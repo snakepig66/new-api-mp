@@ -88,19 +88,22 @@ func (Holiday) TableName() string { return "mp_holidays" }
 // channel = one key. The key itself lives in the upstream channels table,
 // encrypted; only its HMAC fingerprint is stored here.
 type Listing struct {
-	ID                  int64    `gorm:"primaryKey"`
-	SellerID            int64    `gorm:"not null;index"`
-	ChannelID           int64    `gorm:"not null"`
-	Vendor              string   `gorm:"size:64;not null;index"`
-	Models              []string `gorm:"type:text;serializer:json"`
-	MultiplierMilli     int64    `gorm:"not null"` // 倍率千分值 1..1000 (§3.2)
-	ConcurrencyLimit    int      `gorm:"not null"`
-	RPMLimit            int      `gorm:"not null"`  // 0 = unlimited
-	DailyCapMicro       int64    `gorm:"not null"`  // 0 = unlimited
-	Hours               string   `gorm:"type:text"` // JSON windows, empty = all day
-	Status              string   `gorm:"size:16;not null;index"`
-	KeyFingerprint      string   `gorm:"size:128;not null;uniqueIndex"`
-	Version             int64    `gorm:"not null"` // optimistic lock
+	ID               int64    `gorm:"primaryKey"`
+	SellerID         int64    `gorm:"not null;index"`
+	ChannelID        int64    `gorm:"not null"`
+	Vendor           string   `gorm:"size:64;not null;index"`
+	Models           []string `gorm:"type:text;serializer:json"`
+	MultiplierMilli  int64    `gorm:"not null"` // 倍率千分值 1..1000 (§3.2)
+	ConcurrencyLimit int      `gorm:"not null"`
+	RPMLimit         int      `gorm:"not null"`  // 0 = unlimited
+	DailyCapMicro    int64    `gorm:"not null"`  // 0 = unlimited
+	Hours            string   `gorm:"type:text"` // JSON windows, empty = all day
+	Status           string   `gorm:"size:16;not null;index"`
+	KeyFingerprint   string   `gorm:"size:128;not null;uniqueIndex"`
+	// KeyCiphertext is the AES-256-GCM blob (nonce||ciphertext) of the
+	// seller's API key (§3.5); the plaintext never touches the database.
+	KeyCiphertext       []byte `gorm:"type:blob"`
+	Version             int64  `gorm:"not null"` // optimistic lock
 	MultiplierUpdatedAt *time.Time
 	CreatedAt           time.Time
 	UpdatedAt           time.Time

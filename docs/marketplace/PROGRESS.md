@@ -76,3 +76,26 @@
 - `go build ./...` ✅ `go vet ./marketplace/...` ✅ `gofmt -l marketplace/` 无输出 ✅
 - `CGO_ENABLED=1 go test ./marketplace/... -race -count=1` ✅（阶段 1 全绿 + 新增 24 个测试全绿，无 DATA RACE）
 - 验收清单逐条落实：全部边界秒（11:59:59/12:00:00、13:59:59/14:00:00、17:59:59/18:00:00、09:00、08:59:59）、午休、周末、法定节假日、调休上班周末、跨档请求按冻结时刻整条同档、价目版本切换（effective_at 优先、同刻 version 大者优先、恰好生效时刻）、flat 回退、工具价目 2026-11-01 门控、一次取整、OfficialCost 基准、负数/倍率越界。
+
+---
+
+## 阶段 3 · 分享者与挂单（2026-10-24 完成）
+
+开发方式：三个子智能体并行（egress / 挂单主体 / 验真），主智能体补 Init 出网接线、逐行审查安全关键代码、复跑门禁。
+
+做了什么：
+- `egress.go`（§3.11）：fail-closed 出网白名单（空表全拒；精确或点边界后缀匹配；IP 字面量永远拒绝）；`ValidateEgressIP` 拒绝 unspecified/loopback/private/link-local/multicast/CGNAT/benchmarking，先 Unmap 处理 IPv4-mapped；`EgressHTTPClient` 自定义 DialContext——每次拨号独立「白名单检查 → 解析一次 → 全部 IP 校验（任一不过整体拒）→ 用验证过的 IP 直接拨号」，无二次解析（DNS rebinding 的 TOCTOU 窗口不存在）；不走代理（防绕过）；策略拒绝与传输失败的错误语义分离。
+- `vendors.go`：供应商白名单（首版 DeepSeek，base_url 平台固定，模型与种子一致）；`VendorBaseURLHosts` 供出网白名单派生。
+- `keycrypto.go`：AES-256-GCM 加密（随机 nonce），HMAC-SHA256 指纹；两个子密钥经 SHA-256 域分离派生自 MP_KEY_SECRET（与匿名代号共用一份运维备份）；错误不含明文/密文/完整指纹。
+- `listing.go`：挂单 CRUD 与状态机（draft→verifying→canary→live⇄paused→banned，banned 终态）；CreateListing 单事务内指纹查重 + 建上游渠道行（禁用态、占位 Key 非真 key）+ 建挂单；唯一索引冲突三方言映射 ErrDuplicateKey 兜底并发；UpdateMultiplier 10 分钟间隔、Version+1、不重验真；ReplaceKey 重新验真（→verifying）且 banned 拒换；ValidateHours 严格 HH:MM；所有写路径错误不含 key。
+- `verify.go`：验真三件套（/models 有效性与延迟、/user/balance 余额 big.Rat 精确转微元、chat/completions 最小请求探测 prompt 缓存字段）；独立限流桶 VerifyLimiter（手写令牌桶 + 并发信号量，go.mod 无 x/time 未加依赖）；VerifyListing 编排（draft→verifying→canary，失败回 draft 并写 mp_probes 探针，Detail 不含 key）；上游错误只记语义不回显 body（§3.11）。
+- `marketplace.go`：Init 接线出网白名单——MP_EGRESS_DOMAINS 设置时覆盖，否则从供应商白名单 base_url 派生。
+
+取舍：
+- 验真失败回退边（verifying→draft）在 verify.go 内以条件更新实现并注释，listing.go 的公开状态机不暴露该边。
+- 渠道行 Key 字段存占位符（mp-managed:<fp 前 8 位>），真 key 只在 mp_listings.key_ciphertext（加密）——满足 §3.5「任何接口不返回 key」；阶段 4 转发时按需解密注入。
+
+测试结果（主智能体复跑确认）：
+- `go build ./...` ✅ `go vet ./marketplace/...` ✅ `gofmt -l marketplace/` 无输出 ✅
+- `CGO_ENABLED=1 go test ./marketplace/... -race -count=1` ✅（累计 70+ 测试全绿，无 DATA RACE）
+- 验收清单：SSRF/DNS rebinding 用例（好坏 IP 混合整体拒、拨号 IP 即校验 IP、每次拨号独立校验）、重复 key 拒绝（同 seller 与跨 seller）、状态流转合法/非法边、改倍率 10 分钟、验真限流桶隔离（并发信号量 + 速率令牌）、错误/探针不含 key。
