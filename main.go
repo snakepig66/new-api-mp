@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/marketplace" // MP-HOOK: marketplace module
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
@@ -60,6 +61,12 @@ func main() {
 	err := InitResources()
 	if err != nil {
 		common.FatalLog(common.LogText("failed to initialize resources: %s", err.Error()))
+		return
+	}
+
+	// MP-HOOK: marketplace bootstrap (migrations, jobs); no-op unless MP_ENABLED=true
+	if err := marketplace.Init(model.DB); err != nil {
+		common.FatalLog(common.LogText("failed to initialize marketplace: %s", err.Error()))
 		return
 	}
 
