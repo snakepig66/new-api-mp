@@ -53,3 +53,26 @@
 - `CGO_ENABLED=1 go test ./marketplace/... -race -count=1` ✅（25 个顶层测试全 PASS，无 DATA RACE）
 - `gofmt -l marketplace/` 无输出 ✅
 - MySQL/PostgreSQL 方言迁移留到阶段 7 docker 验证（AGENTS.md 数据库规则）。
+
+---
+
+## 阶段 2 · 价目表与统一算价（2026-10-24 完成）
+
+开发方式：子智能体 D 实现、子智能体 E 按文档验收清单独立写测试，主智能体复跑门禁并逐行审查算价代码。
+
+做了什么：
+- `timeslot.go`：`Calendar`（Asia/Shanghai，`time/tzdata` 内嵌兜底）；工作日 [09:00,12:00)∪[14:00,18:00) 半开区间判峰；节假日全天空闲（优先于周末）；调休上班日按工作日；`atomic.Pointer` 换日历保证 Reload 与 TierAt 无竞态；`ImportHolidays` 按日期 upsert（三方言 clause.OnConflict）。
+- `pricebook.go`：`PriceAt`（effective_at <= at 中 effective_at DESC、version DESC 取首行；非 flat 未命中回退 flat；ErrNoPrice）；`PerCallPriceAt` 同规则并返回版本号。
+- `quote.go`：唯一算价入口 `Quote`（§3.7 展示价/扣费/记录共用）。TokenDebit = ceil(Σtokens·P·mult/1e9)、ToolDebit = ceil(Σcount·U·mult/1000)，math/big 精确乘除、每个组成部分只向上取整一次；OfficialCost = 同 usage 按 mult=1000 的全价；工具次数 >0 无价目报 ErrNoPrice（§3.4 剥离前置条件）；负数与倍率越界（1..1000）报错；总额 int64 溢出检查。
+- `seed.go`：DeepSeek 种子——deepseek-flash 空闲 1/0.02/4、高峰 2/0.04/8，deepseek-v4-pro 空闲 4.5/0.15/13.5、高峰 9/0.30/27（元/M，×1e6 转微元；缓存写=标准输入价，因 DeepSeek 无独立缓存写计费）；search/fetch 各 5000 微元/次，2026-11-01 00:00 +08:00 生效；token 价目 2026-01-01 生效；按唯一键查重幂等。价格来源 https://api-docs.deepseek.com/zh-cn/quick_start/pricing（2026-10-23 抓取，页面恰有这两个模型名，无需映射）。
+- `marketplace.go` Init 在 Migrate 后调用 SeedPrices。
+
+取舍：
+- 规格中结构体名 Quote 与函数 Quote 冲突，结构体命名 QuoteResult（函数名与文档 §4.1 一致）。
+- 节假日「年度导入接口」本阶段交付包级函数 ImportHolidays；HTTP 后台接口随阶段 6 接入。
+- 下次切换时间（模型广场需要）留到阶段 5 再加，避免提前打开本文件。
+
+测试结果（主智能体复跑确认）：
+- `go build ./...` ✅ `go vet ./marketplace/...` ✅ `gofmt -l marketplace/` 无输出 ✅
+- `CGO_ENABLED=1 go test ./marketplace/... -race -count=1` ✅（阶段 1 全绿 + 新增 24 个测试全绿，无 DATA RACE）
+- 验收清单逐条落实：全部边界秒（11:59:59/12:00:00、13:59:59/14:00:00、17:59:59/18:00:00、09:00、08:59:59）、午休、周末、法定节假日、调休上班周末、跨档请求按冻结时刻整条同档、价目版本切换（effective_at 优先、同刻 version 大者优先、恰好生效时刻）、flat 回退、工具价目 2026-11-01 门控、一次取整、OfficialCost 基准、负数/倍率越界。

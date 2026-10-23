@@ -41,6 +41,9 @@ func Init(db *gorm.DB) error {
 	if err := Migrate(db); err != nil {
 		return fmt.Errorf("marketplace init: %w", err)
 	}
+	if err := SeedPrices(db); err != nil {
+		return fmt.Errorf("marketplace seed: %w", err)
+	}
 	common.SysLog("marketplace enabled: migrations applied")
 	return nil
 }
