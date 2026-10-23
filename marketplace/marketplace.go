@@ -7,9 +7,12 @@
 package marketplace
 
 import (
+	"fmt"
 	"os"
 
 	"gorm.io/gorm"
+
+	"github.com/QuantumNous/new-api/common"
 )
 
 var enabled bool
@@ -28,5 +31,16 @@ func Init(db *gorm.DB) error {
 	if !enabled {
 		return nil
 	}
+	// MP_KEY_SECRET is mandatory (§4.5): without it anonymous buyer codes
+	// cannot be derived. Never include the secret itself in any error or log.
+	secret := os.Getenv("MP_KEY_SECRET")
+	if secret == "" {
+		return ErrNoAnonSecret
+	}
+	SetAnonSecret(secret)
+	if err := Migrate(db); err != nil {
+		return fmt.Errorf("marketplace init: %w", err)
+	}
+	common.SysLog("marketplace enabled: migrations applied")
 	return nil
 }
