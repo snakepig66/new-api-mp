@@ -53,8 +53,9 @@ func ensureUserIDStart(db *gorm.DB, start int64) error {
 		// InnoDB ignores an AUTO_INCREMENT below the current maximum.
 		return db.Exec(fmt.Sprintf("ALTER TABLE users AUTO_INCREMENT = %d", start)).Error
 	case "postgres":
-		// setval with is_called=false makes the next nextval return `start`.
-		return db.Exec("SELECT setval(pg_get_serial_sequence('users','id'), ?, false)", start-1).Error
+		// setval with is_called=false makes the very next nextval return the
+		// given value itself.
+		return db.Exec("SELECT setval(pg_get_serial_sequence('users','id'), ?, false)", start).Error
 	case "sqlite":
 		// The users table is created by upstream GORM with INTEGER PRIMARY KEY
 		// AUTOINCREMENT, whose high-water mark lives in sqlite_sequence and
