@@ -231,3 +231,32 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 ### 遗留
 - 真实 DeepSeek key 端到端（高峰/空闲/流式/Anthropic messages/带搜索，人工对账）：**等产品负责人提供真实 key**。
 - 阶段 8 前端另排期。
+
+---
+
+## 阶段 7 · 真实上游 E2E 完成（2026-10-24）
+
+### 上游选择（产品负责人未提供官方 key 的替代方案）
+- 官方 api.deepseek.com key 缺失，改用户自有网关 **api.tipig.cloud**（自有 new-api 实例，master-all 令牌无限额度）作为 E2E 真实上游：服务真实 DeepSeek V4.1 Flash 1017 / V4 Pro 0813 模型，usage 字段真实。
+- 相应接入：供应商白名单新增 `tipig`（base_url 平台固定）、种子价复用 DeepSeek 官方价目；`Vendor.PassthroughBody` 多协议透传能力。
+
+### E2E 五条链路（2026-10-24 19:50 上海，周六空闲时段，倍率 1.0）全部成功 + 四方对账通过
+| 链路 | 上游 usage | 扣费微元 | 记录 | 流水恒等式 | 余额 |
+|---|---|---|---|---|---|
+| 空闲单 chat | p62/c59 | 298 = (62×1+59×4) | success/offpeak/v1 | 21+277=298 ✓ | -298 ✓ |
+| 高峰单（价目 v2 模拟高峰单价） | p36/c75 | 672 = (36×2+75×8) | success/v2 | 47+625=672 ✓ | -672 ✓ |
+| 流式（include_usage） | p37/c56 | 261 = (37×1+56×4) | success/usage 帧结算 | 18+243=261 ✓ | -261 ✓ |
+| Anthropic messages | i62/o62 | 310 = (62×1+62×4) | success/end_turn | 22+288=310 ✓ | -310 ✓ |
+| 带 web_search 工具 | p56/c16 | 120 = (56×1+16×4) | strip_tools removed=1、不计工具费 | 8+112=120 ✓ | -120 ✓ |
+
+- 余额轨迹 100000000 → 99998339，五笔 Δ 与记录完全一致；mp_ledger signed 求和 0、buyer_debit=seller_credit+platform_fee 恒等式逐单成立；一个 request_id 一条记录、重试链落库。
+
+### E2E 抓出并整改的 3 个真实 bug（全部提交）
+1. **URL 双前缀**：供应商 base_url 带 /v1 与 adaptor 追加路径叠加 → `POST /v1/v1/chat/completions`。规范：base_url 不带协议路径（48bc5cb48）。
+2. **Claude 请求 /anthropic 前缀**：DeepSeek 渠道类型把 Claude 格式固定打到 `{base}/anthropic/v1/messages`（官方 DeepSeek 约定），tipig 只认原生 `/v1/messages` → 透传渠道按买家原始路径拼 URL（`relay/channel/deepseek/adaptor.go` MP-HOOK，2e1bec7f9）。
+3. **透传渠道的 Anthropic 支持**：`Vendor.PassthroughBody` + channel setting `pass_through_body_enabled`（78f76ca93）——多协议网关转发原始请求体，§3.10 的三协议支持得以真正工作。
+
+### 遗留与决策
+- 高峰单用价目 v2 模拟高峰单价（周六全天空闲、时钟高峰窗已由阶段 2 单测覆盖）；正式高峰窗验证可待工作日或调休标记重跑。
+- tipig 供应商条目为 E2E 用途留在白名单；正式上线仍以 §3.5 首批官方渠道为准，由产品负责人定夺去留。
+- §10 七项待定仍按文档默认（详见文档 §10 与本文档交接节）。
