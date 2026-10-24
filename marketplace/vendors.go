@@ -43,8 +43,8 @@ var vendors = []Vendor{
 		ID:          "tipig",
 		DisplayName: "tipig gateway",
 		// No /v1 suffix: the channel adaptor appends its own protocol path.
-		BaseURL:     "https://api.tipig.cloud",
-		Models:      []string{"deepseek-v4.1-flash-1017", "deepseek-v4-pro-0813"},
+		BaseURL: "https://api.tipig.cloud",
+		Models:  []string{"deepseek-v4.1-flash-1017", "deepseek-v4-pro-0813"},
 		// The gateway is an upstream new-api that speaks OpenAI and Anthropic
 		// natively; passthrough keeps /v1/messages un-converted (its OpenAI
 		// conversion is rejected upstream, verified 2026-10-24 E2E).
