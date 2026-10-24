@@ -17,10 +17,26 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as SellerRouteImport } from './routes/seller'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
+import { Route as AdminHolidaysRouteImport } from './routes/admin/holidays'
+import { Route as AdminListingsRouteImport } from './routes/admin/listings'
+import { Route as AdminPayoutsRouteImport } from './routes/admin/payouts'
+import { Route as AdminPerCallPricesRouteImport } from './routes/admin/per-call-prices'
+import { Route as AdminPricesRouteImport } from './routes/admin/prices'
+import { Route as AdminToolsRouteImport } from './routes/admin/tools'
 import { Route as ConsoleIndexRouteImport } from './routes/console/index'
+import { Route as ConsoleRecordsRouteImport } from './routes/console/records'
+import { Route as ConsoleWalletRouteImport } from './routes/console/wallet'
 import { Route as ModelsIndexRouteImport } from './routes/models/index'
 import { Route as ModelsIdRouteImport } from './routes/models/$id'
+import { Route as OauthProviderRouteImport } from './routes/oauth/$provider'
 import { Route as SellerIndexRouteImport } from './routes/seller/index'
+import { Route as SellerOnboardingRouteImport } from './routes/seller/onboarding'
+import { Route as SellerPayoutsRouteImport } from './routes/seller/payouts'
+import { Route as SellerRecordsRouteImport } from './routes/seller/records'
+import { Route as ConsoleKeysIndexRouteImport } from './routes/console/keys/index'
+import { Route as ConsoleKeysIdRouteImport } from './routes/console/keys/$id'
+import { Route as SellerListingsIndexRouteImport } from './routes/seller/listings/index'
+import { Route as SellerListingsNewRouteImport } from './routes/seller/listings/new'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -62,9 +78,49 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminHolidaysRoute = AdminHolidaysRouteImport.update({
+  id: '/holidays',
+  path: '/holidays',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminListingsRoute = AdminListingsRouteImport.update({
+  id: '/listings',
+  path: '/listings',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminPayoutsRoute = AdminPayoutsRouteImport.update({
+  id: '/payouts',
+  path: '/payouts',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminPerCallPricesRoute = AdminPerCallPricesRouteImport.update({
+  id: '/per-call-prices',
+  path: '/per-call-prices',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminPricesRoute = AdminPricesRouteImport.update({
+  id: '/prices',
+  path: '/prices',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminToolsRoute = AdminToolsRouteImport.update({
+  id: '/tools',
+  path: '/tools',
+  getParentRoute: () => AdminRoute,
+} as any)
 const ConsoleIndexRoute = ConsoleIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => ConsoleRoute,
+} as any)
+const ConsoleRecordsRoute = ConsoleRecordsRouteImport.update({
+  id: '/records',
+  path: '/records',
+  getParentRoute: () => ConsoleRoute,
+} as any)
+const ConsoleWalletRoute = ConsoleWalletRouteImport.update({
+  id: '/wallet',
+  path: '/wallet',
   getParentRoute: () => ConsoleRoute,
 } as any)
 const ModelsIndexRoute = ModelsIndexRouteImport.update({
@@ -77,9 +133,49 @@ const ModelsIdRoute = ModelsIdRouteImport.update({
   path: '/models/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OauthProviderRoute = OauthProviderRouteImport.update({
+  id: '/oauth/$provider',
+  path: '/oauth/$provider',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SellerIndexRoute = SellerIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => SellerRoute,
+} as any)
+const SellerOnboardingRoute = SellerOnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
+  getParentRoute: () => SellerRoute,
+} as any)
+const SellerPayoutsRoute = SellerPayoutsRouteImport.update({
+  id: '/payouts',
+  path: '/payouts',
+  getParentRoute: () => SellerRoute,
+} as any)
+const SellerRecordsRoute = SellerRecordsRouteImport.update({
+  id: '/records',
+  path: '/records',
+  getParentRoute: () => SellerRoute,
+} as any)
+const ConsoleKeysIndexRoute = ConsoleKeysIndexRouteImport.update({
+  id: '/keys/',
+  path: '/keys/',
+  getParentRoute: () => ConsoleRoute,
+} as any)
+const ConsoleKeysIdRoute = ConsoleKeysIdRouteImport.update({
+  id: '/keys/$id',
+  path: '/keys/$id',
+  getParentRoute: () => ConsoleRoute,
+} as any)
+const SellerListingsIndexRoute = SellerListingsIndexRouteImport.update({
+  id: '/listings/',
+  path: '/listings/',
+  getParentRoute: () => SellerRoute,
+} as any)
+const SellerListingsNewRoute = SellerListingsNewRouteImport.update({
+  id: '/listings/new',
+  path: '/listings/new',
   getParentRoute: () => SellerRoute,
 } as any)
 
@@ -91,22 +187,54 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
   '/seller': typeof SellerRouteWithChildren
+  '/admin/holidays': typeof AdminHolidaysRoute
+  '/admin/listings': typeof AdminListingsRoute
+  '/admin/payouts': typeof AdminPayoutsRoute
+  '/admin/per-call-prices': typeof AdminPerCallPricesRoute
+  '/admin/prices': typeof AdminPricesRoute
+  '/admin/tools': typeof AdminToolsRoute
+  '/console/records': typeof ConsoleRecordsRoute
+  '/console/wallet': typeof ConsoleWalletRoute
   '/models/$id': typeof ModelsIdRoute
+  '/oauth/$provider': typeof OauthProviderRoute
+  '/seller/onboarding': typeof SellerOnboardingRoute
+  '/seller/payouts': typeof SellerPayoutsRoute
+  '/seller/records': typeof SellerRecordsRoute
   '/admin/': typeof AdminIndexRoute
   '/console/': typeof ConsoleIndexRoute
   '/models/': typeof ModelsIndexRoute
   '/seller/': typeof SellerIndexRoute
+  '/console/keys/$id': typeof ConsoleKeysIdRoute
+  '/seller/listings/new': typeof SellerListingsNewRoute
+  '/console/keys/': typeof ConsoleKeysIndexRoute
+  '/seller/listings/': typeof SellerListingsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/docs': typeof DocsRoute
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
+  '/admin/holidays': typeof AdminHolidaysRoute
+  '/admin/listings': typeof AdminListingsRoute
+  '/admin/payouts': typeof AdminPayoutsRoute
+  '/admin/per-call-prices': typeof AdminPerCallPricesRoute
+  '/admin/prices': typeof AdminPricesRoute
+  '/admin/tools': typeof AdminToolsRoute
+  '/console/records': typeof ConsoleRecordsRoute
+  '/console/wallet': typeof ConsoleWalletRoute
   '/models/$id': typeof ModelsIdRoute
+  '/oauth/$provider': typeof OauthProviderRoute
+  '/seller/onboarding': typeof SellerOnboardingRoute
+  '/seller/payouts': typeof SellerPayoutsRoute
+  '/seller/records': typeof SellerRecordsRoute
   '/admin': typeof AdminIndexRoute
   '/console': typeof ConsoleIndexRoute
   '/models': typeof ModelsIndexRoute
   '/seller': typeof SellerIndexRoute
+  '/console/keys/$id': typeof ConsoleKeysIdRoute
+  '/seller/listings/new': typeof SellerListingsNewRoute
+  '/console/keys': typeof ConsoleKeysIndexRoute
+  '/seller/listings': typeof SellerListingsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -117,11 +245,27 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
   '/seller': typeof SellerRouteWithChildren
+  '/admin/holidays': typeof AdminHolidaysRoute
+  '/admin/listings': typeof AdminListingsRoute
+  '/admin/payouts': typeof AdminPayoutsRoute
+  '/admin/per-call-prices': typeof AdminPerCallPricesRoute
+  '/admin/prices': typeof AdminPricesRoute
+  '/admin/tools': typeof AdminToolsRoute
+  '/console/records': typeof ConsoleRecordsRoute
+  '/console/wallet': typeof ConsoleWalletRoute
   '/models/$id': typeof ModelsIdRoute
+  '/oauth/$provider': typeof OauthProviderRoute
+  '/seller/onboarding': typeof SellerOnboardingRoute
+  '/seller/payouts': typeof SellerPayoutsRoute
+  '/seller/records': typeof SellerRecordsRoute
   '/admin/': typeof AdminIndexRoute
   '/console/': typeof ConsoleIndexRoute
   '/models/': typeof ModelsIndexRoute
   '/seller/': typeof SellerIndexRoute
+  '/console/keys/$id': typeof ConsoleKeysIdRoute
+  '/seller/listings/new': typeof SellerListingsNewRoute
+  '/console/keys/': typeof ConsoleKeysIndexRoute
+  '/seller/listings/': typeof SellerListingsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -133,22 +277,54 @@ export interface FileRouteTypes {
     | '/login'
     | '/register'
     | '/seller'
+    | '/admin/holidays'
+    | '/admin/listings'
+    | '/admin/payouts'
+    | '/admin/per-call-prices'
+    | '/admin/prices'
+    | '/admin/tools'
+    | '/console/records'
+    | '/console/wallet'
     | '/models/$id'
+    | '/oauth/$provider'
+    | '/seller/onboarding'
+    | '/seller/payouts'
+    | '/seller/records'
     | '/admin/'
     | '/console/'
     | '/models/'
     | '/seller/'
+    | '/console/keys/$id'
+    | '/seller/listings/new'
+    | '/console/keys/'
+    | '/seller/listings/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/docs'
     | '/login'
     | '/register'
+    | '/admin/holidays'
+    | '/admin/listings'
+    | '/admin/payouts'
+    | '/admin/per-call-prices'
+    | '/admin/prices'
+    | '/admin/tools'
+    | '/console/records'
+    | '/console/wallet'
     | '/models/$id'
+    | '/oauth/$provider'
+    | '/seller/onboarding'
+    | '/seller/payouts'
+    | '/seller/records'
     | '/admin'
     | '/console'
     | '/models'
     | '/seller'
+    | '/console/keys/$id'
+    | '/seller/listings/new'
+    | '/console/keys'
+    | '/seller/listings'
   id:
     | '__root__'
     | '/'
@@ -158,11 +334,27 @@ export interface FileRouteTypes {
     | '/login'
     | '/register'
     | '/seller'
+    | '/admin/holidays'
+    | '/admin/listings'
+    | '/admin/payouts'
+    | '/admin/per-call-prices'
+    | '/admin/prices'
+    | '/admin/tools'
+    | '/console/records'
+    | '/console/wallet'
     | '/models/$id'
+    | '/oauth/$provider'
+    | '/seller/onboarding'
+    | '/seller/payouts'
+    | '/seller/records'
     | '/admin/'
     | '/console/'
     | '/models/'
     | '/seller/'
+    | '/console/keys/$id'
+    | '/seller/listings/new'
+    | '/console/keys/'
+    | '/seller/listings/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -174,6 +366,7 @@ export interface RootRouteChildren {
   RegisterRoute: typeof RegisterRoute
   SellerRoute: typeof SellerRouteWithChildren
   ModelsIdRoute: typeof ModelsIdRoute
+  OauthProviderRoute: typeof OauthProviderRoute
   ModelsIndexRoute: typeof ModelsIndexRoute
 }
 
@@ -235,11 +428,67 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/holidays': {
+      id: '/admin/holidays'
+      path: '/holidays'
+      fullPath: '/admin/holidays'
+      preLoaderRoute: typeof AdminHolidaysRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/listings': {
+      id: '/admin/listings'
+      path: '/listings'
+      fullPath: '/admin/listings'
+      preLoaderRoute: typeof AdminListingsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/payouts': {
+      id: '/admin/payouts'
+      path: '/payouts'
+      fullPath: '/admin/payouts'
+      preLoaderRoute: typeof AdminPayoutsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/per-call-prices': {
+      id: '/admin/per-call-prices'
+      path: '/per-call-prices'
+      fullPath: '/admin/per-call-prices'
+      preLoaderRoute: typeof AdminPerCallPricesRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/prices': {
+      id: '/admin/prices'
+      path: '/prices'
+      fullPath: '/admin/prices'
+      preLoaderRoute: typeof AdminPricesRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/tools': {
+      id: '/admin/tools'
+      path: '/tools'
+      fullPath: '/admin/tools'
+      preLoaderRoute: typeof AdminToolsRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/console/': {
       id: '/console/'
       path: '/'
       fullPath: '/console/'
       preLoaderRoute: typeof ConsoleIndexRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
+    '/console/records': {
+      id: '/console/records'
+      path: '/records'
+      fullPath: '/console/records'
+      preLoaderRoute: typeof ConsoleRecordsRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
+    '/console/wallet': {
+      id: '/console/wallet'
+      path: '/wallet'
+      fullPath: '/console/wallet'
+      preLoaderRoute: typeof ConsoleWalletRouteImport
       parentRoute: typeof ConsoleRoute
     }
     '/models/': {
@@ -256,6 +505,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ModelsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/oauth/$provider': {
+      id: '/oauth/$provider'
+      path: '/oauth/$provider'
+      fullPath: '/oauth/$provider'
+      preLoaderRoute: typeof OauthProviderRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/seller/': {
       id: '/seller/'
       path: '/'
@@ -263,36 +519,115 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SellerIndexRouteImport
       parentRoute: typeof SellerRoute
     }
+    '/seller/onboarding': {
+      id: '/seller/onboarding'
+      path: '/onboarding'
+      fullPath: '/seller/onboarding'
+      preLoaderRoute: typeof SellerOnboardingRouteImport
+      parentRoute: typeof SellerRoute
+    }
+    '/seller/payouts': {
+      id: '/seller/payouts'
+      path: '/payouts'
+      fullPath: '/seller/payouts'
+      preLoaderRoute: typeof SellerPayoutsRouteImport
+      parentRoute: typeof SellerRoute
+    }
+    '/seller/records': {
+      id: '/seller/records'
+      path: '/records'
+      fullPath: '/seller/records'
+      preLoaderRoute: typeof SellerRecordsRouteImport
+      parentRoute: typeof SellerRoute
+    }
+    '/console/keys/': {
+      id: '/console/keys/'
+      path: '/keys'
+      fullPath: '/console/keys/'
+      preLoaderRoute: typeof ConsoleKeysIndexRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
+    '/console/keys/$id': {
+      id: '/console/keys/$id'
+      path: '/keys/$id'
+      fullPath: '/console/keys/$id'
+      preLoaderRoute: typeof ConsoleKeysIdRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
+    '/seller/listings/': {
+      id: '/seller/listings/'
+      path: '/listings'
+      fullPath: '/seller/listings/'
+      preLoaderRoute: typeof SellerListingsIndexRouteImport
+      parentRoute: typeof SellerRoute
+    }
+    '/seller/listings/new': {
+      id: '/seller/listings/new'
+      path: '/listings/new'
+      fullPath: '/seller/listings/new'
+      preLoaderRoute: typeof SellerListingsNewRouteImport
+      parentRoute: typeof SellerRoute
+    }
   }
 }
 
 interface AdminRouteChildren {
+  AdminHolidaysRoute: typeof AdminHolidaysRoute
+  AdminListingsRoute: typeof AdminListingsRoute
+  AdminPayoutsRoute: typeof AdminPayoutsRoute
+  AdminPerCallPricesRoute: typeof AdminPerCallPricesRoute
+  AdminPricesRoute: typeof AdminPricesRoute
+  AdminToolsRoute: typeof AdminToolsRoute
   AdminIndexRoute: typeof AdminIndexRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
+  AdminHolidaysRoute: AdminHolidaysRoute,
+  AdminListingsRoute: AdminListingsRoute,
+  AdminPayoutsRoute: AdminPayoutsRoute,
+  AdminPerCallPricesRoute: AdminPerCallPricesRoute,
+  AdminPricesRoute: AdminPricesRoute,
+  AdminToolsRoute: AdminToolsRoute,
   AdminIndexRoute: AdminIndexRoute,
 }
 
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
 interface ConsoleRouteChildren {
+  ConsoleRecordsRoute: typeof ConsoleRecordsRoute
+  ConsoleWalletRoute: typeof ConsoleWalletRoute
   ConsoleIndexRoute: typeof ConsoleIndexRoute
+  ConsoleKeysIdRoute: typeof ConsoleKeysIdRoute
+  ConsoleKeysIndexRoute: typeof ConsoleKeysIndexRoute
 }
 
 const ConsoleRouteChildren: ConsoleRouteChildren = {
+  ConsoleRecordsRoute: ConsoleRecordsRoute,
+  ConsoleWalletRoute: ConsoleWalletRoute,
   ConsoleIndexRoute: ConsoleIndexRoute,
+  ConsoleKeysIdRoute: ConsoleKeysIdRoute,
+  ConsoleKeysIndexRoute: ConsoleKeysIndexRoute,
 }
 
 const ConsoleRouteWithChildren =
   ConsoleRoute._addFileChildren(ConsoleRouteChildren)
 
 interface SellerRouteChildren {
+  SellerOnboardingRoute: typeof SellerOnboardingRoute
+  SellerPayoutsRoute: typeof SellerPayoutsRoute
+  SellerRecordsRoute: typeof SellerRecordsRoute
   SellerIndexRoute: typeof SellerIndexRoute
+  SellerListingsNewRoute: typeof SellerListingsNewRoute
+  SellerListingsIndexRoute: typeof SellerListingsIndexRoute
 }
 
 const SellerRouteChildren: SellerRouteChildren = {
+  SellerOnboardingRoute: SellerOnboardingRoute,
+  SellerPayoutsRoute: SellerPayoutsRoute,
+  SellerRecordsRoute: SellerRecordsRoute,
   SellerIndexRoute: SellerIndexRoute,
+  SellerListingsNewRoute: SellerListingsNewRoute,
+  SellerListingsIndexRoute: SellerListingsIndexRoute,
 }
 
 const SellerRouteWithChildren =
@@ -307,6 +642,7 @@ const rootRouteChildren: RootRouteChildren = {
   RegisterRoute: RegisterRoute,
   SellerRoute: SellerRouteWithChildren,
   ModelsIdRoute: ModelsIdRoute,
+  OauthProviderRoute: OauthProviderRoute,
   ModelsIndexRoute: ModelsIndexRoute,
 }
 export const routeTree = rootRouteImport

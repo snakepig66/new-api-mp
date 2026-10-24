@@ -1,16 +1,28 @@
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useQuery } from '@tanstack/react-query'
 import { Link, createFileRoute, redirect } from '@tanstack/react-router'
+import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 
 import { copy } from '@/copy'
+import { loginUser, systemStatusQuery } from '@/features/auth/api'
+import { AuthSplit } from '@/features/auth/auth-split'
+import { GithubButton } from '@/features/auth/github-button'
+import { Turnstile, isTurnstileConfigured } from '@/features/auth/turnstile'
 import { ApiError } from '@/lib/api'
-import { isLoggedIn, login } from '@/lib/auth'
+import { isLoggedIn } from '@/lib/auth'
 import { safeRedirect } from '@/lib/navigation'
-import { Button, Input, LogoMark } from '@/ui'
+import { Button, Input } from '@/ui'
 
-const searchSchema = (search: Record<string, unknown>): { redirect?: string } => ({
+interface LoginSearch {
+  redirect?: string
+  registered?: boolean
+}
+
+const searchSchema = (search: Record<string, unknown>): LoginSearch => ({
   redirect: typeof search.redirect === 'string' ? search.redirect : undefined,
+  registered: search.registered === true || search.registered === '1' ? true : undefined,
 })
 
 export const Route = createFileRoute('/login')({
@@ -22,15 +34,17 @@ export const Route = createFileRoute('/login')({
 })
 
 const schema = z.object({
-  username: z.string().trim().min(1, copy.validation.required),
+  identifier: z.string().trim().min(1, copy.validation.required),
   password: z.string().min(1, copy.validation.required),
 })
 
 type LoginForm = z.infer<typeof schema>
 
 function LoginPage() {
-  const { redirect: redirectTo } = Route.useSearch()
+  const { redirect: redirectTo, registered } = Route.useSearch()
   const page = copy.pages.login
+  const status = useQuery(systemStatusQuery())
+  const [turnstileToken, setTurnstileToken] = useState('')
 
   const {
     register,
@@ -39,106 +53,117 @@ function LoginPage() {
     formState: { errors, isSubmitting },
   } = useForm<LoginForm>({
     resolver: zodResolver(schema),
-    defaultValues: { username: '', password: '' },
+    defaultValues: { identifier: '', password: '' },
   })
 
   const onSubmit = handleSubmit(async (values) => {
+    if (status.data?.turnstile_check) {
+      if (!isTurnstileConfigured()) {
+        setError('root', { message: page.turnstileMissing })
+        return
+      }
+      if (!turnstileToken) {
+        setError('root', { message: page.turnstileRequired })
+        return
+      }
+    }
     try {
-      await login(values.username, values.password)
+      await loginUser(values.identifier, values.password, turnstileToken || undefined)
       window.location.assign(safeRedirect(redirectTo, '/console'))
     } catch (error) {
       setError('root', {
-        message: error instanceof ApiError ? error.message : page.failed,
+        message:
+          error instanceof ApiError && error.status === 0
+            ? error.message
+            : page.failed,
       })
     }
   })
 
   return (
-    <div className="mx-auto grid max-w-[1180px] gap-12 px-5 py-12 lg:grid-cols-[minmax(0,1fr)_400px] lg:gap-20 lg:py-20">
-      <div className="hidden lg:block">
-        <LogoMark size={34} className="text-brand-dark" />
-        <h1 className="mt-8 max-w-[520px] text-[32px] font-semibold leading-[1.25] tracking-tight text-ink">
-          {copy.pages.home.headlineLines[0]}
-          <br />
-          {copy.pages.home.headlineLines[1]}
-        </h1>
-        <p className="mt-4 max-w-md text-[13.5px] leading-7 text-muted">{page.brandBody}</p>
-        <dl className="mt-10 max-w-sm border-t border-line text-[12.5px]">
-          {copy.pages.home.facts.map((fact) => (
-            <div
-              key={fact.label}
-              className="flex items-baseline justify-between gap-4 border-b border-line/70 py-2.5"
-            >
-              <dt className="text-muted">{fact.label}</dt>
-              <dd className="font-medium text-ink">{fact.value}</dd>
-            </div>
-          ))}
-        </dl>
+    <AuthSplit headline={page.brandHeading} body={page.brandBody}>
+      <h1 className="text-[24px] font-semibold tracking-tight text-ink">{page.title}</h1>
+      <p className="mt-1.5 text-[13px] leading-6 text-muted">{page.lead}</p>
+
+      {registered ? (
+        <p
+          role="status"
+          className="mt-4 border border-success/25 bg-success-soft px-3 py-2 text-[12.5px] leading-5 text-success"
+        >
+          {page.registered}
+        </p>
+      ) : null}
+
+      <GithubButton
+        redirectTo={safeRedirect(redirectTo, '/console')}
+        onError={(message) => setError('root', { message })}
+        className="mt-6"
+      />
+
+      <div className="my-5 flex items-center gap-3 text-[11.5px] text-muted">
+        <span className="h-px flex-1 bg-line" aria-hidden="true" />
+        {page.or}
+        <span className="h-px flex-1 bg-line" aria-hidden="true" />
       </div>
 
-      <div className="w-full max-w-[400px]">
-        <h1 className="text-[24px] font-semibold tracking-tight text-ink">{page.title}</h1>
-        <p className="mt-1.5 text-[13px] leading-6 text-muted">{page.lead}</p>
-
-        <form className="mt-7 space-y-4" onSubmit={onSubmit} noValidate>
-          <div>
-            <label htmlFor="login-username" className="mb-1.5 block text-[12.5px] font-medium text-ink">
-              {page.username}
-            </label>
-            <Input
-              id="login-username"
-              autoComplete="username"
-              placeholder={page.usernamePlaceholder}
-              invalid={Boolean(errors.username)}
-              {...register('username')}
-            />
-            {errors.username ? (
-              <p className="mt-1 text-[11.5px] text-danger">{errors.username.message}</p>
-            ) : null}
-          </div>
-
-          <div>
-            <label htmlFor="login-password" className="mb-1.5 block text-[12.5px] font-medium text-ink">
-              {page.password}
-            </label>
-            <Input
-              id="login-password"
-              type="password"
-              autoComplete="current-password"
-              placeholder={page.passwordPlaceholder}
-              invalid={Boolean(errors.password)}
-              {...register('password')}
-            />
-            {errors.password ? (
-              <p className="mt-1 text-[11.5px] text-danger">{errors.password.message}</p>
-            ) : null}
-          </div>
-
-          {errors.root?.message ? (
-            <p
-              role="alert"
-              className="border border-danger/25 bg-danger-soft px-3 py-2 text-[12.5px] leading-5 text-danger"
-            >
-              {errors.root.message}
-            </p>
+      <form className="space-y-4" onSubmit={onSubmit} noValidate>
+        <div>
+          <label htmlFor="login-identifier" className="mb-1.5 block text-[12.5px] font-medium text-ink">
+            {page.identifier}
+          </label>
+          <Input
+            id="login-identifier"
+            autoComplete="username"
+            placeholder={page.identifierPlaceholder}
+            invalid={Boolean(errors.identifier)}
+            {...register('identifier')}
+          />
+          {errors.identifier ? (
+            <p className="mt-1 text-[11.5px] text-danger">{errors.identifier.message}</p>
           ) : null}
+        </div>
 
-          <Button type="submit" className="w-full" loading={isSubmitting}>
-            {isSubmitting ? page.submitting : page.submit}
-          </Button>
-        </form>
+        <div>
+          <label htmlFor="login-password" className="mb-1.5 block text-[12.5px] font-medium text-ink">
+            {page.password}
+          </label>
+          <Input
+            id="login-password"
+            type="password"
+            autoComplete="current-password"
+            placeholder={page.passwordPlaceholder}
+            invalid={Boolean(errors.password)}
+            {...register('password')}
+          />
+          {errors.password ? (
+            <p className="mt-1 text-[11.5px] text-danger">{errors.password.message}</p>
+          ) : null}
+        </div>
 
-        <p className="mt-4 text-[12.5px] text-muted">
-          {page.noAccount}{' '}
-          <Link to="/register" className="text-brand-dark hover:underline">
-            {page.toRegister}
-          </Link>
-        </p>
+        <Turnstile onToken={setTurnstileToken} />
 
-        <p className="mt-8 border-t border-line pt-4 text-[11.5px] leading-5 text-muted">
-          {page.note}
-        </p>
-      </div>
-    </div>
+        {errors.root?.message ? (
+          <p
+            role="alert"
+            className="border border-danger/25 bg-danger-soft px-3 py-2 text-[12.5px] leading-5 text-danger"
+          >
+            {errors.root.message}
+          </p>
+        ) : null}
+
+        <Button type="submit" className="w-full" loading={isSubmitting}>
+          {isSubmitting ? page.submitting : page.submit}
+        </Button>
+      </form>
+
+      <p className="mt-4 text-[12.5px] text-muted">
+        {page.noAccount}{' '}
+        <Link to="/register" className="text-brand-dark hover:underline">
+          {page.toRegister}
+        </Link>
+      </p>
+
+      <p className="mt-8 border-t border-line pt-4 text-[11.5px] leading-5 text-muted">{page.note}</p>
+    </AuthSplit>
   )
 }

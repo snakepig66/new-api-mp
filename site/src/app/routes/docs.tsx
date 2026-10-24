@@ -1,22 +1,56 @@
+import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
+import type { ReactNode } from 'react'
 
 import { copy } from '@/copy'
-import { PageHeader, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from '@/ui'
+import { squareModelsQuery } from '@/features/market/api'
+import { CodeBlock } from '@/features/market/code-block'
+import { currentBaseUrl } from '@/features/market/url'
+import {
+  PageHeader,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
+} from '@/ui'
 
 export const Route = createFileRoute('/docs')({
   component: DocsPage,
 })
 
-const sections = [
-  { id: 'quickstart', label: copy.pages.docs.sections.quickstart },
-  { id: 'billing', label: copy.pages.docs.sections.billing },
-  { id: 'errors', label: copy.pages.docs.sections.errors },
-  { id: 'terms', label: copy.pages.docs.sections.terms },
-  { id: 'privacy', label: copy.pages.docs.sections.privacy },
-]
+const SECTION_IDS = ['quickstart', 'streaming', 'billing', 'errors', 'terms', 'privacy'] as const
+
+type SectionId = (typeof SECTION_IDS)[number]
+
+function Section({
+  id,
+  title,
+  children,
+}: {
+  id: SectionId
+  title: string
+  children: ReactNode
+}) {
+  return (
+    <section
+      id={id}
+      className="mt-10 scroll-mt-24 border-t border-line pt-8 first:mt-0 first:border-t-0 first:pt-0"
+    >
+      <h2 className="text-[18px] font-semibold tracking-tight text-ink">{title}</h2>
+      <div className="mt-3 space-y-3 text-[13.5px] leading-7 text-muted">{children}</div>
+    </section>
+  )
+}
 
 function DocsPage() {
   const docs = copy.pages.docs
+  const models = useQuery(squareModelsQuery())
+  const baseUrl = currentBaseUrl()
+  // The first live model keeps the snippets runnable; the seed id is only a
+  // fallback while the square request is in flight or unavailable.
+  const model = models.data?.[0]?.model ?? 'deepseek-flash'
 
   return (
     <div className="mx-auto max-w-[1180px] px-5 py-10">
@@ -27,13 +61,13 @@ function DocsPage() {
           <nav className="sticky top-24" aria-label={docs.toc}>
             <div className="mb-2 text-[11.5px] text-muted">{docs.toc}</div>
             <ul className="space-y-1 border-l border-line">
-              {sections.map((section) => (
-                <li key={section.id}>
+              {SECTION_IDS.map((id) => (
+                <li key={id}>
                   <a
-                    href={`#${section.id}`}
+                    href={`#${id}`}
                     className="-ml-px block border-l border-transparent py-0.5 pl-3 text-[12.5px] text-muted transition-colors hover:border-brand hover:text-ink"
                   >
-                    {section.label}
+                    {docs.sections[id]}
                   </a>
                 </li>
               ))}
@@ -41,74 +75,113 @@ function DocsPage() {
           </nav>
         </aside>
 
-        <div className="prose-doc min-w-0">
-          <nav className="flex flex-wrap gap-2 lg:hidden" aria-label={docs.toc}>
-            {sections.map((section) => (
+        <div className="min-w-0">
+          <nav className="mb-6 flex flex-wrap gap-2 lg:hidden" aria-label={docs.toc}>
+            {SECTION_IDS.map((id) => (
               <a
-                key={section.id}
-                href={`#${section.id}`}
+                key={id}
+                href={`#${id}`}
                 className="rounded-[3px] border border-line bg-surface px-2 py-1 text-[11.5px] text-muted"
               >
-                {section.label}
+                {docs.sections[id]}
               </a>
             ))}
           </nav>
 
-          <section>
-            <h2 id="quickstart">{docs.sections.quickstart}</h2>
+          <Section id="quickstart" title={docs.sections.quickstart}>
             <p>{docs.quickstart.body}</p>
-            <pre className="code-block mt-4">
-              <code>{docs.quickstart.code}</code>
-            </pre>
-            <p className="mt-2 text-[11.5px]">{docs.quickstart.note}</p>
-          </section>
+            <CodeBlock code={docs.quickstart.codeWithBase(baseUrl, model)} label="curl" />
+            <p className="text-[11.5px] leading-5">{docs.quickstart.note}</p>
+          </Section>
 
-          <section>
-            <h2 id="billing">{docs.sections.billing}</h2>
+          <Section id="streaming" title={docs.sections.streaming}>
+            <p>{docs.streaming.body}</p>
+            <CodeBlock code={docs.streaming.codeWithBase(baseUrl, model)} label="curl" />
+            <p className="text-[11.5px] leading-5">{docs.streaming.note}</p>
+          </Section>
+
+          <Section id="billing" title={docs.sections.billing}>
             <p>{docs.billing.body}</p>
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-[13px] text-muted">
+
+            <h3 className="mt-6 text-[13.5px] font-semibold text-ink">{docs.billing.peakTitle}</h3>
+            <Table minWidth={520}>
+              <TableHead>
+                <TableRow interactive={false}>
+                  <TableHeaderCell>{docs.billing.peakColumns.tier}</TableHeaderCell>
+                  <TableHeaderCell>{docs.billing.peakColumns.window}</TableHeaderCell>
+                  <TableHeaderCell>{docs.billing.peakColumns.rule}</TableHeaderCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {docs.billing.peakRows.map((row) => (
+                  <TableRow key={row.tier}>
+                    <TableCell className="whitespace-nowrap font-medium">{row.tier}</TableCell>
+                    <TableCell>{row.window}</TableCell>
+                    <TableCell className="text-muted">{row.rule}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <p className="text-[11.5px] leading-5">{docs.billing.peakNote}</p>
+
+            <dl className="divide-y divide-line border-y border-line text-[13px]">
+              <div className="py-3">
+                <dt className="font-medium text-ink">{docs.billing.perCallTitle}</dt>
+                <dd className="mt-0.5">{docs.billing.perCall}</dd>
+              </div>
+              <div className="py-3">
+                <dt className="font-medium text-ink">{docs.billing.failureTitle}</dt>
+                <dd className="mt-0.5">{docs.billing.failure}</dd>
+              </div>
+              <div className="py-3">
+                <dt className="font-medium text-ink">{docs.billing.settlementTitle}</dt>
+                <dd className="mt-0.5">{docs.billing.settlement}</dd>
+              </div>
+            </dl>
+
+            <ul className="list-disc space-y-1 pl-5">
               {docs.billing.items.map((item) => (
                 <li key={item}>{item}</li>
               ))}
             </ul>
-          </section>
 
-          <section>
-            <h2 id="errors">{docs.sections.errors}</h2>
+            <p className="pt-1 text-[11.5px] leading-5">{docs.billing.sniff}</p>
+            <CodeBlock code={docs.billing.codeWithBase(baseUrl)} label="curl" />
+          </Section>
+
+          <Section id="errors" title={docs.sections.errors}>
             <p>{docs.errors.body}</p>
-            <div className="mt-3">
-              <Table minWidth={560}>
-                <TableHead>
-                  <TableRow interactive={false}>
-                    <TableHeaderCell>{docs.errors.columns.code}</TableHeaderCell>
-                    <TableHeaderCell>{docs.errors.columns.meaning}</TableHeaderCell>
-                    <TableHeaderCell>{docs.errors.columns.action}</TableHeaderCell>
+            <Table minWidth={560}>
+              <TableHead>
+                <TableRow interactive={false}>
+                  <TableHeaderCell>{docs.errors.columns.code}</TableHeaderCell>
+                  <TableHeaderCell>{docs.errors.columns.meaning}</TableHeaderCell>
+                  <TableHeaderCell>{docs.errors.columns.action}</TableHeaderCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {docs.errors.rows.map((row) => (
+                  <TableRow key={row.code}>
+                    <TableCell numeric className="w-20">
+                      {row.code}
+                    </TableCell>
+                    <TableCell>{row.meaning}</TableCell>
+                    <TableCell className="text-muted">{row.action}</TableCell>
                   </TableRow>
-                </TableHead>
-                <TableBody>
-                  {docs.errors.rows.map((row) => (
-                    <TableRow key={row.code}>
-                      <TableCell numeric className="w-20">
-                        {row.code}
-                      </TableCell>
-                      <TableCell>{row.meaning}</TableCell>
-                      <TableCell className="text-muted">{row.action}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </section>
+                ))}
+              </TableBody>
+            </Table>
+            <p className="pt-1 text-[11.5px] leading-5">{docs.errors.testNote}</p>
+            <CodeBlock code={docs.errors.codeWithBase(baseUrl, model)} label="curl" />
+          </Section>
 
-          <section>
-            <h2 id="terms">{docs.sections.terms}</h2>
+          <Section id="terms" title={docs.sections.terms}>
             <p>{docs.terms.body}</p>
-          </section>
+          </Section>
 
-          <section>
-            <h2 id="privacy">{docs.sections.privacy}</h2>
+          <Section id="privacy" title={docs.sections.privacy}>
             <p>{docs.privacy.body}</p>
-          </section>
+          </Section>
         </div>
       </div>
     </div>
