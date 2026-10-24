@@ -45,3 +45,9 @@ service/openaicompat/chat_responses_live_local_test.go
 go.work
 go.work.sum
 new-api-linux
+
+# Marketplace frontend (site/) — built output is embedded into the Go binary.
+site/node_modules
+site/dist/*
+!site/dist/index.html
+site/.vite

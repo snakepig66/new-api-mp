@@ -26,7 +26,15 @@ func SetRouter(router *gin.Engine, assets WebAssets) {
 		common.SysLog(common.LogText("FRONTEND_BASE_URL is ignored on master node"))
 	}
 	if frontendBaseUrl == "" {
-		SetWebRouter(router, assets, pluginDispatcher)
+		// MP-HOOK: MP_FRONTEND=site switches the embedded frontend from the
+		// upstream web/dist to the standalone site/dist. Unset/legacy keeps the
+		// previous behaviour untouched.
+		if strings.EqualFold(strings.TrimSpace(os.Getenv("MP_FRONTEND")), "site") {
+			SetSiteWebRouter(router, assets, pluginDispatcher)
+			SetOpsLegacyRouter(router, assets)
+		} else {
+			SetWebRouter(router, assets, pluginDispatcher)
+		}
 	} else {
 		frontendBaseUrl = strings.TrimSuffix(frontendBaseUrl, "/")
 		router.NoRoute(

@@ -48,6 +48,16 @@ var buildFS embed.FS
 //go:embed web/dist/index.html
 var indexPage []byte
 
+// MP-HOOK: standalone marketplace frontend (site/). Build it with
+// `cd site && bun install && bun run build`; site/dist/index.html stays in
+// the tree so `go build` also works before the first frontend build.
+//
+//go:embed site/dist
+var siteBuildFS embed.FS
+
+//go:embed site/dist/index.html
+var siteIndexPage []byte
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "plugin" {
 		os.Exit(jsplugin.RunCLI(os.Args[2:], os.Stdout, os.Stderr))
@@ -210,8 +220,10 @@ func main() {
 
 	// 设置路由
 	router.SetRouter(server, router.WebAssets{
-		BuildFS:   buildFS,
-		IndexPage: indexPage,
+		BuildFS:       buildFS,
+		IndexPage:     indexPage,
+		SiteBuildFS:   siteBuildFS,
+		SiteIndexPage: siteIndexPage,
 	})
 	var port = os.Getenv("PORT")
 	if port == "" {
