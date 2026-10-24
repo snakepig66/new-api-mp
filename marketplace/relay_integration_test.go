@@ -114,8 +114,11 @@ func newMPHarness(t *testing.T, buyerQuota int) *mpHarness {
 		common.SQLitePath = prevSQLitePath
 	})
 
-	t.Setenv("SQL_DSN", "local")
-	common.SQLitePath = filepath.Join(t.TempDir(), "mp_relay_it.db")
+	sqlDSN, isSQLite := marketplace.NewIntegrationDSN(t)
+	t.Setenv("SQL_DSN", sqlDSN)
+	if isSQLite {
+		common.SQLitePath = filepath.Join(t.TempDir(), "mp_relay_it.db")
+	}
 	require.NoError(t, model.InitDB())
 	db := model.DB
 	sqlDB, err := db.DB()
