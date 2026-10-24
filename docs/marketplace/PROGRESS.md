@@ -281,3 +281,9 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 - 三方言矩阵：SQLite/MySQL 8/PG 16 全绿（含加固后复跑）。
 - E2E 五条真实链路（tipig 上游）复跑全过，账户拆分后的账本（buyer:/seller:）对账分毫不差。
 - 公网：https://3000-agqvtobwrbdo3hk4ztmazwjmei.instabox.tech （新前端已上线）。
+
+### 待定项清单（需产品负责人确认，当前按文档默认实现，均可低成本修改）
+- §9-1 产品名/logo：占位「词元市场」+ 极简 SVG 文字标（#0E9F8E）。改名只需改 site/src/copy.ts 的 brand.name 一处。
+- §9-2 无货模型：默认隐藏（广场不出行；详情页直达可访问并提示「暂时没人挂单」）。要改灰显改 features/market 的过滤一处。
+- §9-3 旧后台：保留 /ops-legacy（仅超管）。要移除改 router 一处 + 关 MP_FRONTEND 切换。
+- §10（MARKETPLACE-DEV）：T+7/流式截断不收费/改倍率不回验真/买家自加模型已按默认实现；402、只接 DeepSeek 官方、RPM 400、按模型覆盖倍率与 model@分享者 未实现待确认。
