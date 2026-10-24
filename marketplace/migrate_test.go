@@ -50,8 +50,10 @@ func TestMigrateCreatesTables(t *testing.T) {
 	// the dialect's catalog instead of parsing CREATE INDEX text.
 	switch db.Dialector.Name() {
 	case "mysql":
+		// information_schema.statistics has one row per index COLUMN, and
+		// uk_mp_ledger_req_type spans two columns — count distinct index names.
 		var n int64
-		require.NoError(t, db.Raw("SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'mp_ledger' AND index_name = 'uk_mp_ledger_req_type' AND non_unique = 0").Scan(&n).Error)
+		require.NoError(t, db.Raw("SELECT COUNT(DISTINCT index_name) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'mp_ledger' AND index_name = 'uk_mp_ledger_req_type' AND non_unique = 0").Scan(&n).Error)
 		assert.EqualValues(t, 1, n, "mp_ledger must have the (request_id, entry_type) unique index")
 	case "postgres":
 		var n int64

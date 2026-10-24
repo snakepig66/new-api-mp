@@ -163,7 +163,7 @@ func PostSettlement(db *gorm.DB, s Settlement) error {
 	if err != nil {
 		return err
 	}
-	return db.Transaction(func(tx *gorm.DB) error {
+	err = db.Transaction(func(tx *gorm.DB) error {
 		var stored []LedgerEntry
 		if err := tx.Where("request_id = ?", s.RequestID).Find(&stored).Error; err != nil {
 			return err
@@ -174,19 +174,25 @@ func PostSettlement(db *gorm.DB, s Settlement) error {
 			}
 			return ErrSettlementConflict
 		}
-		if err := tx.Create(&built).Error; err != nil {
-			// Unique-violation race: re-read and apply the same replay rule.
-			var again []LedgerEntry
-			if err2 := tx.Where("request_id = ?", s.RequestID).Find(&again).Error; err2 == nil && len(again) > 0 {
-				if sameRows(again, built) {
-					return nil
-				}
-				return ErrSettlementConflict
-			}
-			return err
-		}
-		return nil
+		return tx.Create(&built).Error
 	})
+	if err == nil {
+		return nil
+	}
+	// Unique-violation race: under REPEATABLE READ the aborted transaction's
+	// snapshot no longer sees the other transaction's committed rows, so the
+	// replay check must re-read in a fresh transaction/connection. (SQLite's
+	// single-writer model makes the in-transaction recheck sufficient there.)
+	if isDuplicateKeyError(err) {
+		var again []LedgerEntry
+		if err2 := db.Where("request_id = ?", s.RequestID).Find(&again).Error; err2 == nil && len(again) > 0 {
+			if sameRows(again, built) {
+				return nil
+			}
+			return ErrSettlementConflict
+		}
+	}
+	return err
 }
 
 // PromoteAvailable matures pending seller credits whose available_at has

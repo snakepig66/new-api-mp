@@ -102,8 +102,10 @@ type Listing struct {
 	KeyFingerprint   string   `gorm:"size:128;not null;uniqueIndex"`
 	// KeyCiphertext is the AES-256-GCM blob (nonce||ciphertext) of the
 	// seller's API key (§3.5); the plaintext never touches the database.
-	KeyCiphertext       []byte `gorm:"type:blob"`
-	Version             int64  `gorm:"not null"` // optimistic lock
+	// No explicit type: GORM maps []byte to the dialect's binary type
+	// (BLOB / BYTEA), keeping PostgreSQL from choking on the literal "blob".
+	KeyCiphertext       []byte
+	Version             int64 `gorm:"not null"` // optimistic lock
 	MultiplierUpdatedAt *time.Time
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
