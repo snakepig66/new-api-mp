@@ -256,6 +256,7 @@ function SellerPayoutsPage() {
             <Empty
               title={page.historyError}
               reason={sellerErrorMessage(payouts.error)}
+              next={copy.common.retryHint}
               action={
                 <Button variant="secondary" onClick={() => void payouts.refetch()}>
                   {copy.actions.retry}

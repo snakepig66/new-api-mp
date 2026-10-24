@@ -105,13 +105,16 @@
 }
 
 @keyframes dialog-content-in {
+  /* Tailwind v4 emits `translate: -50% -50%` for the centering utilities. Use
+     the same property here: a keyframe transform would compose with the
+     translate utility and shift the dialog an extra -50% horizontally. */
   from {
     opacity: 0;
-    transform: translate(-50%, calc(-50% + 6px));
+    translate: -50% calc(-50% + 6px);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, -50%);
+    translate: -50% -50%;
   }
 }
 

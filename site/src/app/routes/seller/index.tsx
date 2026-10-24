@@ -147,6 +147,7 @@ function SellerOverviewPage() {
             <Empty
               title={copy.pages.sellerListings.loadError}
               reason={sellerErrorMessage(listings.error)}
+              next={copy.common.retryHint}
               action={
                 <Button variant="secondary" onClick={() => void listings.refetch()}>
                   {copy.actions.retry}

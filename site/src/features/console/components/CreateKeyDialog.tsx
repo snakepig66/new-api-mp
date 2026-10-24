@@ -277,10 +277,11 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: CreateKeyDial
             </span>
           </div>
 
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 flex flex-wrap gap-2">
             <Input
               aria-label={wizard.models.search}
               placeholder={wizard.models.search}
+              className="min-w-[140px] flex-1"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />

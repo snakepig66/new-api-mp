@@ -466,6 +466,7 @@ function NewListingPage() {
                 <Empty
                   title={page.verify.invalid}
                   reason={sellerErrorMessage(probe.error)}
+                  next={copy.pages.sellerCommon.probeErrors.generic}
                   action={
                     <Button variant="secondary" onClick={runProbe}>
                       {page.verify.retry}
