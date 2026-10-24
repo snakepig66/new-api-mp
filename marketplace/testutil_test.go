@@ -3,7 +3,10 @@ package marketplace
 import (
 	"database/sql"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -105,13 +108,13 @@ func newMySQLDSN(t *testing.T) string {
 	require.NoError(t, err, "MP_TEST_MYSQL_DSN must be a valid go-sql-driver DSN")
 	admin, err := sql.Open("mysql", cfg.FormatDSN())
 	require.NoError(t, err)
-	defer admin.Close()
 
 	name := fmt.Sprintf("mp_test_%d", time.Now().UnixNano())
 	_, err = admin.Exec("CREATE DATABASE " + name)
 	require.NoError(t, err, "create per-test mysql database")
 	t.Cleanup(func() {
 		_, _ = admin.Exec("DROP DATABASE IF EXISTS " + name)
+		_ = admin.Close()
 	})
 
 	cfg.DBName = name
@@ -132,23 +135,41 @@ func newMySQLTestDB(t *testing.T) *gorm.DB {
 // and returns the DSN pointing at it. The DSN is parsed with pgx so the
 // database name is replaced while every other parameter (ssl, timezone,
 // search_path, ...) is preserved. t.Cleanup drops the database.
+//
+// Two traps this function deliberately avoids: ConnConfig.ConnString()
+// returns the ORIGINAL parsed string and ignores the mutated Database field
+// (so the DSN is rebuilt from fields instead), and the admin pool must stay
+// open until the cleanup's DROP DATABASE has run.
 func newPostgresDSN(t *testing.T) string {
 	t.Helper()
 	cfg, err := pgx.ParseConfig(mpTestPostgresDSN)
 	require.NoError(t, err, "MP_TEST_POSTGRES_DSN must be a valid pgx DSN")
 
 	admin := stdlib.OpenDB(*cfg)
-	defer admin.Close()
 
 	name := fmt.Sprintf("mp_test_%d", time.Now().UnixNano())
 	_, err = admin.Exec("CREATE DATABASE " + name)
 	require.NoError(t, err, "create per-test postgres database")
 	t.Cleanup(func() {
 		_, _ = admin.Exec("DROP DATABASE IF EXISTS " + name)
+		_ = admin.Close()
 	})
 
 	cfg.Database = name
-	return cfg.ConnString()
+	// Rebuild the DSN from fields: ConnString() would return the pre-mutation
+	// string (a pgx quirk), silently pointing every test at the management DB.
+	q := url.Values{}
+	for k, v := range cfg.RuntimeParams {
+		q.Set(k, v)
+	}
+	u := url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(cfg.User, cfg.Password),
+		Host:     net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port))),
+		Path:     "/" + name,
+		RawQuery: q.Encode(),
+	}
+	return u.String()
 }
 
 func newPostgresTestDB(t *testing.T) *gorm.DB {
