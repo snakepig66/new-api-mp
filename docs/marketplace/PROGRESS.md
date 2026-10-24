@@ -206,3 +206,28 @@
 
 ### §10 待定项（等产品负责人确认，当前按文档默认推进）
 T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不回验真（已实现）；买家自加模型（已实现）；余额不足暂定 402；首批供应商只接 DeepSeek；RPM 超限暂定 400（§3.10 无 429，待确认）；按模型覆盖倍率/model@分享者/无货模型显示方式未实现（等确认）。
+
+---
+
+## 阶段 7 · 收尾验证（2026-10-24，除真实 key E2E 外完成）
+
+### 三方言验证（AGENTS.md 数据库规则）
+- 测试基建方言可切换（`MP_TEST_MYSQL_DSN`/`MP_TEST_POSTGRES_DSN`，每测试随机库隔离），sqlite 默认路径零回归。
+- llmjar 服务器 docker：MySQL 8 + PostgreSQL 16，全量 `go test ./marketplace/... -count=1`。
+- 矩阵抓出并整改 4 个真实问题（全部提交）：
+  1. `type:blob` 在 PG 不存在 → `KeyCiphertext` 去掉显式类型，GORM 按方言映射（8d1cd1cf0）。
+  2. `PostSettlement` 并发唯一键冲突在 MySQL REPEATABLE READ 下事务内重查不可见 → 重查移到事务外（8d1cd1cf0）。
+  3. 测试断言：MySQL `information_schema.statistics` 每列一行 → COUNT(DISTINCT index_name)（8d1cd1cf0）。
+  4. PG 水位差一：`setval(seq, start, false)` 语义修正（bb9954a94）；另修测试基建的 pgx `ConnString()` 不反映修改后 Database 字段的陷阱（2dc69f53b）。
+- 最终矩阵：sqlite ✅（本地 -race）、MySQL ✅（44s）、PostgreSQL ✅（21s）。
+
+### 部署 llmjar（§7）
+- 源码经 SSH 隧道 tar 传至 `/data/workspace/new-api/`（instabox exec stdin 有 1MB 限制；隧道内 sshd 需把公钥写入 `/data/home/.ssh/authorized_keys` 且家目录不能组可写）。
+- 服务器本机 Go 1.27.1 构建 `new-api-linux`（CGO_ENABLED=0，130MB）。
+- systemd：`/etc/systemd/system/new-api.service`，`EnvironmentFile=/etc/new-api.env`（`MP_ENABLED=true`、`MP_KEY_SECRET`、`QUOTA_PER_UNIT=1000000`、`RETRY_TIMES=2`、`PORT=3000`、`GIN_MODE=release`），Restart=always，已 enable。
+- **MP_KEY_SECRET 备份**：本机 `D:\llmjar\MP_KEY_SECRET.backup.txt`（请产品负责人另行妥善保管；丢失则所有分享者 key 无法解密，§4.5）。
+- 验证：systemd active；日志 `marketplace enabled: migrations applied`；公网 https://3000-agqvtobwrbdo3hk4ztmazwjmei.instabox.tech/api/marketplace/status 返回 `{"enabled":true}`；/api/marketplace/square/models 正常（空列表=尚无挂单，符合预期）。
+
+### 遗留
+- 真实 DeepSeek key 端到端（高峰/空闲/流式/Anthropic messages/带搜索，人工对账）：**等产品负责人提供真实 key**。
+- 阶段 8 前端另排期。
