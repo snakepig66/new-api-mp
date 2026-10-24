@@ -38,7 +38,8 @@ var vendors = []Vendor{
 	{
 		ID:          "tipig",
 		DisplayName: "tipig gateway",
-		BaseURL:     "https://api.tipig.cloud/v1",
+		// No /v1 suffix: the channel adaptor appends its own protocol path.
+		BaseURL:     "https://api.tipig.cloud",
 		Models:      []string{"deepseek-v4.1-flash-1017", "deepseek-v4-pro-0813"},
 	},
 }
