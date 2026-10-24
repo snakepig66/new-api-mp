@@ -76,6 +76,13 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	fimBaseUrl := info.ChannelBaseUrl
 	switch info.RelayFormat {
 	case types.RelayFormatClaude:
+		// MP-HOOK: a pass-through channel forwards the buyer's raw body to the
+		// vendor's native endpoint, so the URL is base + the buyer's original
+		// path; the /anthropic prefix below is the official DeepSeek endpoint
+		// convention and must not be forced on other gateways.
+		if info.ChannelSetting.PassThroughBodyEnabled {
+			return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, info.RequestURLPath, info.ChannelType), nil
+		}
 		return fmt.Sprintf("%s/anthropic/v1/messages", info.ChannelBaseUrl), nil
 	default:
 		if !strings.HasSuffix(info.ChannelBaseUrl, "/beta") {
