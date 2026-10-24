@@ -190,7 +190,7 @@ func TestSeedPrices(t *testing.T) {
 			return books, perCall
 		}
 		booksBefore, perCallBefore := countRows()
-		assert.Equal(t, int64(4), booksBefore, "2 models × 2 tiers")
+		assert.Equal(t, int64(8), booksBefore, "4 deepseek + 4 tipig = 8 rows, 2 models × 2 tiers each")
 		assert.Equal(t, int64(2), perCallBefore, "search + fetch")
 
 		require.NoError(t, SeedPrices(db), "a second run on the same database must succeed")

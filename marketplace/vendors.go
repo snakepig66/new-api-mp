@@ -24,12 +24,22 @@ type Vendor struct {
 // vendors is the platform's supplier whitelist (§3.5). v1 lists only the
 // DeepSeek official channel; the model ids mirror the SeedPrices seed rows
 // (seed.go) so a listing can always be priced.
+//
+// tipig is the platform's own relay gateway (api.tipig.cloud, an upstream
+// new-api instance) serving the same DeepSeek V4.1/V4 Pro models; it is the
+// E2E test upstream until the official-key onboarding lands (§7 阶段 7).
 var vendors = []Vendor{
 	{
 		ID:          SeedVendorDeepSeek,
 		DisplayName: "DeepSeek",
 		BaseURL:     "https://api.deepseek.com",
 		Models:      []string{"deepseek-flash", "deepseek-v4-pro"},
+	},
+	{
+		ID:          "tipig",
+		DisplayName: "tipig gateway",
+		BaseURL:     "https://api.tipig.cloud/v1",
+		Models:      []string{"deepseek-v4.1-flash-1017", "deepseek-v4-pro-0813"},
 	},
 }
 

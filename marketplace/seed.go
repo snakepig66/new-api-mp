@@ -58,6 +58,24 @@ func SeedPrices(db *gorm.DB) error {
 			InputMicroPerMTok: 9_000_000, OutputMicroPerMTok: 27_000_000,
 			CacheReadMicroPerMTok: 300_000, CacheWriteMicroPerMTok: 9_000_000,
 			EffectiveAt: tokenEffective},
+		// tipig gateway serves the same DeepSeek V4.1/V4 Pro models under their
+		// upstream model ids; the official price list applies (§3.2/§7 E2E).
+		{Model: "deepseek-v4.1-flash-1017", Vendor: "tipig", Tier: TierOffpeak, Version: 1,
+			InputMicroPerMTok: 1_000_000, OutputMicroPerMTok: 4_000_000,
+			CacheReadMicroPerMTok: 20_000, CacheWriteMicroPerMTok: 1_000_000,
+			EffectiveAt: tokenEffective},
+		{Model: "deepseek-v4.1-flash-1017", Vendor: "tipig", Tier: TierPeak, Version: 1,
+			InputMicroPerMTok: 2_000_000, OutputMicroPerMTok: 8_000_000,
+			CacheReadMicroPerMTok: 40_000, CacheWriteMicroPerMTok: 2_000_000,
+			EffectiveAt: tokenEffective},
+		{Model: "deepseek-v4-pro-0813", Vendor: "tipig", Tier: TierOffpeak, Version: 1,
+			InputMicroPerMTok: 4_500_000, OutputMicroPerMTok: 13_500_000,
+			CacheReadMicroPerMTok: 150_000, CacheWriteMicroPerMTok: 4_500_000,
+			EffectiveAt: tokenEffective},
+		{Model: "deepseek-v4-pro-0813", Vendor: "tipig", Tier: TierPeak, Version: 1,
+			InputMicroPerMTok: 9_000_000, OutputMicroPerMTok: 27_000_000,
+			CacheReadMicroPerMTok: 300_000, CacheWriteMicroPerMTok: 9_000_000,
+			EffectiveAt: tokenEffective},
 	}
 	for i := range books {
 		b := &books[i]

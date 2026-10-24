@@ -28,8 +28,9 @@ func TestVendorWhitelistMiss(t *testing.T) {
 
 func TestVendorIDs(t *testing.T) {
 	ids := VendorIDs()
-	require.Len(t, ids, 1, "v1 whitelist holds exactly one vendor")
+	require.Len(t, ids, 2, "whitelist holds deepseek + tipig (§7 E2E upstream)")
 	assert.Equal(t, "deepseek", ids[0])
+	assert.Equal(t, "tipig", ids[1])
 }
 
 func TestVendorModelsAreCopied(t *testing.T) {
