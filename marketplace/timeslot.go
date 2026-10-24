@@ -93,6 +93,41 @@ func weekdayTier(lt time.Time) string {
 	return TierOffpeak
 }
 
+// NextSwitch returns the next instant after t at which the billing tier flips
+// (高峰↔空闲, §3.3) — the model square's 下次切换时间 (§5 阶段 5). The holiday
+// and 调休 calendar is honored through TierAt.
+//
+// Implementation: t is first truncated to the second; the scan then steps one
+// minute at a time for at most 8 days looking for the first minute whose
+// TierAt differs from TierAt(t), and walks that straddling minute one second
+// at a time. Tier boundaries are at least an hour apart, so one minute holds
+// at most one boundary, and every boundary (09:00 / 12:00 / 14:00 / 18:00 and
+// holiday midnights) falls on a whole second — the result is therefore exact
+// to the second, with the precision semantic "the first second of the new
+// tier", and always strictly after t.
+//
+// The 8-day horizon covers the longest realistic unbroken stretch (a 7-day
+// 法定节假日 plus an adjacent weekend). If no flip is found inside it the
+// zero time is returned and callers must treat the switch time as unknown.
+func (c *Calendar) NextSwitch(t time.Time) time.Time {
+	t = t.Truncate(time.Second)
+	base := c.TierAt(t)
+	const maxScan = 8 * 24 * time.Hour
+	prev := t
+	for elapsed := time.Duration(0); elapsed < maxScan; elapsed += time.Minute {
+		cur := prev.Add(time.Minute)
+		if c.TierAt(cur) != base {
+			for s := prev.Add(time.Second); ; s = s.Add(time.Second) {
+				if c.TierAt(s) != base {
+					return s
+				}
+			}
+		}
+		prev = cur
+	}
+	return time.Time{}
+}
+
 // ImportHolidays upserts holiday-calendar rows by Date (an existing date gets
 // its Kind updated), so a year can be re-imported or corrected in place (§3.3).
 func ImportHolidays(db *gorm.DB, entries []Holiday) error {

@@ -11,10 +11,13 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
-// RegisterRoutes mounts the marketplace API routes on the /api group. The
-// caller (router seam) gates registration on Enabled().
+// RegisterRoutes mounts the public marketplace API routes on the /api group
+// (status + model square; both are safe without auth). Buyer-key and record
+// endpoints require login and are wired by the router seam onto a UserAuth
+// group. The caller gates registration on Enabled().
 func RegisterRoutes(g *gin.RouterGroup) {
 	g.GET("/marketplace/status", getMarketplaceStatus)
+	RegisterSquareRoutes(g.Group("/marketplace"))
 }
 
 // getMarketplaceStatus reports whether the marketplace module is active; it

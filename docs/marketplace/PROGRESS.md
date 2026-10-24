@@ -134,3 +134,28 @@
   1. 截断流扣费（违反 §3.7）：`marketplace/record.go` 的流失败判定漏 `StreamEndReasonEOF`（上游无 [DONE] 裸结束），被按估算用量扣费 → 已补该分支，全额退冻结、记 failed。
   2. 工具计次丢失（§3.4 链路断裂）：上游 `dto.Usage` 无 `server_tool_use` 字段，adaptor 解析时丢弃，`SettleRelay` 的计次提取是死代码 → 已在 `relaykit/dto/openai_response.go` 的 Usage 增加 `ServerToolUse *ClaudeServerToolUse`（复用既有类型，MP-HOOK 注释；relaykit 独立模块 `GOWORK=off go build` 验证通过）。
 - 修复后 `CGO_ENABLED=1 go test ./marketplace/... -race -count=1` ✅ 全绿（61s，160+ 测试，无 DATA RACE）；两个原失败用例未改动即转绿。
+
+---
+
+## 阶段 5 · 买家侧（2026-10-24 完成）
+
+开发方式：两个子智能体并行（Key 偏好/端点 与 记录/广场/错误码），主智能体整改 flake、收敛错误码、统一路由接线后复跑门禁。
+
+做了什么：
+- `keyprefs.go`：买家 Key 偏好 CRUD（策略 cheapest/balanced/stable、价格上限、优选/拉黑/只用某家+回落互斥校验）、模型管理（AddKeyModel 要求市场有 live/canary 挂单、可设模型级价格上限）、买家 RPM（进程内滑动窗口，复用 selector.go 的 RPMWindow 模式）；relayhook.go BeginDistribute 接入 RPM 检查（超限 400 + rate limited 文案，§10 待确认）。models.go 的 KeyPref 补 `RPM` 列（AutoMigrate 自动补列）。
+- `api_key.go`：/marketplace/key/pref|models 五个端点（UserAuth，token 归属校验他人一律 404 防探测，OpenAI 错误格式）。
+- `api_records.go`：使用记录（买家视角：seller_id 编号可见、含省了多少=saved_micro）与分享记录（分享者视角：买家显示 `AnonBuyerCode` 8 位匿名代号、含收入与平台费）；详情页属主校验他人一律 404；分页 page_size 上限 100；响应字段隔离（买家视图无 seller_credit/listing_id/multiplier，分享者视图无 buyer 真实 id）。
+- `api_square.go`：模型广场（公开）——当前时段、两档买家价（官方价目 × 当前最低可用倍率，逐维调 Quote 保证与扣费同一算价函数，§3.7）、挂单数聚合、官方价详情；不暴露 seller 细节。
+- `timeslot.go`：`Calendar.NextSwitch`（逐分钟扫到跨档分钟再逐秒精确，结果精确到秒、为「新时段的第一秒」；考虑节假日/调休）。
+- `apierror.go`：§3.10 对外只暴露 401/402/400/503，OpenAI 错误格式统一；WriteMarketplaceError 映射（余额→402、未加模型→400、无货源/无价目→503、未知→503 文案不外泄）；表外 status 一律塌缩 503。
+- 路由接线：/api/marketplace/status 与 /api/marketplace/square/* 公开；/api/marketplace/key/* 与 /api/marketplace/records/* 走 UserAuth 组（marketplace 包不 import middleware 防循环，注册函数由 router 接缝注入组）。
+
+主智能体整改：
+- 修复阶段 4 遗留测试 flake：`relayhook_test.go` 测试 key 生成从 `time.Now().UnixNano()` 改为原子计数器（Windows 时钟粒度下同值撞 ErrDuplicateKey）。
+- relayhook.go 错误码收敛到 §3.10 四码：9 处内部失败默认 500 → 503（含 skipRetry）；重选时无价目 500 → 400（与预冻结一致）；注释同步。
+- 三处路由接线（api.go 挂 square、api_key.go 导出 RegisterKeyRoutes、router 接缝 UserAuth 组）。
+
+测试结果（主智能体复跑确认）：
+- `go build ./...` ✅ `go vet ./marketplace/... ./router/...` ✅ `gofmt -l` 无输出 ✅
+- `CGO_ENABLED=1 go test ./marketplace/... -race -count=1` ✅ 全绿（77s，累计 200+ 测试，无 DATA RACE）
+- 验收：接口测试 + 权限测试（分享者只见匿名代号且两卖家同买家代号不同、响应不含买家真实 id；买家拿不到 seller 侧金额/listing/key；他人记录 404 不泄露存在性）；RPM 接线（RPM=1 第二次请求 400 且不建 session）；模型广场价格与 Quote 同函数逐维一致；NextSwitch 边界（整点/午休/周末/节假日/调休/亚秒截断）。

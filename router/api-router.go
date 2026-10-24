@@ -27,9 +27,13 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/setup", controller.GetSetup)
 		apiRouter.POST("/setup", anonymousRequestBodyLimit, controller.PostSetup)
 		apiRouter.GET("/status", controller.GetStatus)
-		// MP-HOOK: marketplace console/status API (§4.4 H)
+		// MP-HOOK: marketplace console/status API (§4.4 H). Public: status +
+		// model square; logged-in: buyer-key prefs and usage/share records.
 		if marketplace.Enabled() {
 			marketplace.RegisterRoutes(apiRouter)
+			mpUser := apiRouter.Group("/marketplace", middleware.UserAuth())
+			marketplace.RegisterKeyRoutes(mpUser)
+			marketplace.RegisterRecordRoutes(mpUser)
 		}
 		apiRouter.GET("/uptime/status", controller.GetUptimeKumaStatus)
 		apiRouter.GET("/models", middleware.UserAuth(), controller.DashboardListModels)

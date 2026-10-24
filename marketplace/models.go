@@ -142,8 +142,11 @@ type KeyPref struct {
 	BlockSellerIDs  []int64 `gorm:"type:text;serializer:json"`
 	OnlySellerID    int64   `gorm:"not null"` // >0 = 只用某一家
 	AllowFallback   bool
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// RPM is the buyer-side requests-per-minute limit of this key (§3.6:
+	// 每个买家有自己的 RPM 限制); 0 = unlimited.
+	RPM       int `gorm:"not null"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 func (KeyPref) TableName() string { return "mp_key_prefs" }

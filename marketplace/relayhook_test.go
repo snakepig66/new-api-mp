@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -76,12 +77,16 @@ func newRelayFixture(t *testing.T, buyerQuota int) *relayFixture {
 	return &relayFixture{db: db, buyerID: buyer.Id, sellerID: int64(seller.Id), selector: sel, cal: cal}
 }
 
+// addListingKeySeq 让每次 addListing 的测试 key 唯一：time.Now().UnixNano() 在
+// Windows 时钟粒度下可能两次相同，撞出 ErrDuplicateKey 的偶发失败。
+var addListingKeySeq atomic.Int64
+
 // addListing creates one live listing (with its disabled upstream channel)
 // for deepseek-flash at the given multiplier. Each listing gets a unique key:
 // one key can only be listed once platform-wide (§3.5).
 func (f *relayFixture) addListing(t *testing.T, multiplierMilli int64) Listing {
 	t.Helper()
-	key := fmt.Sprintf("sk-relayhook-test-key-%d", time.Now().UnixNano())
+	key := fmt.Sprintf("sk-relayhook-test-key-%d", addListingKeySeq.Add(1))
 	listing, err := CreateListing(f.db, CreateListingInput{
 		SellerID:        f.sellerID,
 		VendorID:        SeedVendorDeepSeek,

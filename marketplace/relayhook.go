@@ -324,6 +324,14 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 		common.SysError(common.LogText("marketplace: query key models: %s", qerr.Error()))
 		return nil, true, http.StatusInternalServerError, errors.New("marketplace: failed to query key models")
 	}
+	// MP: 买家 RPM 限制 (§3.6 每个买家有自己的 RPM 限制), checked after the
+	// deterministic model-added rejection so a refused request never spends
+	// budget. §3.10's outward error list has no 429; per the 402/403 待定
+	// precedent this is mapped to 400 with a rate-limited message — §10
+	// 待确认.
+	if !BuyerRPMAllow(int64(tokenID), time.Now()) {
+		return nil, true, http.StatusBadRequest, errors.New("rate limited: this key exceeds its requests-per-minute limit, retry later")
+	}
 	listing, qerr := DefaultSelector().Select(db, SelectInput{Model: modelName, MaxMultiplierMilli: capMilli})
 	if errors.Is(qerr, ErrNoListingAvailable) {
 		return nil, true, http.StatusServiceUnavailable, errors.New("no supplier available for this model")
@@ -446,8 +454,8 @@ func lookupRelayChannel(channelID int64) (*model.Channel, error) {
 // estimateFn callback is the upstream token estimator injected by the seam
 // file, keeping this package free of the service import.
 //
-// Error mapping (§3.10): insufficient balance → 402; pricing/internal → 400
-// or 500 in OpenAI error format.
+// Error mapping (§3.10): insufficient balance → 402; no covering price →
+// 400; every other internal failure → 503 (only 401/402/400/503 ever surface).
 func PrepareBilling(c *gin.Context, info *relaycommon.RelayInfo, estimateFn func(*types.TokenCountMeta) (int, error)) *types.NewAPIError {
 	s := CurrentRelaySession(c)
 	if s == nil || info == nil {
@@ -455,7 +463,7 @@ func PrepareBilling(c *gin.Context, info *relaycommon.RelayInfo, estimateFn func
 	}
 	db, cal := relayState()
 	if db == nil || cal == nil {
-		return types.NewError(errors.New("marketplace is not initialized"), types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry())
+		return types.NewError(errors.New("marketplace is not initialized"), types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 	}
 
 	s.mu.Lock()
@@ -496,7 +504,7 @@ func PrepareBilling(c *gin.Context, info *relaycommon.RelayInfo, estimateFn func
 	} else if estimateFn != nil {
 		tokens, terr := estimateFn(meta)
 		if terr != nil {
-			return types.NewError(terr, types.ErrorCodeCountTokenFailed)
+			return types.NewError(terr, types.ErrorCodeCountTokenFailed, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 		}
 		estInput = tokens
 	}
@@ -523,7 +531,7 @@ func PrepareBilling(c *gin.Context, info *relaycommon.RelayInfo, estimateFn func
 	}
 	if qerr != nil {
 		common.SysError(common.LogText("marketplace: open billing session: %s", qerr.Error()))
-		return types.NewError(qerr, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry())
+		return types.NewError(qerr, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 	}
 	info.Billing = session
 
@@ -604,11 +612,11 @@ func toolCapIfPriced(db *gorm.DB, vendor, item string, at time.Time) int64 {
 func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*gin.Context, *model.Channel, string) *types.NewAPIError) (*model.Channel, *types.NewAPIError) {
 	s := CurrentRelaySession(c)
 	if s == nil || info == nil {
-		return nil, types.NewError(errors.New("marketplace session missing"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		return nil, types.NewError(errors.New("marketplace session missing"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 	}
 	db, cal := relayState()
 	if db == nil || cal == nil {
-		return nil, types.NewError(errors.New("marketplace is not initialized"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		return nil, types.NewError(errors.New("marketplace is not initialized"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 	}
 
 	lastErr := info.LastError
@@ -637,7 +645,7 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 			// Fall through to the single in-place retry below.
 		default:
 			common.SysError(common.LogText("marketplace: re-select listing: %s", err.Error()))
-			return nil, types.NewError(errors.New("marketplace: failed to select a listing"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+			return nil, types.NewError(errors.New("marketplace: failed to select a listing"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 		}
 	}
 	if !switched {
@@ -669,7 +677,7 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 	if err != nil {
 		common.SysError(common.LogText("marketplace: decrypt listing %d key: %s", next.ID, err.Error()))
 		s.releaseSlot()
-		return nil, types.NewError(errors.New("marketplace: listing key unavailable"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		return nil, types.NewError(errors.New("marketplace: listing key unavailable"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 	}
 
 	// 换一家就重新计价、重新冻结；计价时刻仍是首次预冻结时刻 (§3.7/§4.3).
@@ -690,7 +698,7 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 	if err != nil {
 		common.SysError(common.LogText("marketplace: re-freeze quote: %s", err.Error()))
 		s.releaseSlot()
-		return nil, types.NewError(errors.New("marketplace: no covering price for this request"), types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry())
+		return nil, types.NewError(errors.New("marketplace: no covering price for this request"), types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest), types.ErrOptionWithSkipRetry())
 	}
 	session, err := NewBillingSession(db, int64(s.buyerUserID), quote.TotalDebit)
 	if errors.Is(err, ErrInsufficientBalance) {
@@ -700,7 +708,7 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 	if err != nil {
 		common.SysError(common.LogText("marketplace: re-freeze session: %s", err.Error()))
 		s.releaseSlot()
-		return nil, types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry())
+		return nil, types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 	}
 	info.Billing = session
 
