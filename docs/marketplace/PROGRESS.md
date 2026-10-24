@@ -181,3 +181,28 @@
 - `go build ./...` ✅ `go vet ./marketplace/... ./router/...` ✅ `gofmt -l` 无输出 ✅
 - `CGO_ENABLED=1 go test ./marketplace/... -race -count=1` ✅ 全绿（58s，无 DATA RACE）
 - 验收：50 goroutine 并发提现余额不为负、不超额、行数==成功数；20 goroutine 混合审批恰好一个成功；拒绝不重复退款；幂等键重放安全。
+
+---
+
+## 暂停点交接（2026-10-24，下次续作从这里读）
+
+### 当前状态
+- 分支 `mp`，工作区干净，阶段 0–6 全部完成并逐阶段提交：
+  `b2da4cb48`(0) → `59647c904`(1) → `3b0defd40`(2) → `2283782d0`(3) → `c107d0720`(4) → `1a082573f`(5) → `73c25b4cc`(6)
+- 每阶段门禁全绿：`go build ./...`、`go vet ./marketplace/...`、`CGO_ENABLED=1 go test ./marketplace/... -race -count=1`（累计 200+ 测试）、`gofmt -l` 无输出。
+- 后端功能已闭环：微元记账、复式流水 T+7、峰谷价目与统一 Quote、挂单全生命周期（验真/灰度/熔断/暂停）、请求链路（选渠道/预冻结/换家重计价/截断与 0 输出保护/工具剥离与计次）、买家侧（偏好/RPM/记录/广场）、提现与后台、定时任务。
+
+### 下次要做的（按顺序）
+1. **阶段 7 · 三方言验证**：测试基建驱动可切换改造（`testutil_test.go` 支持 `MP_TEST_MYSQL_DSN` / `MP_TEST_POSTGRES_DSN`，库级隔离；`migrateAll` 与水位测试按方言分支；`migrate_test.go` 的 sqlite_master 查询换 information_schema/pg_catalog）。本机无 docker——在 llmjar 服务器 docker 里跑 MySQL 8 + PostgreSQL 16 + golang 容器的全量测试矩阵。relay_integration_test 若缠在 model.InitDB 上可留 sqlite-only 并列清单。
+2. **阶段 7 · 部署 llmjar**：`GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build` 交叉编译（glebarez 纯 Go，无需 CGO；web/dist 已构建）；`instabox ssh llmjar -- -N -L 2222:127.0.0.1:22` 转发后 rsync 到 `/data/workspace/new-api/`；systemd 服务 + `/etc/new-api.env`（`MP_ENABLED=true`、`MP_KEY_SECRET`（单独备份！）、`QUOTA_PER_UNIT=1000000`、`RETRY_TIMES>=2`）；服务监听 3000，经 instabox 公网域名验证。
+3. **阶段 7 · 真实 DeepSeek key 端到端**：高峰一单、空闲一单、流式、Anthropic messages、带搜索请求，人工对账。**需要产品负责人提供真实 key**。
+4. **阶段 8 · 前端**（另排期）：使用者端（模型广场/详情/Key/记录/钱包）与分享者端（挂单四步向导/挂单/记录/收益提现），DeepSeek 式浅色 + 青绿主色（按钮 #087266、logo #0E9F8E）。后端 API 已全部就绪（/api/marketplace/*）。
+
+### 环境备忘
+- Go：`D:\app\go\bin`（go1.27.1；C:\Program Files\Go 已不存在，用户 PATH 已修正）。
+- gcc（-race 需要）：WinLibs mingw64（`C:\Users\75435\AppData\Local\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_...\mingw64\bin`）。
+- 前端包管理：bun（已装）；`web/` 下 `bun install` + `bun run build` 已做过，`web/dist` 存在。
+- llmjar 服务器：闲置 30 分钟自动挂起；instabox 网关只接受证书型主机密钥，普通 ssh 走本地 2222 转发。
+
+### §10 待定项（等产品负责人确认，当前按文档默认推进）
+T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不回验真（已实现）；买家自加模型（已实现）；余额不足暂定 402；首批供应商只接 DeepSeek；RPM 超限暂定 400（§3.10 无 429，待确认）；按模型覆盖倍率/model@分享者/无货模型显示方式未实现（等确认）。
