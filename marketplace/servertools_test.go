@@ -1,6 +1,7 @@
 package marketplace
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -119,6 +120,106 @@ func TestExtractServerToolCounts(t *testing.T) {
 		assert.Equal(t, tc.fetch, fetch, tc.name)
 		assert.Equal(t, tc.ok, ok, tc.name)
 	}
+}
+
+// 7. M12: the strip is a byte-level edit. Field order, whitespace and numeric
+// precision of every surviving field are preserved exactly; only the removed
+// tools[] entry disappears. The integer below is 2^53+1, which a
+// map[string]any round trip would corrupt to 9007199254740992.
+func TestStripPreservesFieldOrderAndNumberPrecision(t *testing.T) {
+	prefix := `{"model":"m","max_tokens":9007199254740993,"temperature":0.5000,"metadata":{"z":1,"a":2}`
+	suffix := `"response_format":{"type":"json_object"},"stream":false}`
+	body := []byte(prefix + `,"tools":[{"type":"web_search"},{"type":"function","function":{"name":"keep"}}],` + suffix)
+
+	stripped, removed, err := StripServerToolsFromRawRequest(body)
+	require.NoError(t, err)
+	require.Equal(t, 1, removed)
+
+	want := prefix + `,"tools":[{"type":"function","function":{"name":"keep"}}],` + suffix
+	assert.Equal(t, want, string(stripped),
+		"everything outside the removed tools[] entry must be byte-identical")
+	assert.Contains(t, string(stripped), "9007199254740993",
+		"the large integer must not lose precision")
+	assert.Contains(t, string(stripped), "0.5000",
+		"the original number spelling must survive")
+	assert.Less(t, strings.Index(string(stripped), `"model"`), strings.Index(string(stripped), `"max_tokens"`),
+		"key order must be preserved")
+}
+
+// 8. M12: tool_choice is dropped when (and only when) it selects a stripped
+// server tool. Both the string form and the object forms are covered.
+func TestStripClearsToolChoiceForServerTools(t *testing.T) {
+	dropped := []string{
+		`{"model":"m","tools":[{"type":"web_search"}],"tool_choice":"web_search"}`,
+		`{"model":"m","tools":[{"type":"web_search"}],"tool_choice":"web_search_preview"}`,
+		`{"model":"m","tools":[{"type":"web_search"}],"tool_choice":{"type":"web_search"}}`,
+		`{"model":"m","tools":[{"type":"function","function":{"name":"web_search"}}],"tool_choice":{"type":"function","function":{"name":"web_search"}}}`,
+		`{"model":"m","tools":[{"type":"web_fetch"}],"tool_choice":{"type":"tool","name":"web_fetch"}}`,
+	}
+	for _, body := range dropped {
+		stripped, removed, err := StripServerToolsFromRawRequest([]byte(body))
+		require.NoError(t, err, body)
+		assert.Equal(t, 2, removed, "one tool entry + tool_choice: %s", body)
+		assert.NotContains(t, string(stripped), "tool_choice", body)
+	}
+
+	kept := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			"choice for a kept function",
+			`{"tools":[{"type":"web_search"},{"type":"function","function":{"name":"get_weather"}}],"tool_choice":{"type":"function","function":{"name":"get_weather"}}}`,
+			`{"tools":[{"type":"function","function":{"name":"get_weather"}}],"tool_choice":{"type":"function","function":{"name":"get_weather"}}}`,
+		},
+		{
+			"auto choice",
+			`{"tools":[{"type":"web_search"}],"tool_choice":{"type":"auto"}}`,
+			`{"tool_choice":{"type":"auto"}}`,
+		},
+		{
+			"required string choice",
+			`{"tools":[{"type":"web_search"}],"tool_choice":"required"}`,
+			`{"tool_choice":"required"}`,
+		},
+	}
+	for _, tc := range kept {
+		stripped, removed, err := StripServerToolsFromRawRequest([]byte(tc.body))
+		require.NoError(t, err, tc.name)
+		assert.Equal(t, 1, removed, tc.name)
+		assert.Equal(t, tc.want, string(stripped), tc.name)
+	}
+
+	// A dangling choice with no tools array still gets cleaned: it would
+	// otherwise make the upstream reject the request with 400.
+	stripped, removed, err := StripServerToolsFromRawRequest([]byte(`{"model":"m","tool_choice":"web_search"}`))
+	require.NoError(t, err)
+	assert.Equal(t, 1, removed)
+	assert.Equal(t, `{"model":"m"}`, string(stripped))
+}
+
+// 9. M12: the chat-only web_search_options field is stripped as well, even
+// when no tools[] entry is present (it enables server search on its own).
+func TestStripWebSearchOptions(t *testing.T) {
+	only := []byte(`{"model":"m","web_search_options":{"search_context_size":"high"}}`)
+	stripped, removed, err := StripServerToolsFromRawRequest(only)
+	require.NoError(t, err)
+	assert.Equal(t, 1, removed, "web_search_options counts as a removed item")
+	assert.Equal(t, `{"model":"m"}`, string(stripped))
+
+	withTools := []byte(`{"model":"m","web_search_options":{},"tools":[{"type":"web_search"}]}`)
+	stripped, removed, err = StripServerToolsFromRawRequest(withTools)
+	require.NoError(t, err)
+	assert.Equal(t, 2, removed, "one tool entry + web_search_options")
+	assert.JSONEq(t, `{"model":"m"}`, string(stripped))
+
+	// Nothing else is touched and the body stays byte-identical.
+	clean := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+	stripped, removed, err = StripServerToolsFromRawRequest(clean)
+	require.NoError(t, err)
+	assert.Zero(t, removed)
+	assert.Equal(t, clean, stripped)
 }
 
 // 6. The stripped body is valid JSON and equivalent to the original except

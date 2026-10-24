@@ -42,7 +42,7 @@ func newBillingFixture(t *testing.T, startQuota int) (*gorm.DB, int64) {
 	model.DB = db
 	t.Cleanup(func() { model.DB = oldDB })
 
-	buyer := model.User{Username: "buyer", Password: "placeholder-pass", AffCode: "buyer", Quota: startQuota}
+	buyer := model.User{Username: "buyer", Password: "placeholder-pass", Quota: startQuota}
 	require.NoError(t, db.Create(&buyer).Error)
 	return db, int64(buyer.Id)
 }
@@ -118,6 +118,117 @@ func TestBillingSettleTopUp(t *testing.T) {
 		assert.Equal(t, 0, final, "only the remaining 50 could be deducted of the 200 delta")
 		assert.False(t, s.NeedsRefund(), "session is settled for what could be deducted")
 	})
+}
+
+// settleAtomic runs one SettleAtomic inside its own transaction, mirroring how
+// the relay's settlement transaction will call it.
+func settleAtomic(t *testing.T, db *gorm.DB, s *BillingSession, actual Micro) Micro {
+	t.Helper()
+	var charged Micro
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		charged, err = s.SettleAtomic(tx, actual)
+		return err
+	}))
+	return charged
+}
+
+// 4b. SettleAtomic (H3): refund of the difference, covered top-up, shortfall
+// capped at what was actually collectable, and idempotent replay.
+func TestBillingSettleAtomic(t *testing.T) {
+	t.Run("refund difference", func(t *testing.T) {
+		db, buyerID := newBillingFixture(t, 1000)
+		s, err := NewBillingSession(db, buyerID, 1000)
+		require.NoError(t, err)
+		assert.Equal(t, 0, buyerQuota(t, buyerID))
+
+		assert.Equal(t, Micro(300), settleAtomic(t, db, s, 300))
+		assert.Equal(t, 700, buyerQuota(t, buyerID))
+
+		// Idempotent replay in a fresh transaction: same charge, no movement.
+		assert.Equal(t, Micro(300), settleAtomic(t, db, s, 300))
+		assert.Equal(t, 700, buyerQuota(t, buyerID))
+	})
+
+	t.Run("covered top-up", func(t *testing.T) {
+		db, buyerID := newBillingFixture(t, 1000)
+		s, err := NewBillingSession(db, buyerID, 300)
+		require.NoError(t, err)
+		assert.Equal(t, 700, buyerQuota(t, buyerID))
+
+		assert.Equal(t, Micro(500), settleAtomic(t, db, s, 500))
+		assert.Equal(t, 500, buyerQuota(t, buyerID), "300 frozen + 200 collected")
+	})
+
+	t.Run("shortfall charges only what was collectable", func(t *testing.T) {
+		db, buyerID := newBillingFixture(t, 350)
+		s, err := NewBillingSession(db, buyerID, 300)
+		require.NoError(t, err)
+		assert.Equal(t, 50, buyerQuota(t, buyerID))
+
+		charged := settleAtomic(t, db, s, 500)
+		assert.Equal(t, Micro(350), charged, "300 frozen + 50 drained; never more than actual")
+		assert.Less(t, charged, Micro(500))
+		assert.Equal(t, 0, buyerQuota(t, buyerID), "balance is drained to exactly zero, never negative")
+
+		// Replay must not charge the remaining shortfall again.
+		assert.Equal(t, Micro(350), settleAtomic(t, db, s, 500))
+		assert.Equal(t, 0, buyerQuota(t, buyerID))
+	})
+
+	t.Run("refund-first wins", func(t *testing.T) {
+		db, buyerID := newBillingFixture(t, 1000)
+		s, err := NewBillingSession(db, buyerID, 400)
+		require.NoError(t, err)
+		s.Refund(nil)
+		assert.Equal(t, 1000, buyerQuota(t, buyerID))
+
+		assert.Equal(t, Micro(0), settleAtomic(t, db, s, 250),
+			"after a refund the session is closed and charges nothing")
+		assert.Equal(t, 1000, buyerQuota(t, buyerID))
+	})
+
+	t.Run("nil transaction and negative amount", func(t *testing.T) {
+		db, buyerID := newBillingFixture(t, 1000)
+		s, err := NewBillingSession(db, buyerID, 100)
+		require.NoError(t, err)
+
+		_, err = s.SettleAtomic(nil, 100)
+		assert.Error(t, err)
+
+		_, err = s.SettleAtomic(db, -1)
+		assert.ErrorIs(t, err, ErrMoneyNegative)
+	})
+}
+
+// 4c. SettleAtomic with 50 goroutines mixing Settle and Refund converges on
+// exactly one of the two legal outcomes (run under -race).
+func TestBillingSettleAtomicConcurrent(t *testing.T) {
+	_, buyerID := newBillingFixture(t, 1000)
+
+	s, err := NewBillingSession(nil, buyerID, 400)
+	require.NoError(t, err)
+	assert.Equal(t, 600, buyerQuota(t, buyerID))
+
+	const goroutines = 50
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if i%2 == 0 {
+				assert.NoError(t, s.Settle(250))
+			} else {
+				s.Refund(nil)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	final := buyerQuota(t, buyerID)
+	assert.Contains(t, []int{750, 1000}, final,
+		"settle-first refunds 150 (750); refund-first restores the pre-freeze (1000)")
+	assert.False(t, s.NeedsRefund())
 }
 
 // 5. Refund returns the whole pre-freeze, is idempotent, and does not fire

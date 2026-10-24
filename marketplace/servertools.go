@@ -1,7 +1,11 @@
 package marketplace
 
 import (
+	"strconv"
 	"strings"
+
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 
 	"github.com/QuantumNous/new-api/common"
 )
@@ -10,10 +14,21 @@ import (
 // call from the usage the upstream reports; when the counts cannot be read
 // the tools must not reach the upstream at all (读不到次数时不能估算收费), so
 // the inbound raw request is stripped before any format conversion.
+//
+// The strip is a byte-level edit (gjson for inspection, sjson for deletion)
+// rather than a decode/re-encode round trip: field order, whitespace and
+// numeric precision of every untouched field survive exactly (M12).
+
+// isServerToolName reports whether a type or function name identifies a
+// server-side search/fetch tool. The match is deliberately conservative:
+// "web_search", "web_fetch" and their dated/preview variants.
+func isServerToolName(name string) bool {
+	return name == "web_search" || name == "web_fetch" ||
+		strings.HasPrefix(name, "web_search_") || strings.HasPrefix(name, "web_fetch_")
+}
 
 // isServerTool reports whether one tools[] entry of an inbound chat/messages
-// request is a server-side search/fetch tool. The match is deliberately
-// conservative:
+// request is a server-side search/fetch tool:
 //
 //   - OpenAI built-in tool types: "web_search", "web_fetch" and any dated or
 //     preview variant ("web_search_preview", "web_search_20250305", ...);
@@ -23,69 +38,125 @@ import (
 //
 // Anything else — including ordinary user functions that merely contain
 // "search" in their name — is left untouched.
-func isServerTool(item map[string]any) bool {
-	if t, ok := item["type"].(string); ok {
-		if t == "web_search" || t == "web_fetch" ||
-			strings.HasPrefix(t, "web_search_") || strings.HasPrefix(t, "web_fetch_") {
-			return true
-		}
+func isServerTool(item gjson.Result) bool {
+	if !item.IsObject() {
+		return false
 	}
-	if fn, ok := item["function"].(map[string]any); ok {
-		if name, ok := fn["name"].(string); ok && (name == "web_search" || name == "web_fetch") {
+	if t := item.Get("type"); t.Type == gjson.String && isServerToolName(t.String()) {
+		return true
+	}
+	if fn := item.Get("function.name"); fn.Type == gjson.String {
+		name := fn.String()
+		if name == "web_search" || name == "web_fetch" {
 			return true
 		}
 	}
 	return false
 }
 
+// toolChoiceTargetsServerTool reports whether tool_choice selects one of the
+// server tools being stripped. All shapes seen in the wild are covered:
+//
+//	"web_search"                                            (OpenAI name string)
+//	{"type":"web_search"}                                   (OpenAI built-in)
+//	{"type":"function","function":{"name":"web_search"}}    (OpenAI function)
+//	{"type":"tool","name":"web_fetch"}                      (Anthropic)
+func toolChoiceTargetsServerTool(choice gjson.Result) bool {
+	if choice.Type == gjson.String {
+		return isServerToolName(choice.String())
+	}
+	if !choice.IsObject() {
+		return false
+	}
+	if t := choice.Get("type"); t.Type == gjson.String && isServerToolName(t.String()) {
+		return true
+	}
+	if n := choice.Get("name"); n.Type == gjson.String && isServerToolName(n.String()) {
+		return true
+	}
+	if fn := choice.Get("function.name"); fn.Type == gjson.String && isServerToolName(fn.String()) {
+		return true
+	}
+	return false
+}
+
 // StripServerToolsFromRawRequest removes server-side search/fetch tool
 // entries from the raw inbound request JSON, before any format conversion
-// (§3.4). It returns the stripped body and the number of removed entries.
+// (§3.4). It returns the stripped body and the number of removed items.
 //
-// A body that is not a JSON object, or carries no tools array, or whose tools
+// A body that is not valid JSON, or carries no tools array, or whose tools
 // array contains no server tools is returned byte-identical with removed=0.
 // When every entry is stripped the now-empty "tools" key is dropped
 // altogether: several upstreams reject an explicit empty tools array, and the
-// absence of the key is the neutral form. JSON goes through the common
-// package wrappers per AGENTS.md.
+// absence of the key is the neutral form.
+//
+// Beyond tools[] the strip also drops:
+//
+//   - a tool_choice that names a stripped server tool (string or object form);
+//     upstreams otherwise reject the request with 400;
+//   - the chat-only web_search_options field, which would re-enable server
+//     search on its own.
+//
+// removed counts every tools[] entry plus every auxiliary field dropped, so
+// removed > 0 always means the returned body differs from the input.
+//
+// Deletions are done in place with sjson, so every field that survives keeps
+// its original byte order, spelling and numeric precision (M12: a map decode/
+// encode round trip reordered keys and lost precision on integers above 2^53).
 func StripServerToolsFromRawRequest(body []byte) (stripped []byte, removed int, err error) {
 	if len(body) == 0 {
 		return body, 0, nil
 	}
-	var obj map[string]any
-	if uerr := common.Unmarshal(body, &obj); uerr != nil {
-		// Not JSON (or not an object): relay as-is, nothing to strip.
+	if !gjson.ValidBytes(body) {
+		// Not JSON: relay as-is, nothing to strip.
 		return body, 0, nil
 	}
-	toolsRaw, ok := obj["tools"]
-	if !ok {
-		return body, 0, nil
-	}
-	tools, ok := toolsRaw.([]any)
-	if !ok {
-		return body, 0, nil
-	}
-	kept := make([]any, 0, len(tools))
-	for _, item := range tools {
-		if m, ok := item.(map[string]any); ok && isServerTool(m) {
-			removed++
-			continue
+	out := body
+
+	if tools := gjson.GetBytes(out, "tools"); tools.IsArray() {
+		entries := tools.Array()
+		drop := make([]int, 0, len(entries))
+		for i, entry := range entries {
+			if isServerTool(entry) {
+				drop = append(drop, i)
+			}
 		}
-		kept = append(kept, item)
+		switch {
+		case len(drop) == 0:
+			// Nothing to do.
+		case len(drop) == len(entries):
+			if out, err = sjson.DeleteBytes(out, "tools"); err != nil {
+				return body, 0, err
+			}
+			removed += len(drop)
+		default:
+			// Delete from the highest index down so the remaining indices
+			// stay valid.
+			for i := len(drop) - 1; i >= 0; i-- {
+				if out, err = sjson.DeleteBytes(out, "tools."+strconv.Itoa(drop[i])); err != nil {
+					return body, 0, err
+				}
+			}
+			removed += len(drop)
+		}
+	}
+
+	if choice := gjson.GetBytes(out, "tool_choice"); choice.Exists() && toolChoiceTargetsServerTool(choice) {
+		if out, err = sjson.DeleteBytes(out, "tool_choice"); err != nil {
+			return body, 0, err
+		}
+		removed++
+	}
+	if gjson.GetBytes(out, "web_search_options").Exists() {
+		if out, err = sjson.DeleteBytes(out, "web_search_options"); err != nil {
+			return body, 0, err
+		}
+		removed++
 	}
 	if removed == 0 {
 		return body, 0, nil
 	}
-	if len(kept) == 0 {
-		delete(obj, "tools")
-	} else {
-		obj["tools"] = kept
-	}
-	stripped, err = common.Marshal(obj)
-	if err != nil {
-		return body, 0, err
-	}
-	return stripped, removed, nil
+	return out, removed, nil
 }
 
 // ExtractServerToolCounts reads the server-side Search/Fetch call counts from

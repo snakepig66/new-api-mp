@@ -8,12 +8,12 @@ package marketplace
 import (
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
-
-	"github.com/QuantumNous/new-api/common"
 )
 
 // Key preference / model management errors (§3.6). Messages never carry key
@@ -156,28 +156,40 @@ func ListKeyModels(db *gorm.DB, tokenID int64) ([]KeyModel, error) {
 }
 
 // buyerRPMWindow is the process-local state of the §3.6 buyer RPM limit,
-// keyed by token id. Like the listing-side Selector state (slots, breaker,
-// listing RPM) it lives in this process only: a multi-node deployment must
-// move it to Redis or equivalent shared storage (second-version item, §8).
+// keyed by buyer user id (M13). Every API key of one buyer shares the same
+// budget, so creating more keys cannot bypass the limit. Like the
+// listing-side Selector state (slots, breaker, listing RPM) it lives in this
+// process only: a multi-node deployment must move it to Redis or equivalent
+// shared storage (second-version item, §8).
 var buyerRPMWindow = NewRPMWindow()
 
-// BuyerRPMAllow records one buyer request against the key's RPM budget and
-// reports whether it fits (§3.6: 每个买家有自己的 RPM 限制). A key without a
-// saved preference, or with RPM = 0, is unlimited. The window is
-// best-effort: when the preference cannot be read the request is admitted —
-// the relay path queries the same database immediately afterwards and fails
-// there with the real error.
-func BuyerRPMAllow(tokenID int64, now time.Time) bool {
-	db, _ := relayState()
-	if db == nil {
+// BuyerRPMAllow records one buyer request against the buyer's RPM budget and
+// reports whether it fits (§3.6: 每个买家有自己的 RPM 限制).
+//
+// The window is keyed by userID — not by token id — so all tokens of the same
+// buyer share one limit (M13: 按买家计, not 按 token 计). rpmLimit <= 0 means
+// unlimited; the caller resolves the effective limit from the key preference
+// and falls back to DefaultBuyerRPM(), because this function only enforces the
+// number it is given. A non-positive userID is admitted without spending
+// budget (it is not a buyer request).
+func BuyerRPMAllow(userID int64, rpmLimit int, now time.Time) bool {
+	if userID <= 0 {
 		return true
 	}
-	pref, err := GetKeyPref(db, tokenID)
-	if err != nil {
-		if !errors.Is(err, ErrKeyPrefNotFound) {
-			common.SysError(common.LogText("marketplace: read key pref for buyer rpm: %s", err.Error()))
-		}
-		return true
+	return buyerRPMWindow.Allow(userID, rpmLimit, now)
+}
+
+// DefaultBuyerRPM returns the platform-wide default buyer RPM from
+// MP_DEFAULT_BUYER_RPM (§3.6). A missing, malformed or non-positive value
+// falls back to 0, which means unlimited.
+func DefaultBuyerRPM() int {
+	raw := strings.TrimSpace(os.Getenv("MP_DEFAULT_BUYER_RPM"))
+	if raw == "" {
+		return 0
 	}
-	return buyerRPMWindow.Allow(tokenID, pref.RPM, now)
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
 }

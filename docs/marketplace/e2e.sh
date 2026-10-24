@@ -1,12 +1,20 @@
 #!/bin/bash
 # MARKETPLACE-DEV.md §5 阶段 7：真实 DeepSeek key 端到端对账
-# 用法: e2e.sh <DEEPSEEK_API_KEY>
+#
+# 用法:
+#   E2E_ADMIN_PASS='<admin/test-account password>' \
+#     ./e2e.sh <DEEPSEEK_API_KEY>
+#
+# E2E_ADMIN_PASS 同时用于 root/admin 初始化以及 e2eseller / e2ebuyer 测试账号。
+# 口令只从环境变量读取，绝不写进脚本或提交到仓库 (H9)。未设置时脚本立即退出。
+# 可选环境变量: E2E_BASE（默认 http://127.0.0.1:3000）、E2E_DB、E2E_MODEL。
 set -uo pipefail
-KEY="${1:?usage: e2e.sh <deepseek_key>}"
-BASE=http://127.0.0.1:3000
-DB=/data/workspace/new-api/one-api.db
-MODEL=deepseek-flash
-PASS='MpE2e#2026x'
+: "${E2E_ADMIN_PASS:?E2E_ADMIN_PASS is required (admin/test-account password)}"
+KEY="${1:?usage: E2E_ADMIN_PASS='<password>' e2e.sh <deepseek_key>}"
+BASE="${E2E_BASE:-http://127.0.0.1:3000}"
+DB="${E2E_DB:-/data/workspace/new-api/one-api.db}"
+MODEL="${E2E_MODEL:-deepseek-flash}"
+PASS="$E2E_ADMIN_PASS"
 
 sql() { python3 - "$DB" "$1" <<'PY'
 import sqlite3,sys

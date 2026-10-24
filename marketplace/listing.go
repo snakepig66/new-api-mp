@@ -60,8 +60,11 @@ func (in CreateListingInput) validate() (Vendor, error) {
 	if in.SellerID <= 0 {
 		return Vendor{}, errors.New("marketplace: seller id is required")
 	}
-	if strings.TrimSpace(in.APIKey) == "" {
-		return Vendor{}, errors.New("marketplace: api key is required")
+	if _, err := normalizeListingKey(in.APIKey); err != nil {
+		// Empty after trimming, or whitespace/control characters inside the
+		// key. Prefixing/suffixing spaces must not produce a second listing
+		// for the same upstream credential (M5); the message never echoes it.
+		return Vendor{}, err
 	}
 	if len(in.Models) == 0 {
 		return Vendor{}, errors.New("marketplace: at least one model is required")
@@ -307,8 +310,11 @@ func UpdateMultiplier(db *gorm.DB, id int64, milli int64, now time.Time) error {
 // always re-triggers verification. Banned listings are terminal and reject
 // key replacement with ErrInvalidTransition.
 func ReplaceKey(db *gorm.DB, id int64, newAPIKey string) error {
-	if strings.TrimSpace(newAPIKey) == "" {
-		return errors.New("marketplace: api key is required")
+	if _, err := normalizeListingKey(newAPIKey); err != nil {
+		// Same normalization as CreateListing: a padded key maps onto the
+		// existing fingerprint; interior whitespace/control characters are
+		// rejected before anything is encrypted.
+		return err
 	}
 	ciphertext, err := EncryptListingKey(newAPIKey)
 	if err != nil {

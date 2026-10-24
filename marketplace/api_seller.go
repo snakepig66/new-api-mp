@@ -15,7 +15,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,6 +45,31 @@ func registerSellerRoutes(g *gin.RouterGroup) {
 	g.POST("/seller/listings/:id/resume", resumeSellerListing)
 	g.GET("/seller/balance", getSellerBalance)
 	g.POST("/seller/payouts", postSellerPayout)
+}
+
+// RegisterSellerOnboardingRoutes is the exported seam for the M9 onboarding
+// endpoints and the FRONTEND-REBUILD §5 seller-side console APIs. The router
+// seam should mount it on the same UserAuth group as RegisterSellerRoutes.
+//
+// It covers:
+//
+//	POST /seller/onboarding       M9 协议 → 实名 → 支付宝
+//	GET  /me                      current user + seller progress
+//	POST /seller/listings/probe   dry-run key check (no DB write)
+//	GET  /seller/listings/:id     detail + recent probes + pause reason
+//	GET  /seller/stats            pending/available/income/fee/30-day series
+//	GET  /seller/payouts          paginated withdraw history
+func RegisterSellerOnboardingRoutes(g *gin.RouterGroup) {
+	registerSellerOnboardingRoutes(g)
+	registerMeRoutes(g)
+}
+
+func registerSellerOnboardingRoutes(g *gin.RouterGroup) {
+	g.POST("/seller/onboarding", postSellerOnboarding)
+	g.POST("/seller/listings/probe", postSellerListingProbe)
+	g.GET("/seller/listings/:id", getSellerListingDetail)
+	g.GET("/seller/stats", getSellerStats)
+	g.GET("/seller/payouts", listSellerPayouts)
 }
 
 // sellerDB returns the marketplace primary database handle, answering 500 when
@@ -158,6 +185,12 @@ func postSellerListing(c *gin.Context) {
 	}
 	db := sellerDB(c)
 	if db == nil {
+		return
+	}
+	// M9: only an active (协议 + 实名 + 收款账户) seller may open listings.
+	if err := RequireActiveSeller(db, sellerID); err != nil {
+		status, msg := sellerGateStatus(err)
+		common.ApiErrorStatus(c, status, errors.New(msg))
 		return
 	}
 	var req sellerListingRequest
@@ -416,7 +449,7 @@ func getSellerBalance(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query available balance"))
 		return
 	}
-	_, pending, err := AccountBalance(db, UserAccount(sellerID))
+	_, pending, err := AccountBalance(db, SellerAccount(sellerID))
 	if err != nil {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query balance"))
 		return
@@ -442,6 +475,13 @@ func postSellerPayout(c *gin.Context) {
 	}
 	db := sellerDB(c)
 	if db == nil {
+		return
+	}
+	// M9: payouts require an active seller (the mp_sellers row is written by
+	// the onboarding flow, not by this handler).
+	if err := RequireActiveSeller(db, sellerID); err != nil {
+		status, msg := sellerGateStatus(err)
+		common.ApiErrorStatus(c, status, errors.New(msg))
 		return
 	}
 	var req struct {
@@ -473,4 +513,397 @@ func postSellerPayout(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, gin.H{"id": payout.ID, "status": payout.Status, "amount_micro": payout.AmountMicro})
+}
+
+// ---------------------------------------------------------------------------
+// 开通 (M9) 与 /me (§5 FRONTEND-REBUILD)
+// ---------------------------------------------------------------------------
+
+type sellerOnboardingRequest struct {
+	AgreementVersion string `json:"agreement_version"`
+	RealName         string `json:"real_name"`
+	IDCardMasked     string `json:"id_card_masked"`
+	AlipayAccount    string `json:"alipay_account"`
+}
+
+// sellerIdentityView is the seller block of GET /me and the onboarding
+// response. It never carries the alipay account, the ciphertext, the real name
+// or the ID number (§2.3/§3.1).
+type sellerIdentityView struct {
+	Exists   bool           `json:"exists"`
+	Status   string         `json:"status"`
+	Progress SellerProgress `json:"progress"`
+}
+
+func sellerIdentityViewOf(s Seller, exists bool) sellerIdentityView {
+	if !exists {
+		return sellerIdentityView{
+			Exists:   false,
+			Progress: SellerProgress{NextStep: "agreement"},
+		}
+	}
+	return sellerIdentityView{Exists: true, Status: s.Status, Progress: s.progress()}
+}
+
+// postSellerOnboarding serves POST /seller/onboarding — the §3.1 state machine
+// 协议 → 实名 → 支付宝. A partial body advances only the provided steps; the
+// response carries the progress and the next step.
+func postSellerOnboarding(c *gin.Context) {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	var req sellerOnboardingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	seller, progress, err := OnboardSeller(db, sellerID, SellerOnboardingInput{
+		AgreementVersion: req.AgreementVersion,
+		RealName:         req.RealName,
+		IDCardMasked:     req.IDCardMasked,
+		AlipayAccount:    req.AlipayAccount,
+	}, time.Now())
+	if err != nil {
+		status, msg := sellerOnboardingStatus(err)
+		common.ApiErrorStatus(c, status, errors.New(msg))
+		return
+	}
+	view := sellerIdentityView{Exists: seller.UserID > 0, Status: seller.Status, Progress: progress}
+	common.ApiSuccess(c, gin.H{"seller": view})
+}
+
+// ---------------------------------------------------------------------------
+// 挂单检测 probe (§5): dry-run, no DB writes.
+// ---------------------------------------------------------------------------
+
+type sellerProbeRequest struct {
+	VendorID string   `json:"vendor_id"`
+	APIKey   string   `json:"api_key"`
+	Models   []string `json:"models"`
+}
+
+// sellerVerifyResources returns the async-verification client and limiter
+// under the same lock as setSellerVerifyClientForTest, so probe and background
+// verification share one independent §3.5 rate-limit bucket.
+func sellerVerifyResources() (*http.Client, *VerifyLimiter) {
+	sellerVerifyMu.RLock()
+	defer sellerVerifyMu.RUnlock()
+	return sellerVerifyClient, sellerVerifyLimiter
+}
+
+// postSellerListingProbe serves POST /seller/listings/probe — one dry-run
+// verification identical to the async listing check (§3.5): key validity,
+// balance, available models, /models latency and prompt-cache support. It
+// writes no mp_listings / mp_probes row and never echoes the key.
+func postSellerListingProbe(c *gin.Context) {
+	if _, ok := sellerUserID(c); !ok {
+		return
+	}
+	if db := sellerDB(c); db == nil {
+		return
+	}
+	var req sellerProbeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	apiKey := strings.TrimSpace(req.APIKey)
+	if apiKey == "" {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("api_key is required"))
+		return
+	}
+	vendor, ok := VendorByID(req.VendorID)
+	if !ok {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("vendor is not whitelisted"))
+		return
+	}
+	for _, m := range req.Models {
+		if !slices.Contains(vendor.Models, m) {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("model is not served by this vendor"))
+			return
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+	client, limiter := sellerVerifyResources()
+	if err := limiter.Acquire(ctx); err != nil {
+		common.ApiErrorStatus(c, http.StatusTooManyRequests, errors.New("verification is busy, try again later"))
+		return
+	}
+	defer limiter.Release()
+	res := VerifyListingKey(ctx, client, vendor, apiKey)
+
+	// Only models the platform actually whitelists for this vendor are
+	// advertised; requested models missing from the key flip ok to false.
+	available := make([]string, 0, len(res.Models))
+	for _, m := range res.Models {
+		if slices.Contains(vendor.Models, m) && !slices.Contains(available, m) {
+			available = append(available, m)
+		}
+	}
+	missing := make([]string, 0)
+	for _, m := range req.Models {
+		if !slices.Contains(res.Models, m) {
+			missing = append(missing, m)
+		}
+	}
+	probeOK := res.OK && len(missing) == 0
+
+	common.ApiSuccess(c, gin.H{
+		"ok":             probeOK,
+		"models":         available,
+		"missing_models": missing,
+		"latency_ms":     res.LatencyMs,
+		"prompt_cache":   res.PromptCacheSupport,
+		"balance_micro":  res.BalanceMicro, // null when the vendor has no balance endpoint
+		"key_valid":      res.KeyValid,
+		"fail_reason":    stripKey(res.FailReason, apiKey),
+	})
+}
+
+// ---------------------------------------------------------------------------
+// 挂单详情 (§5): detail + last 10 probes + pause reason.
+// ---------------------------------------------------------------------------
+
+type sellerProbeView struct {
+	ID        int64     `json:"id"`
+	Type      string    `json:"type"`
+	OK        bool      `json:"ok"`
+	LatencyMs int64     `json:"latency_ms"`
+	Detail    any       `json:"detail"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type sellerListingDetail struct {
+	sellerListingView
+	PauseReason string            `json:"pause_reason"`
+	Probes      []sellerProbeView `json:"probes"`
+}
+
+// probeDetailValue renders a probe's JSON detail to the console; a malformed
+// detail is returned as a plain string rather than dropping it.
+func probeDetailValue(detail string) any {
+	if detail == "" {
+		return nil
+	}
+	var v any
+	if err := common.Unmarshal([]byte(detail), &v); err != nil {
+		return detail
+	}
+	return v
+}
+
+// probeFailReason extracts fail_reason from a probe detail JSON string.
+func probeFailReason(detail string) string {
+	var m map[string]any
+	if err := common.Unmarshal([]byte(detail), &m); err != nil {
+		return ""
+	}
+	if s, ok := m["fail_reason"].(string); ok {
+		return s
+	}
+	return ""
+}
+
+// listingPauseReason derives the paused listing's reason from its most recent
+// failed probe (probe detail), falling back to "manual" (卖家手动暂停).
+func listingPauseReason(listing Listing, probes []Probe) string {
+	if listing.Status != ListingPaused {
+		return ""
+	}
+	for _, p := range probes {
+		if !p.OK {
+			if reason := probeFailReason(p.Detail); reason != "" {
+				return reason
+			}
+		}
+	}
+	return "manual"
+}
+
+// getSellerListingDetail serves GET /seller/listings/:id — own listing detail,
+// the last 10 probes and the pause reason (§5 挂单详情).
+func getSellerListingDetail(c *gin.Context) {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	id, ok := sellerIDParam(c)
+	if !ok {
+		return
+	}
+	listing, ok := requireOwnListing(c, db, id, sellerID)
+	if !ok {
+		return
+	}
+	var probes []Probe
+	if err := db.Where("listing_id = ?", id).Order("id DESC").Limit(10).Find(&probes).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query probes"))
+		return
+	}
+	views := make([]sellerProbeView, 0, len(probes))
+	for _, p := range probes {
+		views = append(views, sellerProbeView{
+			ID:        p.ID,
+			Type:      p.Type,
+			OK:        p.OK,
+			LatencyMs: p.LatencyMs,
+			Detail:    probeDetailValue(p.Detail),
+			CreatedAt: p.CreatedAt,
+		})
+	}
+	common.ApiSuccess(c, sellerListingDetail{
+		sellerListingView: toSellerListingView(&listing),
+		PauseReason:       listingPauseReason(listing, probes),
+		Probes:            views,
+	})
+}
+
+// ---------------------------------------------------------------------------
+// 收益统计 (§5): 待结算 / 可提现 / 本月收入 / 平台费 / 近 30 天按日收入.
+// ---------------------------------------------------------------------------
+
+// sellerDailyIncome is one day of the 30-day series.
+type sellerDailyIncome struct {
+	Date        string `json:"date"` // YYYY-MM-DD Asia/Shanghai
+	IncomeMicro int64  `json:"income_micro"`
+}
+
+// sumSellerLedger sums one seller's ledger entries attributed through
+// mp_requests. Attribution by request (not by account string) keeps the stats
+// correct regardless of the buyer/seller account split of §3.9.
+func sumSellerLedger(db *gorm.DB, sellerID int64, entryTypes []string, extra string, args ...any) (int64, error) {
+	where := "r.seller_id = ? AND l.entry_type IN ?"
+	qargs := []any{sellerID, entryTypes}
+	if extra != "" {
+		where += " AND " + extra
+		qargs = append(qargs, args...)
+	}
+	var sum int64
+	err := db.Table("mp_ledger AS l").
+		Joins("JOIN mp_requests AS r ON r.request_id = l.request_id").
+		Where(where, qargs...).
+		Select("COALESCE(SUM(l.amount_micro), 0)").
+		Scan(&sum).Error
+	return sum, err
+}
+
+// getSellerStats serves GET /seller/stats (§5 分享者概览).
+func getSellerStats(c *gin.Context) {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	now := time.Now()
+	loc, err := time.LoadLocation(shanghaiTZ)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to load timezone"))
+		return
+	}
+	localNow := now.In(loc)
+	monthStart := time.Date(localNow.Year(), localNow.Month(), 1, 0, 0, 0, 0, loc)
+	seriesStart := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -29)
+
+	pending, err := sumSellerLedger(db, sellerID, []string{EntrySellerCredit}, "l.status = ?", LedgerPending)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query pending balance"))
+		return
+	}
+	available, err := AvailableBalance(db, sellerID)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query available balance"))
+		return
+	}
+	monthIncome, err := sumSellerLedger(db, sellerID, []string{EntrySellerCredit},
+		"l.status <> ? AND l.created_at >= ?", LedgerReversed, monthStart)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query monthly income"))
+		return
+	}
+	fees, err := sumSellerLedger(db, sellerID, []string{EntryPlatformFee, EntryFeeReversal}, "")
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query platform fees"))
+		return
+	}
+
+	type dailyRow struct {
+		CreatedAt   time.Time
+		AmountMicro int64
+	}
+	var rows []dailyRow
+	if err := db.Table("mp_ledger AS l").
+		Select("l.created_at AS created_at, l.amount_micro AS amount_micro").
+		Joins("JOIN mp_requests AS r ON r.request_id = l.request_id").
+		Where("r.seller_id = ? AND l.entry_type = ? AND l.status <> ? AND l.created_at >= ?",
+			sellerID, EntrySellerCredit, LedgerReversed, seriesStart).
+		Scan(&rows).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query daily income"))
+		return
+	}
+	byDay := make(map[string]int64, 30)
+	for _, r := range rows {
+		byDay[r.CreatedAt.In(loc).Format("2006-01-02")] += r.AmountMicro
+	}
+	series := make([]sellerDailyIncome, 0, 30)
+	for i := 0; i < 30; i++ {
+		day := seriesStart.AddDate(0, 0, i).Format("2006-01-02")
+		series = append(series, sellerDailyIncome{Date: day, IncomeMicro: byDay[day]})
+	}
+
+	common.ApiSuccess(c, gin.H{
+		"pending_micro":            pending,
+		"available_micro":          int64(available),
+		"month_income_micro":       monthIncome,
+		"platform_fee_total_micro": fees,
+		"daily":                    series,
+		"as_of":                    now,
+	})
+}
+
+// ---------------------------------------------------------------------------
+// 提现历史 (§5)
+// ---------------------------------------------------------------------------
+
+// listSellerPayouts serves GET /seller/payouts?page=&page_size= — the caller's
+// withdrawal history, newest first, in the console PageInfo envelope.
+func listSellerPayouts(c *gin.Context) {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	page, pageSize := parseRecordPageQuery(c)
+	var total int64
+	if err := db.Model(&Payout{}).Where("seller_id = ?", sellerID).Count(&total).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query payouts"))
+		return
+	}
+	var rows []Payout
+	if err := db.Where("seller_id = ?", sellerID).
+		Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).
+		Find(&rows).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query payouts"))
+		return
+	}
+	pageInfo := &common.PageInfo{Page: page, PageSize: pageSize}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(rows)
+	common.ApiSuccess(c, pageInfo)
 }

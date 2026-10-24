@@ -8,9 +8,13 @@ package marketplace
 // marketplace without creating a cycle.
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"math/big"
 	"net/http"
 	"slices"
 	"strings"
@@ -52,6 +56,14 @@ const (
 	HopEventAutoPause    = "auto_pause"
 	HopEventZeroOutput   = "zero_output"
 	HopEventStreamCut    = "stream_cut"
+	HopEventEarlyExit    = "early_exit"
+	// HopEventSettleShortfall records that the buyer's balance could not cover
+	// the actual usage: the ledger charges the amount actually collected and
+	// the difference is this event's detail (H3).
+	HopEventSettleShortfall = "settle_shortfall"
+	// HopEventMaxOutputSkipped records that the affordable max-output estimate
+	// could not be written back into the outbound request type (H3).
+	HopEventMaxOutputSkipped = "max_output_writeback_skipped"
 )
 
 // RelayHop is one event of one marketplace request's retry chain (§3.8).
@@ -96,10 +108,18 @@ type RelaySession struct {
 	strippedTools   int
 	slotListingID   int64
 	slotHeld        bool
-	settled         bool
-	settledMicro    Micro
-	failed          bool
-	recordWritten   bool
+	// tookProbe/probeListingID track the half-open circuit probe slot this
+	// attempt owns (H2). It must be handed back on every non-429 end.
+	tookProbe      bool
+	probeListingID int64
+	// billing is the request's current pre-freeze session, kept here so the
+	// deferred EndRelay can refund it even when GenRelayInfo never ran (H1).
+	billing       *BillingSession
+	settled       bool
+	settledMicro  Micro
+	failed        bool
+	recordWritten bool
+	finished      bool
 }
 
 // ---------------------------------------------------------------------------
@@ -252,13 +272,129 @@ func (s *RelaySession) releaseSlot() {
 	}
 }
 
-// finishAttempt closes a failed attempt: the hop event is recorded and the
-// listing's concurrency slot released before the next selection.
+// takeProbe records that this attempt owns listingID's half-open probe slot.
+func (s *RelaySession) takeProbe(listingID int64) {
+	s.mu.Lock()
+	s.tookProbe = true
+	s.probeListingID = listingID
+	s.mu.Unlock()
+}
+
+// handBackProbe resolves the half-open probe this attempt owns, if any.
+// success=true closes the circuit; false releases the probe slot without
+// resolving it (5xx/timeout/early exit), so the listing stays probeable and
+// is never blacklisted forever (H2). 429 is handled by Record429 in
+// ProcessRelayChannelError, which resets the state itself.
+func (s *RelaySession) handBackProbe(success bool) {
+	s.mu.Lock()
+	id, took := s.probeListingID, s.tookProbe
+	s.tookProbe = false
+	s.probeListingID = 0
+	s.mu.Unlock()
+	if !took || id <= 0 {
+		return
+	}
+	if success {
+		DefaultSelector().Breaker.RecordSuccess(id)
+		return
+	}
+	DefaultSelector().Breaker.ReleaseProbe(id)
+}
+
+// finishAttempt closes a failed attempt: the hop event is recorded, the
+// listing's concurrency slot released and a half-open probe handed back before
+// the next selection (H2). A 429 has already re-broken the circuit.
 func (s *RelaySession) finishAttempt(apiErr *types.NewAPIError) {
 	if apiErr != nil {
 		s.addHop(HopEventError, fmt.Sprintf("status=%d code=%s", apiErr.StatusCode, apiErr.GetErrorCode()))
 	}
+	if apiErr != nil && apiErr.StatusCode == http.StatusTooManyRequests {
+		// Record429 already reset the breaker state; nothing to hand back.
+		s.mu.Lock()
+		s.tookProbe = false
+		s.probeListingID = 0
+		s.mu.Unlock()
+	} else {
+		s.handBackProbe(false)
+	}
 	s.releaseSlot()
+}
+
+// EndRelay is the deferred request-session closer installed by the distributor
+// seam (H1). It runs for every marketplace request, including the paths that
+// never reach PrepareBilling (bad request body, GenRelayInfo failure), the
+// 402/400 pre-freeze failures and handler panics. A session that neither
+// settled nor failed is finalized as failed: the pre-freeze is refunded, the
+// concurrency slot and half-open probe are released and one mp_requests
+// failed row is written. It is idempotent — SettleRelay/FailRelay already
+// close the session, and EndRelay only fills in the gaps.
+//
+// A panic is re-raised so gin's recovery middleware keeps its normal behavior;
+// the cleanup happens on the way out.
+func EndRelay(c *gin.Context) {
+	recovered := recover()
+	if s := CurrentRelaySession(c); s != nil {
+		s.endRelay(c)
+	}
+	if recovered != nil {
+		panic(recovered)
+	}
+}
+
+func (s *RelaySession) endRelay(c *gin.Context) {
+	s.mu.Lock()
+	if s.finished {
+		s.mu.Unlock()
+		return
+	}
+	s.finished = true
+	settled, failed := s.settled, s.failed
+	billing := s.billing
+	s.mu.Unlock()
+	if settled || failed {
+		// SettleRelay/FailRelay already released the slot and probe; these are
+		// idempotent safety nets.
+		s.releaseSlot()
+		s.handBackProbe(false)
+		return
+	}
+	if billing != nil {
+		billing.Refund(c)
+	}
+	// Record the hop before the row is serialized, so the early-exit event is
+	// part of the retry chain of the failed record.
+	s.addHop(HopEventEarlyExit, "unsettled request")
+	db, _ := relayState()
+	if db != nil {
+		s.writeRecordOnce(db, marketplaceUsage{}, 0, 0, QuoteResult{}, 0, RequestFailed)
+	}
+	s.releaseSlot()
+	s.handBackProbe(false)
+}
+
+// ConvergeOutwardError maps a marketplace request's final relay error onto the
+// §3.10 outward contract (M8): 400 and 402 are preserved, every other status —
+// including an upstream 401 from a seller's invalid key — becomes 503. The
+// message is the fixed §3.10 wording; the upstream text has already been
+// written to the retry chain and the server log by the controller, and must
+// never reach the buyer (§2.3).
+func ConvergeOutwardError(apiErr *types.NewAPIError) *types.NewAPIError {
+	if apiErr == nil {
+		return nil
+	}
+	status := http.StatusServiceUnavailable
+	switch apiErr.StatusCode {
+	case http.StatusBadRequest:
+		status = http.StatusBadRequest
+	case http.StatusPaymentRequired:
+		status = http.StatusPaymentRequired
+	}
+	spec := apiErrorSpecs[status]
+	return types.WithOpenAIError(types.OpenAIError{
+		Message: spec.Message,
+		Type:    spec.Type,
+		Code:    spec.Code,
+	}, status)
 }
 
 // ---------------------------------------------------------------------------
@@ -311,7 +447,7 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 	has, qerr := hasLiveListingForModel(db, modelName)
 	if qerr != nil {
 		common.SysError(common.LogText("marketplace: query listings for model %s: %s", modelName, qerr.Error()))
-		return nil, true, http.StatusInternalServerError, errors.New("marketplace: failed to query listings")
+		return nil, true, http.StatusServiceUnavailable, errors.New("marketplace: failed to query listings")
 	}
 	if !has {
 		return nil, false, 0, nil
@@ -322,36 +458,58 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 	}
 	if qerr != nil {
 		common.SysError(common.LogText("marketplace: query key models: %s", qerr.Error()))
-		return nil, true, http.StatusInternalServerError, errors.New("marketplace: failed to query key models")
+		return nil, true, http.StatusServiceUnavailable, errors.New("marketplace: failed to query key models")
 	}
-	// MP: 买家 RPM 限制 (§3.6 每个买家有自己的 RPM 限制), checked after the
+	// MP: 买家 RPM 限制 (§3.6 每个买家有自己的 RPM 限制), counted per buyer
+	// user across all of that buyer's keys (M13), checked after the
 	// deterministic model-added rejection so a refused request never spends
 	// budget. §3.10's outward error list has no 429; per the 402/403 待定
-	// precedent this is mapped to 400 with a rate-limited message — §10
-	// 待确认.
-	if !BuyerRPMAllow(int64(tokenID), time.Now()) {
+	// precedent this is mapped to 400 with a rate-limited message — §10 待确认.
+	buyerUserID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	// M13/§3.6: the key preference may lower the limit, but a key without an
+	// explicit limit uses the platform-wide buyer default instead of being
+	// unlimited.
+	rpm := buyerRPMLimit(db, tokenID)
+	if rpm <= 0 {
+		rpm = DefaultBuyerRPM()
+	}
+	if rpm > 0 && !BuyerRPMAllow(buyerUserID, rpm, time.Now()) {
 		return nil, true, http.StatusBadRequest, errors.New("rate limited: this key exceeds its requests-per-minute limit, retry later")
 	}
-	listing, qerr := DefaultSelector().Select(db, SelectInput{Model: modelName, MaxMultiplierMilli: capMilli})
+	listing, tookProbe, qerr := DefaultSelector().SelectWithProbe(db, SelectInput{Model: modelName, MaxMultiplierMilli: capMilli})
 	if errors.Is(qerr, ErrNoListingAvailable) {
 		return nil, true, http.StatusServiceUnavailable, errors.New("no supplier available for this model")
 	}
 	if qerr != nil {
 		common.SysError(common.LogText("marketplace: select listing: %s", qerr.Error()))
-		return nil, true, http.StatusInternalServerError, errors.New("marketplace: failed to select a listing")
+		return nil, true, http.StatusServiceUnavailable, errors.New("marketplace: failed to select a listing")
 	}
 	channel, qerr = lookupRelayChannel(listing.ChannelID)
 	if qerr != nil {
 		common.SysError(common.LogText("marketplace: load listing channel %d: %s", listing.ChannelID, qerr.Error()))
 		DefaultSelector().Slots.Release(listing.ID)
+		if tookProbe {
+			DefaultSelector().Breaker.ReleaseProbe(listing.ID)
+		}
 		return nil, true, http.StatusServiceUnavailable, errors.New("no supplier available for this model")
+	}
+	if err := hydrateListingKey(db, &listing); err != nil {
+		common.SysError(common.LogText("marketplace: load listing %d key: %s", listing.ID, err.Error()))
+		DefaultSelector().Slots.Release(listing.ID)
+		if tookProbe {
+			DefaultSelector().Breaker.ReleaseProbe(listing.ID)
+		}
+		return nil, true, http.StatusServiceUnavailable, errors.New("marketplace: listing key unavailable")
 	}
 	realKey, qerr := DecryptListingKey(listing.KeyCiphertext)
 	if qerr != nil {
 		// §2.3: the decryption error never names the key.
 		common.SysError(common.LogText("marketplace: decrypt listing %d key: %s", listing.ID, qerr.Error()))
 		DefaultSelector().Slots.Release(listing.ID)
-		return nil, true, http.StatusInternalServerError, errors.New("marketplace: listing key unavailable")
+		if tookProbe {
+			DefaultSelector().Breaker.ReleaseProbe(listing.ID)
+		}
+		return nil, true, http.StatusServiceUnavailable, errors.New("marketplace: listing key unavailable")
 	}
 	s := &RelaySession{
 		requestID:          c.GetString(common.RequestIdKey),
@@ -364,6 +522,10 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 		triedListingIDs:    []int64{listing.ID},
 		slotListingID:      listing.ID,
 		slotHeld:           true,
+		tookProbe:          tookProbe,
+	}
+	if tookProbe {
+		s.probeListingID = listing.ID
 	}
 	c.Set(relaySessionContextKey, s)
 	s.addHop(HopEventSelect, "")
@@ -427,6 +589,36 @@ func keyModelCapMilli(db *gorm.DB, tokenID int, modelName string) (int64, error)
 		return 0, err
 	}
 	return pref.PriceCapMilli, nil
+}
+
+// buyerRPMLimit returns the buyer KeyPref's per-buyer RPM limit (0 = no
+// limit). Read failures are treated as unlimited: the request flow queries
+// the same database immediately afterwards and fails there with the real
+// error, and the RPM check is best-effort.
+func buyerRPMLimit(db *gorm.DB, tokenID int) int {
+	var pref KeyPref
+	if err := db.Select("rpm").Where("token_id = ?", tokenID).Take(&pref).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			common.SysError(common.LogText("marketplace: read key pref for buyer rpm: %s", err.Error()))
+		}
+		return 0
+	}
+	return pref.RPM
+}
+
+// hydrateListingKey loads the winner's encrypted key column, which the
+// listing-wide Select deliberately does not fetch (M7). Only the winner pays
+// this extra targeted query, whose result lives for one request only.
+func hydrateListingKey(db *gorm.DB, listing *Listing) error {
+	if listing == nil || listing.ID == 0 || len(listing.KeyCiphertext) > 0 {
+		return nil
+	}
+	var row Listing
+	if err := db.Select("id", "key_ciphertext").Where("id = ?", listing.ID).Take(&row).Error; err != nil {
+		return err
+	}
+	listing.KeyCiphertext = row.KeyCiphertext
+	return nil
 }
 
 // lookupRelayChannel loads the listing's upstream channel row. The row is
@@ -514,8 +706,27 @@ func PrepareBilling(c *gin.Context, info *relaycommon.RelayInfo, estimateFn func
 	fetchCap := toolCapIfPriced(db, listing.Vendor, ToolItemFetch, freezeAt)
 
 	maxOut := int64(meta.MaxTokens)
-	if maxOut <= 0 {
-		maxOut = s.affordableMaxOutput(db, cal, freezeAt, int64(estInput), searchCap, fetchCap)
+	substituted := maxOut <= 0
+	if substituted {
+		var aerr error
+		maxOut, aerr = s.affordableMaxOutput(db, cal, freezeAt, int64(estInput), searchCap, fetchCap)
+		if errors.Is(aerr, ErrInsufficientBalance) {
+			// H3: the balance cannot cover even the estimated input → 402
+			// instead of letting the request through with a zero output cap.
+			return types.NewOpenAIError(ErrInsufficientBalance, types.ErrorCodeInsufficientUserQuota, http.StatusPaymentRequired, types.ErrOptionWithSkipRetry())
+		}
+		if aerr != nil {
+			common.SysError(common.LogText("marketplace: affordable max output: %s", aerr.Error()))
+			return types.NewError(errors.New("marketplace: no covering price for this request"), types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest), types.ErrOptionWithSkipRetry())
+		}
+		if maxOut <= 0 {
+			return types.NewOpenAIError(ErrInsufficientBalance, types.ErrorCodeInsufficientUserQuota, http.StatusPaymentRequired, types.ErrOptionWithSkipRetry())
+		}
+		// H3: write the affordable cap into the outbound request, so the
+		// upstream cannot produce more output than the buyer's balance covers.
+		if !s.applyMaxOutput(info, maxOut) {
+			s.addHop(HopEventMaxOutputSkipped, fmt.Sprintf("max_output=%d", maxOut))
+		}
 	}
 
 	quote, qerr := PreFreezeQuote(db, cal, listing.Vendor, s.model, listing.MultiplierMilli,
@@ -536,6 +747,7 @@ func PrepareBilling(c *gin.Context, info *relaycommon.RelayInfo, estimateFn func
 	info.Billing = session
 
 	s.mu.Lock()
+	s.billing = session
 	s.estInputTokens = int64(estInput)
 	s.maxOutputTokens = maxOut
 	s.searchCap = searchCap
@@ -545,12 +757,46 @@ func PrepareBilling(c *gin.Context, info *relaycommon.RelayInfo, estimateFn func
 	return nil
 }
 
+// applyMaxOutput writes the affordable output cap back into the outbound
+// request (H3), so an omitted max_tokens cannot let the upstream exceed the
+// buyer's balance. It reports false for request types it cannot mutate; the
+// caller records that fact in the retry chain. The relay always talks one of
+// the three v1 protocols, but the same code path could see another type
+// (e.g. Gemini) if the marketplace path is widened later — hence the event.
+func (s *RelaySession) applyMaxOutput(info *relaycommon.RelayInfo, maxOut int64) bool {
+	if info == nil || info.Request == nil || maxOut <= 0 {
+		return false
+	}
+	n := uint(maxOut)
+	switch req := info.Request.(type) {
+	case *dto.GeneralOpenAIRequest:
+		// The caller enriched max_tokens/max_completion_tokens from both
+		// fields; write back whichever one the client actually used.
+		if req.MaxCompletionTokens != nil {
+			req.MaxCompletionTokens = &n
+			return true
+		}
+		req.MaxTokens = &n
+		return true
+	case *dto.OpenAIResponsesRequest:
+		req.MaxOutputTokens = &n
+		return true
+	case *dto.ClaudeRequest:
+		req.MaxTokens = &n
+		return true
+	default:
+		return false
+	}
+}
+
 // affordableMaxOutput implements §3.7's "没传 max_tokens 时按模型最大输出估
 // 算，但不超过余额": start from the model's maximum output and clamp it to the
 // output tokens the buyer's current balance can still cover after the fixed
-// part (estimated input + tool caps). The atomic reserve in NewBillingSession
-// remains the authoritative balance check.
-func (s *RelaySession) affordableMaxOutput(db *gorm.DB, cal *Calendar, freezeAt time.Time, estInput, searchCap, fetchCap int64) int64 {
+// part (estimated input + tool caps). It returns ErrInsufficientBalance when
+// the balance cannot even cover the fixed part (H3: remaining <= 0 must be a
+// 402, never a zero-output pass). The arithmetic runs in big.Int so a balance
+// above ~¥9,223 no longer overflows int64 and collapses to zero (H3).
+func (s *RelaySession) affordableMaxOutput(db *gorm.DB, cal *Calendar, freezeAt time.Time, estInput, searchCap, fetchCap int64) (int64, error) {
 	s.mu.Lock()
 	listing := s.listing
 	modelName := s.model
@@ -560,29 +806,34 @@ func (s *RelaySession) affordableMaxOutput(db *gorm.DB, cal *Calendar, freezeAt 
 	maxOut := ModelMaxOutputTokens(modelName)
 	balance, err := model.GetUserQuota(buyerID, true)
 	if err != nil || balance <= 0 {
-		return maxOut
+		// Let the authoritative reserve in NewBillingSession produce the 402.
+		return maxOut, nil
 	}
 	pb, err := PriceAt(db, modelName, listing.Vendor, cal.TierAt(freezeAt), freezeAt)
 	if err != nil {
-		return maxOut
+		return maxOut, nil
 	}
 	fixed, err := PreFreezeQuote(db, cal, listing.Vendor, modelName, listing.MultiplierMilli, estInput, 0, searchCap, fetchCap, freezeAt)
 	if err != nil {
-		return maxOut
+		return maxOut, nil
 	}
 	remaining := int64(balance) - int64(fixed.TotalDebit)
 	if remaining <= 0 {
-		return 0
+		return 0, ErrInsufficientBalance
 	}
 	// cost(out) = ceil(out·price·mult / (1e6·1000)) ≤ remaining
-	//   ⟹ out ≤ remaining·1e6·1000 / (price·mult); the product stays well
-	//   inside int64 for any realistic balance.
-	denom := pb.OutputMicroPerMTok * listing.MultiplierMilli
-	if denom <= 0 {
-		return maxOut
+	//   ⟹ out ≤ remaining·1e6·1000 / (price·mult), floored.
+	denom := new(big.Int).Mul(big.NewInt(pb.OutputMicroPerMTok), big.NewInt(listing.MultiplierMilli))
+	if denom.Sign() <= 0 {
+		return maxOut, nil
 	}
-	affordable := remaining * MicroPerMillionTokens * 1000 / denom
-	return min(maxOut, affordable)
+	num := new(big.Int).Mul(big.NewInt(remaining), big.NewInt(MicroPerMillionTokens))
+	num.Mul(num, big.NewInt(1000))
+	affordable := new(big.Int).Div(num, denom)
+	if !affordable.IsInt64() {
+		return maxOut, nil
+	}
+	return min(maxOut, affordable.Int64()), nil
 }
 
 // toolCapIfPriced returns the §3.4 per-request pre-freeze cap for one
@@ -626,20 +877,24 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 	hopCount := s.hopCount
 	inPlaceRetried := s.inPlaceRetried
 	excluded := slices.Clone(s.triedListingIDs)
+	modelName := s.model
+	multiplierMilli := s.maxMultiplierMilli
 	s.mu.Unlock()
 
 	selector := DefaultSelector()
 	var next Listing
+	tookProbe := false
 	switched := false
 	if hopCount < maxListingHops {
-		listing, err := selector.Select(db, SelectInput{
-			Model:              s.model,
+		listing, probe, err := selector.SelectWithProbe(db, SelectInput{
+			Model:              modelName,
 			ExcludeListingIDs:  excluded,
-			MaxMultiplierMilli: s.maxMultiplierMilli,
+			MaxMultiplierMilli: multiplierMilli,
 		})
 		switch {
 		case err == nil:
 			next = listing
+			tookProbe = probe
 			switched = true
 		case errors.Is(err, ErrNoListingAvailable):
 			// Fall through to the single in-place retry below.
@@ -671,12 +926,23 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 		s.slotListingID = next.ID
 		s.slotHeld = true
 		s.mu.Unlock()
+		if err := hydrateListingKey(db, &next); err != nil {
+			common.SysError(common.LogText("marketplace: load listing %d key: %s", next.ID, err.Error()))
+			s.releaseSlot()
+			if tookProbe {
+				selector.Breaker.ReleaseProbe(next.ID)
+			}
+			return nil, types.NewError(errors.New("marketplace: listing key unavailable"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
+		}
 	}
 
 	realKey, err := DecryptListingKey(next.KeyCiphertext)
 	if err != nil {
 		common.SysError(common.LogText("marketplace: decrypt listing %d key: %s", next.ID, err.Error()))
 		s.releaseSlot()
+		if tookProbe {
+			selector.Breaker.ReleaseProbe(next.ID)
+		}
 		return nil, types.NewError(errors.New("marketplace: listing key unavailable"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 	}
 
@@ -687,38 +953,63 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 	maxOut := s.maxOutputTokens
 	searchCap := s.searchCap
 	fetchCap := s.fetchCap
-	modelName := s.model
 	s.mu.Unlock()
 
 	if info.Billing != nil {
 		info.Billing.Refund(c)
 		info.Billing = nil
 	}
+	s.mu.Lock()
+	s.billing = nil
+	s.mu.Unlock()
 	quote, err := PreFreezeQuote(db, cal, next.Vendor, modelName, next.MultiplierMilli, estInput, maxOut, searchCap, fetchCap, freezeAt)
 	if err != nil {
 		common.SysError(common.LogText("marketplace: re-freeze quote: %s", err.Error()))
 		s.releaseSlot()
+		if tookProbe {
+			selector.Breaker.ReleaseProbe(next.ID)
+		}
 		return nil, types.NewError(errors.New("marketplace: no covering price for this request"), types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest), types.ErrOptionWithSkipRetry())
 	}
 	session, err := NewBillingSession(db, int64(s.buyerUserID), quote.TotalDebit)
 	if errors.Is(err, ErrInsufficientBalance) {
 		s.releaseSlot()
+		if tookProbe {
+			selector.Breaker.ReleaseProbe(next.ID)
+		}
 		return nil, types.NewOpenAIError(ErrInsufficientBalance, types.ErrorCodeInsufficientUserQuota, http.StatusPaymentRequired, types.ErrOptionWithSkipRetry())
 	}
 	if err != nil {
 		common.SysError(common.LogText("marketplace: re-freeze session: %s", err.Error()))
 		s.releaseSlot()
+		if tookProbe {
+			selector.Breaker.ReleaseProbe(next.ID)
+		}
 		return nil, types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 	}
 	info.Billing = session
+	s.mu.Lock()
+	s.billing = session
+	s.mu.Unlock()
 
 	channel, err := lookupRelayChannel(next.ChannelID)
 	if err != nil {
 		common.SysError(common.LogText("marketplace: load listing channel %d: %s", next.ChannelID, err.Error()))
+		session.Refund(c)
+		info.Billing = nil
 		s.releaseSlot()
+		if tookProbe {
+			selector.Breaker.ReleaseProbe(next.ID)
+		}
 		return nil, types.NewOpenAIError(ErrNoListingAvailable, types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable)
 	}
 	if apiErr := setupFn(c, channel, info.OriginModelName); apiErr != nil {
+		session.Refund(c)
+		info.Billing = nil
+		s.releaseSlot()
+		if tookProbe {
+			selector.Breaker.ReleaseProbe(next.ID)
+		}
 		return nil, apiErr
 	}
 
@@ -731,6 +1022,9 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 	s.realKey = realKey
 	s.preFreeze = quote
 	s.mu.Unlock()
+	if tookProbe {
+		s.takeProbe(next.ID)
+	}
 	if switched {
 		s.addHopForListing(HopEventSwitch, "", next.ID)
 	} else {
@@ -755,6 +1049,23 @@ func MayRetry(c *gin.Context, apiErr *types.NewAPIError) bool {
 		return true
 	}
 	return !s.inPlaceRetried && isTransientUpstreamError(apiErr)
+}
+
+// marketplaceRetryBudget is the number of retries a marketplace request may
+// consume: two listing switches plus one in-place retry (§3.7). It is a
+// package constant on purpose — common.RetryTimes is a mutable global that
+// SyncOptions periodically overwrites from the options table, so relying on it
+// would silently disable switching when an operator saved RetryTimes=0 (M2).
+const marketplaceRetryBudget = maxListingHops + 1
+
+// RetryBudget returns the retry budget the relay loop and retry policy must
+// use. Marketplace requests always get the package budget, independent of the
+// mutable upstream setting; every other request keeps the upstream value.
+func RetryBudget(c *gin.Context, upstream int) int {
+	if CurrentRelaySession(c) == nil {
+		return upstream
+	}
+	return marketplaceRetryBudget
 }
 
 // isTransientUpstreamError implements §3.7's 瞬时失败: timeouts and 5xx
@@ -897,25 +1208,186 @@ func StripInboundServerTools(c *gin.Context) {
 // ---------------------------------------------------------------------------
 
 // RelayFirstByteTimeout is the §3.7 first-byte timeout for marketplace
-// upstream calls; a timeout switches to the next listing (counted in the
-// retry budget).
+// upstream calls. "First byte" is the first payload the client can use — the
+// first SSE `data:` frame for a stream or the first non-whitespace body byte
+// for a non-stream response — not the response headers (M1). A vendored
+// upstream that sends headers and then stalls must switch listings.
 const RelayFirstByteTimeout = 20 * time.Second
+
+// RelayHeaderTimeout is how long the marketplace client waits for upstream
+// response headers before giving up. It is deliberately longer than the
+// first-byte timeout: a non-streaming upstream may legitimately spend a long
+// time generating before it sends anything at all, and only the payload
+// timeout then bounds the wait (M1).
+const RelayHeaderTimeout = 60 * time.Second
 
 // relayHTTPClient is the shared marketplace relay client: the §3.11 egress
 // guard on every dial (whitelist + per-IP validation, same dialer as
-// EgressHTTPClient) with the §3.7 20s response-header timeout instead of the
-// verification client's 30s. No proxy is honored — a proxy would bypass the
-// dial-time IP validation.
+// EgressHTTPClient), a long header timeout and the §3.7 first-data-block
+// timeout enforced on the response body (M1). No proxy is honored — a proxy
+// would bypass the dial-time IP validation.
 var relayHTTPClient = &http.Client{
-	Transport: &http.Transport{
-		DialContext:           egressDial,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: RelayFirstByteTimeout,
-		ExpectContinueTimeout: time.Second,
+	Transport: &firstByteTransport{
+		base: &http.Transport{
+			DialContext:           egressDial,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: RelayHeaderTimeout,
+			ExpectContinueTimeout: time.Second,
+		},
+		timeout: RelayFirstByteTimeout,
 	},
+}
+
+// ErrRelayFirstByteTimeout marks an upstream that produced response headers
+// but no usable payload within RelayFirstByteTimeout. It is a transient,
+// retryable failure (§3.7).
+var ErrRelayFirstByteTimeout = errors.New("marketplace: upstream first byte timeout")
+
+// firstByteTransport wraps a RoundTripper and enforces the first-data-block
+// timeout on the response body (M1). Headers are governed by the underlying
+// transport's ResponseHeaderTimeout.
+type firstByteTransport struct {
+	base    http.RoundTripper
+	timeout time.Duration
+}
+
+func (t *firstByteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	timeout := t.timeout
+	if timeout <= 0 {
+		timeout = RelayFirstByteTimeout
+	}
+	ctx, cancel := context.WithCancel(req.Context())
+	resp, err := t.base.RoundTrip(req.WithContext(ctx))
+	if err != nil {
+		cancel()
+		return resp, err
+	}
+	if resp == nil || resp.Body == nil {
+		cancel()
+		return resp, nil
+	}
+	streaming := strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")
+	resp.Body = &firstByteBody{
+		rc:        resp.Body,
+		cancel:    cancel,
+		timeout:   timeout,
+		streaming: streaming,
+	}
+	return resp, nil
+}
+
+// firstByteBody enforces the first-data-block timeout lazily from the first
+// Read. It ignores SSE keep-alive comment lines (`: keep-alive`) and
+// whitespace-only non-stream bodies, matching the M1 definition of a usable
+// first byte.
+type firstByteBody struct {
+	rc        io.ReadCloser
+	cancel    context.CancelFunc
+	timeout   time.Duration
+	streaming bool
+
+	mu       sync.Mutex
+	started  bool
+	seen     bool
+	timedOut bool
+	timer    *time.Timer
+	// pending holds an incomplete SSE line between Reads.
+	pending []byte
+}
+
+func (b *firstByteBody) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	if !b.started {
+		b.started = true
+		b.timer = time.AfterFunc(b.timeout, func() {
+			b.mu.Lock()
+			if b.seen {
+				b.mu.Unlock()
+				return
+			}
+			b.timedOut = true
+			b.mu.Unlock()
+			b.cancel()
+		})
+	}
+	b.mu.Unlock()
+
+	n, err := b.rc.Read(p)
+	if n > 0 {
+		if b.streaming {
+			b.scanSSE(p[:n])
+		} else if containsNonSpace(p[:n]) {
+			b.markSeen()
+		}
+	}
+	if err != nil {
+		b.mu.Lock()
+		timedOut, seen := b.timedOut, b.seen
+		b.mu.Unlock()
+		if timedOut && !seen {
+			err = ErrRelayFirstByteTimeout
+		}
+	}
+	return n, err
+}
+
+// scanSSE consumes bytes into pending and marks the body as started once a
+// non-empty `data:` line appears.
+func (b *firstByteBody) scanSSE(chunk []byte) {
+	b.mu.Lock()
+	b.pending = append(b.pending, chunk...)
+	for {
+		idx := bytes.IndexByte(b.pending, '\n')
+		if idx < 0 {
+			break
+		}
+		line := strings.TrimSpace(string(b.pending[:idx]))
+		b.pending = b.pending[idx+1:]
+		if strings.HasPrefix(line, "data:") && strings.TrimSpace(line[len("data:"):]) != "" {
+			b.seen = true
+			break
+		}
+	}
+	seen := b.seen
+	if seen && b.timer != nil {
+		b.timer.Stop()
+	}
+	b.mu.Unlock()
+}
+
+func (b *firstByteBody) markSeen() {
+	b.mu.Lock()
+	if !b.seen {
+		b.seen = true
+		if b.timer != nil {
+			b.timer.Stop()
+		}
+	}
+	b.mu.Unlock()
+}
+
+func containsNonSpace(p []byte) bool {
+	for _, c := range p {
+		switch c {
+		case ' ', '\t', '\r', '\n':
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+func (b *firstByteBody) Close() error {
+	b.mu.Lock()
+	if b.timer != nil {
+		b.timer.Stop()
+	}
+	b.mu.Unlock()
+	b.cancel()
+	return b.rc.Close()
 }
 
 // relayHTTPClientMu guards relayHTTPClient so integration tests can swap it

@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 // marketplaceUsage is the normalized token breakdown of one upstream
@@ -39,6 +40,10 @@ type marketplaceUsage struct {
 // standalone. A nil usage means the upstream returned none (truncated stream,
 // empty response): the prompt is estimated from the pre-freeze estimate and
 // the output is 0, which the caller treats as a failed request (§3.7).
+//
+// Anthropic semantics report input_tokens EXCLUDING cache_read and
+// cache_creation (H4): the subtraction below must not run for them, or a
+// cache-heavy /v1/messages request would be billed for almost no input.
 func extractMarketplaceUsage(info *relaycommon.RelayInfo, usage *dto.Usage) marketplaceUsage {
 	if usage == nil {
 		estimated := int64(0)
@@ -54,7 +59,19 @@ func extractMarketplaceUsage(info *relaycommon.RelayInfo, usage *dto.Usage) mark
 		cacheRead = int64(usage.PromptCacheHitTokens)
 	}
 	cacheWrite := int64(usage.PromptTokensDetails.CacheCreationTokensTotal())
-	input := int64(usage.PromptTokens) - cacheRead - cacheWrite
+	anthropic := usage.UsageSemantic == "anthropic" ||
+		(usage.UsageSemantic == "" && info != nil && info.GetFinalRequestRelayFormat() == types.RelayFormatClaude)
+	var input int64
+	if anthropic {
+		// PromptTokens already excludes both cache counts for anthropic. Only
+		// fall back to InputTokens when it is the plain total (no cache data).
+		input = int64(usage.PromptTokens)
+		if input == 0 && cacheRead == 0 && cacheWrite == 0 {
+			input = int64(usage.InputTokens)
+		}
+	} else {
+		input = int64(usage.PromptTokens) - cacheRead - cacheWrite
+	}
 	if input < 0 {
 		input = 0
 	}
@@ -183,41 +200,127 @@ func SettleRelay(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage
 		total = quote.TotalDebit
 	}
 
+	// H3: the pre-freeze reconciliation (users.quota), the ledger rows and the
+	// mp_requests row all commit in ONE transaction. Any error rolls all three
+	// back; the upstream BillingSession is settled inside the same tx via
+	// SettleAtomic and reports what was actually collected (charged ≤ total
+	// when the buyer's balance could not cover the settle top-up).
+	charged := total
 	if db != nil {
-		s.writeRecordOnce(db, u, searchCount, fetchCount, quote, total, status)
-		if status == RequestSuccess && total > 0 {
-			settlement := Settlement{
-				RequestID:       s.RequestID(),
-				BuyerUserID:     int64(s.buyerUserID),
-				SellerUserID:    listing.SellerID,
-				ListingID:       listing.ID,
-				PriceVersion:    quote.PriceVersion,
-				MultiplierMilli: listing.MultiplierMilli,
-				TokenDebit:      quote.TokenDebit,
-				ToolDebit:       quote.ToolDebit,
-				Now:             time.Now(),
-			}
-			if err := PostSettlement(db, settlement); err != nil && !errors.Is(err, ErrSettlementConflict) {
-				common.SysError(common.LogText("marketplace: post settlement (request %s): %s", s.RequestID(), err.Error()))
-			}
+		var settleErr error
+		charged, settleErr = s.settleAtomic(db, u, searchCount, fetchCount, quote, total, status, listing)
+		if settleErr != nil {
+			common.SysError(common.LogText("marketplace: settle transaction (request %s): %s", s.RequestID(), settleErr.Error()))
+			// The transaction rolled back. Leave the upstream seam to settle the
+			// full amount so the buyer is not undercharged, and keep the error in
+			// the logs (the retry chain already carries the failure event).
+			charged = total
+		}
+		if charged <= 0 {
+			status = RequestFailed
 		}
 	}
 
 	// A completed attempt (even a zero-output one) is not a 429: hand the
 	// breaker's half-open probe back (§3.5).
+	s.handBackProbe(true)
 	DefaultSelector().Breaker.RecordSuccess(listing.ID)
 	s.releaseSlot()
 
 	s.mu.Lock()
-	s.settledMicro = total
+	s.settledMicro = charged
 	s.settled = true
 	s.mu.Unlock()
-	v, err := microToInt(total)
+	v, err := microToInt(charged)
 	if err != nil {
 		common.SysError(common.LogText("marketplace: settle amount out of range (request %s)", s.RequestID()))
 		return 0
 	}
 	return v
+}
+
+// settleAtomic is the single-transaction settlement of H3: settle the
+// pre-freeze (SettleAtomic), write the mp_requests row and post the ledger
+// rows, all against tx. It returns the amount actually collected: charged == 0
+// means nothing could be collected (the whole pre-freeze was refunded and the
+// request is recorded as failed), while 0 < charged < total means the buyer's
+// balance covered only part of the settle top-up — the ledger books charged
+// and the shortfall is recorded in the retry chain.
+func (s *RelaySession) settleAtomic(db *gorm.DB, u marketplaceUsage, searchCount, fetchCount int64, quote QuoteResult, total Micro, status string, listing Listing) (Micro, error) {
+	charged := total
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if status != RequestSuccess || total <= 0 {
+			// §3.7 失败不扣费: refund the whole pre-freeze (in this transaction)
+			// and record the failure. SettleBilling's later Settle(0) replays the
+			// recorded charge and moves no money.
+			if s.billing != nil {
+				if _, err := s.billing.SettleAtomic(tx, 0); err != nil {
+					return err
+				}
+			}
+			return s.insertRecord(tx, u, searchCount, fetchCount, quote, 0, 0, 0, RequestFailed)
+		}
+		if s.billing != nil {
+			c, err := s.billing.SettleAtomic(tx, total)
+			if err != nil {
+				return err
+			}
+			charged = c
+		}
+		if charged <= 0 {
+			// Nothing could be collected: SettleAtomic already refunded the whole
+			// pre-freeze, so this request is a failure (§3.7).
+			s.addHop(HopEventSettleShortfall, fmt.Sprintf("actual=%d charged=0", int64(total)))
+			return s.insertRecord(tx, u, searchCount, fetchCount, quote, 0, 0, 0, RequestFailed)
+		}
+		tokenDebit, toolDebit := quote.TokenDebit, quote.ToolDebit
+		if charged < total {
+			s.addHop(HopEventSettleShortfall, fmt.Sprintf("actual=%d charged=%d", int64(total), int64(charged)))
+			tokenDebit, toolDebit = scaleDebits(charged, total, tokenDebit, toolDebit)
+		}
+		if err := s.insertRecord(tx, u, searchCount, fetchCount, quote, tokenDebit, toolDebit, charged, RequestSuccess); err != nil {
+			return err
+		}
+		settlement := Settlement{
+			RequestID:       s.RequestID(),
+			BuyerUserID:     int64(s.buyerUserID),
+			SellerUserID:    listing.SellerID,
+			ListingID:       listing.ID,
+			PriceVersion:    quote.PriceVersion,
+			MultiplierMilli: listing.MultiplierMilli,
+			TokenDebit:      tokenDebit,
+			ToolDebit:       toolDebit,
+			Now:             time.Now(),
+		}
+		if err := PostSettlement(tx, settlement); err != nil && !errors.Is(err, ErrSettlementConflict) {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return charged, err
+	}
+	s.mu.Lock()
+	s.recordWritten = true
+	s.mu.Unlock()
+	return charged, nil
+}
+
+// scaleDebits splits the actually collected amount across the token and tool
+// charges so the ledger books exactly what the buyer paid: the tool part is
+// scaled proportionally (rounded up) and the token part takes the remainder.
+func scaleDebits(charged, total, tokenDebit, toolDebit Micro) (Micro, Micro) {
+	if charged >= total || total <= 0 {
+		return tokenDebit, toolDebit
+	}
+	if toolDebit <= 0 {
+		return charged, 0
+	}
+	scaledTool, err := mulDivCeil(int64(toolDebit), int64(charged), int64(total))
+	if err != nil || scaledTool > charged {
+		scaledTool = charged
+	}
+	return charged - scaledTool, scaledTool
 }
 
 // streamEndReasonDetail renders the stream end reason for the retry-chain
@@ -250,22 +353,36 @@ func FailRelay(c *gin.Context, info *relaycommon.RelayInfo) {
 	if db != nil {
 		s.writeRecordOnce(db, marketplaceUsage{}, 0, 0, QuoteResult{}, 0, RequestFailed)
 	}
+	// H2: a failed attempt never keeps the half-open probe. A 429 has already
+	// reset the breaker via ProcessRelayChannelError (releaseProbe then no-ops),
+	// so handing back unconditionally is safe for every end state.
+	s.handBackProbe(false)
 	s.releaseSlot()
 }
 
-// writeRecordOnce persists the single mp_requests row of the request (§3.8).
-// It is idempotent: the first writer wins, later calls (a settle racing a
-// failure path, or a retried settlement) are no-ops; the request_id unique
-// index is the database backstop.
+// writeRecordOnce persists the single mp_requests row of the request (§3.8) at
+// most once per session. It is idempotent: the request_id unique index is the
+// database backstop for a settle racing a failure path.
 func (s *RelaySession) writeRecordOnce(db *gorm.DB, u marketplaceUsage, searchCount, fetchCount int64, quote QuoteResult, total Micro, status string) {
 	s.mu.Lock()
 	if s.recordWritten {
 		s.mu.Unlock()
 		return
 	}
+	s.mu.Unlock()
+	if err := s.insertRecord(db, u, searchCount, fetchCount, quote, quote.TokenDebit, quote.ToolDebit, total, status); err != nil {
+		common.SysError(common.LogText("marketplace: write request record (request %s): %s", s.RequestID(), err.Error()))
+		return
+	}
+	s.mu.Lock()
 	s.recordWritten = true
 	s.mu.Unlock()
+}
 
+// insertRecord writes the request's mp_requests row through db (which may be a
+// transaction). Conflict with the request_id unique index is ignored: the
+// first writer wins.
+func (s *RelaySession) insertRecord(db *gorm.DB, u marketplaceUsage, searchCount, fetchCount int64, quote QuoteResult, tokenDebit, toolDebit, total Micro, status string) error {
 	fee, credit, err := SplitPlatformFee(total)
 	if err != nil {
 		fee, credit = 0, 0
@@ -309,8 +426,8 @@ func (s *RelaySession) writeRecordOnce(db *gorm.DB, u marketplaceUsage, searchCo
 		CacheWriteTokens:  u.cacheWrite,
 		SearchCount:       searchCount,
 		FetchCount:        fetchCount,
-		TokenDebitMicro:   int64(quote.TokenDebit),
-		ToolDebitMicro:    int64(quote.ToolDebit),
+		TokenDebitMicro:   int64(tokenDebit),
+		ToolDebitMicro:    int64(toolDebit),
 		TotalDebitMicro:   int64(total),
 		PlatformFeeMicro:  int64(fee),
 		SellerCreditMicro: int64(credit),
@@ -319,7 +436,5 @@ func (s *RelaySession) writeRecordOnce(db *gorm.DB, u marketplaceUsage, searchCo
 		Status:            status,
 		RetryChain:        string(hops),
 	}
-	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rec).Error; err != nil {
-		common.SysError(common.LogText("marketplace: write request record (request %s): %s", s.RequestID(), err.Error()))
-	}
+	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rec).Error
 }

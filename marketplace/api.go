@@ -18,6 +18,7 @@ import (
 func RegisterRoutes(g *gin.RouterGroup) {
 	g.GET("/marketplace/status", getMarketplaceStatus)
 	RegisterSquareRoutes(g.Group("/marketplace"))
+	RegisterPublicStatsRoutes(g.Group("/marketplace"))
 	// MP-HOOK: 分享者自助 API (§5 阶段 6). The caller builds a UserAuth group
 	// (this package cannot import middleware) and passes it to
 	// RegisterSellerRoutes — see router/api-router.go.

@@ -30,7 +30,7 @@ func newPayoutSeller(t *testing.T, db *gorm.DB, sellerID, balanceMicro int64) {
 	require.NoError(t, db.Create(&LedgerEntry{
 		RequestID:   fmt.Sprintf("payout-seed-%d", sellerID),
 		EntryType:   EntrySellerCredit,
-		Account:     UserAccount(sellerID),
+		Account:     SellerAccount(sellerID),
 		AmountMicro: balanceMicro,
 		Status:      LedgerAvailable,
 		CreatedAt:   payoutTestNow,
@@ -43,6 +43,42 @@ func countPayouts(t *testing.T, db *gorm.DB, sellerID int64) int64 {
 	var n int64
 	require.NoError(t, db.Model(&Payout{}).Where("seller_id = ?", sellerID).Count(&n).Error)
 	return n
+}
+
+// TestAvailableBalanceExcludesBuyerSpend pins the H5 withdrawable rule: the
+// balance comes from seller:<id> only, so a seller's own marketplace purchases
+// never reduce what they can withdraw.
+func TestAvailableBalanceExcludesBuyerSpend(t *testing.T) {
+	db := newTestDB(t)
+	migrateAll(t, db)
+
+	const seller = int64(10012)
+	income := baseSettlement()
+	income.BuyerUserID = 10011
+	income.SellerUserID = seller
+	require.NoError(t, PostSettlement(db, income))
+	_, err := PromoteAvailable(db, income.Now.Add(DefaultMaturity))
+	require.NoError(t, err)
+
+	before, err := AvailableBalance(db, seller)
+	require.NoError(t, err)
+	assert.Equal(t, Micro(wantCredit), before)
+
+	spend := baseSettlement()
+	spend.RequestID = "available-spend"
+	spend.BuyerUserID = seller
+	spend.SellerUserID = 10013
+	spend.TokenDebit = 30_000_000
+	spend.ToolDebit = 0
+	require.NoError(t, PostSettlement(db, spend))
+
+	after, err := AvailableBalance(db, seller)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+
+	sellerAvail, _, err := AccountBalance(db, SellerAccount(seller))
+	require.NoError(t, err)
+	assert.Equal(t, Micro(wantCredit), sellerAvail, "buyer spending is booked to buyer:<id> only")
 }
 
 func TestPayoutRequestBasic(t *testing.T) {

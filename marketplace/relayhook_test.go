@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -313,11 +314,81 @@ func TestPrepareBillingDefaultMaxOutputClampedToBalance(t *testing.T) {
 	s := CurrentRelaySession(c)
 	assert.Less(t, s.maxOutputTokens, int64(64<<10))
 	assert.LessOrEqual(t, info.Billing.GetPreConsumedQuota(), 1000)
+	// H3: the affordable cap is written back into the outbound request so the
+	// upstream cannot generate more than the buyer can pay for.
+	req := info.Request.(*dto.GeneralOpenAIRequest)
+	require.NotNil(t, req.MaxTokens)
+	assert.Equal(t, uint(s.maxOutputTokens), *req.MaxTokens)
 
 	// The clamp used the listing's actual output price at the freeze instant.
 	pb, perr := PriceAt(f.db, "deepseek-flash", l.Vendor, f.cal.TierAt(s.FreezeAt()), s.FreezeAt())
 	require.NoError(t, perr)
 	assert.Greater(t, pb.OutputMicroPerMTok, int64(0))
+}
+
+// H3: a balance that cannot cover even the estimated input is a 402, not a
+// pass-through with a zero output cap.
+func TestPrepareBillingBalanceBelowInput402(t *testing.T) {
+	f := newRelayFixture(t, 1) // cannot cover any non-trivial input
+	f.addListing(t, 500)
+	f.addKeyModel(t, 77, "deepseek-flash", 0)
+	c := f.newRelayContext(t, []byte(`{"model":"deepseek-flash"}`))
+	_, handled, _, err := BeginDistribute(c, "deepseek-flash")
+	require.NoError(t, err)
+	require.True(t, handled)
+
+	info := newChatInfo("deepseek-flash", nil) // no max_tokens → affordableMaxOutput path
+	apiErr := PrepareBilling(c, info, stubEstimator(100_000))
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusPaymentRequired, apiErr.StatusCode)
+	assert.Nil(t, info.Billing)
+	assert.Equal(t, 1, buyerQuota(t, int64(f.buyerID)))
+}
+
+// H3: the old remaining*1e6*1000 arithmetic overflowed int64 above ~¥9,223 and
+// clamped the output budget to zero. A large balance must still produce a
+// positive affordable output.
+func TestAffordableMaxOutputLargeBalanceNoOverflow(t *testing.T) {
+	f := newRelayFixture(t, 20_000_000_000) // ¥20,000
+	l := f.addListing(t, 500)
+	s := &RelaySession{
+		buyerUserID:        f.buyerID,
+		model:              "deepseek-flash",
+		listing:            l,
+		freezeAt:           time.Now(),
+		maxMultiplierMilli: 500,
+	}
+	out, err := s.affordableMaxOutput(f.db, f.cal, s.freezeAt, 10, 0, 0)
+	require.NoError(t, err)
+	assert.Equal(t, ModelMaxOutputTokens("deepseek-flash"), out,
+		"a large balance can afford the model's full output")
+}
+
+// H3: the affordable max-output is written into whichever v1 protocol request
+// carries it.
+func TestApplyMaxOutputWritesBack(t *testing.T) {
+	s := &RelaySession{}
+	maxCompletion := uint(7)
+	chat := &dto.GeneralOpenAIRequest{MaxCompletionTokens: &maxCompletion}
+	assert.True(t, s.applyMaxOutput(&relaycommon.RelayInfo{Request: chat}, 1234))
+	assert.Equal(t, uint(1234), *chat.MaxCompletionTokens, "the field the client used is rewritten")
+
+	plainChat := &dto.GeneralOpenAIRequest{}
+	assert.True(t, s.applyMaxOutput(&relaycommon.RelayInfo{Request: plainChat}, 1234))
+	require.NotNil(t, plainChat.MaxTokens)
+	assert.Equal(t, uint(1234), *plainChat.MaxTokens)
+
+	responses := &dto.OpenAIResponsesRequest{}
+	assert.True(t, s.applyMaxOutput(&relaycommon.RelayInfo{Request: responses}, 1234))
+	require.NotNil(t, responses.MaxOutputTokens)
+	assert.Equal(t, uint(1234), *responses.MaxOutputTokens)
+
+	claude := &dto.ClaudeRequest{}
+	assert.True(t, s.applyMaxOutput(&relaycommon.RelayInfo{Request: claude}, 1234))
+	require.NotNil(t, claude.MaxTokens)
+	assert.Equal(t, uint(1234), *claude.MaxTokens)
+
+	assert.False(t, s.applyMaxOutput(&relaycommon.RelayInfo{}, 1234), "unknown request types report failure so the hop event is recorded")
 }
 
 func TestPrepareBillingSampledEstimateForLargeBody(t *testing.T) {
@@ -496,7 +567,58 @@ func TestMayRetryHopBudget(t *testing.T) {
 	assert.False(t, MayRetry(c, apiErrorWithStatus(500))) // budget exhausted
 }
 
-// --- ProcessRelayChannelError -------------------------------------------------
+// M2: the marketplace retry budget is a package constant; toggling the mutable
+// upstream global must not change it.
+func TestRetryBudgetIgnoresGlobalRetryTimes(t *testing.T) {
+	old := common.RetryTimes
+	common.RetryTimes = 0
+	t.Cleanup(func() { common.RetryTimes = old })
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	assert.Equal(t, 0, RetryBudget(c, common.RetryTimes), "non-marketplace requests keep the upstream value")
+
+	c.Set(relaySessionContextKey, &RelaySession{})
+	assert.Equal(t, marketplaceRetryBudget, RetryBudget(c, common.RetryTimes))
+	assert.Equal(t, 3, RetryBudget(c, common.RetryTimes), "2 switches + 1 in-place retry (§3.7)")
+}
+
+// H2: a half-open probe taken by an attempt that then fails with a non-429
+// error (5xx/timeout/early exit) must be handed back, or the listing would stay
+// blacklisted until the process restarts.
+func TestProbeHandedBackOnNon429Failure(t *testing.T) {
+	f := newRelayFixture(t, 10_000_000)
+	l := f.addListing(t, 500)
+	now := time.Now()
+
+	// Put the breaker past its break window so it is half-open.
+	f.selector.Breaker.Record429(l.ID, now.Add(-CircuitBreakDuration-time.Second))
+
+	s := &RelaySession{
+		requestID:      "req_probe_finish",
+		listing:        l,
+		tookProbe:      true,
+		probeListingID: l.ID,
+	}
+	s.finishAttempt(apiErrorWithStatus(http.StatusInternalServerError))
+	assert.False(t, s.tookProbe, "finishAttempt hands the probe back")
+	require.True(t, f.selector.Breaker.Allow(l.ID, now),
+		"the listing admits the next probe instead of staying blacklisted (H2)")
+
+	// The all-failed path does the same.
+	s2 := &RelaySession{
+		requestID:          "req_probe_fail",
+		listing:            l,
+		tookProbe:          true,
+		probeListingID:     l.ID,
+		buyerUserID:        f.buyerID,
+		maxMultiplierMilli: 500,
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set(relaySessionContextKey, s2)
+	FailRelay(c, nil)
+	assert.False(t, s2.tookProbe, "FailRelay hands the probe back")
+	require.True(t, f.selector.Breaker.Allow(l.ID, now), "still probeable after the failed attempt")
+}
 
 func TestProcessRelayChannelError429Breaks(t *testing.T) {
 	f := newRelayFixture(t, 10_000_000)
@@ -594,9 +716,104 @@ func TestStripInboundServerToolsNoSession(t *testing.T) {
 func TestRelayHTTPClientTimeout(t *testing.T) {
 	client := RelayHTTPClient()
 	require.NotNil(t, client)
-	transport, ok := client.Transport.(*http.Transport)
+	transport, ok := client.Transport.(*firstByteTransport)
+	require.True(t, ok, "marketplace client must enforce the first-data-block timeout on the body (M1)")
+	base, ok := transport.base.(*http.Transport)
 	require.True(t, ok)
-	assert.Equal(t, 20*time.Second, transport.ResponseHeaderTimeout)
+	assert.Equal(t, RelayHeaderTimeout, base.ResponseHeaderTimeout,
+		"headers get the long timeout: a non-stream upstream may generate before sending anything (M1)")
+	assert.Equal(t, RelayFirstByteTimeout, transport.timeout,
+		"the 20s budget applies to the first usable data block, not the headers (M1)")
+}
+
+// slowStreamingUpstream sends response headers immediately and then only SSE
+// keep-alive comments: the M1 first-data-block reader must time out and hand
+// back a retryable error instead of waiting forever.
+func TestFirstByteTransportTimesOutOnKeepAliveOnly(t *testing.T) {
+	done := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fl, _ := w.(http.Flusher)
+		if fl != nil {
+			fl.Flush()
+		}
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if _, err := io.WriteString(w, ": keep-alive\n\n"); err != nil {
+					return
+				}
+				if fl != nil {
+					fl.Flush()
+				}
+			}
+		}
+	}))
+	defer server.Close()
+	defer close(done)
+
+	client := &http.Client{Transport: &firstByteTransport{base: http.DefaultTransport, timeout: 120 * time.Millisecond}}
+	resp, err := client.Get(server.URL)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	_, err = io.ReadAll(resp.Body)
+	assert.ErrorIs(t, err, ErrRelayFirstByteTimeout)
+}
+
+// A normal stream whose first data frame arrives inside the budget must not be
+// affected by the first-byte wrapper, keep-alives included.
+func TestFirstByteTransportAllowsNormalStream(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fl, _ := w.(http.Flusher)
+		if fl != nil {
+			fl.Flush()
+		}
+		_, _ = io.WriteString(w, ": keep-alive\n\n")
+		if fl != nil {
+			fl.Flush()
+		}
+		time.Sleep(40 * time.Millisecond)
+		_, _ = io.WriteString(w, "data: hello\n\n")
+		if fl != nil {
+			fl.Flush()
+		}
+	}))
+	defer server.Close()
+
+	client := &http.Client{Transport: &firstByteTransport{base: http.DefaultTransport, timeout: 500 * time.Millisecond}}
+	resp, err := client.Get(server.URL)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "data: hello")
+}
+
+// A non-streaming upstream may spend most of the header budget generating and
+// then send the JSON body in one go; the body reader must accept it.
+func TestFirstByteTransportAllowsDelayedJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, "  \n")
+		time.Sleep(40 * time.Millisecond)
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer server.Close()
+
+	client := &http.Client{Transport: &firstByteTransport{base: http.DefaultTransport, timeout: 500 * time.Millisecond}}
+	resp, err := client.Get(server.URL)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `"ok":true`)
 }
 
 // --- Init ------------------------------------------------------------------------

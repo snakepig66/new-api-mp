@@ -27,17 +27,27 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 )
 
-// RegisterAdminRoutes is the exported one-line wrapper the router seam calls;
-// the marketplace package cannot import middleware (import cycle), so the
-// AdminAuth group is built by the caller and passed in.
-func RegisterAdminRoutes(g *gin.RouterGroup) { registerAdminRoutes(g) }
+// RegisterAdminRootRoutes is the exported seam for the marketplace admin API.
+// The sensitive actions (提现审批 / 冲正 / 代号反查) require Root privileges
+// (L5): the caller must mount this group with middleware.RootAuth(). The
+// handlers additionally re-check the role from the context as defense in depth,
+// so accidentally wiring AdminAuth still rejects non-root administrators.
+func RegisterAdminRootRoutes(g *gin.RouterGroup) { registerAdminRootRoutes(g) }
 
-// registerAdminRoutes mounts the §5 阶段 6 admin endpoints on g. g is assumed
-// to already carry middleware.AdminAuth() (and to be gated on Enabled() by the
-// caller). Route wiring into RegisterRoutes is done centrally in api.go.
-func registerAdminRoutes(g *gin.RouterGroup) {
+// RegisterAdminRoutes is the legacy name kept so the current router seam keeps
+// compiling during the parallel refactor. New wiring should call
+// RegisterAdminRootRoutes on a RootAuth group.
+//
+// Deprecated: use RegisterAdminRootRoutes.
+func RegisterAdminRoutes(g *gin.RouterGroup) { registerAdminRootRoutes(g) }
+
+// registerAdminRootRoutes mounts the §5 阶段 6 admin endpoints on g. Route
+// wiring into RegisterRoutes is done centrally in api.go.
+func registerAdminRootRoutes(g *gin.RouterGroup) {
 	g.POST("/admin/prices", adminPostPrice)
 	g.GET("/admin/prices", adminListPrices)
+	g.POST("/admin/per-call-prices", adminPostPerCallPrice)
+	g.GET("/admin/per-call-prices", adminListPerCallPrices)
 	g.POST("/admin/holidays", adminPostHolidays)
 	g.GET("/admin/holidays", adminListHolidays)
 	g.GET("/admin/listings", adminListListings)
@@ -49,6 +59,21 @@ func registerAdminRoutes(g *gin.RouterGroup) {
 	g.POST("/admin/payouts/:id/mark-paid", adminMarkPayoutPaid)
 	g.POST("/admin/reverse", adminReverse)
 	g.GET("/admin/deanon", adminDeanon)
+}
+
+// adminRequireRoot is the L5 defense-in-depth gate for 提现审批 / 冲正 /
+// 代号反查. RootAuth already enforces it at the group level; this check keeps
+// the endpoints safe if they are ever mounted on an AdminAuth group.
+func adminRequireRoot(c *gin.Context) bool {
+	if common.GetContextKeyInt(c, constant.ContextKeyUserId) <= 0 {
+		common.ApiErrorStatus(c, http.StatusUnauthorized, errors.New("unauthorized"))
+		return false
+	}
+	if c.GetInt("role") < common.RoleRootUser {
+		common.ApiErrorStatus(c, http.StatusForbidden, errors.New("root privileges required"))
+		return false
+	}
+	return true
 }
 
 // adminDB returns the marketplace primary database handle, answering 500 when
@@ -123,16 +148,28 @@ func adminPostPrice(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("model, vendor and tier are required"))
 		return
 	}
+	// M11: the tier is an enum; an unknown value would silently price nothing.
+	if req.Tier != TierPeak && req.Tier != TierOffpeak && req.Tier != TierFlat {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("tier must be peak, offpeak or flat"))
+		return
+	}
 	if req.InputMicroPerMTok < 0 || req.OutputMicroPerMTok < 0 ||
 		req.CacheReadMicroPerMTok < 0 || req.CacheWriteMicroPerMTok < 0 {
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("prices must be >= 0"))
 		return
 	}
-	effectiveAt := time.Now()
+	now := time.Now()
+	effectiveAt := now
 	if req.EffectiveAt != "" {
 		t, err := time.Parse(time.RFC3339, req.EffectiveAt)
 		if err != nil {
 			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("effective_at must be RFC3339"))
+			return
+		}
+		// M11/§3.3: a backdated version would split one request's pre-freeze
+		// and settlement across two price versions, so it is rejected.
+		if t.Before(now) {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("effective_at must not be earlier than now"))
 			return
 		}
 		effectiveAt = t
@@ -197,14 +234,136 @@ func adminListPrices(c *gin.Context) {
 }
 
 // ---------------------------------------------------------------------------
+// 按次价目 (§3.4): 后台维护 Search / Fetch 的官方单价, 同样只增不改.
+// ---------------------------------------------------------------------------
+
+// adminPerCallPriceRequest is the POST /admin/per-call-prices body. Prices
+// are 微元/次; version is optional and auto-incremented like token prices.
+type adminPerCallPriceRequest struct {
+	Vendor         string `json:"vendor"`
+	Item           string `json:"item"` // search / fetch
+	UnitPriceMicro int64  `json:"unit_price_micro"`
+	Version        int64  `json:"version"`
+	EffectiveAt    string `json:"effective_at"`
+}
+
+func nextPerCallVersion(db *gorm.DB, vendor, item string) (int64, error) {
+	var maxV *int64
+	if err := db.Model(&PerCallPrice{}).
+		Where("vendor = ? AND item = ?", vendor, item).
+		Select("COALESCE(MAX(version), 0)").Scan(&maxV).Error; err != nil {
+		return 0, err
+	}
+	if maxV == nil {
+		return 1, nil
+	}
+	return *maxV + 1, nil
+}
+
+// adminPostPerCallPrice serves POST /admin/per-call-prices (§3.4/§12 M11).
+func adminPostPerCallPrice(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	var req adminPerCallPriceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	if req.Vendor == "" {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("vendor is required"))
+		return
+	}
+	if req.Item != ToolItemSearch && req.Item != ToolItemFetch {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("item must be search or fetch"))
+		return
+	}
+	if req.UnitPriceMicro < 0 {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("unit_price_micro must be >= 0"))
+		return
+	}
+	now := time.Now()
+	effectiveAt := now
+	if req.EffectiveAt != "" {
+		t, err := time.Parse(time.RFC3339, req.EffectiveAt)
+		if err != nil {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("effective_at must be RFC3339"))
+			return
+		}
+		if t.Before(now) {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("effective_at must not be earlier than now"))
+			return
+		}
+		effectiveAt = t
+	}
+	version := req.Version
+	if version <= 0 {
+		next, err := nextPerCallVersion(db, req.Vendor, req.Item)
+		if err != nil {
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to assign per-call price version"))
+			return
+		}
+		version = next
+	}
+	var clash int64
+	if err := db.Model(&PerCallPrice{}).
+		Where("vendor = ? AND item = ? AND version = ?", req.Vendor, req.Item, version).
+		Count(&clash).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query per-call prices"))
+		return
+	}
+	if clash > 0 {
+		common.ApiErrorStatus(c, http.StatusConflict, errors.New("per-call price version already exists for this vendor/item"))
+		return
+	}
+	row := PerCallPrice{
+		Vendor:         req.Vendor,
+		Item:           req.Item,
+		Version:        version,
+		UnitPriceMicro: req.UnitPriceMicro,
+		EffectiveAt:    effectiveAt,
+	}
+	if err := db.Create(&row).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to create per-call price row"))
+		return
+	}
+	common.ApiSuccess(c, row)
+}
+
+// adminListPerCallPrices serves GET /admin/per-call-prices?vendor=&item=.
+func adminListPerCallPrices(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	q := db.Model(&PerCallPrice{})
+	if vendor := c.Query("vendor"); vendor != "" {
+		q = q.Where("vendor = ?", vendor)
+	}
+	if item := c.Query("item"); item != "" {
+		q = q.Where("item = ?", item)
+	}
+	var rows []PerCallPrice
+	if err := q.Order("vendor ASC").Order("item ASC").Order("version DESC").Find(&rows).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query per-call prices"))
+		return
+	}
+	common.ApiSuccess(c, rows)
+}
+
+// ---------------------------------------------------------------------------
 // 节假日 (§3.3): 后台按年导入 / 列表.
 // ---------------------------------------------------------------------------
 
 // adminPostHolidays serves POST /admin/holidays — the body is an array of
 // {"date":"YYYY-MM-DD","kind":"holiday|workday"} upserted via ImportHolidays.
+// M11: the in-process calendar is reloaded immediately so the new dates take
+// effect on the next request instead of waiting for the hourly job.
 func adminPostHolidays(c *gin.Context) {
-	db := adminDB(c)
+	db, cal := relayState()
 	if db == nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("marketplace is not initialized"))
 		return
 	}
 	var entries []Holiday
@@ -216,11 +375,47 @@ func adminPostHolidays(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
 		return
 	}
+	if cal == nil {
+		// relayState loads lazily; this branch is defensive.
+		loaded, err := LoadCalendar(db)
+		if err != nil {
+			common.SysError(common.LogText("marketplace: reload calendar after import: %s", err.Error()))
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("holidays imported but calendar reload failed"))
+			return
+		}
+		cal = loaded
+	}
+	if err := cal.Reload(db); err != nil {
+		common.SysError(common.LogText("marketplace: reload calendar after import: %s", err.Error()))
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("holidays imported but calendar reload failed"))
+		return
+	}
 	common.ApiSuccess(c, gin.H{"imported": len(entries)})
 }
 
+// nextCalendarYear returns the next year in Asia/Shanghai, the calendar the
+// holiday table is keyed on.
+func nextCalendarYear(now time.Time) int {
+	loc, err := time.LoadLocation(shanghaiTZ)
+	if err != nil {
+		return now.Year() + 1
+	}
+	return now.In(loc).Year() + 1
+}
+
+// holidayYearImported reports whether at least one date of the given year is
+// in mp_holidays.
+func holidayYearImported(db *gorm.DB, year int) (bool, error) {
+	var count int64
+	prefix := strconv.Itoa(year) + "%"
+	if err := db.Model(&Holiday{}).Where("date LIKE ?", prefix).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // adminListHolidays serves GET /admin/holidays?year= — the holiday calendar,
-// optionally filtered to one year (YYYY).
+// optionally filtered to one year (YYYY), plus the M11 明年日历导入告警 flag.
 func adminListHolidays(c *gin.Context) {
 	db := adminDB(c)
 	if db == nil {
@@ -239,7 +434,18 @@ func adminListHolidays(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query holidays"))
 		return
 	}
-	common.ApiSuccess(c, rows)
+	nextYear := nextCalendarYear(time.Now())
+	nextImported, err := holidayYearImported(db, nextYear)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query next year's holidays"))
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"holidays":           rows,
+		"year":               c.Query("year"),
+		"next_year":          nextYear,
+		"next_year_imported": nextImported,
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -368,11 +574,29 @@ func adminListPayouts(c *gin.Context) {
 	common.ApiSuccess(c, rows)
 }
 
+// adminPayoutSellerID loads the payout's owner for the L5 self-review check.
+func adminPayoutSellerID(c *gin.Context, db *gorm.DB, id int64) (int64, bool) {
+	var p Payout
+	if err := db.Select("id", "seller_id").Where("id = ?", id).Take(&p).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			common.ApiErrorStatus(c, http.StatusNotFound, errors.New("payout not found"))
+			return 0, false
+		}
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query payout"))
+		return 0, false
+	}
+	return p.SellerID, true
+}
+
 // adminPayoutAction runs one payout state transition with the reviewer id
-// taken from the admin session.
+// taken from the admin session. L5: root only, and an administrator may never
+// approve/reject their own payout.
 func adminPayoutAction(c *gin.Context, fn func(db *gorm.DB, payoutID, reviewerID int64, now time.Time) error) {
 	db := adminDB(c)
 	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
 		return
 	}
 	id, ok := adminIDParam(c)
@@ -380,6 +604,14 @@ func adminPayoutAction(c *gin.Context, fn func(db *gorm.DB, payoutID, reviewerID
 		return
 	}
 	reviewerID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	sellerID, ok := adminPayoutSellerID(c, db, id)
+	if !ok {
+		return
+	}
+	if sellerID == reviewerID {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("administrators cannot review their own payout"))
+		return
+	}
 	if err := fn(db, id, reviewerID, time.Now()); err != nil {
 		switch {
 		case errors.Is(err, ErrPayoutNotFound):
@@ -407,8 +639,20 @@ func adminMarkPayoutPaid(c *gin.Context) {
 	if db == nil {
 		return
 	}
+	if !adminRequireRoot(c) {
+		return
+	}
 	id, ok := adminIDParam(c)
 	if !ok {
+		return
+	}
+	reviewerID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	sellerID, ok := adminPayoutSellerID(c, db, id)
+	if !ok {
+		return
+	}
+	if sellerID == reviewerID {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("administrators cannot operate on their own payout"))
 		return
 	}
 	if err := MarkPayoutPaid(db, id, time.Now()); err != nil {
@@ -435,6 +679,9 @@ func adminMarkPayoutPaid(c *gin.Context) {
 func adminReverse(c *gin.Context) {
 	db := adminDB(c)
 	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
 		return
 	}
 	var req struct {
@@ -490,6 +737,9 @@ func adminReverse(c *gin.Context) {
 func adminDeanon(c *gin.Context) {
 	db := adminDB(c)
 	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
 		return
 	}
 	sellerID, err := strconv.ParseInt(c.Query("seller_id"), 10, 64)

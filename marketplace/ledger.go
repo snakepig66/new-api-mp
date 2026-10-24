@@ -4,9 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
+
+	"github.com/QuantumNous/new-api/model"
 )
 
 // DefaultMaturity is the T+7 freeze on seller income (§3.9): a seller credit
@@ -24,13 +27,47 @@ var (
 	ErrAlreadyReversed = errors.New("marketplace: request already reversed")
 	// ErrInvalidSettlement is returned for structurally invalid input.
 	ErrInvalidSettlement = errors.New("marketplace: invalid settlement")
+	// ErrReversalConflict is returned when the seller credit changed state
+	// between the reversal's read and its conditional update (for example a
+	// concurrent T+7 promotion), so the reversal must roll back (L3).
+	ErrReversalConflict = errors.New("marketplace: request changed state during reversal")
 )
 
 // PlatformAccount is the ledger account holding the platform's 7% fees.
 func PlatformAccount() string { return "platform" }
 
-// UserAccount is the ledger account of a buyer or seller.
+// BuyerAccount is the ledger account of a user's marketplace spending
+// (§3.9). It is informational only: the real buyer balance is users.quota,
+// and this account is never part of a seller's withdrawable balance.
+func BuyerAccount(userID int64) string { return "buyer:" + strconv.FormatInt(userID, 10) }
+
+// SellerAccount is the ledger account of a user's marketplace income (§3.9).
+// Only this account feeds the withdrawable balance.
+func SellerAccount(userID int64) string { return "seller:" + strconv.FormatInt(userID, 10) }
+
+// UserAccount is the pre-split combined account ("user:<id>") that used to
+// hold both buyer spending and seller income. It is retained so historical
+// rows stay readable; new rows always use BuyerAccount or SellerAccount.
+//
+// Deprecated: use BuyerAccount or SellerAccount.
 func UserAccount(userID int64) string { return "user:" + strconv.FormatInt(userID, 10) }
+
+// accountUserID extracts the user id from a "buyer:<id>", "seller:<id>" or
+// legacy "user:<id>" ledger account. It reports false for "platform" and for
+// malformed values.
+func accountUserID(account string) (int64, bool) {
+	for _, prefix := range []string{"buyer:", "seller:", "user:"} {
+		if !strings.HasPrefix(account, prefix) {
+			continue
+		}
+		id, err := strconv.ParseInt(strings.TrimPrefix(account, prefix), 10, 64)
+		if err != nil || id <= 0 {
+			return 0, false
+		}
+		return id, true
+	}
+	return 0, false
+}
 
 // Settlement is the priced outcome of one successful request (§3.7/§3.9).
 type Settlement struct {
@@ -96,7 +133,9 @@ func (s Settlement) rows() ([]LedgerEntry, error) {
 		func() LedgerEntry {
 			r := base
 			r.EntryType = EntryBuyerDebit
-			r.Account = UserAccount(s.BuyerUserID)
+			// Buyer spending lives in its own account so it never reduces a
+			// seller's withdrawable income (H5).
+			r.Account = BuyerAccount(s.BuyerUserID)
 			r.AmountMicro = -int64(s.TokenDebit)
 			r.Status = LedgerAvailable
 			return r
@@ -104,7 +143,7 @@ func (s Settlement) rows() ([]LedgerEntry, error) {
 		func() LedgerEntry {
 			r := base
 			r.EntryType = EntrySellerCredit
-			r.Account = UserAccount(s.SellerUserID)
+			r.Account = SellerAccount(s.SellerUserID)
 			r.AmountMicro = int64(credit)
 			r.Status = LedgerPending
 			r.AvailableAt = &availableAt
@@ -122,7 +161,7 @@ func (s Settlement) rows() ([]LedgerEntry, error) {
 	if s.ToolDebit > 0 {
 		tool := base
 		tool.EntryType = EntryToolDebit
-		tool.Account = UserAccount(s.BuyerUserID)
+		tool.Account = BuyerAccount(s.BuyerUserID)
 		tool.AmountMicro = -int64(s.ToolDebit)
 		tool.Status = LedgerAvailable
 		rows = append(rows, tool)
@@ -214,6 +253,11 @@ func PromoteAvailable(db *gorm.DB, now time.Time) (int64, error) {
 // After a reversal every account nets to zero and the active rows of the
 // request still sum to zero. Reversing a matured or unknown request returns
 // ErrNotReversible; reversing twice returns ErrAlreadyReversed.
+//
+// The refund is real money: in the same transaction the buyer's users.quota is
+// credited with the full debit (H5), and the refund ledger row is booked to
+// buyer:<id>, which is never withdrawable. The seller-credit state flip checks
+// RowsAffected so a concurrent T+7 promotion cannot be overwritten (L3).
 func Reverse(db *gorm.DB, requestID string, now time.Time) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		var rows []LedgerEntry
@@ -222,6 +266,7 @@ func Reverse(db *gorm.DB, requestID string, now time.Time) error {
 		}
 		var creditRow *LedgerEntry
 		var total int64
+		var buyerID int64
 		for i := range rows {
 			r := &rows[i]
 			switch r.EntryType {
@@ -229,8 +274,16 @@ func Reverse(db *gorm.DB, requestID string, now time.Time) error {
 				return ErrAlreadyReversed
 			case EntryBuyerDebit:
 				total += -r.AmountMicro
+				if id, ok := accountUserID(r.Account); ok {
+					buyerID = id
+				}
 			case EntryToolDebit:
 				total += -r.AmountMicro
+				if buyerID == 0 {
+					if id, ok := accountUserID(r.Account); ok {
+						buyerID = id
+					}
+				}
 			case EntrySellerCredit:
 				creditRow = r
 			}
@@ -239,10 +292,32 @@ func Reverse(db *gorm.DB, requestID string, now time.Time) error {
 			creditRow.AvailableAt == nil || !creditRow.AvailableAt.After(now) {
 			return ErrNotReversible
 		}
-		if err := tx.Model(&LedgerEntry{}).
+		res := tx.Model(&LedgerEntry{}).
 			Where("id = ? AND status = ?", creditRow.ID, LedgerPending).
-			Update("status", LedgerReversed).Error; err != nil {
-			return err
+			Update("status", LedgerReversed)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			// Another writer (T+7 promotion or a competing reversal) changed
+			// the row after our read: roll the whole reversal back.
+			return ErrReversalConflict
+		}
+		// Return the money to the buyer's real wallet in this same
+		// transaction; the ledger refund alone would leave the wallet short.
+		if total > 0 {
+			if buyerID == 0 {
+				return fmt.Errorf("marketplace: reverse request %s: cannot resolve buyer account", requestID)
+			}
+			res := tx.Model(&model.User{}).
+				Where("id = ?", buyerID).
+				Update("quota", gorm.Expr("quota + ?", total))
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected != 1 {
+				return fmt.Errorf("marketplace: reverse request %s: buyer %d not found", requestID, buyerID)
+			}
 		}
 		var fee Micro
 		var credit Micro
@@ -254,16 +329,21 @@ func Reverse(db *gorm.DB, requestID string, now time.Time) error {
 				credit = Micro(rows[i].AmountMicro)
 			}
 		}
-		buyerAccount := ""
-		for i := range rows {
-			if rows[i].EntryType == EntryBuyerDebit {
-				buyerAccount = rows[i].Account
+		// Refunds always land in the buyer account, even when the original
+		// settlement predates the split (legacy "user:<id>" rows).
+		refundAccount := BuyerAccount(buyerID)
+		if buyerID == 0 {
+			refundAccount = ""
+			for i := range rows {
+				if rows[i].EntryType == EntryBuyerDebit {
+					refundAccount = rows[i].Account
+				}
 			}
 		}
 		compensation := []LedgerEntry{
 			{
 				RequestID: requestID, EntryType: EntryRefund,
-				Account: buyerAccount, AmountMicro: total,
+				Account: refundAccount, AmountMicro: total,
 				ListingID: creditRow.ListingID, PriceVersion: creditRow.PriceVersion,
 				MultiplierMilli: creditRow.MultiplierMilli,
 				Status:          LedgerAvailable, CreatedAt: now,
@@ -288,8 +368,10 @@ func Reverse(db *gorm.DB, requestID string, now time.Time) error {
 }
 
 // AccountBalance returns an account's available and pending totals in 微元.
-// Reversed rows are excluded from both. Buyer balances are informational only;
-// the buyer's real balance is users.quota (§4.5: quota == 微元).
+// Reversed rows are excluded from both. Accounts are "seller:<id>" (income,
+// the only withdrawable account), "buyer:<id>" (spending, informational only),
+// "platform", and legacy "user:<id>" rows from before the split. The buyer's
+// real balance is users.quota (§4.5: quota == 微元).
 func AccountBalance(db *gorm.DB, account string) (available Micro, pending Micro, err error) {
 	type sumRow struct {
 		Status string

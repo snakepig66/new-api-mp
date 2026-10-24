@@ -62,10 +62,12 @@ func activePayoutSum(db *gorm.DB, sellerID int64) (int64, error) {
 }
 
 // AvailableBalance computes the seller's current withdrawable balance (§3.9):
-// the ledger's available total minus the sum of active (pending/approved/paid)
-// payouts. It is shared by the API display and RequestPayout's internal check.
+// the seller account's available total minus the sum of active
+// (pending/approved/paid) payouts. Buyer spending and refunds live in
+// buyer:<id> and never enter this calculation (H5). It is shared by the API
+// display and RequestPayout's internal check.
 func AvailableBalance(db *gorm.DB, sellerID int64) (Micro, error) {
-	available, _, err := AccountBalance(db, UserAccount(sellerID))
+	available, _, err := AccountBalance(db, SellerAccount(sellerID))
 	if err != nil {
 		return 0, err
 	}
@@ -142,7 +144,7 @@ func RequestPayout(db *gorm.DB, sellerID, amountMicro int64, idempotencyKey stri
 
 		// Recompute the withdrawable balance inside the locked transaction and
 		// verify it can cover the request.
-		available, _, err := AccountBalance(tx, UserAccount(sellerID))
+		available, _, err := AccountBalance(tx, SellerAccount(sellerID))
 		if err != nil {
 			return err
 		}

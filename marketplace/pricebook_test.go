@@ -190,7 +190,7 @@ func TestSeedPrices(t *testing.T) {
 			return books, perCall
 		}
 		booksBefore, perCallBefore := countRows()
-		assert.Equal(t, int64(8), booksBefore, "4 deepseek + 4 tipig = 8 rows, 2 models × 2 tiers each")
+		assert.Equal(t, int64(4), booksBefore, "default whitelist: 2 deepseek models × 2 tiers (H8: tipig not seeded)")
 		assert.Equal(t, int64(2), perCallBefore, "search + fetch")
 
 		require.NoError(t, SeedPrices(db), "a second run on the same database must succeed")
@@ -199,4 +199,31 @@ func TestSeedPrices(t *testing.T) {
 		assert.Equal(t, booksBefore, booksAfter, "SeedPrices must skip rows that already exist")
 		assert.Equal(t, perCallBefore, perCallAfter, "SeedPrices must skip rows that already exist")
 	})
+}
+
+// H8: the four tipig seed rows exist only when the vendor was injected through
+// MP_EXTRA_VENDORS; the production whitelist stays free of the E2E gateway.
+func TestSeedPricesTipigInjected(t *testing.T) {
+	withExtraVendors(t, tipigExtraVendors)
+
+	db := newTestDB(t)
+	migrateAll(t, db)
+	require.NoError(t, SeedPrices(db))
+
+	var books int64
+	require.NoError(t, db.Model(&PriceBook{}).Count(&books).Error)
+	assert.Equal(t, int64(8), books, "4 deepseek + 4 injected tipig rows")
+
+	for _, model := range []string{"deepseek-v4.1-flash-1017", "deepseek-v4-pro-0813"} {
+		for _, tier := range []string{TierOffpeak, TierPeak} {
+			var pb PriceBook
+			require.NoError(t, db.Where("model = ? AND vendor = ? AND tier = ?", model, seedVendorTipig, tier).Take(&pb).Error,
+				"seeded row %s/%s", model, tier)
+			assert.Equal(t, int64(1), pb.Version)
+		}
+	}
+
+	var perCall int64
+	require.NoError(t, db.Model(&PerCallPrice{}).Count(&perCall).Error)
+	assert.Equal(t, int64(2), perCall, "per-call prices stay DeepSeek-only")
 }

@@ -318,12 +318,14 @@ func TestApiRecordDetailPermissions(t *testing.T) {
 		"the seller of the record is still not its buyer")
 
 	// Seller detail: the owning seller gets the row with the anonymous buyer
-	// code and the same raw retry chain.
+	// code; the retry chain is redacted (L4): no listing ids or other sellers'
+	// identifiers may leak into the seller view.
 	wS := f.get(t, "/api/marketplace/records/shares/req-d1", seller)
 	require.Equal(t, http.StatusOK, wS.Code, "body: %s", wS.Body.String())
 	detailS := apiData(t, decodeAPIBody(t, wS))
 	assert.Equal(t, "req-d1", detailS["request_id"])
-	assert.Equal(t, chain, detailS["retry_chain"])
+	assert.Equal(t, `[{"seq":1,"event":"select","at":""},{"seq":2,"event":"switch","at":""}]`, detailS["retry_chain"],
+		"seller-view retry chain must be redacted")
 	wantCode, err := AnonBuyerCode(seller, buyer)
 	require.NoError(t, err)
 	assert.Equal(t, wantCode, detailS["buyer_code"])

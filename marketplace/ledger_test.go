@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -9,7 +10,29 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/QuantumNous/new-api/model"
 )
+
+// createLedgerBuyer creates the users row that Reverse credits. migrateAll
+// only creates the id column, so AutoMigrate adds quota and the rest.
+func createLedgerBuyer(t *testing.T, db *gorm.DB, userID int64, quota int) {
+	t.Helper()
+	require.NoError(t, db.AutoMigrate(&model.User{}))
+	require.NoError(t, db.Create(&model.User{
+		Id:       int(userID),
+		Username: fmt.Sprintf("ledger-buyer-%d", userID),
+		Password: "placeholder-pass",
+		Quota:    quota,
+	}).Error)
+}
+
+func userQuotaInDB(t *testing.T, db *gorm.DB, userID int64) int {
+	t.Helper()
+	var u model.User
+	require.NoError(t, db.Select("id", "quota").First(&u, userID).Error)
+	return u.Quota
+}
 
 // ledgerTestNow is the fixed settlement instant used by all ledger tests;
 // deterministic input, deterministic expectations (AGENTS.md backend test
@@ -87,17 +110,17 @@ func TestPostSettlementIdentity(t *testing.T) {
 	require.Len(t, rows, 4, "buyer_debit + tool_debit + seller_credit + platform_fee")
 
 	buyer := rowByType(t, rows, EntryBuyerDebit)
-	assert.Equal(t, UserAccount(10011), buyer.Account)
+	assert.Equal(t, BuyerAccount(10011), buyer.Account)
 	assert.Equal(t, int64(-1_234_567), buyer.AmountMicro)
 	assert.Equal(t, LedgerAvailable, buyer.Status)
 
 	tool := rowByType(t, rows, EntryToolDebit)
-	assert.Equal(t, UserAccount(10011), tool.Account)
+	assert.Equal(t, BuyerAccount(10011), tool.Account)
 	assert.Equal(t, int64(-5_000), tool.AmountMicro)
 	assert.Equal(t, LedgerAvailable, tool.Status)
 
 	seller := rowByType(t, rows, EntrySellerCredit)
-	assert.Equal(t, UserAccount(10012), seller.Account)
+	assert.Equal(t, SellerAccount(10012), seller.Account)
 	assert.Equal(t, wantCredit, seller.AmountMicro)
 	assert.Equal(t, LedgerPending, seller.Status, "seller income freezes as pending (T+7, §3.9)")
 	require.NotNil(t, seller.AvailableAt)
@@ -161,14 +184,14 @@ func TestPostSettlementIdempotentReplay(t *testing.T) {
 	s := baseSettlement()
 	require.NoError(t, PostSettlement(db, s))
 	rowsBefore := rowsOfRequest(t, db, s.RequestID)
-	sellerAvailBefore, sellerPendingBefore, err := AccountBalance(db, UserAccount(s.SellerUserID))
+	sellerAvailBefore, sellerPendingBefore, err := AccountBalance(db, SellerAccount(s.SellerUserID))
 	require.NoError(t, err)
 
 	require.NoError(t, PostSettlement(db, s), "replaying the identical settlement is a no-op")
 
 	rowsAfter := rowsOfRequest(t, db, s.RequestID)
 	assert.Len(t, rowsAfter, len(rowsBefore), "replay must not add rows")
-	sellerAvailAfter, sellerPendingAfter, err := AccountBalance(db, UserAccount(s.SellerUserID))
+	sellerAvailAfter, sellerPendingAfter, err := AccountBalance(db, SellerAccount(s.SellerUserID))
 	require.NoError(t, err)
 	assert.Equal(t, sellerAvailBefore, sellerAvailAfter)
 	assert.Equal(t, sellerPendingBefore, sellerPendingAfter)
@@ -245,7 +268,7 @@ func TestPromoteAvailable(t *testing.T) {
 
 	s := baseSettlement()
 	require.NoError(t, PostSettlement(db, s))
-	sellerAccount := UserAccount(s.SellerUserID)
+	sellerAccount := SellerAccount(s.SellerUserID)
 
 	n, err := PromoteAvailable(db, s.Now.Add(6*24*time.Hour))
 	require.NoError(t, err)
@@ -274,8 +297,12 @@ func TestReverseHappy(t *testing.T) {
 	migrateAll(t, db)
 
 	s := baseSettlement()
+	createLedgerBuyer(t, db, s.BuyerUserID, 500_000)
 	require.NoError(t, PostSettlement(db, s))
 	require.NoError(t, Reverse(db, s.RequestID, s.Now.Add(time.Hour)))
+
+	assert.Equal(t, 500_000+int(wantTotal), userQuotaInDB(t, db, s.BuyerUserID),
+		"the reversal must credit the buyer's real wallet, not only the ledger")
 
 	rows := rowsOfRequest(t, db, s.RequestID)
 	require.Len(t, rows, 7, "4 settlement rows + refund + reversal + fee_reversal")
@@ -284,12 +311,12 @@ func TestReverseHappy(t *testing.T) {
 	assert.Equal(t, LedgerReversed, seller.Status, "the frozen credit is flipped to reversed")
 
 	refund := rowByType(t, rows, EntryRefund)
-	assert.Equal(t, UserAccount(s.BuyerUserID), refund.Account)
+	assert.Equal(t, BuyerAccount(s.BuyerUserID), refund.Account)
 	assert.Equal(t, wantTotal, refund.AmountMicro)
 	assert.Equal(t, LedgerAvailable, refund.Status)
 
 	reversal := rowByType(t, rows, EntryReversal)
-	assert.Equal(t, UserAccount(s.SellerUserID), reversal.Account)
+	assert.Equal(t, SellerAccount(s.SellerUserID), reversal.Account)
 	assert.Equal(t, -wantCredit, reversal.AmountMicro)
 	assert.Equal(t, LedgerReversed, reversal.Status)
 
@@ -301,12 +328,12 @@ func TestReverseHappy(t *testing.T) {
 	assert.Zero(t, signedSum(rows), "all rows including reversed ones must still sum to zero")
 	assert.Zero(t, activeSum(rows), "active (non-reversed) rows must sum to zero")
 
-	buyerAvail, buyerPending, err := AccountBalance(db, UserAccount(s.BuyerUserID))
+	buyerAvail, buyerPending, err := AccountBalance(db, BuyerAccount(s.BuyerUserID))
 	require.NoError(t, err)
 	assert.Equal(t, Micro(0), buyerAvail)
 	assert.Equal(t, Micro(0), buyerPending)
 
-	sellerAvail, sellerPending, err := AccountBalance(db, UserAccount(s.SellerUserID))
+	sellerAvail, sellerPending, err := AccountBalance(db, SellerAccount(s.SellerUserID))
 	require.NoError(t, err)
 	assert.Equal(t, Micro(0), sellerAvail, "reversed rows are excluded from balances")
 	assert.Equal(t, Micro(0), sellerPending)
@@ -325,6 +352,7 @@ func TestReverseGuards(t *testing.T) {
 		"reversing an unknown request id")
 
 	s := baseSettlement()
+	createLedgerBuyer(t, db, s.BuyerUserID, 0)
 	require.NoError(t, PostSettlement(db, s))
 	require.NoError(t, Reverse(db, s.RequestID, s.Now.Add(time.Hour)))
 	assert.ErrorIs(t, Reverse(db, s.RequestID, s.Now.Add(2*time.Hour)), ErrAlreadyReversed,
@@ -340,11 +368,114 @@ func TestReverseGuards(t *testing.T) {
 		"a matured (T+7) credit is outside the reversal window")
 }
 
+// TestPostSettlementAccountSplit pins the H5 split: buyer spending is booked
+// to buyer:<id>, seller income to seller:<id>, and the two never mix.
+func TestPostSettlementAccountSplit(t *testing.T) {
+	db := newTestDB(t)
+	migrateAll(t, db)
+
+	s := baseSettlement()
+	require.NoError(t, PostSettlement(db, s))
+
+	buyerAvail, buyerPending, err := AccountBalance(db, BuyerAccount(s.BuyerUserID))
+	require.NoError(t, err)
+	assert.Equal(t, Micro(-wantTotal), buyerAvail, "buyer account carries the negative spend")
+	assert.Equal(t, Micro(0), buyerPending)
+
+	sellerAvail, sellerPending, err := AccountBalance(db, SellerAccount(s.SellerUserID))
+	require.NoError(t, err)
+	assert.Equal(t, Micro(0), sellerAvail, "seller income is pending during the T+7 freeze")
+	assert.Equal(t, Micro(wantCredit), sellerPending)
+
+	platformAvail, platformPending, err := AccountBalance(db, PlatformAccount())
+	require.NoError(t, err)
+	assert.Equal(t, Micro(wantFee), platformAvail)
+	assert.Equal(t, Micro(0), platformPending)
+
+	// The legacy combined account stays empty for new settlements.
+	legacyAvail, legacyPending, err := AccountBalance(db, UserAccount(s.BuyerUserID))
+	require.NoError(t, err)
+	assert.Equal(t, Micro(0), legacyAvail)
+	assert.Equal(t, Micro(0), legacyPending)
+
+	// Nothing is withdrawable while income is still pending.
+	bal, err := AvailableBalance(db, s.SellerUserID)
+	require.NoError(t, err)
+	assert.Equal(t, Micro(0), bal)
+
+	_, err = PromoteAvailable(db, s.Now.Add(DefaultMaturity))
+	require.NoError(t, err)
+	bal, err = AvailableBalance(db, s.SellerUserID)
+	require.NoError(t, err)
+	assert.Equal(t, Micro(wantCredit), bal, "only seller income is withdrawable")
+}
+
+// TestSellerSpendingDoesNotReduceWithdrawable covers the original H5 failure:
+// a seller who also buys with their own key must keep their full seller
+// income withdrawable.
+func TestSellerSpendingDoesNotReduceWithdrawable(t *testing.T) {
+	db := newTestDB(t)
+	migrateAll(t, db)
+
+	const seller = int64(10012)
+	income := baseSettlement()
+	income.BuyerUserID = 10011
+	income.SellerUserID = seller
+	require.NoError(t, PostSettlement(db, income))
+	_, err := PromoteAvailable(db, income.Now.Add(DefaultMaturity))
+	require.NoError(t, err)
+
+	balBefore, err := AvailableBalance(db, seller)
+	require.NoError(t, err)
+	assert.Equal(t, Micro(wantCredit), balBefore)
+
+	// The seller buys ¥30 worth through the marketplace.
+	spend := baseSettlement()
+	spend.RequestID = "r-seller-spend"
+	spend.BuyerUserID = seller
+	spend.SellerUserID = 10013
+	spend.TokenDebit = 30_000_000
+	spend.ToolDebit = 0
+	require.NoError(t, PostSettlement(db, spend))
+
+	balAfter, err := AvailableBalance(db, seller)
+	require.NoError(t, err)
+	assert.Equal(t, balBefore, balAfter,
+		"buyer spending must not be subtracted from seller withdrawable income")
+}
+
+// TestReverseBuyerAccountNotWithdrawable checks that a refund booked to
+// buyer:<id> never becomes withdrawable, even when the buyer is also a seller.
+func TestReverseBuyerAccountNotWithdrawable(t *testing.T) {
+	db := newTestDB(t)
+	migrateAll(t, db)
+
+	const uid = int64(10012)
+	s := baseSettlement()
+	s.BuyerUserID = uid
+	s.SellerUserID = uid
+	createLedgerBuyer(t, db, uid, 0)
+	require.NoError(t, PostSettlement(db, s))
+	require.NoError(t, Reverse(db, s.RequestID, s.Now.Add(time.Hour)))
+
+	assert.Equal(t, int(wantTotal), userQuotaInDB(t, db, uid),
+		"the buyer's real wallet must be credited by the reversal")
+
+	buyerAvail, _, err := AccountBalance(db, BuyerAccount(uid))
+	require.NoError(t, err)
+	assert.Equal(t, Micro(0), buyerAvail, "spend + refund nets to zero in the buyer account")
+
+	bal, err := AvailableBalance(db, uid)
+	require.NoError(t, err)
+	assert.Equal(t, Micro(0), bal,
+		"a buyer refund must not become withdrawable seller income")
+}
+
 func TestAccountBalanceEmpty(t *testing.T) {
 	db := newTestDB(t)
 	migrateAll(t, db)
 
-	avail, pending, err := AccountBalance(db, UserAccount(42424))
+	avail, pending, err := AccountBalance(db, SellerAccount(42424))
 	require.NoError(t, err)
 	assert.Equal(t, Micro(0), avail)
 	assert.Equal(t, Micro(0), pending)

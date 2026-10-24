@@ -193,6 +193,31 @@ func (b *CircuitBreaker) releaseProbe(listingID int64) {
 	}
 }
 
+// ReleaseProbe is the exported hand-back used by the relay session when a
+// half-open probe attempt ends with a non-429 failure (5xx, timeout, 401, an
+// early-exit cleanup, ...). Without it probeInFlight would stay true forever
+// and the listing would never receive traffic again (CODE-REVIEW H2). The
+// circuit stays half-open, so the next request is admitted as the probe.
+func (b *CircuitBreaker) ReleaseProbe(listingID int64) {
+	b.releaseProbe(listingID)
+}
+
+// available reports whether listingID may be attempted now without mutating
+// the state machine or consuming the half-open probe slot. Select ranks with
+// it and only calls allow on the candidate it commits to.
+func (b *CircuitBreaker) available(listingID int64, now time.Time) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	st, ok := b.states[listingID]
+	if !ok {
+		return true
+	}
+	if !st.halfOpen {
+		return now.Sub(st.openedAt) >= CircuitBreakDuration
+	}
+	return !st.probeInFlight
+}
+
 // rpmWindow is the sliding window RPMWindow limits over (§3.5 RPM 上限).
 const rpmWindow = time.Minute
 
@@ -291,6 +316,71 @@ func WithinHours(hours string, now time.Time) bool {
 	return false
 }
 
+// dailySpendCacheTTL is how long one listing's daily spend sum is reused
+// (M7: 避免每请求全表 SUM). One second bounds staleness far below the
+// minutely RPM/cap granularity while collapsing bursts of requests.
+const dailySpendCacheTTL = time.Second
+
+// dailySpendEntry is one listing's cached daily spend. loading/done implement
+// a single-flight refresh so a burst of requests issues one SUM query.
+type dailySpendEntry struct {
+	at      time.Time
+	value   int64
+	err     error
+	loading bool
+	done    chan struct{}
+}
+
+// dailySpendCache caches ListingDailySpendMicro per listing for a short TTL.
+type dailySpendCache struct {
+	mu      sync.Mutex
+	entries map[int64]*dailySpendEntry
+}
+
+func newDailySpendCache() *dailySpendCache {
+	return &dailySpendCache{entries: make(map[int64]*dailySpendEntry)}
+}
+
+// get returns listingID's spend at now, loading it through load at most once
+// per TTL (and once concurrently — later callers wait for the in-flight load).
+func (c *dailySpendCache) get(listingID int64, now time.Time, load func() (int64, error)) (int64, error) {
+	c.mu.Lock()
+	e := c.entries[listingID]
+	if e != nil && !e.loading && now.Sub(e.at) < dailySpendCacheTTL {
+		v, err := e.value, e.err
+		c.mu.Unlock()
+		return v, err
+	}
+	if e != nil && e.loading {
+		done := e.done
+		c.mu.Unlock()
+		<-done
+		c.mu.Lock()
+		cur := c.entries[listingID]
+		c.mu.Unlock()
+		if cur != nil {
+			return cur.value, cur.err
+		}
+		return 0, nil
+	}
+	if e == nil {
+		e = &dailySpendEntry{}
+		c.entries[listingID] = e
+	}
+	e.loading = true
+	e.done = make(chan struct{})
+	done := e.done
+	c.mu.Unlock()
+
+	v, err := load()
+
+	c.mu.Lock()
+	e.value, e.err, e.at, e.loading = v, err, now, false
+	close(done)
+	c.mu.Unlock()
+	return v, err
+}
+
 // ErrNoListingAvailable is Select's outcome when every candidate has been
 // filtered out; the relay layer maps it to §3.10's 503 暂无可用供应商.
 var ErrNoListingAvailable = errors.New("marketplace: no listing available")
@@ -309,6 +399,9 @@ type Selector struct {
 	Rand *rand.Rand
 
 	randMu sync.Mutex
+	// spend caches each listing's daily spend for dailySpendCacheTTL (M7).
+	spendMu sync.Mutex
+	spend   *dailySpendCache
 }
 
 // NewSelector builds a Selector with the §3.5 default canary fraction.
@@ -319,7 +412,22 @@ func NewSelector() *Selector {
 		RPM:            NewRPMWindow(),
 		CanaryFraction: 0.1,
 		Rand:           rand.New(rand.NewSource(time.Now().UnixNano())),
+		spend:          newDailySpendCache(),
 	}
+}
+
+// dailySpend returns the listing's daily spend, served from the short-TTL
+// process cache (single-flight) instead of one SUM per candidate per request.
+func (s *Selector) dailySpend(db *gorm.DB, listingID int64, now time.Time) (int64, error) {
+	s.spendMu.Lock()
+	if s.spend == nil {
+		s.spend = newDailySpendCache()
+	}
+	cache := s.spend
+	s.spendMu.Unlock()
+	return cache.get(listingID, now, func() (int64, error) {
+		return ListingDailySpendMicro(db, listingID, now)
+	})
 }
 
 // SelectInput is one buyer request's routing context (§4.3 step 2).
@@ -334,44 +442,48 @@ type SelectInput struct {
 	MaxMultiplierMilli int64
 }
 
+// selectorListingColumns deliberately omits key_ciphertext: Select runs over
+// every live listing on every request, and the encrypted seller key is only
+// needed for the winning listing (hydrateListingKey). M7: 挂单全表加载不取密文.
+const selectorListingColumns = "id, seller_id, channel_id, vendor, models, multiplier_milli, " +
+	"concurrency_limit, status, hours, daily_cap_micro, rpm_limit, key_fingerprint, version"
+
 // Select filters the live (+ gray-admitted canary) listings for in.Model and
 // returns the best-scored one, holding its concurrency slot — the caller
 // MUST release it via s.Slots.Release when the request ends (§3.5).
 //
 // Filters, in order: not excluded, serves the model, canary admitted by the
 // CanaryFraction dice, multiplier within MaxMultiplierMilli when set, inside
-// its 可接单时段, under its daily spend cap, RPM budget left, circuit not
-// broken, and a free concurrency slot (a full listing is skipped, never
-// queued).
+// its 可接单时段, under its daily spend cap, and circuit not broken. Scoring
+// (§4.3 综合价格、可用率、延迟): multiplier ascending first; ties break on the
+// most recent verify/patrol mp_probes latency ascending, with never-probed
+// listings last; the final tie-break is listing id ascending.
 //
-// Scoring (§4.3 综合价格、可用率、延迟): multiplier ascending first; ties
-// break on the most recent verify/patrol mp_probes latency ascending, with
-// never-probed listings last; the final tie-break is listing id ascending,
-// so the pick is deterministic.
+// Side-effecting limits (RPM, half-open probe, concurrency slot) are applied
+// only to candidates in ranked order, and only the eventual winner keeps
+// them: a candidate whose RPM budget is exhausted is skipped in favour of the
+// next best instead of consuming budget it never uses (M7). Use
+// SelectWithProbe when the caller must know it holds a half-open probe.
 func (s *Selector) Select(db *gorm.DB, in SelectInput) (Listing, error) {
+	listing, _, err := s.SelectWithProbe(db, in)
+	return listing, err
+}
+
+// SelectWithProbe is Select plus tookProbe: true when the returned listing's
+// half-open circuit probe slot was consumed for this request. The caller MUST
+// eventually resolve it via CircuitBreaker.RecordSuccess/Record429/
+// ReleaseProbe (see RelaySession).
+func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, error) {
 	now := in.Now
 	if now.IsZero() {
 		now = time.Now()
 	}
 	var rows []Listing
-	if err := db.Where("status IN ?", []string{ListingLive, ListingCanary}).Find(&rows).Error; err != nil {
-		return Listing{}, err
+	if err := db.Where("status IN ?", []string{ListingLive, ListingCanary}).
+		Select(selectorListingColumns).Find(&rows).Error; err != nil {
+		return Listing{}, false, err
 	}
-	// candidate is one listing that passed every filter; tookProbe records
-	// whether it holds the breaker's half-open probe slot.
-	type candidate struct {
-		listing   Listing
-		tookProbe bool
-	}
-	var cands []candidate
-	release := func(cs []candidate) {
-		for _, c := range cs {
-			s.Slots.Release(c.listing.ID)
-			if c.tookProbe {
-				s.Breaker.releaseProbe(c.listing.ID)
-			}
-		}
-	}
+	var cands []Listing
 	for i := range rows {
 		l := rows[i]
 		if slices.Contains(in.ExcludeListingIDs, l.ID) {
@@ -390,51 +502,38 @@ func (s *Selector) Select(db *gorm.DB, in SelectInput) (Listing, error) {
 			continue
 		}
 		if l.DailyCapMicro > 0 {
-			spent, err := ListingDailySpendMicro(db, l.ID, now)
+			spent, err := s.dailySpend(db, l.ID, now)
 			if err != nil {
-				release(cands)
-				return Listing{}, err
+				return Listing{}, false, err
 			}
 			if spent >= l.DailyCapMicro {
 				continue
 			}
 		}
-		// Side-effecting checks come last. RPM.Allow spends budget on every
-		// attempt reaching it, not only on wins — the conservative direction
-		// for a seller-protecting limit (§3.5).
-		if !s.RPM.Allow(l.ID, l.RPMLimit, now) {
+		// Non-mutating breaker check; the probe slot is only consumed for a
+		// candidate that reaches the commit loop below.
+		if !s.Breaker.available(l.ID, now) {
 			continue
 		}
-		allowed, tookProbe := s.Breaker.allow(l.ID, now)
-		if !allowed {
-			continue
-		}
-		if !s.Slots.Acquire(l.ID, l.ConcurrencyLimit, now) {
-			if tookProbe {
-				s.Breaker.releaseProbe(l.ID)
-			}
-			continue
-		}
-		cands = append(cands, candidate{listing: l, tookProbe: tookProbe})
+		cands = append(cands, l)
 	}
 	if len(cands) == 0 {
-		return Listing{}, ErrNoListingAvailable
+		return Listing{}, false, ErrNoListingAvailable
 	}
 	ids := make([]int64, len(cands))
-	for i, c := range cands {
-		ids[i] = c.listing.ID
+	for i := range cands {
+		ids[i] = cands[i].ID
 	}
 	latency, err := latestProbeLatencies(db, ids)
 	if err != nil {
-		release(cands)
-		return Listing{}, err
+		return Listing{}, false, err
 	}
-	slices.SortFunc(cands, func(a, b candidate) int {
-		if a.listing.MultiplierMilli != b.listing.MultiplierMilli {
-			return cmp.Compare(a.listing.MultiplierMilli, b.listing.MultiplierMilli)
+	slices.SortFunc(cands, func(a, b Listing) int {
+		if a.MultiplierMilli != b.MultiplierMilli {
+			return cmp.Compare(a.MultiplierMilli, b.MultiplierMilli)
 		}
-		la, oka := latency[a.listing.ID]
-		lb, okb := latency[b.listing.ID]
+		la, oka := latency[a.ID]
+		lb, okb := latency[b.ID]
 		if oka != okb {
 			if oka {
 				return -1
@@ -444,11 +543,28 @@ func (s *Selector) Select(db *gorm.DB, in SelectInput) (Listing, error) {
 		if la != lb {
 			return cmp.Compare(la, lb)
 		}
-		return cmp.Compare(a.listing.ID, b.listing.ID)
+		return cmp.Compare(a.ID, b.ID)
 	})
-	// Every non-winner hands its slot (and half-open probe, if taken) back.
-	release(cands[1:])
-	return cands[0].listing, nil
+	// Commit side effects in ranked order: the winner keeps the slot, the RPM
+	// budget and (when half-open) the probe; every loser is handed back before
+	// the next candidate is considered.
+	for i := range cands {
+		l := cands[i]
+		if !s.Slots.Acquire(l.ID, l.ConcurrencyLimit, now) {
+			continue
+		}
+		if !s.RPM.Allow(l.ID, l.RPMLimit, now) {
+			s.Slots.Release(l.ID)
+			continue
+		}
+		allowed, tookProbe := s.Breaker.allow(l.ID, now)
+		if !allowed {
+			s.Slots.Release(l.ID)
+			continue
+		}
+		return l, tookProbe, nil
+	}
+	return Listing{}, false, ErrNoListingAvailable
 }
 
 // canaryAdmit rolls the gray-release dice for one canary candidate.

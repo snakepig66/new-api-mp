@@ -83,8 +83,21 @@ func newSellerAPIFixture(t *testing.T) *sellerAPIFixture {
 	buyer := model.User{Username: "buyer", Password: "placeholder-pass", AffCode: "buyer"}
 	require.NoError(t, db.Create(&buyer).Error)
 
+	// M9: writes require an active seller row; the fixture seller is fully
+	// onboarded so the pre-M9 tests keep exercising their own paths.
+	require.NoError(t, db.Create(&Seller{
+		UserID:           int64(seller.Id),
+		Status:           SellerStatusActive,
+		RealNameStatus:   SellerRealNameVerified,
+		AgreementVersion: CurrentSellerAgreementVersion,
+		PayoutAccount:    "fixture-encrypted-account",
+	}).Error)
+
 	engine := gin.New()
-	registerSellerRoutes(engine.Group("/api/marketplace", headerSellerUserAuth()))
+	grp := engine.Group("/api/marketplace", headerSellerUserAuth())
+	registerSellerRoutes(grp)
+	registerSellerOnboardingRoutes(grp)
+	registerMeRoutes(grp)
 
 	return &sellerAPIFixture{
 		db:       db,
@@ -342,4 +355,331 @@ func TestSellerRequiresAuth(t *testing.T) {
 	f := newSellerAPIFixture(t)
 	w := f.do(t, http.MethodGet, "/api/marketplace/seller/listings", nil, 0)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// ---------------------------------------------------------------------------
+// M9 开通状态机 + GET /me
+// ---------------------------------------------------------------------------
+
+func TestSellerOnboardingFlow(t *testing.T) {
+	f := newSellerAPIFixture(t)
+	userID := int(f.buyerID) // this fixture user has no seller row
+
+	// 1. Wrong agreement version → 400.
+	w := f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
+		"agreement_version": "v2",
+	}, userID)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+
+	// 2. Correct agreement → record created as pending, next step real_name.
+	w = f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
+		"agreement_version": CurrentSellerAgreementVersion,
+	}, userID)
+	require.Equal(t, http.StatusOK, w.Code)
+	seller := onboardingSellerView(t, w)
+	assert.Equal(t, true, seller["exists"])
+	assert.Equal(t, SellerStatusPending, seller["status"])
+	assert.Equal(t, "real_name", seller["progress"].(map[string]any)["next_step"])
+
+	// 3. Real name alone advances the wizard but does not activate.
+	w = f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
+		"real_name": "张三",
+	}, userID)
+	require.Equal(t, http.StatusOK, w.Code)
+	seller = onboardingSellerView(t, w)
+	assert.Equal(t, SellerStatusPending, seller["status"])
+	assert.Equal(t, "payout_account", seller["progress"].(map[string]any)["next_step"])
+
+	// 4. Invalid real name / plaintext id / bad alipay → 400 and no state change.
+	for _, body := range []map[string]any{
+		{"real_name": "12345"},
+		{"id_card_masked": "110101199001011234"}, // unmasked: no '*'
+		{"alipay_account": "not-an-account"},
+	} {
+		w = f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", body, userID)
+		assert.Equal(t, http.StatusBadRequest, w.Code, body)
+	}
+
+	// 5. Masked id + alipay → active; the response never echoes the account.
+	alipay := "seller-payout@example.com"
+	w = f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
+		"id_card_masked": "110101********1234",
+		"alipay_account": alipay,
+	}, userID)
+	require.Equal(t, http.StatusOK, w.Code)
+	seller = onboardingSellerView(t, w)
+	assert.Equal(t, SellerStatusActive, seller["status"])
+	assert.Equal(t, "done", seller["progress"].(map[string]any)["next_step"])
+	assert.NotContains(t, w.Body.String(), alipay, "§2.3: the payout account is never returned")
+	assert.NotContains(t, w.Body.String(), "110101", "the masked id is never echoed")
+
+	// 6. Stored at rest as AES-GCM ciphertext, decryptable back to plaintext.
+	var row Seller
+	require.NoError(t, f.db.Where("user_id = ?", f.buyerID).Take(&row).Error)
+	assert.NotEqual(t, alipay, row.PayoutAccount)
+	assert.NotContains(t, row.PayoutAccount, alipay)
+	plain, err := decryptPayoutAccount(row.PayoutAccount)
+	require.NoError(t, err)
+	assert.Equal(t, alipay, plain)
+	assert.Equal(t, SellerRealNameVerified, row.RealNameStatus)
+
+	// 7. GET /me reports the seller identity and progress.
+	w = f.do(t, http.MethodGet, "/api/marketplace/me", nil, userID)
+	require.Equal(t, http.StatusOK, w.Code)
+	data := decodeSellerBody(t, w)["data"].(map[string]any)
+	assert.EqualValues(t, f.buyerID, data["user_id"])
+	meSeller := data["seller"].(map[string]any)
+	assert.Equal(t, true, meSeller["exists"])
+	assert.Equal(t, SellerStatusActive, meSeller["status"])
+	assert.Equal(t, "done", meSeller["progress"].(map[string]any)["next_step"])
+	assert.NotContains(t, w.Body.String(), alipay)
+
+	// 8. A user without a seller row is reported as exists=false.
+	w = f.do(t, http.MethodGet, "/api/marketplace/me", nil, int(f.stranger))
+	require.Equal(t, http.StatusOK, w.Code)
+	data = decodeSellerBody(t, w)["data"].(map[string]any)
+	meSeller = data["seller"].(map[string]any)
+	assert.Equal(t, false, meSeller["exists"])
+	assert.Equal(t, "agreement", meSeller["progress"].(map[string]any)["next_step"])
+}
+
+func onboardingSellerView(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	data, ok := decodeSellerBody(t, w)["data"].(map[string]any)
+	require.True(t, ok)
+	seller, ok := data["seller"].(map[string]any)
+	require.True(t, ok)
+	return seller
+}
+
+// TestSellerOnboardingInactiveWriteRejected covers M9: pending (or missing)
+// sellers cannot open listings or request payouts → 403.
+func TestSellerOnboardingInactiveWriteRejected(t *testing.T) {
+	f := newSellerAPIFixture(t)
+	// Demote the onboarded fixture seller to pending.
+	require.NoError(t, f.db.Model(&Seller{}).Where("user_id = ?", f.sellerID).
+		Update("status", SellerStatusPending).Error)
+
+	body := map[string]any{
+		"vendor_id": "deepseek", "api_key": "sk-inactive-" + strconv.FormatInt(time.Now().UnixNano(), 36),
+		"models": []string{"deepseek-flash"}, "multiplier_milli": 500,
+	}
+	w := f.do(t, http.MethodPost, "/api/marketplace/seller/listings", body, int(f.sellerID))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	w = f.do(t, http.MethodPost, "/api/marketplace/seller/payouts", map[string]any{
+		"amount_micro": 50_000_000, "idempotency_key": "inactive-payout",
+	}, int(f.sellerID))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	// A user with no seller row at all is rejected on both writes too.
+	w = f.do(t, http.MethodPost, "/api/marketplace/seller/listings", body, int(f.stranger))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	w = f.do(t, http.MethodPost, "/api/marketplace/seller/payouts", map[string]any{
+		"amount_micro": 50_000_000, "idempotency_key": "stranger-payout",
+	}, int(f.stranger))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// ---------------------------------------------------------------------------
+// probe / listing detail
+// ---------------------------------------------------------------------------
+
+// TestProbeDoesNotPersist covers POST /seller/listings/probe: the dry-run
+// result fields, no mp_listings/mp_probes writes and no key in the response.
+func TestProbeDoesNotPersist(t *testing.T) {
+	f := newSellerAPIFixture(t)
+	h := allGreenHandler()
+	srv, _ := newVendorServer(t, h)
+	target, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+	restore := setSellerVerifyClientForTest(&http.Client{Transport: rewriteTransport{target: target}})
+	defer restore()
+
+	var listingsBefore, probesBefore int64
+	require.NoError(t, f.db.Model(&Listing{}).Count(&listingsBefore).Error)
+	require.NoError(t, f.db.Model(&Probe{}).Count(&probesBefore).Error)
+
+	w := f.do(t, http.MethodPost, "/api/marketplace/seller/listings/probe", map[string]any{
+		"vendor_id": "deepseek",
+		"api_key":   verifyTestKey,
+		"models":    []string{"deepseek-flash"},
+	}, int(f.sellerID))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	data := decodeSellerBody(t, w)["data"].(map[string]any)
+	assert.Equal(t, true, data["ok"])
+	assert.Equal(t, true, data["key_valid"])
+	assert.Equal(t, true, data["prompt_cache"])
+	assert.NotNil(t, data["balance_micro"])
+	assert.EqualValues(t, 12_340_000, data["balance_micro"])
+	models, ok := data["models"].([]any)
+	require.True(t, ok)
+	assert.Contains(t, models, "deepseek-flash")
+	assert.EqualValues(t, 0, len(data["missing_models"].([]any)))
+	assert.Equal(t, "", data["fail_reason"])
+	assert.NotContains(t, w.Body.String(), verifyTestKey, "§2.3: probe never echoes the key")
+
+	var listingsAfter, probesAfter int64
+	require.NoError(t, f.db.Model(&Listing{}).Count(&listingsAfter).Error)
+	require.NoError(t, f.db.Model(&Probe{}).Count(&probesAfter).Error)
+	assert.Equal(t, listingsBefore, listingsAfter, "probe must not create a listing")
+	assert.Equal(t, probesBefore, probesAfter, "probe must not write mp_probes")
+}
+
+// TestProbeListingDetail covers GET /seller/listings/:id: ownership, the last
+// 10 probes, and the paused reason taken from the probe detail.
+func TestProbeListingDetail(t *testing.T) {
+	f := newSellerAPIFixture(t)
+	listing, err := CreateListing(f.db, CreateListingInput{
+		SellerID:        f.sellerID,
+		VendorID:        SeedVendorDeepSeek,
+		APIKey:          "sk-detail-" + strconv.FormatInt(time.Now().UnixNano(), 36),
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 300,
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.db.Model(&Listing{}).Where("id = ?", listing.ID).
+		Update("status", ListingPaused).Error)
+	require.NoError(t, f.db.Create(&Probe{
+		ListingID: listing.ID, Type: ProbeTypeVerify, OK: false, LatencyMs: 42,
+		Detail: `{"key_valid":false,"fail_reason":"key rejected (http 401)"}`,
+	}).Error)
+
+	w := f.do(t, http.MethodGet, "/api/marketplace/seller/listings/"+strconv.FormatInt(listing.ID, 10), nil, int(f.sellerID))
+	require.Equal(t, http.StatusOK, w.Code)
+	data := decodeSellerBody(t, w)["data"].(map[string]any)
+	assert.EqualValues(t, listing.ID, data["id"])
+	assert.Equal(t, ListingPaused, data["status"])
+	assert.Equal(t, "key rejected (http 401)", data["pause_reason"])
+	probes, ok := data["probes"].([]any)
+	require.True(t, ok)
+	require.Len(t, probes, 1)
+	first := probes[0].(map[string]any)
+	assert.Equal(t, false, first["ok"])
+	detail, ok := first["detail"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "key rejected (http 401)", detail["fail_reason"])
+	assert.NotContains(t, w.Body.String(), listing.KeyFingerprint)
+
+	// Ownership: a foreign user gets the uniform 404.
+	w = f.do(t, http.MethodGet, "/api/marketplace/seller/listings/"+strconv.FormatInt(listing.ID, 10), nil, int(f.stranger))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// ---------------------------------------------------------------------------
+// stats / payouts
+// ---------------------------------------------------------------------------
+
+// TestSellerStats covers GET /seller/stats against hand-inserted ledger rows.
+func TestSellerStats(t *testing.T) {
+	f := newSellerAPIFixture(t)
+	now := time.Now()
+	old := now.AddDate(0, -2, 0)
+	maturity := now.Add(24 * time.Hour)
+
+	require.NoError(t, f.db.Create(&Request{
+		RequestID: "stats-req-1", BuyerUserID: f.buyerID, SellerID: f.sellerID,
+		Model: "deepseek-flash", Status: RequestSuccess, CreatedAt: now,
+	}).Error)
+	require.NoError(t, f.db.Create(&Request{
+		RequestID: "stats-req-2", BuyerUserID: f.buyerID, SellerID: f.sellerID,
+		Model: "deepseek-flash", Status: RequestSuccess, CreatedAt: old,
+	}).Error)
+	entries := []LedgerEntry{
+		{RequestID: "stats-req-1", EntryType: EntrySellerCredit, Account: UserAccount(f.sellerID),
+			AmountMicro: 9_300_000, Status: LedgerPending, AvailableAt: &maturity, CreatedAt: now},
+		{RequestID: "stats-req-1", EntryType: EntryPlatformFee, Account: PlatformAccount(),
+			AmountMicro: 700_000, Status: LedgerAvailable, CreatedAt: now},
+		{RequestID: "stats-req-2", EntryType: EntrySellerCredit, Account: UserAccount(f.sellerID),
+			AmountMicro: 4_650_000, Status: LedgerAvailable, CreatedAt: old},
+		{RequestID: "stats-req-2", EntryType: EntryPlatformFee, Account: PlatformAccount(),
+			AmountMicro: 350_000, Status: LedgerAvailable, CreatedAt: old},
+	}
+	require.NoError(t, f.db.Create(&entries).Error)
+
+	w := f.do(t, http.MethodGet, "/api/marketplace/seller/stats", nil, int(f.sellerID))
+	require.Equal(t, http.StatusOK, w.Code)
+	data := decodeSellerBody(t, w)["data"].(map[string]any)
+
+	assert.EqualValues(t, 9_300_000, data["pending_micro"])
+	assert.EqualValues(t, 1_050_000, data["platform_fee_total_micro"])
+	// Two months ago is outside the current month: only req-1 counts.
+	assert.EqualValues(t, 9_300_000, data["month_income_micro"])
+
+	// The available figure is whatever the ledger's withdrawable helper says
+	// (signature is shared with payout.go and its account split may change).
+	available, err := AvailableBalance(f.db, f.sellerID)
+	require.NoError(t, err)
+	assert.EqualValues(t, int64(available), data["available_micro"])
+
+	daily, ok := data["daily"].([]any)
+	require.True(t, ok)
+	require.Len(t, daily, 30)
+	loc, err := time.LoadLocation(shanghaiTZ)
+	require.NoError(t, err)
+	today := now.In(loc).Format("2006-01-02")
+	var todayIncome any
+	for _, item := range daily {
+		row := item.(map[string]any)
+		if row["date"] == today {
+			todayIncome = row["income_micro"]
+		}
+	}
+	assert.EqualValues(t, 9_300_000, todayIncome)
+}
+
+// TestSellerPayouts covers GET /seller/payouts pagination.
+func TestSellerPayouts(t *testing.T) {
+	f := newSellerAPIFixture(t)
+	for i := 1; i <= 3; i++ {
+		require.NoError(t, f.db.Create(&Payout{
+			SellerID:       f.sellerID,
+			AmountMicro:    int64(i) * 1_000_000,
+			Status:         PayoutPending,
+			IdempotencyKey: "seller-payout-page-" + strconv.Itoa(i),
+			CreatedAt:      time.Now().Add(time.Duration(i) * time.Second),
+		}).Error)
+	}
+	w := f.do(t, http.MethodGet, "/api/marketplace/seller/payouts?page=2&page_size=2", nil, int(f.sellerID))
+	require.Equal(t, http.StatusOK, w.Code)
+	data := decodeSellerBody(t, w)["data"].(map[string]any)
+	assert.EqualValues(t, 3, data["total"])
+	assert.EqualValues(t, 2, data["page"])
+	assert.EqualValues(t, 2, data["page_size"])
+	items, ok := data["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, 1, "3 payouts, page 2 of size 2 → the oldest one")
+	first := items[0].(map[string]any)
+	// Payout has no JSON tags; encoding/json keeps the Go field name.
+	assert.EqualValues(t, 1_000_000, first["AmountMicro"])
+}
+
+// TestSellerStatsRetryChainRedaction covers L4: a share detail's retry chain
+// never carries other listing ids or seller identifiers.
+func TestSellerStatsRetryChainRedaction(t *testing.T) {
+	raw := `[
+		{"seq":1,"event":"select","listing_id":777,"detail":"selected listing 777 for seller_id=88","at":"2026-10-24T10:00:00+08:00"},
+		{"seq":2,"event":"switch","listing_id":999,"detail":"listing_id=999 seller #88 failed","at":"2026-10-24T10:00:01+08:00"}
+	]`
+	out := sellerRetryChain(raw)
+	assert.NotContains(t, out, "777")
+	assert.NotContains(t, out, "999")
+	assert.NotContains(t, out, "88")
+	assert.NotContains(t, out, "listing_id")
+	assert.NotContains(t, out, "seller_id")
+
+	var hops []map[string]any
+	require.NoError(t, common.Unmarshal([]byte(out), &hops))
+	require.Len(t, hops, 2)
+	for _, h := range hops {
+		assert.Contains(t, h, "seq")
+		assert.Contains(t, h, "event")
+		assert.Contains(t, h, "at")
+		assert.NotContains(t, h, "listing_id")
+	}
+
+	// Malformed input never leaks raw text.
+	assert.Equal(t, "[]", sellerRetryChain("not json"))
+	assert.Equal(t, "", sellerRetryChain(""))
 }

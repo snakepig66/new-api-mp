@@ -330,6 +330,6 @@ func getShareRecord(c *gin.Context) {
 		if err != nil {
 			return nil
 		}
-		return shareRecordDetail{shareRecord: newShareRecord(r, code), RetryChain: r.RetryChain}
+		return shareRecordDetail{shareRecord: newShareRecord(r, code), RetryChain: sellerRetryChain(r.RetryChain)}
 	})
 }

@@ -8,8 +8,34 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
+	"unicode"
 )
+
+// ErrInvalidListingKey marks a key that cannot be used as an upstream
+// credential: empty after trimming, or containing any interior whitespace or
+// control character (§2.3: the message never echoes the key).
+var ErrInvalidListingKey = errors.New("marketplace: api key is invalid")
+
+// normalizeListingKey canonicalizes a key before it is fingerprinted or
+// encrypted (M5): surrounding whitespace is trimmed and the result must be
+// non-empty and free of interior whitespace/control characters.
+//
+// HTTP header values ignore surrounding whitespace upstream, so "sk-abc" and
+// "sk-abc " would otherwise fingerprint differently and let the same key be
+// listed twice; normalizing first closes that duplicate-listing hole.
+func normalizeListingKey(plaintext string) (string, error) {
+	key := strings.TrimSpace(plaintext)
+	if key == "" {
+		return "", fmt.Errorf("%w: api key is required", ErrInvalidListingKey)
+	}
+	if strings.IndexFunc(key, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return "", fmt.Errorf("%w: api key must not contain whitespace or control characters", ErrInvalidListingKey)
+	}
+	return key, nil
+}
 
 // Listing keys are encrypted with AES-256-GCM and fingerprinted with
 // HMAC-SHA256 (§3.5). Both subkeys derive from the package-level anonSecret
@@ -40,10 +66,16 @@ func keyFingerprintKey() ([]byte, error) {
 	return sum[:], nil
 }
 
-// EncryptListingKey encrypts one seller API key for at-rest storage. The
-// output is nonce||ciphertext with a fresh random nonce per call, so two
-// encryptions of the same key never produce the same blob.
+// EncryptListingKey encrypts one seller API key for at-rest storage. The key
+// is normalized first (see normalizeListingKey) so the stored secret matches
+// the fingerprint. The output is nonce||ciphertext with a fresh random nonce
+// per call, so two encryptions of the same key never produce the same blob.
 func EncryptListingKey(plaintext string) ([]byte, error) {
+	normalized, err := normalizeListingKey(plaintext)
+	if err != nil {
+		return nil, err
+	}
+	plaintext = normalized
 	key, err := keyEncryptionKey()
 	if err != nil {
 		return nil, err
@@ -83,16 +115,22 @@ func DecryptListingKey(ciphertext []byte) (string, error) {
 }
 
 // ListingKeyFingerprint returns hex(HMAC-SHA256(fingerprintKey, plaintext)),
-// 64 lowercase hex characters. The fingerprint is deterministic and
-// irreversible; it backs the "one key listed once platform-wide" rule (§3.5)
-// through the unique index on mp_listings.key_fingerprint.
+// 64 lowercase hex characters. The key is normalized first (see
+// normalizeListingKey), so "sk-abc" and "sk-abc " share one fingerprint. The
+// fingerprint is deterministic and irreversible; it backs the "one key listed
+// once platform-wide" rule (§3.5) through the unique index on
+// mp_listings.key_fingerprint.
 func ListingKeyFingerprint(plaintext string) (string, error) {
+	normalized, err := normalizeListingKey(plaintext)
+	if err != nil {
+		return "", err
+	}
 	key, err := keyFingerprintKey()
 	if err != nil {
 		return "", err
 	}
 	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte(plaintext))
+	mac.Write([]byte(normalized))
 	return hex.EncodeToString(mac.Sum(nil)), nil
 }
 

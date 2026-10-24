@@ -79,6 +79,22 @@ func TestValidateEgressIP(t *testing.T) {
 		"198.18.0.1", "198.19.255.255", // benchmarking 198.18.0.0/15
 		"224.0.0.1", "224.0.0.2", "ff02::1", // multicast / link-local multicast
 		"::ffff:127.0.0.1", // IPv4-mapped loopback: must be judged as 127.0.0.1
+
+		// L2 additions: ranges netip does not classify by itself.
+		"0.1.2.3", "0.255.255.255", // 0.0.0.0/8 "this network"
+		"192.0.0.1",        // 192.0.0.0/24 IETF protocol assignments
+		"192.0.2.1",        // 192.0.2.0/24 TEST-NET-1 documentation
+		"192.0.2.255",      // TEST-NET-1 upper edge
+		"240.1.1.1",        // 240.0.0.0/4 reserved
+		"255.255.255.255",  // limited broadcast, inside 240.0.0.0/4
+		"64:ff9b::8.8.8.8", // NAT64 64:ff9b::/96 embeds a public IPv4
+		"2002::1",          // 6to4 2002::/16
+		"2002:c0a8:0101::", // 6to4 embedding 192.168.1.1
+
+		// IPv4-mapped forms must be judged as the embedded IPv4 address.
+		"::ffff:192.0.2.1",
+		"::ffff:240.1.1.1",
+		"::ffff:0.0.0.0",
 	}
 	for _, s := range denied {
 		t.Run("deny "+s, func(t *testing.T) {

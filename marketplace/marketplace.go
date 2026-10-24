@@ -39,6 +39,11 @@ func Init(db *gorm.DB) error {
 		return ErrNoAnonSecret
 	}
 	SetAnonSecret(secret)
+	// Extra vendors (e.g. test gateways) join the whitelist only via
+	// MP_EXTRA_VENDORS; the built-in production whitelist stays official.
+	if err := LoadExtraVendorsFromEnv(); err != nil {
+		return fmt.Errorf("marketplace init: %w", err)
+	}
 	// Egress whitelist (§3.11/§4.5): MP_EGRESS_DOMAINS overrides the built-in
 	// list derived from the whitelisted vendors' fixed base URLs.
 	if domains := os.Getenv("MP_EGRESS_DOMAINS"); domains != "" {

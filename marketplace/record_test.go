@@ -12,6 +12,8 @@ import (
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+
+	"github.com/QuantumNous/new-api/model"
 )
 
 // settleFixture runs the BeginDistribute → PrepareBilling prefix of a request
@@ -117,6 +119,37 @@ func TestSettleRelaySuccess(t *testing.T) {
 	assert.Equal(t, micro, again)
 	assert.Equal(t, int64(1), countRequests(t, f.db, "req_relayhook_test"))
 	assert.Len(t, ledgerRows(t, f.db, "req_relayhook_test"), 3)
+}
+
+// H3: when the buyer's balance can no longer cover the settle top-up, the
+// ledger books only what was actually collected and the difference is recorded
+// in the retry chain — never a seller credit for money the platform never got.
+func TestSettleRelayShortfallBooksCollected(t *testing.T) {
+	f, c, info, _ := settleFixture(t, 10_000_000, 500)
+	// Simulate the balance being spent elsewhere after the pre-freeze.
+	require.NoError(t, f.db.Model(&model.User{}).Where("id = ?", f.buyerID).Update("quota", 0).Error)
+
+	// Output far above the pre-freeze's max_tokens=100, so the actual quote
+	// exceeds the pre-consumed amount and the top-up cannot be collected.
+	usage := &dto.Usage{PromptTokens: 900, CompletionTokens: 5000}
+	micro := SettleRelay(c, info, usage)
+	require.Greater(t, micro, 0, "the pre-freeze was still collectable")
+
+	var rec Request
+	require.NoError(t, f.db.Where("request_id = ?", "req_relayhook_test").Take(&rec).Error)
+	assert.Equal(t, RequestSuccess, rec.Status)
+	assert.Equal(t, int64(micro), rec.TotalDebitMicro, "the record books the collected amount")
+	assert.Equal(t, rec.TotalDebitMicro, rec.TokenDebitMicro+rec.ToolDebitMicro)
+	assert.Contains(t, rec.RetryChain, HopEventSettleShortfall)
+
+	rows := ledgerRows(t, f.db, "req_relayhook_test")
+	require.NotEmpty(t, rows)
+	var sum int64
+	for _, r := range rows {
+		sum += r.AmountMicro
+	}
+	assert.Zero(t, sum, "ledger signed sum stays zero")
+	assert.Equal(t, 0, buyerQuota(t, int64(f.buyerID)), "the balance is drained, never negative")
 }
 
 // §3.7: 上游正常结束但 0 输出 token → 判失败不扣费 (covers chat / responses /

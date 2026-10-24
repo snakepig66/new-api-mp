@@ -112,6 +112,9 @@ func Distribute() func(c *gin.Context) {
 				// MP-HOOK: marketplace requests pick a seller listing instead of a pool channel (§4.4 A)
 				mpChannel, mpHandled, mpStatus, mpErr := marketplace.BeginDistribute(c, modelRequest.Model)
 				if mpHandled {
+					// MP-HOOK: idempotent session cleanup for every exit path of
+					// this request, including a panic in the handler (§4.4 H1).
+					defer marketplace.EndRelay(c)
 					if mpErr != nil {
 						abortWithOpenAiMessage(c, mpStatus, mpErr.Error())
 						return

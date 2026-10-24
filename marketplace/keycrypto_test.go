@@ -116,6 +116,37 @@ func TestKeycryptoTamperedCiphertext(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// M5: surrounding whitespace is normalized away before fingerprinting and
+// encryption, so the same upstream credential always maps onto one
+// fingerprint and one stored secret. Interior whitespace and control
+// characters are rejected outright.
+func TestKeycryptoNormalizesSurroundingWhitespace(t *testing.T) {
+	preserveAnonSecret(t)
+	SetAnonSecret("test-secret")
+
+	fp1, err := ListingKeyFingerprint("sk-abc")
+	require.NoError(t, err)
+	fp2, err := ListingKeyFingerprint("sk-abc ")
+	require.NoError(t, err)
+	fp3, err := ListingKeyFingerprint("\t sk-abc\r\n")
+	require.NoError(t, err)
+	assert.Equal(t, fp1, fp2, `"sk-abc" and "sk-abc " must share one fingerprint`)
+	assert.Equal(t, fp1, fp3, "all surrounding whitespace is trimmed")
+
+	ciphertext, err := EncryptListingKey("  sk-abc  ")
+	require.NoError(t, err)
+	back, err := DecryptListingKey(ciphertext)
+	require.NoError(t, err)
+	assert.Equal(t, "sk-abc", back, "the stored key is the normalized form")
+
+	for _, bad := range []string{"", "   ", "\t\n", "sk-abc def", "sk-abc\nxyz", "sk\x00abc", "sk\u00a0abc"} {
+		_, err := ListingKeyFingerprint(bad)
+		assert.ErrorIs(t, err, ErrInvalidListingKey, "key %q must be rejected", bad)
+		_, err = EncryptListingKey(bad)
+		assert.ErrorIs(t, err, ErrInvalidListingKey, "key %q must be rejected", bad)
+	}
+}
+
 func TestKeycryptoErrorsNeverLeakKey(t *testing.T) {
 	preserveAnonSecret(t)
 	SetAnonSecret("test-secret")

@@ -230,7 +230,7 @@ type LedgerEntry struct {
 	ID              int64  `gorm:"primaryKey"`
 	RequestID       string `gorm:"size:64;not null;uniqueIndex:uk_mp_ledger_req_type,priority:1;index"`
 	EntryType       string `gorm:"size:20;not null;uniqueIndex:uk_mp_ledger_req_type,priority:2"`
-	Account         string `gorm:"size:40;not null;index"` // "user:<id>" or "platform"
+	Account         string `gorm:"size:40;not null;index"` // "buyer:<id>", "seller:<id>", "platform"; legacy "user:<id>"
 	ListingID       int64
 	AmountMicro     int64 `gorm:"not null"` // signed
 	PriceVersion    int64

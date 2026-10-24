@@ -395,7 +395,17 @@ type chatResult struct {
 // happens after settlement ran on the handler goroutine).
 func (h *mpHarness) doChat(body string) chatResult {
 	h.t.Helper()
-	req, err := http.NewRequest(http.MethodPost, h.server.URL+"/v1/chat/completions", strings.NewReader(body))
+	return h.doChatTo(h.server.URL+"/v1/chat/completions", body)
+}
+
+// doChatTo posts the standard buyer request to an arbitrary relay URL.
+func (h *mpHarness) doChatTo(url string, body ...string) chatResult {
+	h.t.Helper()
+	payload := chatBody(false, 100)
+	if len(body) > 0 {
+		payload = body[0]
+	}
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(payload))
 	require.NoError(h.t, err)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer sk-"+h.tokenKey)
@@ -405,6 +415,25 @@ func (h *mpHarness) doChat(body string) chatResult {
 	data, err := io.ReadAll(resp.Body)
 	require.NoError(h.t, err)
 	return chatResult{status: resp.StatusCode, requestID: resp.Header.Get(common.RequestIdKey), body: data}
+}
+
+// newPanicServer runs the same production middleware chain as the harness but
+// ends in a handler that panics, so the H1 deferred cleanup can be exercised
+// through the middleware seam.
+func (h *mpHarness) newPanicServer() *httptest.Server {
+	h.t.Helper()
+	engine := gin.New()
+	engine.Use(gin.Recovery())
+	engine.Use(middleware.RequestId())
+	v1 := engine.Group("/v1")
+	v1.Use(middleware.TokenAuth())
+	v1.Use(middleware.Distribute())
+	v1.POST("/chat/completions", func(c *gin.Context) {
+		panic("marketplace handler panic")
+	})
+	server := httptest.NewServer(engine)
+	h.t.Cleanup(server.Close)
+	return server
 }
 
 // ---------------------------------------------------------------------------
@@ -549,18 +578,18 @@ func (h *mpHarness) reconcileSuccess(requestID string, listing marketplace.Listi
 	buyerDebit, ok := rows[marketplace.EntryBuyerDebit]
 	require.True(h.t, ok, "buyer_debit row missing")
 	assert.Equal(h.t, -int64(quote.TokenDebit), buyerDebit.AmountMicro)
-	assert.Equal(h.t, marketplace.UserAccount(int64(h.buyerID)), buyerDebit.Account)
+	assert.Equal(h.t, marketplace.BuyerAccount(int64(h.buyerID)), buyerDebit.Account)
 	assert.Equal(h.t, marketplace.LedgerAvailable, buyerDebit.Status)
 	if quote.ToolDebit > 0 {
 		toolDebit, ok := rows[marketplace.EntryToolDebit]
 		require.True(h.t, ok, "tool_debit row missing")
 		assert.Equal(h.t, -int64(quote.ToolDebit), toolDebit.AmountMicro)
-		assert.Equal(h.t, marketplace.UserAccount(int64(h.buyerID)), toolDebit.Account)
+		assert.Equal(h.t, marketplace.BuyerAccount(int64(h.buyerID)), toolDebit.Account)
 	}
 	sellerCredit, ok := rows[marketplace.EntrySellerCredit]
 	require.True(h.t, ok, "seller_credit row missing")
 	assert.Equal(h.t, int64(credit), sellerCredit.AmountMicro)
-	assert.Equal(h.t, marketplace.UserAccount(listing.SellerID), sellerCredit.Account)
+	assert.Equal(h.t, marketplace.SellerAccount(listing.SellerID), sellerCredit.Account)
 	assert.Equal(h.t, marketplace.LedgerPending, sellerCredit.Status)
 	require.NotNil(h.t, sellerCredit.AvailableAt)
 	assert.WithinDuration(h.t, time.Now().Add(marketplace.DefaultMaturity), *sellerCredit.AvailableAt, time.Minute)
@@ -803,7 +832,11 @@ func TestRelayIT_AllListingsFail(t *testing.T) {
 	listingB := h.addListing(second.url(), "sk-seller-fail-b", 1000)
 
 	res := h.doChat(chatBody(false, 100))
-	assert.Equal(h.t, http.StatusInternalServerError, res.status, string(res.body))
+	// M8/§3.10: the all-failed path exposes a fixed 503, never the upstream's
+	// 500 or its error text.
+	assert.Equal(h.t, http.StatusServiceUnavailable, res.status, string(res.body))
+	assert.Contains(h.t, string(res.body), `"code":"no_supplier_available"`)
+	assert.NotContains(h.t, string(res.body), "boom")
 	assert.Equal(h.t, 1, first.callCount())
 	// B serves its first attempt plus the single in-place retry (§3.7).
 	assert.Equal(h.t, 2, second.callCount())
@@ -887,24 +920,75 @@ func TestRelayIT_ServerToolsStripped(t *testing.T) {
 	assert.Contains(t, hopEvents(hopsOf(t, rec)), marketplace.HopEventStripTools)
 }
 
-// Case 10: buyer balance below the pre-freeze → 402, and no ledger rows, no
-// record, no balance movement (§3.7 余额不足报错; §10-3 402).
+// Case 10: buyer balance below the pre-freeze → 402; the H1 cleanup releases
+// the listing slot and writes exactly one failed record, the balance is
+// untouched and no ledger row exists (§3.7 余额不足报错; §10-3 402).
 func TestRelayIT_InsufficientBalance(t *testing.T) {
 	h := newMPHarness(t, 1_000) // ¥0.001 — far below any pre-freeze
 	upstream := newMockUpstream(t, writeChatSuccess("never reached", chatUsageJSON{PromptTokens: 1, CompletionTokens: 1}))
-	h.addListing(upstream.url(), "sk-seller-poor", 1000)
+	listing := h.addListing(upstream.url(), "sk-seller-poor", 1000)
 
 	res := h.doChat(chatBody(false, 100_000))
 	assert.Equal(h.t, http.StatusPaymentRequired, res.status, string(res.body))
 	assert.Contains(t, string(res.body), `"error"`, "the error must use the OpenAI error format (§3.10)")
 	assert.Equal(t, 0, upstream.callCount(), "nothing may reach the upstream")
 
-	var recCount, ledgerCount int64
-	require.NoError(t, h.db.Model(&marketplace.Request{}).Count(&recCount).Error)
-	require.NoError(t, h.db.Model(&marketplace.LedgerEntry{}).Count(&ledgerCount).Error)
-	assert.Zero(t, recCount, "a 402 rejected at pre-freeze writes no request record")
-	assert.Zero(t, ledgerCount, "a 402 writes no ledger rows")
-	assert.Equal(t, h.startQuota, h.buyerQuota())
+	// H1: the early exit must not leak the slot acquired during selection.
+	assert.Equal(h.t, 0, marketplace.DefaultSelector().Slots.InFlight(listing.ID))
+	rec := h.recordOf(res.requestID)
+	assert.Equal(h.t, marketplace.RequestFailed, rec.Status)
+	assert.Zero(h.t, rec.TotalDebitMicro)
+	assert.Contains(h.t, hopEvents(hopsOf(h.t, rec)), marketplace.HopEventEarlyExit)
+
+	var ledgerCount int64
+	require.NoError(h.t, h.db.Model(&marketplace.LedgerEntry{}).Count(&ledgerCount).Error)
+	assert.Zero(h.t, ledgerCount, "a 402 writes no ledger rows")
+	assert.Equal(h.t, h.startQuota, h.buyerQuota())
+}
+
+// H1: a request rejected after selection (valid JSON, invalid payload) still
+// releases the slot, refunds nothing (no pre-freeze happened) and leaves a
+// failed record.
+func TestRelayIT_BadRequestBodyReleasesSlot(t *testing.T) {
+	h := newMPHarness(t, itBuyerQuota)
+	upstream := newMockUpstream(t, writeChatSuccess("never reached", chatUsageJSON{PromptTokens: 1, CompletionTokens: 1}))
+	listing := h.addListing(upstream.url(), "sk-seller-badbody", 1000)
+
+	// `messages` must be an array; the distributor only inspects `model`, so the
+	// listing slot is acquired before the relay body validation rejects it.
+	res := h.doChat(`{"model":"deepseek-flash","messages":"not-an-array"}`)
+	assert.Equal(h.t, http.StatusBadRequest, res.status, string(res.body))
+	assert.Equal(h.t, 0, upstream.callCount())
+
+	assert.Equal(h.t, 0, marketplace.DefaultSelector().Slots.InFlight(listing.ID))
+	rec := h.recordOf(res.requestID)
+	assert.Equal(h.t, marketplace.RequestFailed, rec.Status)
+	assert.Contains(h.t, hopEvents(hopsOf(h.t, rec)), marketplace.HopEventEarlyExit)
+	assert.Equal(h.t, h.startQuota, h.buyerQuota())
+	var ledgerCount int64
+	require.NoError(h.t, h.db.Model(&marketplace.LedgerEntry{}).Count(&ledgerCount).Error)
+	assert.Zero(h.t, ledgerCount)
+}
+
+// H1: a panic in the relay handler must still release the slot, refund the
+// pre-freeze (if any) and write the failed record; gin's recovery keeps the
+// usual 500 response.
+func TestRelayIT_HandlerPanicReleasesSlot(t *testing.T) {
+	h := newMPHarness(t, itBuyerQuota)
+	upstream := newMockUpstream(t, writeChatSuccess("never reached", chatUsageJSON{PromptTokens: 1, CompletionTokens: 1}))
+	listing := h.addListing(upstream.url(), "sk-seller-panic", 1000)
+	panicServer := h.newPanicServer()
+
+	res := h.doChatTo(panicServer.URL + "/v1/chat/completions")
+	assert.Equal(h.t, http.StatusInternalServerError, res.status)
+	assert.Equal(h.t, 0, upstream.callCount())
+
+	assert.Equal(h.t, 0, marketplace.DefaultSelector().Slots.InFlight(listing.ID),
+		"a panicking request must not keep its concurrency slot")
+	assert.Equal(h.t, h.startQuota, h.buyerQuota())
+	rec := h.recordOf(res.requestID)
+	assert.Equal(h.t, marketplace.RequestFailed, rec.Status)
+	assert.Zero(h.t, rec.TotalDebitMicro)
 }
 
 // Case 11: a single listing with a transient failure is retried in place

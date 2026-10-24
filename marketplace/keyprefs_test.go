@@ -114,28 +114,66 @@ func swapBuyerRPMWindow(t *testing.T) {
 	t.Cleanup(func() { buyerRPMWindow = old })
 }
 
-func TestBuyerRPMAllow(t *testing.T) {
-	f := newRelayFixture(t, 0)
+func TestBuyerRPMByUser(t *testing.T) {
 	swapBuyerRPMWindow(t)
 	now := time.Now()
 
-	// No preference row → unlimited.
+	// rpmLimit <= 0 → unlimited and no budget is spent.
 	for range 5 {
-		assert.True(t, BuyerRPMAllow(77, now))
+		assert.True(t, BuyerRPMAllow(77, 0, now))
 	}
 
 	// RPM = 2: the third attempt inside the 60s window is refused.
-	require.NoError(t, UpsertKeyPref(f.db, 77, KeyPrefInput{RPM: 2}))
-	assert.True(t, BuyerRPMAllow(77, now))
-	assert.True(t, BuyerRPMAllow(77, now.Add(time.Second)))
-	assert.False(t, BuyerRPMAllow(77, now.Add(2*time.Second)))
+	assert.True(t, BuyerRPMAllow(77, 2, now))
+	assert.True(t, BuyerRPMAllow(77, 2, now.Add(time.Second)))
+	assert.False(t, BuyerRPMAllow(77, 2, now.Add(2*time.Second)))
 	// The window slides: a minute later the oldest hit falls out.
-	assert.True(t, BuyerRPMAllow(77, now.Add(61*time.Second)))
+	assert.True(t, BuyerRPMAllow(77, 2, now.Add(61*time.Second)))
 
-	// RPM = 0 → unlimited.
-	require.NoError(t, UpsertKeyPref(f.db, 88, KeyPrefInput{RPM: 0}))
-	for i := range 5 {
-		assert.True(t, BuyerRPMAllow(88, now.Add(time.Duration(i)*time.Second)))
+	// Another buyer has an independent budget (the window is per user id).
+	assert.True(t, BuyerRPMAllow(88, 2, now.Add(time.Second)))
+	assert.True(t, BuyerRPMAllow(88, 2, now.Add(2*time.Second)))
+	assert.False(t, BuyerRPMAllow(88, 2, now.Add(3*time.Second)))
+
+	// A non-positive user id is not a buyer request: always admitted.
+	for range 50 {
+		assert.True(t, BuyerRPMAllow(0, 1, now))
+	}
+}
+
+// TestBuyerRPMSharedAcrossTokensOfOneUser is the M13 regression: the limit is
+// counted per buyer, so a second key of the same user shares the budget
+// instead of getting a fresh one.
+func TestBuyerRPMSharedAcrossTokensOfOneUser(t *testing.T) {
+	swapBuyerRPMWindow(t)
+	now := time.Now()
+	const buyer = int64(4242)
+
+	// Token A's two requests fill the user's budget; token B is refused even
+	// though it never made a request itself.
+	assert.True(t, BuyerRPMAllow(buyer, 2, now), "token A, first request")
+	assert.True(t, BuyerRPMAllow(buyer, 2, now.Add(time.Second)), "token A, second request")
+	assert.False(t, BuyerRPMAllow(buyer, 2, now.Add(2*time.Second)), "token B shares token A's window")
+
+	// A different user is unaffected.
+	assert.True(t, BuyerRPMAllow(buyer+1, 2, now.Add(2*time.Second)))
+
+	// The budget recovers after the window slides.
+	assert.True(t, BuyerRPMAllow(buyer, 2, now.Add(61*time.Second)))
+}
+
+func TestDefaultBuyerRPM(t *testing.T) {
+	t.Setenv("MP_DEFAULT_BUYER_RPM", "120")
+	assert.Equal(t, 120, DefaultBuyerRPM())
+
+	// Surrounding whitespace is tolerated.
+	t.Setenv("MP_DEFAULT_BUYER_RPM", " 60 ")
+	assert.Equal(t, 60, DefaultBuyerRPM())
+
+	// Non-positive and malformed values all mean "unlimited".
+	for _, raw := range []string{"", "0", "-5", "abc", "1.5"} {
+		t.Setenv("MP_DEFAULT_BUYER_RPM", raw)
+		assert.Equal(t, 0, DefaultBuyerRPM(), "MP_DEFAULT_BUYER_RPM=%q", raw)
 	}
 }
 

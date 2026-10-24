@@ -152,6 +152,36 @@ func TestCreateListingDuplicateKey(t *testing.T) {
 	assert.NotEqual(t, first.KeyFingerprint, second.KeyFingerprint)
 }
 
+// M5 anti-regression: a key with surrounding whitespace normalizes onto the
+// already-listed key and must be reported as ErrDuplicateKey; interior
+// whitespace/control characters are rejected as a parameter error before
+// anything is written.
+func TestCreateListingNormalizesKeyWhitespace(t *testing.T) {
+	db := newListingTestDB(t)
+
+	first := createTestListing(t, db, 10023, "sk-abc")
+
+	_, err := CreateListing(db, CreateListingInput{
+		SellerID: 10024, VendorID: "deepseek", APIKey: "sk-abc ",
+		Models: []string{"deepseek-flash"}, MultiplierMilli: 300,
+	})
+	assert.ErrorIs(t, err, ErrDuplicateKey,
+		`"sk-abc " must not open a second listing for "sk-abc"`)
+	assertNoKeyLeak(t, err, "sk-abc", first.KeyFingerprint)
+
+	_, err = CreateListing(db, CreateListingInput{
+		SellerID: 10024, VendorID: "deepseek", APIKey: "sk-abc def",
+		Models: []string{"deepseek-flash"}, MultiplierMilli: 300,
+	})
+	assert.ErrorIs(t, err, ErrInvalidListingKey, "interior whitespace is rejected")
+	assertNoKeyLeak(t, err, "sk-abc def")
+
+	// A rejected create writes nothing.
+	var cnt int64
+	require.NoError(t, db.Model(&Listing{}).Count(&cnt).Error)
+	assert.Equal(t, int64(1), cnt)
+}
+
 func TestCreateListingValidation(t *testing.T) {
 	db := newListingTestDB(t)
 

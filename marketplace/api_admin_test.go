@@ -42,6 +42,15 @@ func headerAdminAuth() gin.HandlerFunc {
 			return
 		}
 		common.SetContextKey(c, constant.ContextKeyUserId, id)
+		// The marketplace admin handlers re-check the role (L5). Tests default
+		// to root; X-Test-Role lowers it to exercise the non-root rejection.
+		role := common.RoleRootUser
+		if rawRole := strings.TrimSpace(c.GetHeader("X-Test-Role")); rawRole != "" {
+			if parsed, err := strconv.Atoi(rawRole); err == nil {
+				role = parsed
+			}
+		}
+		c.Set("role", role)
 		c.Next()
 	}
 }
@@ -82,7 +91,7 @@ func newAdminAPIFixture(t *testing.T) *adminAPIFixture {
 	require.NoError(t, db.Create(&buyer).Error)
 
 	engine := gin.New()
-	registerAdminRoutes(engine.Group("/api/marketplace", headerAdminAuth()))
+	registerAdminRootRoutes(engine.Group("/api/marketplace", headerAdminAuth()))
 
 	return &adminAPIFixture{
 		db:       db,
@@ -108,6 +117,28 @@ func (f *adminAPIFixture) do(t *testing.T, method, path string, body any, userID
 	if userID > 0 {
 		req.Header.Set("X-Test-User-Id", strconv.Itoa(userID))
 	}
+	w := httptest.NewRecorder()
+	f.engine.ServeHTTP(w, req)
+	return w
+}
+
+// doRole is do with an explicit role header (L5 tests).
+func (f *adminAPIFixture) doRole(t *testing.T, method, path string, body any, userID, role int) *httptest.ResponseRecorder {
+	t.Helper()
+	var rdr *bytes.Reader
+	if body != nil {
+		raw, err := common.Marshal(body)
+		require.NoError(t, err)
+		rdr = bytes.NewReader(raw)
+	} else {
+		rdr = bytes.NewReader(nil)
+	}
+	req := httptest.NewRequest(method, path, rdr)
+	req.Header.Set("Content-Type", "application/json")
+	if userID > 0 {
+		req.Header.Set("X-Test-User-Id", strconv.Itoa(userID))
+	}
+	req.Header.Set("X-Test-Role", strconv.Itoa(role))
 	w := httptest.NewRecorder()
 	f.engine.ServeHTTP(w, req)
 	return w
@@ -201,9 +232,12 @@ func TestAdminHolidaysImportAndList(t *testing.T) {
 
 	w = f.do(t, http.MethodGet, "/api/marketplace/admin/holidays?year=2026", nil, f.adminID)
 	require.Equal(t, http.StatusOK, w.Code)
-	items, ok := decodeAdminBody(t, w)["data"].([]any)
+	data := decodeAdminBody(t, w)["data"].(map[string]any)
+	items, ok := data["holidays"].([]any)
 	require.True(t, ok)
 	assert.Len(t, items, 3)
+	assert.Contains(t, data, "next_year_imported")
+	assert.Contains(t, data, "next_year")
 
 	// Re-importing a date upserts its kind (ImportHolidays semantics).
 	w = f.do(t, http.MethodPost, "/api/marketplace/admin/holidays", []map[string]any{
@@ -386,4 +420,181 @@ func TestAdminRequiresAuth(t *testing.T) {
 	f := newAdminAPIFixture(t)
 	w := f.do(t, http.MethodGet, "/api/marketplace/admin/prices", nil, 0)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// ---------------------------------------------------------------------------
+// M11 价目 / 按次价目 / 日历
+// ---------------------------------------------------------------------------
+
+// TestAdminPriceValidation covers M11: backdated effective_at and unknown tier
+// are rejected; a future effective_at is accepted.
+func TestAdminPriceValidation(t *testing.T) {
+	f := newAdminAPIFixture(t)
+
+	past := time.Now().Add(-time.Hour).Format(time.RFC3339)
+	w := f.do(t, http.MethodPost, "/api/marketplace/admin/prices", map[string]any{
+		"model": "deepseek-flash", "vendor": "deepseek", "tier": "offpeak",
+		"input_micro_per_mtok": 1_000_000, "output_micro_per_mtok": 4_000_000,
+		"cache_read_micro_per_mtok": 20_000, "cache_write_micro_per_mtok": 1_000_000,
+		"effective_at": past,
+	}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code, "backdated price version")
+
+	w = f.do(t, http.MethodPost, "/api/marketplace/admin/prices", map[string]any{
+		"model": "deepseek-flash", "vendor": "deepseek", "tier": "bogus",
+		"input_micro_per_mtok": 1, "output_micro_per_mtok": 1,
+		"cache_read_micro_per_mtok": 1, "cache_write_micro_per_mtok": 1,
+	}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code, "tier must be peak/offpeak/flat")
+
+	future := time.Now().Add(time.Hour).Format(time.RFC3339)
+	w = f.do(t, http.MethodPost, "/api/marketplace/admin/prices", map[string]any{
+		"model": "deepseek-flash", "vendor": "deepseek", "tier": "offpeak",
+		"input_micro_per_mtok": 1_100_000, "output_micro_per_mtok": 4_100_000,
+		"cache_read_micro_per_mtok": 21_000, "cache_write_micro_per_mtok": 1_100_000,
+		"effective_at": future,
+	}, f.adminID)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestPerCallPrices covers the §3.4/§12 M11 per-call price admin CRUD.
+func TestPerCallPrices(t *testing.T) {
+	f := newAdminAPIFixture(t)
+
+	w := f.do(t, http.MethodPost, "/api/marketplace/admin/per-call-prices", map[string]any{
+		"vendor": "deepseek", "item": "search", "unit_price_micro": 6_000,
+	}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	row := decodeAdminBody(t, w)["data"].(map[string]any)
+	// PerCallPrice has no JSON tags; encoding/json keeps the Go field names.
+	assert.EqualValues(t, 2, row["Version"], "seed search row is version 1")
+	assert.EqualValues(t, 6_000, row["UnitPriceMicro"])
+
+	w = f.do(t, http.MethodGet, "/api/marketplace/admin/per-call-prices?vendor=deepseek&item=search", nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	items, ok := decodeAdminBody(t, w)["data"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, items)
+	assert.EqualValues(t, 2, items[0].(map[string]any)["Version"])
+
+	// Unknown item and backdated effective_at are rejected.
+	w = f.do(t, http.MethodPost, "/api/marketplace/admin/per-call-prices", map[string]any{
+		"vendor": "deepseek", "item": "bogus", "unit_price_micro": 6_000,
+	}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	w = f.do(t, http.MethodPost, "/api/marketplace/admin/per-call-prices", map[string]any{
+		"vendor": "deepseek", "item": "fetch", "unit_price_micro": 6_000,
+		"effective_at": time.Now().Add(-time.Hour).Format(time.RFC3339),
+	}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestHolidaysCalendarReload covers M11: an import reloads the in-process
+// calendar immediately (TierAt assertion) and GET reports next_year_imported.
+func TestHolidaysCalendarReload(t *testing.T) {
+	f := newAdminAPIFixture(t)
+	_, cal := relayState()
+	require.NotNil(t, cal)
+
+	// Pick a weekday in next calendar year so (a) the calendar first reports
+	// peak at 10:00 and (b) the import flips the next_year_imported flag.
+	nextYear := nextCalendarYear(time.Now())
+	var date string
+	for day := 1; day <= 10; day++ {
+		d := time.Date(nextYear, 1, day, 10, 0, 0, 0, time.UTC)
+		wd := d.Weekday()
+		if wd != time.Saturday && wd != time.Sunday {
+			date = d.Format("2006-01-02")
+			break
+		}
+	}
+	require.NotEmpty(t, date, "a weekday in early January must exist")
+	at, err := time.ParseInLocation("2006-01-02 15:04", date+" 10:00", cal.loc)
+	require.NoError(t, err)
+	require.Equal(t, TierPeak, cal.TierAt(at), "before import the weekday is peak")
+
+	// next_year_imported starts false (seed contains no next-year rows).
+	w := f.do(t, http.MethodGet, "/api/marketplace/admin/holidays", nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	data := decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.Equal(t, false, data["next_year_imported"])
+
+	w = f.do(t, http.MethodPost, "/api/marketplace/admin/holidays", []map[string]any{
+		{"date": date, "kind": "holiday"},
+	}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// No waiting for the hourly job: the same instant is off-peak now.
+	assert.Equal(t, TierOffpeak, cal.TierAt(at), "import must reload the calendar immediately")
+
+	w = f.do(t, http.MethodGet, "/api/marketplace/admin/holidays", nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	data = decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.Equal(t, true, data["next_year_imported"])
+
+	// And the endpoint lists the imported date.
+	items, ok := data["holidays"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, 1)
+	assert.Equal(t, date, items[0].(map[string]any)["Date"])
+}
+
+// ---------------------------------------------------------------------------
+// L5: root-only sensitive actions + no self-review
+// ---------------------------------------------------------------------------
+
+// TestAdminRootOnlySensitiveActions covers L5: 提现审批 / 冲正 / 代号反查
+// reject non-root administrators with 403.
+func TestAdminRootOnlySensitiveActions(t *testing.T) {
+	f := newAdminAPIFixture(t)
+	payout := Payout{
+		SellerID: f.sellerID, AmountMicro: 50_000_000, Status: PayoutPending,
+		IdempotencyKey: "root-only-payout", CreatedAt: time.Now(),
+	}
+	require.NoError(t, f.db.Create(&payout).Error)
+
+	nonRoot := common.RoleAdminUser
+	w := f.doRole(t, http.MethodPost,
+		"/api/marketplace/admin/payouts/"+strconv.FormatInt(payout.ID, 10)+"/approve", nil, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	w = f.doRole(t, http.MethodPost, "/api/marketplace/admin/reverse",
+		map[string]any{"request_id": "whatever"}, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	w = f.doRole(t, http.MethodGet,
+		"/api/marketplace/admin/deanon?seller_id="+strconv.FormatInt(f.sellerID, 10)+"&code=deadbeef", nil, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	// Root can still act (here: approve another seller's payout).
+	w = f.doRole(t, http.MethodPost,
+		"/api/marketplace/admin/payouts/"+strconv.FormatInt(payout.ID, 10)+"/approve", nil, f.adminID, common.RoleRootUser)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestAdminSelfPayoutForbidden covers L5: an administrator cannot approve or
+// mark paid their own withdrawal.
+func TestAdminSelfPayoutForbidden(t *testing.T) {
+	f := newAdminAPIFixture(t)
+	payout := Payout{
+		SellerID: int64(f.adminID), AmountMicro: 50_000_000, Status: PayoutPending,
+		IdempotencyKey: "self-payout", CreatedAt: time.Now(),
+	}
+	require.NoError(t, f.db.Create(&payout).Error)
+	path := "/api/marketplace/admin/payouts/" + strconv.FormatInt(payout.ID, 10)
+
+	w := f.do(t, http.MethodPost, path+"/approve", nil, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	w = f.do(t, http.MethodPost, path+"/reject", nil, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	w = f.do(t, http.MethodPost, path+"/mark-paid", nil, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// The payout is untouched.
+	var row Payout
+	require.NoError(t, f.db.Where("id = ?", payout.ID).Take(&row).Error)
+	assert.Equal(t, PayoutPending, row.Status)
 }

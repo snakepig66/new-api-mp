@@ -63,12 +63,13 @@ func ToolPreFreezeCap() int {
 // racing a timeout refund); the mutex makes Settle/Refund mutually exclusive
 // and idempotent.
 type BillingSession struct {
-	db          *gorm.DB
-	buyerUserID int
-	preConsumed Micro
-	settled     bool
-	refunded    bool
-	mu          sync.Mutex
+	db           *gorm.DB
+	buyerUserID  int
+	preConsumed  Micro
+	settled      bool
+	refunded     bool
+	settledMicro Micro // amount actually charged by the winning Settle/SettleAtomic
+	mu           sync.Mutex
 }
 
 // Compile-time proof that BillingSession satisfies the upstream seam.
@@ -117,51 +118,116 @@ func NewBillingSession(db *gorm.DB, buyerUserID int64, preConsume Micro) (*Billi
 //   - actual == preConsumed: no quota movement.
 //
 // Settle is idempotent: once settled or refunded it returns nil without
-// moving quota again.
+// moving quota again. It wraps SettleAtomic in its own transaction, so the
+// quota movement is atomic and never negative.
 func (s *BillingSession) Settle(actualQuota int) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.settled || s.refunded {
-		return nil
-	}
 	if actualQuota < 0 {
 		return fmt.Errorf("%w: settle amount must be non-negative", ErrMoneyNegative)
 	}
-	delta := actualQuota - int(s.preConsumed)
-	switch {
-	case delta < 0:
-		if err := model.IncreaseUserQuota(s.buyerUserID, -delta, false); err != nil {
-			// Nothing moved; leave the session unsettled so the caller can
-			// retry Settle or fall back to Refund without double-counting.
-			return fmt.Errorf("marketplace: settle refund difference: %w", err)
-		}
-	case delta > 0:
-		ok, err := model.TryReserveUserQuota(s.buyerUserID, delta)
-		switch {
-		case err != nil:
-			// The quota row could not be updated at all; nothing moved.
-			// Settle for the pre-freeze alone and surface the loss to ops
-			// rather than leaving a refundable session for a consumed
-			// request.
-			common.SysError(common.LogText(
-				"marketplace: settle top-up failed (userId=%d, delta=%d): %s",
-				s.buyerUserID, delta, err.Error()))
-		case !ok:
-			// Insufficient balance: deduct whatever remains (never negative)
-			// and log the shortfall (§3.7 失败处理的对账口径).
-			drained := 0
-			if bal, qerr := model.GetUserQuota(s.buyerUserID, true); qerr == nil && bal > 0 {
-				if reserved, rerr := model.TryReserveUserQuota(s.buyerUserID, bal); rerr == nil && reserved {
-					drained = bal
-				}
-			}
-			common.SysError(common.LogText(
-				"marketplace: settle top-up shortfall (userId=%d, need=%d, drained=%d)",
-				s.buyerUserID, delta, drained))
-		}
+	db := s.quotaDB()
+	if db == nil {
+		return errors.New("marketplace: settle: no database handle")
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		_, err := s.SettleAtomic(tx, Micro(actualQuota))
+		return err
+	})
+}
+
+// SettleAtomic reconciles the pre-freeze against actual inside the caller's
+// transaction (H3): the ledger rows, the request record and users.quota must
+// commit or roll back together. It returns the amount actually charged, which
+// is what the caller must book as the buyer debit:
+//
+//   - actual <= preConsumed: the difference is credited back to users.quota;
+//     charged == actual.
+//   - actual > preConsumed: the difference is deducted from users.quota. When
+//     the balance cannot cover it, the remaining balance is drained to exactly
+//     zero and charged == preConsumed + drained (< actual); the shortfall is
+//     logged and the caller books only the money actually received.
+//
+// All quota movement is a direct conditional UPDATE inside tx, so it is atomic
+// with the caller's ledger writes and never crosses the transaction boundary.
+// Once settled (or refunded) the session replays its recorded charge and moves
+// no money.
+func (s *BillingSession) SettleAtomic(tx *gorm.DB, actual Micro) (charged Micro, err error) {
+	if tx == nil {
+		return 0, errors.New("marketplace: settle requires a transaction")
+	}
+	if actual < 0 {
+		return 0, fmt.Errorf("%w: settle amount must be non-negative", ErrMoneyNegative)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refunded {
+		return 0, nil
+	}
+	if s.settled {
+		return s.settledMicro, nil
+	}
+	charged, err = s.settleInTx(tx, actual)
+	if err != nil {
+		return 0, err
 	}
 	s.settled = true
-	return nil
+	s.settledMicro = charged
+	return charged, nil
+}
+
+// settleInTx performs the quota reconciliation against tx. The caller holds
+// s.mu.
+func (s *BillingSession) settleInTx(tx *gorm.DB, actual Micro) (Micro, error) {
+	if actual <= s.preConsumed {
+		refund := s.preConsumed - actual
+		if refund > 0 {
+			res := tx.Model(&model.User{}).
+				Where("id = ?", s.buyerUserID).
+				Update("quota", gorm.Expr("quota + ?", int64(refund)))
+			if res.Error != nil {
+				return 0, fmt.Errorf("marketplace: settle refund difference: %w", res.Error)
+			}
+			if res.RowsAffected != 1 {
+				return 0, fmt.Errorf("marketplace: settle refund difference: user %d not found", s.buyerUserID)
+			}
+		}
+		return actual, nil
+	}
+
+	delta := actual - s.preConsumed
+	res := tx.Model(&model.User{}).
+		Where("id = ? AND quota >= ?", s.buyerUserID, int64(delta)).
+		Update("quota", gorm.Expr("quota - ?", int64(delta)))
+	if res.Error != nil {
+		return 0, fmt.Errorf("marketplace: settle top-up: %w", res.Error)
+	}
+	if res.RowsAffected == 1 {
+		return actual, nil
+	}
+
+	// Insufficient balance: lock the row, read what is left, drain it to
+	// exactly zero, and report the charge actually collected.
+	var user model.User
+	if err := lockForUpdate(tx).Select("id", "quota").
+		Where("id = ?", s.buyerUserID).First(&user).Error; err != nil {
+		return 0, fmt.Errorf("marketplace: settle shortfall: %w", err)
+	}
+	drained := 0
+	if user.Quota > 0 {
+		res := tx.Model(&model.User{}).
+			Where("id = ? AND quota >= ?", s.buyerUserID, user.Quota).
+			Update("quota", gorm.Expr("quota - ?", user.Quota))
+		if res.Error != nil {
+			return 0, fmt.Errorf("marketplace: settle shortfall drain: %w", res.Error)
+		}
+		if res.RowsAffected == 1 {
+			drained = user.Quota
+		}
+	}
+	charged := s.preConsumed + Micro(drained)
+	common.SysError(common.LogText(
+		"marketplace: settle top-up shortfall (userId=%d, need=%d, drained=%d)",
+		s.buyerUserID, int64(delta), drained))
+	return charged, nil
 }
 
 // Refund returns the whole pre-freeze to the buyer's users.quota on the
@@ -170,23 +236,55 @@ func (s *BillingSession) Settle(actualQuota int) error {
 // relaycommon.BillingSettler signature but unused: refunding is done
 // synchronously so callers can rely on the balance being restored when
 // Refund returns.
+//
+// The refund reuses settleInTx (actual == 0) so it follows the same atomic
+// conditional UPDATE as SettleAtomic.
 func (s *BillingSession) Refund(c *gin.Context) {
+	db := s.quotaDB()
+	if db == nil {
+		common.SysError(common.LogText(
+			"marketplace: refund pre-freeze failed (userId=%d): no database handle", s.buyerUserID))
+		return
+	}
+	// Acquire the connection (Begin) before the session mutex, matching
+	// Settle/SettleAtomic's connection-then-mutex order. sqlite pools a single
+	// connection; the opposite order would deadlock a racing Settle.
+	tx := db.Begin()
+	if tx.Error != nil {
+		common.SysError(common.LogText(
+			"marketplace: refund pre-freeze failed (userId=%d): %s", s.buyerUserID, tx.Error.Error()))
+		return
+	}
 	s.mu.Lock()
 	if s.settled || s.refunded {
 		s.mu.Unlock()
+		_ = tx.Rollback().Error
+		return
+	}
+	_, err := s.settleInTx(tx, 0)
+	if err == nil {
+		err = tx.Commit().Error
+	} else {
+		_ = tx.Rollback().Error
+	}
+	if err != nil {
+		s.mu.Unlock()
+		common.SysError(common.LogText(
+			"marketplace: refund pre-freeze failed (userId=%d, amount=%d): %s",
+			s.buyerUserID, int64(s.preConsumed), err.Error()))
 		return
 	}
 	s.refunded = true
-	amount := int(s.preConsumed)
 	s.mu.Unlock()
+}
 
-	if amount > 0 {
-		if err := model.IncreaseUserQuota(s.buyerUserID, amount, false); err != nil {
-			common.SysError(common.LogText(
-				"marketplace: refund pre-freeze failed (userId=%d, amount=%d): %s",
-				s.buyerUserID, amount, err.Error()))
-		}
+// quotaDB returns the marketplace handle, falling back to the model package's
+// global handle for sessions created without one (tests and legacy callers).
+func (s *BillingSession) quotaDB() *gorm.DB {
+	if s.db != nil {
+		return s.db
 	}
+	return model.DB
 }
 
 // NeedsRefund reports whether the session still holds a pre-freeze that

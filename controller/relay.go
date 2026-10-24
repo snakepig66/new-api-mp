@@ -73,6 +73,10 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
 func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	requestId := c.GetString(common.RequestIdKey)
+	// MP-HOOK: finalize the marketplace session on every exit path, including
+	// PrepareBilling failures, bad request bodies, panics and early returns that
+	// never reach RefundFailedRequestBilling (§4.4 H1). No-op when not MP.
+	defer marketplace.EndRelay(c)
 	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 	//originalModel := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
 
@@ -95,6 +99,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if newAPIError != nil {
 			service.RecordRequestPolicyTermination(c, newAPIError)
 			logger.LogError(c, common.LogText("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
+			if marketplace.IsRelayRequest(c) {
+				// MP-HOOK: §3.10 — the buyer only ever sees 400/402/503 with fixed wording; the upstream text stays in the log/retry chain.
+				newAPIError = marketplace.ConvergeOutwardError(newAPIError)
+			}
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			upstreamURLs := common.UpstreamAddresses(c)
 			if relayFormat != types.RelayFormatOpenAIRealtime && c.Writer.Written() &&
@@ -176,8 +184,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
+	// MP-HOOK: marketplace retries use their own fixed budget (2 switches + 1
+	// in-place retry) and never read the mutable common.RetryTimes (§4.4 C, M2).
+	retryBudget := marketplace.RetryBudget(c, common.RetryTimes)
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	for ; retryParam.GetRetry() <= retryBudget; retryParam.IncreaseRetry() {
 		relayInfo.StreamStatus = nil
 		relayInfo.PerformanceBusinessRejection = false
 		relayInfo.PerformanceOutputTokens = 0
@@ -226,7 +237,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
-		decision := service.DecideRelayRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
+		decision := service.DecideRelayRetry(c, newAPIError, retryBudget-retryParam.GetRetry())
 		// MP-HOOK: marketplace hop budget — at most 2 listing switches plus 1 in-place retry (§4.4 C, §3.7)
 		if decision.Action == "retry" && !marketplace.MayRetry(c, newAPIError) {
 			decision = service.PolicyDecision{Action: "stop", Reason: "marketplace_hop_budget_exhausted", Source: "marketplace"}

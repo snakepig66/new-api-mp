@@ -11,6 +11,11 @@ import (
 // first whitelisted vendor (§3.5).
 const SeedVendorDeepSeek = "deepseek"
 
+// seedVendorTipig is the optional E2E gateway vendor id. It is NOT in the
+// production whitelist (H8); its seed rows are written only when the vendor
+// has been injected through MP_EXTRA_VENDORS.
+const seedVendorTipig = "tipig"
+
 // SeedPrices idempotently writes the DeepSeek seed price books (§3.3/§3.4):
 // peak and off-peak tiers for deepseek-flash and deepseek-v4-pro, plus the
 // Search/Fetch per-call prices. Rows that already exist — same
@@ -58,24 +63,32 @@ func SeedPrices(db *gorm.DB) error {
 			InputMicroPerMTok: 9_000_000, OutputMicroPerMTok: 27_000_000,
 			CacheReadMicroPerMTok: 300_000, CacheWriteMicroPerMTok: 9_000_000,
 			EffectiveAt: tokenEffective},
+	}
+	// E2E-only vendor (H8): its prices are seeded only when the vendor was
+	// injected through MP_EXTRA_VENDORS. The production whitelist does not
+	// contain tipig, so a default deployment writes exactly the four DeepSeek
+	// rows and no unofficial model ever gets the official price list.
+	if _, ok := VendorByID(seedVendorTipig); ok {
 		// tipig gateway serves the same DeepSeek V4.1/V4 Pro models under their
 		// upstream model ids; the official price list applies (§3.2/§7 E2E).
-		{Model: "deepseek-v4.1-flash-1017", Vendor: "tipig", Tier: TierOffpeak, Version: 1,
-			InputMicroPerMTok: 1_000_000, OutputMicroPerMTok: 4_000_000,
-			CacheReadMicroPerMTok: 20_000, CacheWriteMicroPerMTok: 1_000_000,
-			EffectiveAt: tokenEffective},
-		{Model: "deepseek-v4.1-flash-1017", Vendor: "tipig", Tier: TierPeak, Version: 1,
-			InputMicroPerMTok: 2_000_000, OutputMicroPerMTok: 8_000_000,
-			CacheReadMicroPerMTok: 40_000, CacheWriteMicroPerMTok: 2_000_000,
-			EffectiveAt: tokenEffective},
-		{Model: "deepseek-v4-pro-0813", Vendor: "tipig", Tier: TierOffpeak, Version: 1,
-			InputMicroPerMTok: 4_500_000, OutputMicroPerMTok: 13_500_000,
-			CacheReadMicroPerMTok: 150_000, CacheWriteMicroPerMTok: 4_500_000,
-			EffectiveAt: tokenEffective},
-		{Model: "deepseek-v4-pro-0813", Vendor: "tipig", Tier: TierPeak, Version: 1,
-			InputMicroPerMTok: 9_000_000, OutputMicroPerMTok: 27_000_000,
-			CacheReadMicroPerMTok: 300_000, CacheWriteMicroPerMTok: 9_000_000,
-			EffectiveAt: tokenEffective},
+		books = append(books,
+			PriceBook{Model: "deepseek-v4.1-flash-1017", Vendor: seedVendorTipig, Tier: TierOffpeak, Version: 1,
+				InputMicroPerMTok: 1_000_000, OutputMicroPerMTok: 4_000_000,
+				CacheReadMicroPerMTok: 20_000, CacheWriteMicroPerMTok: 1_000_000,
+				EffectiveAt: tokenEffective},
+			PriceBook{Model: "deepseek-v4.1-flash-1017", Vendor: seedVendorTipig, Tier: TierPeak, Version: 1,
+				InputMicroPerMTok: 2_000_000, OutputMicroPerMTok: 8_000_000,
+				CacheReadMicroPerMTok: 40_000, CacheWriteMicroPerMTok: 2_000_000,
+				EffectiveAt: tokenEffective},
+			PriceBook{Model: "deepseek-v4-pro-0813", Vendor: seedVendorTipig, Tier: TierOffpeak, Version: 1,
+				InputMicroPerMTok: 4_500_000, OutputMicroPerMTok: 13_500_000,
+				CacheReadMicroPerMTok: 150_000, CacheWriteMicroPerMTok: 4_500_000,
+				EffectiveAt: tokenEffective},
+			PriceBook{Model: "deepseek-v4-pro-0813", Vendor: seedVendorTipig, Tier: TierPeak, Version: 1,
+				InputMicroPerMTok: 9_000_000, OutputMicroPerMTok: 27_000_000,
+				CacheReadMicroPerMTok: 300_000, CacheWriteMicroPerMTok: 9_000_000,
+				EffectiveAt: tokenEffective},
+		)
 	}
 	for i := range books {
 		b := &books[i]

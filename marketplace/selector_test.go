@@ -468,6 +468,30 @@ func TestSelect(t *testing.T) {
 		assert.Equal(t, b.ID, got.ID)
 	})
 
+	t.Run("only the winner consumes rpm budget", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		a := addSelectorListing(t, db, "fp-a", func(l *Listing) {
+			l.MultiplierMilli = 100
+			l.RPMLimit = 1
+		})
+		b := addSelectorListing(t, db, "fp-b", func(l *Listing) {
+			l.MultiplierMilli = 400
+			l.RPMLimit = 1
+		})
+		s := newSelector()
+		first, err := s.Select(db, SelectInput{Model: "deepseek-flash", Now: now})
+		require.NoError(t, err)
+		assert.Equal(t, a.ID, first.ID)
+		s.Slots.Release(first.ID)
+		// A's only rpm slot is spent; B's must still be intact because B lost the
+		// first round without serving it (M7).
+		second, err := s.Select(db, SelectInput{Model: "deepseek-flash", Now: now})
+		require.NoError(t, err, "the loser must not have consumed its rpm budget")
+		assert.Equal(t, b.ID, second.ID)
+		s.Slots.Release(second.ID)
+	})
+
 	t.Run("draft and paused listings never serve traffic", func(t *testing.T) {
 		db := newTestDB(t)
 		migrateAll(t, db)
