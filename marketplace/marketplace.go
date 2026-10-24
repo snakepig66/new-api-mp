@@ -60,6 +60,9 @@ func Init(db *gorm.DB) error {
 	// Start the package-level relay singletons (Selector, holiday calendar)
 	// used by the §4.4 seam hooks.
 	initRelayState(db)
+	// Background jobs (T+7 maturity, canary promotion, patrol, calendar reload).
+	// The stop channel is never closed: the jobs exit with the process.
+	StartJobs(db, make(chan struct{}))
 	common.SysLog("marketplace enabled: migrations applied")
 	return nil
 }

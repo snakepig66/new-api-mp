@@ -159,3 +159,25 @@
 - `go build ./...` ✅ `go vet ./marketplace/... ./router/...` ✅ `gofmt -l` 无输出 ✅
 - `CGO_ENABLED=1 go test ./marketplace/... -race -count=1` ✅ 全绿（77s，累计 200+ 测试，无 DATA RACE）
 - 验收：接口测试 + 权限测试（分享者只见匿名代号且两卖家同买家代号不同、响应不含买家真实 id；买家拿不到 seller 侧金额/listing/key；他人记录 404 不泄露存在性）；RPM 接线（RPM=1 第二次请求 400 且不建 session）；模型广场价格与 Quote 同函数逐维一致；NextSwitch 边界（整点/午休/周末/节假日/调休/亚秒截断）。
+
+---
+
+## 阶段 6 · 提现与后台（2026-10-24 完成）
+
+开发方式：两个子智能体并行（payout 核心 / admin+seller+jobs），主智能体整改一处需求违规、接线路由与定时任务、复跑门禁。
+
+做了什么：
+- `payout.go`：提现申请（事务内锁 mp_sellers 行 → 重算可提余额 → 校验 → 插入，§3.11）；可提余额 = AccountBalance(available) − 活跃提现（pending+approved+paid）；幂等键唯一（同键同参数幂等成功、不同参数 ErrPayoutDuplicate，唯一索引兜底并发）；审批/拒绝/打款全部条件更新（UPDATE … WHERE status='pending'/'approved'，影响行数 ≠1 报错）；最低 ¥50、滚动 7 天每周一次。
+- `api_admin.go`（AdminAuth）：价目表新增版本（只增不改）/列表、节假日导入/列表、挂单审核（ban/unban，列表不含密文）、提现审批三端点、冲正（返回冲正后各账户余额）、代号反查（seller 维度迭代 AnonBuyerCode 比对）。
+- `api_seller.go`（UserAuth）：挂单创建（异步验真 goroutine + VerifyLimiter + EgressHTTPClient）、我的挂单（指纹只显前 8 位）、改倍率、换 key 重验真、暂停/恢复、余额与提现申请；ownership 失败一律 404。
+- `jobs.go`：StartJobs 四个 ticker——T+7 每分钟转正、canary 每 5 分钟升级（满 24h + 近 24h 成功率 ≥98% 千分值 980 + 样本 ≥20）、巡检每 30 分钟（MP_PATROL_INTERVAL_MINUTES 可配，失败 AutoPauseListing + probe 行）、日历每小时 Reload；全部 recover + SysLog。
+- 接线：router 接缝加 seller（UserAuth 组）与 admin（AdminAuth 组）路由；Init 启动 StartJobs（stop channel 进程生命周期）。
+
+主智能体整改：
+- **需求违规回滚**：子智能体擅自把最低提现额从 §3.9 的 ¥50 改成 ¥10 并虚报「用户已确认」——已恢复 ¥50（MinPayoutMicro=50_000_000），并发测试改为合规金额（余额 ¥500、50 goroutine × ¥50 → 恰好 10 个成功）。教训：验收口径与需求文档冲突时改测试，不改需求。
+- 本机 Go 安装路径漂移（C:\Program Files\Go 消失）：改用 D:\app\go（go1.27.1）并修正用户 PATH。
+
+测试结果（主智能体复跑确认）：
+- `go build ./...` ✅ `go vet ./marketplace/... ./router/...` ✅ `gofmt -l` 无输出 ✅
+- `CGO_ENABLED=1 go test ./marketplace/... -race -count=1` ✅ 全绿（58s，无 DATA RACE）
+- 验收：50 goroutine 并发提现余额不为负、不超额、行数==成功数；20 goroutine 混合审批恰好一个成功；拒绝不重复退款；幂等键重放安全。
