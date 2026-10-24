@@ -114,17 +114,20 @@ func TestUsageStatsDailyAggregation(t *testing.T) {
 		// Exactly at the start of the horizon → day 20.
 		{RequestID: "u-1", BuyerUserID: f.buyerID, InputTokens: 100, OutputTokens: 10,
 			CacheReadTokens: 5, TotalDebitMicro: 1000, OfficialCostMicro: 3000, CreatedAt: day20},
-		// Last instant of day 20 → still day 20.
+		// Last second of day 20 → still day 20. (Second, not nanosecond:
+		// MySQL rounds fractional seconds into DATETIME, which would carry a
+		// nanosecond boundary row into the next day.)
 		{RequestID: "u-2", BuyerUserID: f.buyerID, InputTokens: 200, OutputTokens: 20,
-			TotalDebitMicro: 2000, OfficialCostMicro: 4000, CreatedAt: day20.AddDate(0, 0, 1).Add(-time.Nanosecond)},
+			TotalDebitMicro: 2000, OfficialCostMicro: 4000, CreatedAt: day20.AddDate(0, 0, 1).Add(-time.Second)},
 		// First instant of day 21 → day 21, not day 20.
 		{RequestID: "u-3", BuyerUserID: f.buyerID, InputTokens: 300, OutputTokens: 30,
 			TotalDebitMicro: 3000, OfficialCostMicro: 6000, CreatedAt: day21},
 		{RequestID: "u-4", BuyerUserID: f.buyerID, InputTokens: 400, OutputTokens: 40,
 			TotalDebitMicro: 4000, OfficialCostMicro: 8000, CreatedAt: day22.Add(9 * time.Hour)},
-		// Just before the horizon → excluded.
+		// Just before the horizon → excluded (second precision for the same
+		// MySQL rounding reason).
 		{RequestID: "u-before", BuyerUserID: f.buyerID, InputTokens: 900, TotalDebitMicro: 9000,
-			OfficialCostMicro: 9000, CreatedAt: day20.Add(-time.Nanosecond)},
+			OfficialCostMicro: 9000, CreatedAt: day20.Add(-time.Second)},
 		// Another buyer → excluded.
 		{RequestID: "u-other", BuyerUserID: f.otherID, InputTokens: 999, TotalDebitMicro: 9999,
 			OfficialCostMicro: 9999, CreatedAt: day21},
