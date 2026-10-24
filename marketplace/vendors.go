@@ -19,6 +19,10 @@ type Vendor struct {
 	DisplayName string
 	BaseURL     string   // fixed by the platform; sellers never supply it
 	Models      []string // model ids this vendor can serve
+	// PassthroughBody marks vendors that natively speak multiple protocol
+	// formats (OpenAI + Anthropic); the channel forwards the buyer's raw body
+	// instead of converting, which keeps /v1/messages native (§3.10).
+	PassthroughBody bool
 }
 
 // vendors is the platform's supplier whitelist (§3.5). v1 lists only the
@@ -41,6 +45,10 @@ var vendors = []Vendor{
 		// No /v1 suffix: the channel adaptor appends its own protocol path.
 		BaseURL:     "https://api.tipig.cloud",
 		Models:      []string{"deepseek-v4.1-flash-1017", "deepseek-v4-pro-0813"},
+		// The gateway is an upstream new-api that speaks OpenAI and Anthropic
+		// natively; passthrough keeps /v1/messages un-converted (its OpenAI
+		// conversion is rejected upstream, verified 2026-10-24 E2E).
+		PassthroughBody: true,
 	},
 }
 

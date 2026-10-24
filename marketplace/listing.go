@@ -141,6 +141,12 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 			Group:       "default",
 			CreatedTime: time.Now().Unix(),
 		}
+		// Multi-protocol vendors relay the buyer's raw body (native OpenAI +
+		// Anthropic) instead of the adaptor's conversion (§3.10).
+		if vendor.PassthroughBody {
+			setting := `{"pass_through_body_enabled":true}`
+			channel.Setting = &setting
+		}
 		if err := tx.Create(&channel).Error; err != nil {
 			return fmt.Errorf("marketplace: create upstream channel: %w", err)
 		}
