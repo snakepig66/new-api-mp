@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/marketplace"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -23,6 +24,12 @@ import (
 // provide the current request body through BodyStorage or BillingRequestInput;
 // channel retries retain the resulting billing session and pricing snapshot.
 func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
+	// MP-HOOK: marketplace pre-freeze replaces upstream pre-consume entirely (§4.4 B)
+	if marketplace.IsRelayRequest(c) {
+		return marketplace.PrepareBilling(c, info, func(meta *types.TokenCountMeta) (int, error) {
+			return service.CountRequestToken(c, meta, info)
+		})
+	}
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	meta := &types.TokenCountMeta{TokenType: types.TokenTypeTokenizer}
 	if info.Request != nil && (needSensitiveCheck || constant.CountToken) {
@@ -74,6 +81,8 @@ func RefundFailedRequestBilling(c *gin.Context, info *relaycommon.RelayInfo, api
 		return nil
 	}
 	apiErr = service.NormalizeViolationFeeError(apiErr)
+	// MP-HOOK: marketplace all-failed → write the failed record and release the listing slot (§4.4 C/E)
+	marketplace.FailRelay(c, info)
 	if info.Billing != nil {
 		info.Billing.Refund(c)
 	}

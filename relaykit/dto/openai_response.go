@@ -247,6 +247,12 @@ type Usage struct {
 
 	// OpenRouter Params
 	Cost any `json:"cost,omitempty"`
+
+	// MP-HOOK: server-side tool counters (web search/fetch requests) reported
+	// in the upstream usage object. Preserved so consumers that re-marshal
+	// Usage (e.g. marketplace per-call billing, §3.4) still see the counts;
+	// without this field the parser silently drops them.
+	ServerToolUse *ClaudeServerToolUse `json:"server_tool_use,omitempty"`
 }
 
 type OpenAIVideoResponse struct {

@@ -14,6 +14,7 @@ import (
 	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/marketplace"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
@@ -120,6 +121,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}()
 
+	// MP-HOOK: marketplace inbound server-tool strip, before any parsing/conversion (§4.4 G, §3.4)
+	marketplace.StripInboundServerTools(c)
 	request, err := helper.GetAndValidateRequest(c, relayFormat)
 	if err != nil {
 		// Map "request body too large" to 413 so clients can handle it correctly
@@ -224,6 +227,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.LastError = newAPIError
 
 		decision := service.DecideRelayRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
+		// MP-HOOK: marketplace hop budget — at most 2 listing switches plus 1 in-place retry (§4.4 C, §3.7)
+		if decision.Action == "retry" && !marketplace.MayRetry(c, newAPIError) {
+			decision = service.PolicyDecision{Action: "stop", Reason: "marketplace_hop_budget_exhausted", Source: "marketplace"}
+		}
 		service.RecordPolicyFailure(c, channel.Id, newAPIError, decision)
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, relayInfo)
 
@@ -310,6 +317,10 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		}
 		service.RequestPolicy(c).BeginAttempt(channel, info.UsingGroup)
 		return channel, nil
+	}
+	// MP-HOOK: marketplace retry re-selects a listing and re-freezes at the original quote instant (§4.4 C, §3.7)
+	if marketplace.IsRelayRequest(c) {
+		return marketplace.ReselectChannel(c, info, middleware.SetupContextForSelectedChannel)
 	}
 	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
 	if err != nil {

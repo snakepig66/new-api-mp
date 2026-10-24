@@ -99,3 +99,38 @@
 - `go build ./...` ✅ `go vet ./marketplace/...` ✅ `gofmt -l marketplace/` 无输出 ✅
 - `CGO_ENABLED=1 go test ./marketplace/... -race -count=1` ✅（累计 70+ 测试全绿，无 DATA RACE）
 - 验收清单：SSRF/DNS rebinding 用例（好坏 IP 混合整体拒、拨号 IP 即校验 IP、每次拨号独立校验）、重复 key 拒绝（同 seller 与跨 seller）、状态流转合法/非法边、改倍率 10 分钟、验真限流桶隔离（并发信号量 + 速率令牌）、错误/探针不含 key。
+
+---
+
+## 阶段 4 · 请求链路上游接缝（2026-10-24 完成）
+
+做了什么（全部接缝按 §4.4 标 `// MP-HOOK`；marketplace 侧逻辑全部收在 marketplace/ 包新文件）：
+
+- `marketplace/relayhook.go`：RelaySession（gin context 携带的每请求会话：listing、真 key、冻结时刻、hop 链、并发槽、幂等标志）；`BeginDistribute`（市场请求判定：MP_ENABLED + chat/responses/messages POST + token + 模型有 live/canary 挂单 → 校验 mp_key_models → 价格上限（模型级 > Key 级）→ Selector.Select → 渠道钉入 + 真 key 解密）；`ApplyRelayChannelKey`；`PrepareBilling`（预冻结：>64KB 分段采样估算、max_tokens 缺失按模型最大输出（硬编码 64K 表）且不超过余额、PreFreezeQuote + ToolPreFreezeCap（价目未生效则 cap=0）、NewBillingSession 赋给 info.Billing、402 余额不足；流式强制 include_usage）；`ReselectChannel`（换家：排除已试、重新 SetupContext + 真 key、旧 session 退款、按首次冻结时刻重新 Quote + 新 BillingSession；只剩一家且瞬时失败原地重试 1 次）；`MayRetry`（换家上限 2 + 原地 1 次）；`ProcessRelayChannelError`（429 熔断 60s；余额不足/key 失效自动暂停，关键词+状态码对齐 ShouldDisableChannel 语义）；`StripInboundServerTools`（入站剥离并改写 BodyStorage，事件入 hop 链）；`RelayHTTPClient`（egress 拨号 + 首字节 20s）；`DefaultSelector` 等包级单例。
+- `marketplace/estimate.go`：EstimateTokensSampled（头/中/尾 3 段采样外推，禁止全量同步分词）+ 模型最大输出常量表。
+- `marketplace/record.go`：`SettleRelay`（实际 usage 归一化：cache 读写拆分、推理并入输出、ExtractServerToolCounts 读到才计；按首次冻结时刻 Quote 重算；0 输出 token / nil usage / 截断流（含 §10-1 客户端断开，按 StreamStatus.EndReason 判定）→ 判失败 Settle(0)；写 mp_requests 一条 + PostSettlement 幂等流水；返回微元数给上游 SettleBilling）；`FailRelay`（全部失败 ¥0，失败记录 + 释放并发槽）；`writeRecordOnce`（request_id 唯一，OnConflict DoNothing 兜底）。
+- `marketplace/api.go`：`RegisterRoutes` 挂 GET /api/marketplace/status。
+- `marketplace/marketplace.go`：Init 提升 `common.RetryTimes` 至 >=2（只升不降，§4.5）+ `initRelayState` 启动单例。
+- 上游 8 处接缝（每处 1–10 行）：`middleware/distributor.go`（选渠道替换 + 真 key 覆写）、`relay/request_billing.go`（PrepareRequestBilling 顶部接管 + RefundFailedRequestBilling 失败记录）、`controller/relay.go`（GetAndValidateRequest 前剥离、getChannel 重选、DecideRelayRetry 后收敛 hop 预算）、`relay/channel/api_request.go`（doRequest 换 marketplace client；DoWssRequest/DoTaskApiRequest 注释说明市场渠道不可达——hook A 只接管 chat/responses/messages）、`service/text_quota.go`（summary 算完后覆盖 Quota 为市场微元数并清工具附加费）、`service/relay_error.go`（ProcessChannelError 入口转市场熔断/暂停）、`router/api-router.go`（Enabled 时注册路由）。
+
+取舍与结论：
+- marketplace 包不 import middleware/controller/relay/service（防循环依赖）：SetupContextForSelectedChannel 与上游 token 估算以函数参数注入。
+- 市场渠道判定（D 接缝）：以 gin context 中的 RelaySession 标记为准（比 channel name 前缀可靠；渠道测试/巡检不带会话，自然走原 client）。市场渠道 AutoBan=nil → 上游自动禁用天然不触发，暂停只走挂单。
+- 入站剥离位置放在 GetAndValidateRequest **之前**（不是之后）：转换路径从 dto 重新序列化，剥离必须先于解析，否则工具会被重新带回上游。
+- 三条协议路径的 0 token/截断保护点统一在 `service.PostTextConsumeQuota`（chat/responses/messages 全部经此结算），由 SettleRelay 一处判定。
+- 流式中途断开结论：上游 OpenAI 流式处理器在客户端断开时**仍会**返回（估算）usage 并进入 PostTextConsumeQuota 扣费，故按 §10-1 在 SettleRelay 内按 StreamStatus.EndReason 拦截（client_gone/timeout/scanner_error/panic/ping_fail → 判失败不扣费；扫描器对"已完成但取消竞胜"已先修正为 done）。
+- PrepareBilling 接管后上游敏感词检查与 ModelPriceHelper 对市场请求不再执行（市场定价不走上游倍率体系；敏感词检查为可配功能，后续如需在市场侧补做）。
+- Search/Fetch 预冻结 cap 仅在对应按次价目已生效时计入（2026-11-01 前为 0），避免 ErrNoPrice 卡死全部请求；v1 DeepSeek 次数不可读 → 入站一律剥离。
+
+测试结果：
+- `go build ./...` ✅ `go vet ./marketplace/... ./middleware/... ./controller/... ./service/... ./relay/... ./router/...` ✅ `gofmt -l` 无输出 ✅
+- `CGO_ENABLED=1 go test ./marketplace/... -race -count=1` ✅（新增 relayhook/estimate/record 三组测试：判定、选渠道、价格上限、预冻结、402、余额钳制、采样估算、换家重计价、原地重试、hop 预算、429 熔断、自动暂停、剥离、结算成功/0 输出/nil usage/客户端断流/全部失败、幂等、usage 归一化、Init 语义）
+- 上游回归 `go test ./middleware/... ./controller/... ./service/... ./relay/... -count=1`：与基线 commit 33c61a242（git worktree 纯净树）逐项对比，失败集合一致（controller/service 大量 Windows TempDir 文件锁清理失败 + 少量时序敏感用例；基线另多 2 个 flaky），无本阶段引入的失败。
+
+主智能体验收（2026-10-24）：
+
+- 验收测试（子智能体 K2）：`marketplace/relay_integration_test.go`——真实 gin 引擎 + 真实中间链子链（RequestId→TokenAuth→Distribute→Relay）+ httptest mock 厂商（可编程：正常/SSE 带 usage 帧/429/500/裸 EOF 截断流/0 completion_tokens/带 server_tool_use 的 usage），13 个用例覆盖 §5 阶段 4 验收清单全部 11 条（成功×2、换家重计价、429 熔断、截断流×2、0 输出、全失败、搜索计次、读不到次数剥离、402、原地重试）+ key 防泄漏守卫。每个用例三方对平：users.quota（无残留预冻结）、mp_requests（一个 request_id 一条）、mp_ledger（signed 求和 0、恒等式、T+7 pending）。
+- 验收发现并整改两个实现 bug：
+  1. 截断流扣费（违反 §3.7）：`marketplace/record.go` 的流失败判定漏 `StreamEndReasonEOF`（上游无 [DONE] 裸结束），被按估算用量扣费 → 已补该分支，全额退冻结、记 failed。
+  2. 工具计次丢失（§3.4 链路断裂）：上游 `dto.Usage` 无 `server_tool_use` 字段，adaptor 解析时丢弃，`SettleRelay` 的计次提取是死代码 → 已在 `relaykit/dto/openai_response.go` 的 Usage 增加 `ServerToolUse *ClaudeServerToolUse`（复用既有类型，MP-HOOK 注释；relaykit 独立模块 `GOWORK=off go build` 验证通过）。
+- 修复后 `CGO_ENABLED=1 go test ./marketplace/... -race -count=1` ✅ 全绿（61s，160+ 测试，无 DATA RACE）；两个原失败用例未改动即转绿。

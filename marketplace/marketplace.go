@@ -52,6 +52,14 @@ func Init(db *gorm.DB) error {
 	if err := SeedPrices(db); err != nil {
 		return fmt.Errorf("marketplace seed: %w", err)
 	}
+	// §4.5: the §3.7 retry semantics (最多换 2 家) need at least two upstream
+	// retries; only ever raise the global value (只升不降).
+	if common.RetryTimes < 2 {
+		common.RetryTimes = 2
+	}
+	// Start the package-level relay singletons (Selector, holiday calendar)
+	// used by the §4.4 seam hooks.
+	initRelayState(db)
 	common.SysLog("marketplace enabled: migrations applied")
 	return nil
 }
