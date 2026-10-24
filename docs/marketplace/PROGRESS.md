@@ -260,3 +260,24 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 - 高峰单用价目 v2 模拟高峰单价（周六全天空闲、时钟高峰窗已由阶段 2 单测覆盖）；正式高峰窗验证可待工作日或调休标记重跑。
 - tipig 供应商条目为 E2E 用途留在白名单；正式上线仍以 §3.5 首批官方渠道为准，由产品负责人定夺去留。
 - §10 七项待定仍按文档默认（详见文档 §10 与本文档交接节）。
+
+---
+
+## 审查整改波 + 前端重做（2026-10-24/25 完成）
+
+### 代码审查整改（CODE-REVIEW.md）
+高（H1–H9 全部修复并验证）：提前退出泄漏（EndRelay 统一收尾：402/坏 JSON/panic 都释放槽+退冻结+记失败）、熔断半开探测归还、结算单事务原子化（SettleAtomic+记录+流水同提交）、anthropic 缓存不再重复扣减、买家/卖家账本账户拆分（buyer:/seller:）+ 冲正同事务真退余额、key 路由偏好生效（优选/拉黑/只用某家/回落）、Key 额度按买家维度 RPM、tipig 移出生产白名单（MP_EXTRA_VENDORS 注入）、e2e.sh 口令改环境变量 + llmjar 管理员口令已轮换。
+中（M1–M13）：首字节超时改首个有效数据块语义、换家预算脱离全局 RetryTimes、RPM 只扣胜出者、按买家 RPM、价目/日历后台校验与立即生效、per-call 价目接口、sjson 保序剥离、egress IP 黑名单补全、key 规范化防空格绕过。
+低：L3/L4/L5 已修；L1/L6/L7 留待第二版（多节点 Redis 化等）。
+
+### 前端重做（FRONTEND-REBUILD.md F0–F5 全部完成）
+- site/ 独立前端（React 19 + Vite + TanStack Router/Query + Tailwind v4 + Radix），设计系统 14 组件，中文文案集中 copy.ts，金额只经 formatYuan 展示。
+- 页面：首页/模型广场/模型详情/文档/登录注册（公开区）；控制台概览/Key 向导/使用记录/钱包（买家）；开通引导/挂单向导/我的挂单/分享记录/提现（分享者）；价目/按次价/日历/挂单审核/提现审批/冲正反查（后台，Root 二次守卫）。
+- MP_FRONTEND=site 切换；/ops-legacy 保留旧后台（仅 root）。
+- 验收：build/typecheck/80 vitest 全绿；Playwright 10 条关键路径通过；1440px/390px 无溢出；首屏 gzip ~112KB（<200KB）；全站无上游品牌字样。
+- 已部署 llmjar：MP_FRONTEND=site，公网首页标题「词元市场」。
+
+### 当前线上验证
+- 三方言矩阵：SQLite/MySQL 8/PG 16 全绿（含加固后复跑）。
+- E2E 五条真实链路（tipig 上游）复跑全过，账户拆分后的账本（buyer:/seller:）对账分毫不差。
+- 公网：https://3000-agqvtobwrbdo3hk4ztmazwjmei.instabox.tech （新前端已上线）。
