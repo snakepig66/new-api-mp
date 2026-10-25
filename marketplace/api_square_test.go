@@ -108,6 +108,25 @@ func (f *squareFixture) get(t *testing.T, path string) *httptest.ResponseRecorde
 	return w
 }
 
+// pricedModelCount is the number of active standard models that have an
+// origin-vendor price book, i.e. exactly the rows the square advertises.
+func pricedModelCount(t *testing.T, db *gorm.DB) int {
+	t.Helper()
+	var models []ModelPool
+	require.NoError(t, db.Where("status = ?", PoolStatusActive).Find(&models).Error)
+	n := 0
+	for _, m := range models {
+		var cnt int64
+		require.NoError(t, db.Model(&PriceBook{}).
+			Where("model = ? AND vendor = ?", m.Name, m.OriginVendor).
+			Count(&cnt).Error)
+		if cnt > 0 {
+			n++
+		}
+	}
+	return n
+}
+
 func findSquareItem(t *testing.T, items []any, model string) map[string]any {
 	t.Helper()
 	for _, it := range items {
@@ -141,9 +160,8 @@ func TestApiSquareModels(t *testing.T) {
 	require.Equal(t, true, body["success"])
 	items, ok := body["data"].([]any)
 	require.True(t, ok, "data must be an array, body: %v", body)
-	// One row per active standard model with an origin price book: the two
-	// DeepSeek models. (The other seeded pool models have no price book yet.)
-	require.Len(t, items, 2, "one row per standard model")
+	// One row per active standard model with an origin price book.
+	require.Len(t, items, pricedModelCount(t, f.db), "one row per priced standard model")
 
 	flash := findSquareItem(t, items, "deepseek-flash")
 	assert.Equal(t, "deepseek", flash["origin_vendor"])
@@ -230,7 +248,7 @@ func TestApiSquareUnlistedModelsUseOfficialPrice(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	items, ok := decodeAPIBody(t, w)["data"].([]any)
 	require.True(t, ok)
-	require.Len(t, items, 2, "unlisted standard models are still advertised")
+	require.Len(t, items, pricedModelCount(t, f.db), "unlisted standard models are still advertised")
 
 	flash := findSquareItem(t, items, "deepseek-flash")
 	assert.Equal(t, int64(0), apiNum(t, flash, "listing_count"))
@@ -267,7 +285,7 @@ func TestApiSquareUnlistedModelsUseOfficialPrice(t *testing.T) {
 	w = f.get(t, "/api/marketplace/square/models")
 	require.Equal(t, http.StatusOK, w.Code)
 	items = decodeAPIBody(t, w)["data"].([]any)
-	require.Len(t, items, 1)
+	require.Len(t, items, pricedModelCount(t, f.db), "retiring one model removes exactly its row")
 	assert.Equal(t, "deepseek-flash", items[0].(map[string]any)["model"])
 	assert.Equal(t, http.StatusNotFound, f.get(t, "/api/marketplace/square/models/deepseek-v4-pro").Code)
 }
@@ -326,7 +344,7 @@ func TestApiSquareUsesStandardModelNames(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	items, ok := decodeAPIBody(t, w)["data"].([]any)
 	require.True(t, ok)
-	require.Len(t, items, 2, "an alias must not create a second row")
+	require.Len(t, items, pricedModelCount(t, f.db), "an alias must not create a second row")
 	for _, it := range items {
 		assert.NotEqual(t, "DeepSeek-Flash", it.(map[string]any)["model"])
 	}
@@ -658,9 +676,11 @@ func TestApiVendorsPoolModels(t *testing.T) {
 	assert.Equal(t, ChannelKindPlan, arkPlan["kind"])
 	assert.Empty(t, vendorModels(t, arkPlan))
 
-	// No price book yet under zhipu's origin vendor → glm-4.6 not listable.
+	// glm-4.6 still has no catalog price, so its verified qualification is not
+	// listable even though priced GLM models are.
 	zhipu := findVendorItem(t, items, "zhipu")
-	assert.Empty(t, vendorModels(t, zhipu))
+	assert.NotContains(t, vendorModels(t, zhipu), "glm-4.6")
+	assert.Contains(t, vendorModels(t, zhipu), "glm-5.3")
 
 	// Adding the origin price book makes the verified qualification listable.
 	require.NoError(t, db.Create(&PriceBook{
@@ -669,14 +689,15 @@ func TestApiVendorsPoolModels(t *testing.T) {
 		EffectiveAt: time.Now().Add(-time.Hour),
 	}).Error)
 	zhipu = findVendorItem(t, getVendors(t, engine), "zhipu")
-	assert.Equal(t, []string{"glm-4.6"}, vendorModels(t, zhipu))
+	assert.Contains(t, vendorModels(t, zhipu), "glm-4.6")
 
 	// An unverified qualification drops out.
 	require.NoError(t, db.Model(&ChannelModel{}).
 		Where("channel_slug = ? AND model = ?", "zhipu", "glm-4.6").
 		Update("verified", false).Error)
 	zhipu = findVendorItem(t, getVendors(t, engine), "zhipu")
-	assert.Empty(t, vendorModels(t, zhipu))
+	assert.NotContains(t, vendorModels(t, zhipu), "glm-4.6")
+	assert.Contains(t, vendorModels(t, zhipu), "glm-5.3")
 
 	// Disabled channels are omitted from the directory entirely.
 	require.NoError(t, db.Model(&ChannelPool{}).

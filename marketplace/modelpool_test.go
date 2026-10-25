@@ -38,15 +38,14 @@ func TestModelPoolMigrateAndSeedIdempotent(t *testing.T) {
 	assert.EqualValues(t, len(modelPoolSeeds), countRows(t, db, &ModelPool{}))
 	assert.EqualValues(t, len(channelPoolSeeds), countRows(t, db, &ChannelPool{}))
 	assert.EqualValues(t, len(poolChannelModelSeeds), countRows(t, db, &ChannelModel{}))
-	assert.EqualValues(t, 6, countRows(t, db, &ModelPool{}))
-	assert.EqualValues(t, 8, countRows(t, db, &ChannelPool{}))
-	assert.EqualValues(t, 12, countRows(t, db, &ChannelModel{}))
+
+	// Seeded model content.
 
 	// Seeded model content.
 	glm, ok := ModelPoolByName(db, "glm-5.3")
 	require.True(t, ok)
 	assert.Equal(t, "zhipu", glm.OriginVendor)
-	assert.EqualValues(t, 131072, glm.ContextLength)
+	assert.EqualValues(t, 200000, glm.ContextLength)
 	assert.ElementsMatch(t, []string{"text", "tools", "cache"}, parseStringList(glm.Capabilities))
 	assert.ElementsMatch(t, []string{"glm5.3", "GLM-5.3", "zhipu/glm-5.3"}, parseStringList(glm.Aliases))
 	assert.Equal(t, PoolStatusActive, glm.Status)
@@ -69,9 +68,9 @@ func TestModelPoolMigrateAndSeedIdempotent(t *testing.T) {
 
 	// A second seed is a no-op.
 	require.NoError(t, SeedModelChannelPool(db))
-	assert.EqualValues(t, 6, countRows(t, db, &ModelPool{}))
-	assert.EqualValues(t, 8, countRows(t, db, &ChannelPool{}))
-	assert.EqualValues(t, 12, countRows(t, db, &ChannelModel{}))
+	assert.EqualValues(t, len(modelPoolSeeds), countRows(t, db, &ModelPool{}))
+	assert.EqualValues(t, len(channelPoolSeeds), countRows(t, db, &ChannelPool{}))
+	assert.EqualValues(t, len(poolChannelModelSeeds), countRows(t, db, &ChannelModel{}))
 }
 
 // TestModelPoolResolveAlias covers case-insensitive Name and Aliases matching.
@@ -345,5 +344,64 @@ func TestSeedModelChannelPoolPausesUnmappedListings(t *testing.T) {
 	for _, probe := range probes {
 		assert.False(t, probe.OK)
 		assert.Equal(t, poolMigrationFailReason, probe.Detail)
+	}
+}
+
+// TestSeedCatalogCoversCommonModels pins the 2026-10-25 catalog import: every
+// newly seeded common model must have an origin price book, a verified
+// qualification on its origin channel, and an identity upstream mapping, so
+// the square can advertise it and sellers can list it without admin edits.
+func TestSeedCatalogCoversCommonModels(t *testing.T) {
+	db := newTestDB(t)
+	migrateAll(t, db)
+	seedPool(t, db)
+
+	type want struct {
+		model   string
+		vendor  string
+		input   int64
+		output  int64
+		cache   int64
+		context int64
+	}
+	cases := []want{
+		{"kimi-k3.1-pro", "moonshot", 13_000_000, 68_000_000, 1_300_000, 1048576},
+		{"kimi-k3", "moonshot", 20_000_000, 100_000_000, 2_000_000, 1048576},
+		{"kimi-k2.7-code", "moonshot", 6_500_000, 27_000_000, 1_300_000, 262144},
+		{"kimi-k2.6", "moonshot", 6_500_000, 27_000_000, 1_100_000, 262144},
+		{"glm-5.3", "zhipu", 8_000_000, 28_000_000, 2_000_000, 200000},
+		{"glm-5.3-flash", "zhipu", 800_000, 2_800_000, 230_000, 200000},
+		{"glm-5.3-flashx", "zhipu", 2_000_000, 7_000_000, 570_000, 200000},
+		{"glm-5.2", "zhipu", 8_000_000, 28_000_000, 2_000_000, 200000},
+		{"glm-4.7-flash", "zhipu", 0, 0, 0, 200000},
+		{"minimax-m3", "minimax", 2_100_000, 8_400_000, 420_000, 512000},
+		{"minimax-m3.1-flash", "minimax", 1_000_000, 4_000_000, 100_000, 512000},
+		{"qwen3.8-max", "aliyun-bailian", 12_000_000, 36_000_000, 12_000_000, 1000000},
+		{"qwen3.7-plus", "aliyun-bailian", 2_000_000, 8_000_000, 2_000_000, 256000},
+		{"qwen3.8-flash", "aliyun-bailian", 800_000, 2_700_000, 800_000, 1000000},
+		{"doubao-seed-evolving", "volcengine-ark", 6_000_000, 30_000_000, 1_200_000, 256000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.model, func(t *testing.T) {
+			m, ok := ModelPoolByName(db, tc.model)
+			require.True(t, ok, "model must be seeded")
+			assert.Equal(t, tc.vendor, m.OriginVendor)
+			assert.EqualValues(t, tc.context, m.ContextLength)
+
+			pb, err := PriceAt(db, tc.model, tc.vendor, TierFlat, time.Now())
+			require.NoError(t, err, "origin price book must exist")
+			assert.EqualValues(t, tc.input, pb.InputMicroPerMTok)
+			assert.EqualValues(t, tc.output, pb.OutputMicroPerMTok)
+			assert.EqualValues(t, tc.cache, pb.CacheReadMicroPerMTok)
+
+			cm, ok := VerifiedChannelModelFor(db, tc.vendor, tc.model)
+			require.True(t, ok, "verified qualification must exist")
+			assert.EqualValues(t, 1000, cm.CoefficientMilli)
+			assert.Equal(t, tc.model, cm.UpstreamModel, "official upstream id is the standard name")
+
+			qualified, mapped := ChannelModelFor(db, tc.vendor, tc.model)
+			assert.True(t, mapped)
+			assert.Equal(t, tc.model, qualified.UpstreamModel)
+		})
 	}
 }

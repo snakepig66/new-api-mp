@@ -64,6 +64,93 @@ func SeedPrices(db *gorm.DB) error {
 			CacheReadMicroPerMTok: 300_000, CacheWriteMicroPerMTok: 9_000_000,
 			EffectiveAt: tokenEffective},
 	}
+	// Catalog prices for the other official channels, fetched 2026-10-25 from
+	// each vendor's public price page (元/百万 tokens → 微元/百万 tokens).
+	// They all publish a single price tier, so they use TierFlat; DeepSeek
+	// remains the only peak/off-peak vendor.
+	//
+	// Sources:
+	//   https://platform.kimi.com/docs/pricing/chat
+	//   https://docs.bigmodel.cn/cn/guide/models/text/glm-5
+	//   https://platform.minimax.cn/docs/guides/pricing
+	//   https://help.aliyun.com/zh/model-studio/qwen3-8-max
+	//   https://help.aliyun.com/zh/model-studio/qwen3-7-plus
+	//   https://help.aliyun.com/zh/model-studio/qwen3-8-flash
+	//   https://www.volcengine.com/pricing?product=ark
+	//
+	// A missing per-token cache-write price (Zhipu free cache storage, Doubao
+	// hourly cache storage) is seeded as 0 so storage is never double-billed.
+	// Qwen publishes no cache discount, so cache reads are billed at the input
+	// rate. qwen3.7-plus and minimax-m3 publish context-tiered prices; the pool
+	// advertises the base tier (≤256k / ≤512k) and bills that row, so neither
+	// model can silently undercharge long-context requests.
+	catalogEffective := time.Date(2026, 10, 1, 0, 0, 0, 0, loc)
+	books = append(books,
+		PriceBook{Model: "kimi-k3.1-pro", Vendor: "moonshot", Tier: TierFlat, Version: 1,
+			InputMicroPerMTok: 13_000_000, OutputMicroPerMTok: 68_000_000,
+			CacheReadMicroPerMTok: 1_300_000, CacheWriteMicroPerMTok: 13_000_000,
+			EffectiveAt: catalogEffective},
+		PriceBook{Model: "kimi-k3", Vendor: "moonshot", Tier: TierFlat, Version: 1,
+			InputMicroPerMTok: 20_000_000, OutputMicroPerMTok: 100_000_000,
+			CacheReadMicroPerMTok: 2_000_000, CacheWriteMicroPerMTok: 20_000_000,
+			EffectiveAt: catalogEffective},
+		PriceBook{Model: "kimi-k2.7-code", Vendor: "moonshot", Tier: TierFlat, Version: 1,
+			InputMicroPerMTok: 6_500_000, OutputMicroPerMTok: 27_000_000,
+			CacheReadMicroPerMTok: 1_300_000, CacheWriteMicroPerMTok: 6_500_000,
+			EffectiveAt: catalogEffective},
+		PriceBook{Model: "kimi-k2.6", Vendor: "moonshot", Tier: TierFlat, Version: 1,
+			InputMicroPerMTok: 6_500_000, OutputMicroPerMTok: 27_000_000,
+			CacheReadMicroPerMTok: 1_100_000, CacheWriteMicroPerMTok: 6_500_000,
+			EffectiveAt: catalogEffective},
+
+		PriceBook{Model: "glm-5.3", Vendor: "zhipu", Tier: TierFlat, Version: 1,
+			InputMicroPerMTok: 8_000_000, OutputMicroPerMTok: 28_000_000,
+			CacheReadMicroPerMTok: 2_000_000, CacheWriteMicroPerMTok: 0,
+			EffectiveAt: catalogEffective},
+		PriceBook{Model: "glm-5.3-flash", Vendor: "zhipu", Tier: TierFlat, Version: 1,
+			InputMicroPerMTok: 800_000, OutputMicroPerMTok: 2_800_000,
+			CacheReadMicroPerMTok: 230_000, CacheWriteMicroPerMTok: 0,
+			EffectiveAt: catalogEffective},
+		PriceBook{Model: "glm-5.3-flashx", Vendor: "zhipu", Tier: TierFlat, Version: 1,
+			InputMicroPerMTok: 2_000_000, OutputMicroPerMTok: 7_000_000,
+			CacheReadMicroPerMTok: 570_000, CacheWriteMicroPerMTok: 0,
+			EffectiveAt: catalogEffective},
+		PriceBook{Model: "glm-5.2", Vendor: "zhipu", Tier: TierFlat, Version: 1,
+			InputMicroPerMTok: 8_000_000, OutputMicroPerMTok: 28_000_000,
+			CacheReadMicroPerMTok: 2_000_000, CacheWriteMicroPerMTok: 0,
+			EffectiveAt: catalogEffective},
+		PriceBook{Model: "glm-4.7-flash", Vendor: "zhipu", Tier: TierFlat, Version: 1,
+			InputMicroPerMTok: 0, OutputMicroPerMTok: 0,
+			CacheReadMicroPerMTok: 0, CacheWriteMicroPerMTok: 0,
+			EffectiveAt: catalogEffective},
+
+		PriceBook{Model: "minimax-m3", Vendor: "minimax", Tier: TierFlat, Version: 1,
+			InputMicroPerMTok: 2_100_000, OutputMicroPerMTok: 8_400_000,
+			CacheReadMicroPerMTok: 420_000, CacheWriteMicroPerMTok: 2_100_000,
+			EffectiveAt: catalogEffective},
+		PriceBook{Model: "minimax-m3.1-flash", Vendor: "minimax", Tier: TierFlat, Version: 1,
+			InputMicroPerMTok: 1_000_000, OutputMicroPerMTok: 4_000_000,
+			CacheReadMicroPerMTok: 100_000, CacheWriteMicroPerMTok: 1_000_000,
+			EffectiveAt: catalogEffective},
+
+		PriceBook{Model: "qwen3.8-max", Vendor: "aliyun-bailian", Tier: TierFlat, Version: 1,
+			InputMicroPerMTok: 12_000_000, OutputMicroPerMTok: 36_000_000,
+			CacheReadMicroPerMTok: 12_000_000, CacheWriteMicroPerMTok: 12_000_000,
+			EffectiveAt: catalogEffective},
+		PriceBook{Model: "qwen3.7-plus", Vendor: "aliyun-bailian", Tier: TierFlat, Version: 1,
+			InputMicroPerMTok: 2_000_000, OutputMicroPerMTok: 8_000_000,
+			CacheReadMicroPerMTok: 2_000_000, CacheWriteMicroPerMTok: 2_000_000,
+			EffectiveAt: catalogEffective},
+		PriceBook{Model: "qwen3.8-flash", Vendor: "aliyun-bailian", Tier: TierFlat, Version: 1,
+			InputMicroPerMTok: 800_000, OutputMicroPerMTok: 2_700_000,
+			CacheReadMicroPerMTok: 800_000, CacheWriteMicroPerMTok: 800_000,
+			EffectiveAt: catalogEffective},
+
+		PriceBook{Model: "doubao-seed-evolving", Vendor: "volcengine-ark", Tier: TierFlat, Version: 1,
+			InputMicroPerMTok: 6_000_000, OutputMicroPerMTok: 30_000_000,
+			CacheReadMicroPerMTok: 1_200_000, CacheWriteMicroPerMTok: 0,
+			EffectiveAt: catalogEffective},
+	)
 	// E2E-only vendor (H8): its prices are seeded only when the vendor was
 	// injected through MP_EXTRA_VENDORS. The production whitelist does not
 	// contain tipig, so a default deployment writes exactly the four DeepSeek

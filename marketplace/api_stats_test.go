@@ -256,10 +256,11 @@ func TestPublicStats(t *testing.T) {
 	assert.Equal(t, int64(3), stats.ModelsOnSale, "distinct (model, vendor) pairs")
 	assert.Equal(t, int64(300), stats.MinMultiplierMilli, "live only, canary does not set the floor")
 	assert.Equal(t, int64(3), stats.TodayRequests)
-	// Two active standard models have an origin price book: the seeded
-	// deepseek-flash / deepseek-v4-pro. alpha/beta are price-only rows with no
-	// mp_models entry, so they are not "platform models".
-	assert.Equal(t, int64(2), stats.PlatformModels)
+	// Every active standard model with an origin price book counts. alpha/beta
+	// are price-only rows with no mp_models entry, so they are not "platform
+	// models".
+	wantPlatformModels := int64(pricedModelCount(t, f.db))
+	assert.Equal(t, wantPlatformModels, stats.PlatformModels)
 
 	// The payload carries no seller/buyer/listing identifiers or key material
 	// (the struct has only aggregates; this guards future field additions).
@@ -277,7 +278,7 @@ func TestPublicStats(t *testing.T) {
 	assert.Equal(t, int64(3), apiNum(t, data, "models_on_sale"))
 	assert.Equal(t, int64(300), apiNum(t, data, "min_multiplier_milli"))
 	assert.Equal(t, int64(3), apiNum(t, data, "today_requests"))
-	assert.Equal(t, int64(2), apiNum(t, data, "platform_models"))
+	assert.Equal(t, wantPlatformModels, apiNum(t, data, "platform_models"))
 	assert.NotEmpty(t, data["generated_at"])
 	assert.Len(t, data, 5)
 	assert.NotContains(t, w.Body.String(), "seller_id")

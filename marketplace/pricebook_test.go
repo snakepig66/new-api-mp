@@ -190,7 +190,7 @@ func TestSeedPrices(t *testing.T) {
 			return books, perCall
 		}
 		booksBefore, perCallBefore := countRows()
-		assert.Equal(t, int64(12), booksBefore, "4 deepseek rows + the same books copied onto the two official cloud channels (OFFICIAL-CHANNELS §3); tipig is not seeded (H8)")
+		assert.Equal(t, int64(27), booksBefore, "4 deepseek + 8 copied cloud rows + 15 catalog rows (Kimi/GLM/MiniMax/Qwen/Doubao); tipig is not seeded (H8)")
 		assert.Equal(t, int64(2), perCallBefore, "search + fetch")
 
 		require.NoError(t, SeedPrices(db), "a second run on the same database must succeed")
@@ -212,7 +212,7 @@ func TestSeedPricesTipigInjected(t *testing.T) {
 
 	var books int64
 	require.NoError(t, db.Model(&PriceBook{}).Count(&books).Error)
-	assert.Equal(t, int64(16), books, "4 deepseek + 8 copied onto the two cloud channels + 4 injected tipig rows")
+	assert.Equal(t, int64(31), books, "27 catalog rows + 4 injected tipig rows")
 
 	for _, model := range []string{"deepseek-v4.1-flash-1017", "deepseek-v4-pro-0813"} {
 		for _, tier := range []string{TierOffpeak, TierPeak} {
