@@ -74,6 +74,31 @@ test.describe('响应式：公开区', () => {
     })
   }
 
+  test('390px 下厂家行与模型名行各自横向滚动，不撑宽页面', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto('/models?vendor=deepseek')
+    await expect(page.locator('[data-testid="vendor-pills"]')).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('[data-testid="vendor-model-chips"]')).toBeVisible()
+
+    const overflow = await page.evaluate(() =>
+      ['vendor-pills', 'vendor-model-chips'].map((id) => {
+        const node = document.querySelector(`[data-testid="${id}"]`) as HTMLElement | null
+        return node ? getComputedStyle(node).overflowX : null
+      }),
+    )
+    expect(overflow).toEqual(['auto', 'auto'])
+    await expectNoHorizontalOverflow(page, '/models?vendor=deepseek @390')
+  })
+
+  test('未登录点「加入 Key」跳登录并保留当前筛选', async ({ page }) => {
+    await page.goto('/models?vendor=deepseek&q=deepseek')
+    await page.getByRole('button', { name: '加入 Key' }).first().click()
+    await page.waitForURL(/\/login\?redirect=/)
+    const target = new URL(page.url())
+    expect(target.pathname).toBe('/login')
+    expect(target.searchParams.get('redirect')).toBe('/models?vendor=deepseek&q=deepseek')
+  })
+
   for (const width of [1440, 390]) {
     test(`${width}px 下模型详情不横向溢出`, async ({ page }) => {
       test.skip(!LOCAL, '外部实例的行情由部署环境决定，模型详情由手工清单覆盖')

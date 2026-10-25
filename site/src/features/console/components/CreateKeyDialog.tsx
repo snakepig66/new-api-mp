@@ -51,6 +51,8 @@ export interface CreateKeyDialogProps {
   onOpenChange: (open: boolean) => void
   onCreated: (tokenId: number) => void
   onOpenDetail?: (tokenId: number) => void
+  /** Square row action: start in selected scope with this model checked. */
+  initialModel?: string
 }
 
 export function CreateKeyDialog({
@@ -58,6 +60,7 @@ export function CreateKeyDialog({
   onOpenChange,
   onCreated,
   onOpenDetail,
+  initialModel,
 }: CreateKeyDialogProps) {
   const toast = useToast()
   const queryClient = useQueryClient()
@@ -83,10 +86,10 @@ export function CreateKeyDialog({
 
   useEffect(() => {
     if (!open) return
-    form.reset(defaultPref)
+    form.reset(initialModel ? { ...defaultPref, modelScope: 'selected' } : defaultPref)
     setName('')
     setSpendCap('')
-    setSelection({})
+    setSelection(initialModel ? { [initialModel]: '' } : {})
     setCopyFrom('')
     setNeverExpires(true)
     setExpiresAt('')
@@ -95,7 +98,7 @@ export function CreateKeyDialog({
     setSubmitting(false)
     setCreated(null)
     setCopied(false)
-  }, [form, open])
+  }, [form, open, initialModel])
 
   const scope = values.modelScope
   const selectedCount = Object.keys(selection).length

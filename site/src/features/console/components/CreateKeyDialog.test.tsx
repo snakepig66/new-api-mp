@@ -143,14 +143,19 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function renderDialog() {
+function renderDialog(initialModel?: string) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: 0 } },
   })
   return render(
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <CreateKeyDialog open onOpenChange={() => undefined} onCreated={() => undefined} />
+        <CreateKeyDialog
+          open
+          onOpenChange={() => undefined}
+          onCreated={() => undefined}
+          initialModel={initialModel}
+        />
       </ToastProvider>
     </QueryClientProvider>,
   )
@@ -191,6 +196,20 @@ describe('CreateKeyDialog', () => {
     const cap = (await screen.findByLabelText('glm-5.3 上限')) as HTMLInputElement
     expect(cap.value).toBe('0.8')
     expect((screen.getByLabelText('路由策略') as HTMLSelectElement).value).toBe('cheapest')
+  })
+
+  it('preselects a model in selected scope from the square row action', async () => {
+    renderDialog('glm-5.3')
+
+    expect((await screen.findAllByText('已选 1 个')).length).toBeGreaterThan(0)
+    expect(
+      screen.getByRole('button', { name: '仅指定模型' }).getAttribute('aria-pressed'),
+    ).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: '创建 Key' }))
+
+    await waitFor(() => expect(createdBody).not.toBeNull())
+    expect(createdBody?.model_scope).toBe('selected')
+    expect(createdBody?.models).toEqual([{ model: 'glm-5.3', price_cap_milli: 0 }])
   })
 
   it('submits a custom expiry and IP whitelist from the custom settings', async () => {

@@ -226,6 +226,8 @@ export interface SellerVendor {
   tier: string
   /** Pool kind; defaults to tier for older payloads. */
   kind?: SellerChannelKind
+  /** Root-relative brand mark; empty for vendors without a shipped SVG. */
+  logo_url?: string
   protocols: { openai: string; anthropic: string }
   models: string[]
   passthrough_body: boolean

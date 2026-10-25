@@ -1,19 +1,36 @@
 import { useQuery } from '@tanstack/react-query'
-import { Link, createFileRoute } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useEffect, useMemo, useState } from 'react'
 
 import { copy } from '@/copy'
 import { squareModelsQuery, useSquareModelDetails } from '@/features/market/api'
+import { filterPickerModels } from '@/features/market/ModelPicker'
 import { ModelTable, originVendorOf } from '@/features/market/model-table'
 import { QueryError } from '@/features/market/query-error'
-import { toVendorLookup, vendorOptions } from '@/features/market/vendors'
+import { VendorPills } from '@/features/market/VendorPills'
+import { toVendorLookup, vendorLogo, vendorOptions } from '@/features/market/vendors'
 import { vendorsQuery } from '@/features/seller/api'
-import { cn } from '@/lib/cn'
 import { formatMultiplier } from '@/lib/multiplier'
+import { formatYuan } from '@/lib/money'
 import { Button, Empty, Input, PageHeader, buttonClasses } from '@/ui'
 import type { SquareModel } from '@/features/market/api'
 
+interface ModelsSearch {
+  vendor?: string
+  q?: string
+}
+
+const searchSchema = (search: Record<string, unknown>): ModelsSearch => {
+  const vendor = typeof search.vendor === 'string' ? search.vendor.trim() : ''
+  const q = typeof search.q === 'string' ? search.q : ''
+  return {
+    ...(vendor ? { vendor } : {}),
+    ...(q.trim() ? { q } : {}),
+  }
+}
+
 export const Route = createFileRoute('/models/')({
+  validateSearch: searchSchema,
   component: ModelsPage,
 })
 
@@ -31,54 +48,66 @@ function uniqueByModel(rows: SquareModel[]): SquareModel[] {
   return Array.from(byModel.values())
 }
 
-function Pill({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: string
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        'inline-flex h-9 shrink-0 items-center rounded-full px-4 text-[14px] transition-colors',
-        active
-          ? 'bg-cta font-medium text-white hover:bg-cta-hover'
-          : 'bg-bg-soft text-ink-2 hover:bg-line/70 hover:text-ink',
-      )}
-    >
-      {children}
-    </button>
-  )
+/** Cheapest input price across every tier the model publishes. */
+function lowestInputMicro(model: SquareModel): number | null {
+  let lowest: number | null = null
+  for (const price of Object.values(model.prices)) {
+    if (!price) continue
+    const value = Number(price.input_micro_per_mtok)
+    if (!Number.isFinite(value) || value < 0) continue
+    if (lowest === null || value < lowest) lowest = value
+  }
+  return lowest
 }
 
 export function ModelsPage() {
   const modelsCopy = copy.pages.models
+  const navigate = useNavigate()
+  const { vendor: vendorParam, q: queryParam } = Route.useSearch()
+  const vendor = vendorParam ?? null
+  const query = (queryParam ?? '').trim()
+
   const models = useQuery(squareModelsQuery())
   const vendors = useQuery(vendorsQuery())
-  const [vendor, setVendor] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
+  const [searchInput, setSearchInput] = useState(queryParam ?? '')
+
+  useEffect(() => {
+    setSearchInput(queryParam ?? '')
+  }, [queryParam])
 
   const rows = useMemo(() => uniqueByModel(models.data ?? []), [models.data])
   const vendorMeta = useMemo(() => toVendorLookup(vendors.data ?? []), [vendors.data])
-  const pills = useMemo(
-    () => vendorOptions(rows.map((row) => originVendorOf(row)), vendorMeta),
-    [rows, vendorMeta],
-  )
-  const query = search.trim().toLowerCase()
 
-  const filtered = useMemo(() => {
-    return rows.filter((row) => {
-      if (vendor && originVendorOf(row) !== vendor) return false
-      if (query && !row.model.toLowerCase().includes(query)) return false
-      return true
-    })
-  }, [rows, vendor, query])
+  const vendorCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const row of rows) {
+      const origin = originVendorOf(row)
+      counts.set(origin, (counts.get(origin) ?? 0) + 1)
+    }
+    return counts
+  }, [rows])
+
+  const pillOptions = useMemo(
+    () =>
+      vendorOptions(rows.map((row) => originVendorOf(row)), vendorMeta).map((option) => ({
+        ...option,
+        logoUrl: vendorLogo(option.value, vendorMeta),
+        count: vendorCounts.get(option.value) ?? 0,
+      })),
+    [rows, vendorMeta, vendorCounts],
+  )
+
+  const filtered = useMemo(
+    () => filterPickerModels(rows, vendor ?? 'all', queryParam ?? ''),
+    [rows, vendor, queryParam],
+  )
+
+  const vendorModels = useMemo(() => {
+    if (!vendor) return []
+    return rows
+      .filter((row) => originVendorOf(row) === vendor)
+      .sort((a, b) => a.model.localeCompare(b.model))
+  }, [rows, vendor])
 
   // Detail queries carry 官方价 and 最低倍率, which the list endpoint omits.
   // Fetch for the whole catalog so the header's lowest multiplier is stable
@@ -100,9 +129,30 @@ export function ModelsPage() {
 
   const hasFilters = vendor !== null || query.length > 0
 
+  function selectVendor(next: string | null) {
+    void navigate({
+      to: '/models',
+      search: (previous) => ({ ...previous, vendor: next ?? undefined }),
+      resetScroll: false,
+    })
+  }
+
+  function updateSearch(value: string) {
+    setSearchInput(value)
+    void navigate({
+      to: '/models',
+      search: (previous) => ({
+        ...previous,
+        q: value.trim() ? value : undefined,
+      }),
+      replace: true,
+      resetScroll: false,
+    })
+  }
+
   function clearFilters() {
-    setVendor(null)
-    setSearch('')
+    setSearchInput('')
+    void navigate({ to: '/models', search: {}, resetScroll: false })
   }
 
   return (
@@ -120,20 +170,44 @@ export function ModelsPage() {
         className="border-b-0 pb-0"
       />
 
-      <div className="mt-8 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1">
-          <Pill active={vendor === null} onClick={() => setVendor(null)}>
-            {modelsCopy.allVendors}
-          </Pill>
-          {pills.map((pill) => (
-            <Pill
-              key={pill.value}
-              active={vendor === pill.value}
-              onClick={() => setVendor(vendor === pill.value ? null : pill.value)}
+      <div className="mt-8 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <VendorPills
+            options={pillOptions}
+            active={vendor}
+            onSelect={selectVendor}
+            allLabel={modelsCopy.allVendors}
+            allCount={rows.length}
+            ariaLabel={modelsCopy.vendorAria}
+          />
+          {vendor ? (
+            <div
+              data-testid="vendor-model-chips"
+              className="-mx-1 mt-2 flex min-w-0 items-stretch gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:thin]"
             >
-              {pill.label}
-            </Pill>
-          ))}
+              {vendorModels.map((model) => {
+                const input = lowestInputMicro(model)
+                return (
+                  <Link
+                    key={model.model}
+                    to="/models/$id"
+                    params={{ id: model.model }}
+                    className="shrink-0 rounded-md border border-line bg-bg px-3 py-2 transition-colors hover:border-line-strong hover:bg-bg-soft"
+                  >
+                    <span className="block whitespace-nowrap text-[13px] font-medium text-ink">
+                      {model.model}
+                    </span>
+                    <span className="mt-0.5 block whitespace-nowrap text-[12px] tabular-nums text-ink-3">
+                      {modelsCopy.modelRow.priceLabel}{' '}
+                      {input === null
+                        ? copy.common.none
+                        : `${formatYuan(input)}${modelsCopy.modelRow.perMillion}`}
+                    </span>
+                  </Link>
+                )
+              })}
+            </div>
+          ) : null}
         </div>
 
         <div className="relative w-full shrink-0 lg:w-[260px]">
@@ -150,8 +224,8 @@ export function ModelsPage() {
           </svg>
           <Input
             type="search"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            value={searchInput}
+            onChange={(event) => updateSearch(event.target.value)}
             placeholder={modelsCopy.searchPlaceholder}
             aria-label={modelsCopy.searchAria}
             className="h-10 rounded-full pl-10 text-[14px]"
@@ -208,6 +282,8 @@ export function ModelsPage() {
               details={details}
               detailsLoading={detailsLoading}
               vendorMeta={vendorMeta}
+              showAddToKey
+              minWidth={1160}
             />
           </>
         )}

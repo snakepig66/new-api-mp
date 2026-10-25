@@ -1,17 +1,15 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { Link, createFileRoute } from '@tanstack/react-router'
 
 import { copy } from '@/copy'
 import {
-  addModelToKey,
-  buyerTokensQuery,
   squareModelQuery,
   type MarketTier,
   type SquareChannel,
   type SquareModelDetail,
   type SquareTierPrices,
 } from '@/features/market/api'
+import { AddToKeyMenu } from '@/features/market/AddToKeyMenu'
 import { capabilitiesOf } from '@/features/market/capabilities'
 import { CodeBlock } from '@/features/market/code-block'
 import { CopyButton } from '@/features/market/copy-button'
@@ -21,14 +19,10 @@ import { currentBaseUrl } from '@/features/market/url'
 import { isOfficialVendor, toVendorLookup, vendorLabel } from '@/features/market/vendors'
 import { vendorsQuery } from '@/features/seller/api'
 import { ApiError } from '@/lib/api'
-import { useAuth } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { formatYuan } from '@/lib/money'
 import { formatMultiplier } from '@/lib/multiplier'
 import {
-  Button,
-  Dialog,
-  DialogClose,
   Empty,
   Multiplier,
   PeakBadge,
@@ -41,7 +35,6 @@ import {
   TableRow,
   Tag,
   buttonClasses,
-  useToast,
 } from '@/ui'
 
 export const Route = createFileRoute('/models/$id')({
@@ -117,159 +110,6 @@ function ChannelKindTag({ channel }: { channel: SquareChannel }) {
   if (channel.kind === 'official') return <Tag tone="brand">{kinds.official}</Tag>
   if (channel.kind === 'plan') return <Tag>{kinds.plan}</Tag>
   return <Tag>{kinds.thirdParty}</Tag>
-}
-
-function addErrorCopy(error: unknown): string {
-  if (error instanceof ApiError) {
-    if (error.status === 404) return copy.errors.token_not_found
-    return error.message
-  }
-  return copy.pages.modelDetail.addToKey.failed
-}
-
-function AddToKeyButton({ model, className }: { model: string; className?: string }) {
-  const page = copy.pages.modelDetail.addToKey
-  const { isLoggedIn } = useAuth()
-  const navigate = useNavigate()
-  const toast = useToast()
-  const [open, setOpen] = useState(false)
-  const [selected, setSelected] = useState<number | null>(null)
-
-  const tokens = useQuery({ ...buyerTokensQuery(), enabled: isLoggedIn })
-  const enabledTokens = (tokens.data?.items ?? []).filter((token) => token.status === 1)
-
-  const mutation = useMutation({
-    mutationFn: (tokenId: number) => addModelToKey(tokenId, model),
-    onSuccess: (_data, tokenId) => {
-      const token = enabledTokens.find((item) => item.id === tokenId)
-      toast.show({
-        title: page.success(token?.name || `#${tokenId}`),
-        tone: 'success',
-      })
-      setOpen(false)
-    },
-    onError: (error) => {
-      toast.show({ title: addErrorCopy(error), tone: 'error' })
-    },
-  })
-
-  function submit(tokenId: number) {
-    mutation.mutate(tokenId)
-  }
-
-  function handleClick() {
-    if (!isLoggedIn) {
-      navigate({
-        to: '/login',
-        search: {
-          redirect: `${window.location.pathname}${window.location.search}`,
-        },
-      })
-      return
-    }
-    if (tokens.isPending) return
-    if (tokens.isError) {
-      toast.show({ title: page.failed, description: copy.errors.UNKNOWN, tone: 'error' })
-      return
-    }
-    if (enabledTokens.length === 0) {
-      setOpen(true)
-      return
-    }
-    if (enabledTokens.length === 1) {
-      submit(enabledTokens[0].id)
-      return
-    }
-    setSelected(enabledTokens[0].id)
-    setOpen(true)
-  }
-
-  const loading = mutation.isPending || (isLoggedIn && tokens.isPending)
-
-  return (
-    <>
-      <Button size="lg" onClick={handleClick} loading={loading} className={className}>
-        {mutation.isPending ? page.adding : page.action}
-      </Button>
-
-      <Dialog
-        open={open}
-        onOpenChange={setOpen}
-        title={page.dialogTitle}
-        description={page.dialogDescription}
-        footer={
-          enabledTokens.length === 0 ? (
-            <>
-              <DialogClose asChild>
-                <Button variant="secondary">{copy.actions.close}</Button>
-              </DialogClose>
-              <Link to="/console" className={buttonClasses('primary', 'md')}>
-                {page.goConsole}
-              </Link>
-            </>
-          ) : (
-            <>
-              <DialogClose asChild>
-                <Button variant="secondary">{copy.actions.close}</Button>
-              </DialogClose>
-              <Button
-                loading={mutation.isPending}
-                disabled={selected === null}
-                onClick={() => {
-                  if (selected !== null) submit(selected)
-                }}
-              >
-                {page.choose}
-              </Button>
-            </>
-          )
-        }
-      >
-        {tokens.isPending ? (
-          <p className="text-[14px] text-ink-2">{copy.common.loading}</p>
-        ) : tokens.isError ? (
-          <div>
-            <p className="text-[14px] text-ink-2">{page.failed}</p>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="mt-3"
-              onClick={() => void tokens.refetch()}
-            >
-              {copy.actions.retry}
-            </Button>
-          </div>
-        ) : enabledTokens.length === 0 ? (
-          <Empty
-            className="border-0 px-0 py-0"
-            title={page.noKeysTitle}
-            reason={page.noKeysReason}
-            next={page.noKeysNext}
-          />
-        ) : (
-          <ul className="divide-y divide-line border-y border-line">
-            {enabledTokens.map((token) => (
-              <li key={token.id}>
-                <label className="flex cursor-pointer items-center gap-3 py-3 text-[14px]">
-                  <input
-                    type="radio"
-                    name="key-choice"
-                    checked={selected === token.id}
-                    onChange={() => setSelected(token.id)}
-                    className="h-4 w-4 accent-brand"
-                  />
-                  <span className="min-w-0 flex-1 truncate text-ink">
-                    {token.name || `Key #${token.id}`}
-                  </span>
-                  <span className="tabular-nums text-[13px] text-ink-3">#{token.id}</span>
-                </label>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Dialog>
-    </>
-  )
 }
 
 function DetailSkeleton() {
@@ -627,7 +467,12 @@ export function ModelDetailPage() {
 
             <p className="mt-3 text-[13px] leading-6 text-ink-3">{page.code.note}</p>
 
-            <AddToKeyButton model={data.model} className="mt-5 w-full" />
+            <AddToKeyMenu
+              model={data.model}
+              hasSupply={data.listing_count > 0}
+              size="lg"
+              className="mt-5 w-full"
+            />
           </div>
         </aside>
       </div>

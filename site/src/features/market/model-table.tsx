@@ -15,6 +15,7 @@ import {
 } from '@/ui'
 
 import type { SquareModel, SquareModelDetail, SquareTierPrices } from './api'
+import { AddToKeyMenu } from './AddToKeyMenu'
 import { isOfficialVendor, vendorLabel, type VendorLookup } from './vendors'
 
 export interface ModelTableProps {
@@ -24,6 +25,8 @@ export interface ModelTableProps {
   detailsLoading?: boolean
   /** Vendor catalogue metadata; enables display names and the official tag. */
   vendorMeta?: VendorLookup
+  /** Square-only row action; the homepage table stays read-only. */
+  showAddToKey?: boolean
   loading?: boolean
   skeletonRows?: number
   minWidth?: number
@@ -71,6 +74,7 @@ export function ModelTable({
   details,
   detailsLoading = false,
   vendorMeta,
+  showAddToKey = false,
   loading = false,
   skeletonRows = 6,
   minWidth = 1040,
@@ -89,6 +93,7 @@ export function ModelTable({
           <TableHeaderCell numeric>{columns.channels}</TableHeaderCell>
           <TableHeaderCell numeric>{columns.sellers}</TableHeaderCell>
           <TableHeaderCell>{columns.tier}</TableHeaderCell>
+          {showAddToKey ? <TableHeaderCell>{columns.actions}</TableHeaderCell> : null}
         </TableRow>
       </TableHead>
       <TableBody>
@@ -122,6 +127,11 @@ export function ModelTable({
                   <div className="flex justify-end">{skeletonCell('w-8')}</div>
                 </TableCell>
                 <TableCell>{skeletonCell('w-20')}</TableCell>
+                {showAddToKey ? (
+                  <TableCell>
+                    <div className="flex justify-end">{skeletonCell('w-16')}</div>
+                  </TableCell>
+                ) : null}
               </TableRow>
             ))
           : models.map((model) => {
@@ -223,6 +233,11 @@ export function ModelTable({
                       <PeakBadge tier={model.tier} nextSwitchAt={model.next_switch} />
                     )}
                   </TableCell>
+                  {showAddToKey ? (
+                    <TableCell className="relative z-10 w-px whitespace-nowrap">
+                      <AddToKeyMenu model={model.model} hasSupply={hasMarketSupply} />
+                    </TableCell>
+                  ) : null}
                 </TableRow>
               )
             })}

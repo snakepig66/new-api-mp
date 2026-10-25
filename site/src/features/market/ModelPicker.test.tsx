@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ModelPicker } from './ModelPicker'
@@ -42,8 +42,20 @@ function model(
 }
 
 const vendors = [
-  { id: 'deepseek', display_name: 'DeepSeek', tier: 'official', kind: 'official' },
-  { id: 'zhipu', display_name: '智谱', tier: 'official', kind: 'official' },
+  {
+    id: 'deepseek',
+    display_name: 'DeepSeek',
+    tier: 'official',
+    kind: 'official',
+    logo_url: '/vendors/deepseek.svg',
+  },
+  {
+    id: 'zhipu',
+    display_name: '智谱',
+    tier: 'official',
+    kind: 'official',
+    logo_url: '/vendors/zhipu.svg',
+  },
   { id: 'moonshot', display_name: '月之暗面', tier: 'official', kind: 'official' },
 ]
 
@@ -92,11 +104,11 @@ describe('ModelPicker', () => {
     renderPicker({})
     expect(await screen.findByText('deepseek-flash')).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('tab', { name: '智谱' }))
+    fireEvent.click(screen.getByRole('button', { name: /智谱/ }))
     expect(screen.getByText('glm-5.3')).toBeTruthy()
     expect(screen.queryByText('deepseek-flash')).toBeNull()
 
-    fireEvent.click(screen.getByRole('tab', { name: '全部' }))
+    fireEvent.click(screen.getByRole('button', { name: /^全部/ }))
     const search = screen.getByPlaceholderText('搜索模型名称或别名')
     fireEvent.change(search, { target: { value: 'glm' } })
     expect(screen.getByText('glm-5.3')).toBeTruthy()
@@ -129,6 +141,18 @@ describe('ModelPicker', () => {
     await waitFor(() => expect(partial.indeterminate).toBe(true))
     const enabledCap = screen.getByLabelText('deepseek-flash 上限') as HTMLInputElement
     expect(enabledCap.disabled).toBe(false)
+  })
+
+  it('shows vendor logos, counts, and a monogram fallback', async () => {
+    renderPicker({})
+    expect(await screen.findByText('deepseek-flash')).toBeTruthy()
+
+    const deepseek = screen.getByRole('button', { name: /DeepSeek 2 个模型/ })
+    expect(deepseek.querySelector('img')?.getAttribute('src')).toBe('/vendors/deepseek.svg')
+
+    const kimi = screen.getByRole('button', { name: /Kimi 1 个模型/ })
+    expect(kimi.querySelector('img')).toBeNull()
+    expect(within(kimi).getByText('K')).toBeTruthy()
   })
 
   it('shows the two different empty states', async () => {

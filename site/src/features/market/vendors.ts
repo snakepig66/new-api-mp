@@ -13,6 +13,8 @@ export interface VendorMeta {
   tier: string
   /** Channel pool kind: official / plan / third_party. */
   kind?: string
+  /** Root-relative mark shipped in site/public/vendors; empty means monogram. */
+  logo_url?: string
 }
 
 /** A metadata lookup keyed by vendor slug (Map or plain object). */
@@ -48,6 +50,30 @@ export function vendorLabel(vendor: string, lookup?: VendorLookup): string {
   return hit ? hit.label : vendor
 }
 
+/**
+ * Short brand name for the vendor pill. The catalogue keeps the official
+ * display names (e.g. 阿里云百炼), but the square's pill row is narrow and
+ * buyers recognize 千问/豆包 better.
+ */
+const VENDOR_SHORT_LABELS: { match: RegExp; label: string }[] = [
+  { match: /^deepseek/i, label: 'DeepSeek' },
+  { match: /^zhipu/i, label: '智谱' },
+  { match: /^aliyun-bailian|^qwen/i, label: '千问' },
+  { match: /^moonshot|^kimi/i, label: 'Kimi' },
+  { match: /^minimax/i, label: 'MiniMax' },
+  { match: /^volcengine-ark|^doubao|^bytedance/i, label: '豆包' },
+]
+
+export function vendorShortLabel(vendor: string, lookup?: VendorLookup): string {
+  const hit = VENDOR_SHORT_LABELS.find((entry) => entry.match.test(vendor))
+  return hit ? hit.label : vendorLabel(vendor, lookup)
+}
+
+/** Logo path from the catalogue; empty when the vendor has no shipped SVG. */
+export function vendorLogo(vendor: string, lookup?: VendorLookup): string {
+  return metaOf(vendor, lookup)?.logo_url?.trim() ?? ''
+}
+
 /** True when the catalogue classifies this vendor as an official channel. */
 export function isOfficialVendor(vendor: string, lookup?: VendorLookup): boolean {
   const meta = metaOf(vendor, lookup)
@@ -58,7 +84,13 @@ export function isOfficialVendor(vendor: string, lookup?: VendorLookup): boolean
 
 /** Build the id→{display_name,tier,kind} map used by the square and detail tags. */
 export function toVendorLookup(
-  vendors: Iterable<{ id: string; display_name: string; tier: string; kind?: string }>,
+  vendors: Iterable<{
+    id: string
+    display_name: string
+    tier: string
+    kind?: string
+    logo_url?: string
+  }>,
 ): Map<string, VendorMeta> {
   const lookup = new Map<string, VendorMeta>()
   for (const vendor of vendors) {
@@ -66,6 +98,7 @@ export function toVendorLookup(
       display_name: vendor.display_name,
       tier: vendor.tier,
       kind: vendor.kind,
+      logo_url: vendor.logo_url,
     })
   }
   return lookup
@@ -81,7 +114,7 @@ export function vendorOptions(
   for (const vendor of vendors) {
     if (!vendor || seen.has(vendor)) continue
     seen.add(vendor)
-    options.push({ value: vendor, label: vendorLabel(vendor, lookup) })
+    options.push({ value: vendor, label: vendorShortLabel(vendor, lookup) })
   }
   return options.sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'))
 }

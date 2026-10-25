@@ -4,7 +4,9 @@ import {
   isOfficialVendor,
   toVendorLookup,
   vendorLabel,
+  vendorLogo,
   vendorOptions,
+  vendorShortLabel,
 } from './vendors'
 
 describe('vendor labels', () => {
@@ -41,6 +43,32 @@ describe('vendor labels', () => {
     ])
     expect(isOfficialVendor('plan-vendor', lookup)).toBe(false)
     expect(isOfficialVendor('official-vendor', lookup)).toBe(true)
+  })
+
+  it('uses short brand names for pills but keeps the catalogue display name', () => {
+    const lookup = toVendorLookup([
+      { id: 'aliyun-bailian', display_name: '阿里云百炼', tier: 'official' },
+      { id: 'volcengine-ark', display_name: '火山方舟', tier: 'official' },
+      { id: 'moonshot', display_name: 'Kimi（月之暗面）', tier: 'official' },
+    ])
+    expect(vendorShortLabel('aliyun-bailian', lookup)).toBe('千问')
+    expect(vendorShortLabel('volcengine-ark', lookup)).toBe('豆包')
+    expect(vendorShortLabel('moonshot', lookup)).toBe('Kimi')
+    expect(vendorLabel('aliyun-bailian', lookup)).toBe('阿里云百炼')
+  })
+
+  it('carries the logo path through the lookup', () => {
+    const lookup = toVendorLookup([
+      {
+        id: 'deepseek',
+        display_name: 'DeepSeek',
+        tier: 'official',
+        logo_url: '/vendors/deepseek.svg',
+      },
+      { id: 'acme-ai', display_name: 'Acme', tier: 'third_party' },
+    ])
+    expect(vendorLogo('deepseek', lookup)).toBe('/vendors/deepseek.svg')
+    expect(vendorLogo('acme-ai', lookup)).toBe('')
   })
 
   it('dedupes and sorts options for the pill row', () => {

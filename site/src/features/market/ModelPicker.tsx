@@ -8,7 +8,8 @@ import { Button, Empty, Input } from '@/ui'
 
 import { squareModelsQuery, type SquareModel, type SquareTierPrices } from './api'
 import { originVendorOf } from './model-table'
-import { toVendorLookup, vendorLabel, vendorOptions } from './vendors'
+import { VendorPills } from './VendorPills'
+import { toVendorLookup, vendorLogo, vendorOptions, vendorShortLabel } from './vendors'
 import { vendorsQuery } from '@/features/seller/api'
 
 const pickerCopy = copy.pages.models.picker
@@ -24,7 +25,13 @@ export interface ModelPickerProps {
   className?: string
   /** Optional overrides for tests and callers that already hold the data. */
   models?: SquareModel[]
-  vendors?: { id: string; display_name: string; tier: string; kind?: string }[]
+  vendors?: {
+    id: string
+    display_name: string
+    tier: string
+    kind?: string
+    logo_url?: string
+  }[]
   loading?: boolean
   error?: unknown
   onRetry?: () => void
@@ -113,12 +120,24 @@ export function ModelPicker({
   const allModels = models ?? squareQuery.data ?? []
   const vendorList = vendors ?? vendorsQueryResult.data ?? []
   const lookup = useMemo(() => toVendorLookup(vendorList), [vendorList])
-  const labelFor = (slug: string) => vendorLabel(slug, lookup)
+  const labelFor = (slug: string) => vendorShortLabel(slug, lookup)
 
   const originVendors = useMemo(
     () => vendorOptions(new Set(allModels.map((model) => originVendorOf(model))), lookup),
     [allModels, lookup],
   )
+  const vendorPillOptions = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const model of allModels) {
+      const vendor = originVendorOf(model)
+      counts.set(vendor, (counts.get(vendor) ?? 0) + 1)
+    }
+    return originVendors.map((option) => ({
+      ...option,
+      logoUrl: vendorLogo(option.value, lookup),
+      count: counts.get(option.value) ?? 0,
+    }))
+  }, [allModels, lookup, originVendors])
   const filtered = useMemo(
     () => filterPickerModels(allModels, vendor, search),
     [allModels, vendor, search],
@@ -156,25 +175,14 @@ export function ModelPicker({
 
   return (
     <div className={cn('min-w-0', className)}>
-      <div
-        className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]"
-        role="tablist"
-        aria-label={copy.pages.models.allVendors}
-      >
-        <VendorPill
-          active={vendor === 'all'}
-          onClick={() => setVendor('all')}
-          label={pickerCopy.allVendors}
-        />
-        {originVendors.map((option) => (
-          <VendorPill
-            key={option.value}
-            active={vendor === option.value}
-            onClick={() => setVendor(option.value)}
-            label={option.label}
-          />
-        ))}
-      </div>
+      <VendorPills
+        options={vendorPillOptions}
+        active={vendor === 'all' ? null : vendor}
+        onSelect={(next) => setVendor(next ?? 'all')}
+        allLabel={pickerCopy.allVendors}
+        allCount={allModels.length}
+        ariaLabel={copy.pages.models.vendorAria}
+      />
 
       <div className="mt-2">
         <Input
@@ -312,33 +320,6 @@ export function ModelPicker({
         </div>
       </div>
     </div>
-  )
-}
-
-function VendorPill({
-  active,
-  onClick,
-  label,
-}: {
-  active: boolean
-  onClick: () => void
-  label: string
-}) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      onClick={onClick}
-      className={cn(
-        'shrink-0 rounded-full border px-3 py-1.5 text-[13px] transition-colors',
-        active
-          ? 'border-brand bg-brand-soft text-brand-ink'
-          : 'border-line bg-bg text-ink-2 hover:border-line-strong hover:text-ink',
-      )}
-    >
-      {label}
-    </button>
   )
 }
 

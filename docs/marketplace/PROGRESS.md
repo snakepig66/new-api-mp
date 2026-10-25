@@ -543,3 +543,29 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 ### 验收
 - `go build ./...`、`go vet ./...` 通过；`go test ./marketplace/` 通过（新增过期时间/IP 白名单与更新接口用例）。
 - 前端 `npm run build`、`tsc --noEmit` 通过；vitest 119/119 通过。
+
+## 模型广场厂家选模型与加入 Key（2026-10-25）
+
+### 厂家与筛选
+- `/marketplace/vendors` 新增 `logo_url`（静态 allow-list：deepseek / zhipu / qwen / kimi / minimax / doubao；Coding Plan 渠道复用父品牌），未知厂家返回空，前端用厂家名首字圆形占位。
+- 六个 SVG 放在 `site/public/vendors/`，随 Vite 构建进入 `site/dist/vendors` 并被 Go embed；DeepSeek/Qwen/Kimi/MiniMax 使用 Simple Icons 路径，智谱/豆包使用项目内简化品牌标记。
+- 新增共用 `features/market/VendorPills.tsx`：logo、短品牌名（DeepSeek/智谱/千问/Kimi/MiniMax/豆包）、`N 个模型`；广场和 ModelPicker 共用，ModelPicker 不再自己维护厂家 Pill。
+- 广场筛选统一走 `filterPickerModels`：只匹配标准名和 alias，不匹配厂家名或渠道名。
+- `/models` 增加 URL 状态：`?vendor=deepseek&q=v3`；厂家切换保留历史，搜索输入用 replace，前后退和分享都能恢复。
+- 选中厂家后出现模型名横向标签行：标准名 + 该模型所有档位中的最低输入价，点击进入详情。
+- 详情页渠道表的「官方 / 套餐 / 第三方」保持只读说明，不参与广场筛选；文案明确提示到 Key 详情开启「只用官方渠道」。
+
+### 加入 Key
+- 广场表格新增行尾「加入 Key」，打开锚定小菜单：
+  - 可勾选多把 Key 一次加入；已包含模型的 Key、全部模型 Key、停用 Key、未配置偏好 Key 分别显示状态且不可重复添加。
+  - 全部模型 Key 不会自动改成指定模型；只做加入，不移除。
+  - 模型无 live/canary 挂单时禁用已有 Key 的加入，但仍可新建 Key。
+  - 未登录点击会先 `ensureAuth()`，失败跳 `/login?redirect=当前路径+查询`。
+- 新增 `features/market/AddToKeyMenu.tsx`，详情页原来的单选「加到我的 Key」也换成同一多选菜单。
+- 每次加入调用现有 `POST /marketplace/key/models`；多 Key 用 allSettled 汇总，`model_already_added` 视为成功，最终 toast 汇总成功/失败数量。
+- `CreateKeyDialog` 新增 `initialModel`：从广场新建 Key 时自动切到「仅指定模型」并勾选当前模型，仍保留一次性完整 Key 的复制界面。
+
+### 测试与验收
+- Go：扩展 `/marketplace/vendors` 用例，覆盖六家 logo_url、Coding Plan 父品牌映射和未知厂家空值。
+- 前端新增/更新：厂家 Pill 筛选与 URL 同步、URL 恢复、别名搜索不匹配渠道名、模型标签价格与详情链接、行尾加入 Key；ModelPicker logo/数量/首字占位；AddToKeyMenu 未登录跳转、多 Key 加入、新建 Key 预选模型；CreateKeyDialog initialModel。
+- Playwright：390px 下厂家行/模型名行 `overflow-x: auto` 且文档不横向溢出；未登录加入 Key 跳登录并保留 redirect。

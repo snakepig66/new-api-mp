@@ -31,9 +31,33 @@ type vendorView struct {
 	DisplayName     string          `json:"display_name"`
 	Tier            string          `json:"tier"`
 	Kind            string          `json:"kind"`
+	LogoURL         string          `json:"logo_url,omitempty"`
 	Protocols       VendorProtocols `json:"protocols"`
 	Models          []string        `json:"models"`
 	PassthroughBody bool            `json:"passthrough_body"`
+}
+
+// vendorLogoURL is a static allow-list from channel slug to the copy shipped
+// in site/public/vendors. Keeping it out of the database means no migration
+// and no admin-editable URL that could point anywhere. Plan channels reuse
+// their parent brand's mark.
+func vendorLogoURL(slug string) string {
+	switch slug {
+	case "deepseek":
+		return "/vendors/deepseek.svg"
+	case "zhipu":
+		return "/vendors/zhipu.svg"
+	case "aliyun-bailian", "aliyun-bailian-coding-plan":
+		return "/vendors/qwen.svg"
+	case "moonshot":
+		return "/vendors/kimi.svg"
+	case "minimax":
+		return "/vendors/minimax.svg"
+	case "volcengine-ark", "volcengine-ark-coding-plan":
+		return "/vendors/doubao.svg"
+	default:
+		return ""
+	}
 }
 
 // RegisterVendorsRoutes mounts GET /marketplace/vendors on the public group.
@@ -65,6 +89,7 @@ func listVendors(c *gin.Context) {
 			DisplayName:     vendor.DisplayName,
 			Tier:            vendor.Tier,
 			Kind:            vendor.Tier,
+			LogoURL:         vendorLogoURL(vendor.ID),
 			Protocols:       vendor.Protocols,
 			Models:          listableModels(db, vendor),
 			PassthroughBody: vendor.PassthroughBody,

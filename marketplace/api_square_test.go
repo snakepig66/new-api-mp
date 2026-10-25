@@ -669,7 +669,17 @@ func TestApiVendorsPoolModels(t *testing.T) {
 	assert.Equal(t, "DeepSeek", deepseek["display_name"])
 	assert.Equal(t, VendorTierOfficial, deepseek["tier"])
 	assert.Equal(t, ChannelKindOfficial, deepseek["kind"])
+	assert.Equal(t, "/vendors/deepseek.svg", deepseek["logo_url"])
 	assert.Equal(t, []string{"deepseek-flash", "deepseek-v4-pro"}, vendorModels(t, deepseek))
+
+	// Each first-batch brand points at its shipped SVG; plan channels reuse the
+	// parent brand's mark. Unknown slugs fall back to the frontend monogram.
+	assert.Equal(t, "/vendors/zhipu.svg", findVendorItem(t, items, "zhipu")["logo_url"])
+	assert.Equal(t, "/vendors/qwen.svg", findVendorItem(t, items, "aliyun-bailian")["logo_url"])
+	assert.Equal(t, "/vendors/kimi.svg", findVendorItem(t, items, "moonshot")["logo_url"])
+	assert.Equal(t, "/vendors/minimax.svg", findVendorItem(t, items, "minimax")["logo_url"])
+	assert.Equal(t, "/vendors/doubao.svg", findVendorItem(t, items, "volcengine-ark")["logo_url"])
+	assert.Empty(t, vendorLogoURL("third-party-unknown"))
 
 	// The pool channel set is the source: every seeded active channel appears.
 	findVendorItem(t, items, "volcengine-ark")
@@ -681,6 +691,7 @@ func TestApiVendorsPoolModels(t *testing.T) {
 	arkPlan := findVendorItem(t, items, "volcengine-ark-coding-plan")
 	assert.Equal(t, ChannelKindPlan, arkPlan["kind"])
 	assert.Empty(t, vendorModels(t, arkPlan))
+	assert.Equal(t, "/vendors/doubao.svg", arkPlan["logo_url"])
 
 	// glm-4.6 still has no catalog price, so its verified qualification is not
 	// listable even though priced GLM models are.
