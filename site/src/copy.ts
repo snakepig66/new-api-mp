@@ -1,11 +1,11 @@
 /**
  * 全站中文文案。所有界面文字从这里取，不要在组件里写死。
- * 产品名目前是占位名「词元市场」，等品牌定稿后只改 brand.name。
+ * 品牌名与文案集中在这里；改名只需改 brand.name。
  */
 
 export const copy = {
   brand: {
-    name: '词元市场',
+    name: 'LLMJar',
     tagline: '同一个 Key，用官方模型更便宜',
     description:
       '把分散的官方模型额度汇总成一个市场：价格、倍率、可用率都摆在同一张表里，按量结算，失败不收费。',
@@ -91,7 +91,7 @@ export const copy = {
   },
 
   footer: {
-    copyright: '© 2026 词元市场',
+    copyright: '© 2026 LLMJar',
     company: '运营主体：待定',
     icp: 'ICP 备案号：待填',
     terms: '用户协议',

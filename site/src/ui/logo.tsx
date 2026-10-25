@@ -1,29 +1,35 @@
-import { copy } from '@/copy'
 import { cn } from '@/lib/cn'
 
 export interface LogoMarkProps {
-  /** Wordmark font size in px; the blue dot stays 8px. */
+  /** Square mark size in px. */
   size?: number
   className?: string
 }
 
-/**
- * Pure-text wordmark: the first two characters of the brand name, tightened,
- * with one 8px brand dot. No SVG.
- */
-export function LogoMark({ size = 20, className }: LogoMarkProps) {
-  const mark = copy.brand.name.slice(0, 2)
-
+/** Brand mark: the jar outline on the brand-blue rounded square. */
+export function LogoMark({ size = 24, className }: LogoMarkProps) {
   return (
-    <span className={cn('inline-flex items-start text-ink', className)} aria-hidden="true">
-      <span
-        style={{ fontSize: `${size}px`, lineHeight: 1 }}
-        className="font-semibold tracking-[-0.03em]"
-      >
-        {mark}
-      </span>
-      <span className="ml-1 mt-0.5 h-2 w-2 shrink-0 rounded-full bg-brand" />
-    </span>
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      className={cn('shrink-0', className)}
+      aria-hidden="true"
+    >
+      <rect width="32" height="32" rx="8" fill="#4D6BFE" />
+      <rect x="11.5" y="6.5" width="9" height="3" rx="1.5" fill="#fff" />
+      <rect
+        x="8.75"
+        y="11.25"
+        width="14.5"
+        height="14.5"
+        rx="4.5"
+        fill="none"
+        stroke="#fff"
+        strokeWidth="2.5"
+      />
+      <circle cx="16" cy="18.5" r="2.75" fill="#fff" />
+    </svg>
   )
 }
 
@@ -34,18 +40,16 @@ export interface LogoProps {
   subtitle?: string
 }
 
-/** Full wordmark: brand name from copy.ts plus the brand dot. */
-export function Logo({ className, markSize = 20, subtitle }: LogoProps) {
+/** Full wordmark: the jar mark plus "LLMJar" (Jar in the brand colour). */
+export function Logo({ className, markSize = 24, subtitle }: LogoProps) {
   return (
-    <span className={cn('inline-flex items-start gap-2', className)}>
-      <span className="inline-flex items-start">
-        <span
-          style={{ fontSize: `${markSize}px`, lineHeight: 1 }}
-          className="font-semibold tracking-[-0.03em] text-ink"
-        >
-          {copy.brand.name}
-        </span>
-        <span className="ml-1 mt-0.5 h-2 w-2 shrink-0 rounded-full bg-brand" aria-hidden="true" />
+    <span className={cn('inline-flex items-center gap-2', className)}>
+      <LogoMark size={markSize} />
+      <span
+        className="font-semibold tracking-[-0.02em] text-ink"
+        style={{ fontSize: `${markSize}px`, lineHeight: 1 }}
+      >
+        LLM<span className="text-brand">Jar</span>
       </span>
       {subtitle ? (
         <span className="text-[13px] leading-5 text-ink-3">{subtitle}</span>
