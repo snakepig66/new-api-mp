@@ -308,3 +308,13 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 
 ### 待定项更新
 - §9-1 产品名仍为默认「词元市场」；logo 已按 VISUAL-SPEC 蓝点风格（待正式定名后出正式版）。
+
+---
+
+## GitHub 登录（2026-10-25）
+
+- 前端与上游 OAuth 链路原本已实现（登录/注册页按钮 → `/api/oauth/state` 取 state → GitHub 授权 → SPA `/oauth/github` 回调换取会话），缺的是配置注入方式。
+- 新增环境变量支持（`model/option.go: applyOAuthEnvOverrides`）：`GITHUB_CLIENT_ID`、`GITHUB_CLIENT_SECRET`、可选 `GITHUB_OAUTH_ENABLED`。两个凭据配齐即自动开启；显式 true 但缺凭据会拒绝并记错误日志；每次从数据库同步选项后重新应用，保证 env 优先且不被 SyncOptions 覆盖。Go 单测 6 例覆盖（`model/option_oauth_env_test.go`）。
+- 隔离实例实测（/tmp 新库 + 3901 端口 + 假凭据）：`/api/status` 正确返回 `github_oauth=true` 与 client id；生产实例无凭据时保持 `false`，登录页按钮维持禁用说明。
+- 回调地址必须注册为 `https://<本站域名>/oauth/github`（SPA 路由，已验证 200）。
+- 配置步骤见 `docs/marketplace/GITHUB-LOGIN.md`；真正上线还差一次人工动作：在 GitHub 创建 OAuth App 并写入 `/etc/new-api.env` 后重启（凭据不在仓库、本机或日志中保存）。
