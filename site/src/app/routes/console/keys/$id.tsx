@@ -13,7 +13,6 @@ import {
   Dialog,
   Empty,
   Input,
-  SellerId,
   Table,
   TableBody,
   TableCell,
@@ -40,7 +39,8 @@ import {
   Section,
 } from '@/features/console/components/DataState'
 import { Field, Notice, Select } from '@/features/console/components/form'
-import { milliToMultiplierInput, parseMultiplierToMilli, parseSellerIds } from '@/features/console/format'
+import { KeyRoutingFields } from '@/features/console/components/KeyRoutingFields'
+import { milliToMultiplierInput, parseMultiplierToMilli } from '@/features/console/format'
 import { tokenStatusMeta } from '@/features/console/labels'
 import {
   prefFormSchema,
@@ -49,7 +49,6 @@ import {
   type PrefFormValues,
 } from '@/features/console/schemas'
 import {
-  STRATEGIES,
   TOKEN_STATUS_DISABLED,
   TOKEN_STATUS_ENABLED,
   type KeyDetail,
@@ -157,13 +156,6 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
     form.reset(prefToFormValues(pref))
   }, [form, pref])
 
-  const preferText = form.watch('prefer')
-  const blockText = form.watch('block')
-  const onlyText = form.watch('only')
-  const preferIds = parseSellerIds(preferText).ids
-  const blockIds = parseSellerIds(blockText).ids
-  const onlyIds = parseSellerIds(onlyText).ids
-
   async function handleCopy() {
     setCopying(true)
     try {
@@ -261,7 +253,10 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
               {copy.pages.consoleKeys.columns.spend}：{copy.pages.consoleKeys.spend.used(formatYuan(token.used_quota))}
             </span>
             <span>
-              {copy.pages.consoleKeys.columns.models}：{copy.pages.consoleKeys.modelsUnit(models.length)}
+              {copy.pages.consoleKeys.columns.models}：
+              {pref?.model_scope === 'all'
+                ? page.models.allScopeTitle
+                : copy.pages.consoleKeys.modelsUnit(models.length)}
             </span>
             <span>{page.status.hint}</span>
           </div>
@@ -288,143 +283,7 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
       <Section className="mt-8" title={page.config.title} hint={page.config.hint}>
         {!pref ? <Notice className="mb-4">{page.config.noPref}</Notice> : null}
         <form onSubmit={savePref} className="grid gap-4 sm:grid-cols-2" noValidate>
-          <Field
-            label={page.config.strategy}
-            htmlFor="pref-strategy"
-            error={form.formState.errors.strategy?.message}
-          >
-            <Select id="pref-strategy" {...form.register('strategy')}>
-              {STRATEGIES.map((strategy) => (
-                <option key={strategy} value={strategy}>
-                  {copy.pages.consoleKeys.strategy[strategy]}
-                </option>
-              ))}
-            </Select>
-          </Field>
-
-          <Field
-            label={page.config.priceCap}
-            htmlFor="pref-price-cap"
-            hint={page.config.priceCapHint}
-            error={form.formState.errors.priceCap?.message}
-          >
-            <Input
-              id="pref-price-cap"
-              inputMode="decimal"
-              placeholder="0.85"
-              {...form.register('priceCap')}
-            />
-          </Field>
-
-          <Field
-            label={page.config.rpm}
-            htmlFor="pref-rpm"
-            hint={page.config.rpmHint}
-            error={form.formState.errors.rpm?.message}
-          >
-            <Input
-              id="pref-rpm"
-              inputMode="numeric"
-              placeholder="60"
-              {...form.register('rpm')}
-            />
-          </Field>
-
-          <div className="hidden sm:block" />
-
-          <Field
-            label={page.config.prefer}
-            htmlFor="pref-prefer"
-            hint={page.config.preferHint}
-            error={form.formState.errors.prefer?.message}
-          >
-            <Input
-              id="pref-prefer"
-              placeholder={page.sellerIds.placeholder}
-              {...form.register('prefer')}
-            />
-            <SellerChips
-              ids={preferIds}
-              onRemove={(sellerId) =>
-                form.setValue(
-                  'prefer',
-                  preferIds.filter((value) => value !== sellerId).join(', '),
-                  { shouldDirty: true },
-                )
-              }
-            />
-          </Field>
-
-          <Field
-            label={page.config.block}
-            htmlFor="pref-block"
-            hint={page.config.blockHint}
-            error={form.formState.errors.block?.message}
-          >
-            <Input
-              id="pref-block"
-              placeholder={page.sellerIds.placeholder}
-              {...form.register('block')}
-            />
-            <SellerChips
-              ids={blockIds}
-              onRemove={(sellerId) =>
-                form.setValue(
-                  'block',
-                  blockIds.filter((value) => value !== sellerId).join(', '),
-                  { shouldDirty: true },
-                )
-              }
-            />
-          </Field>
-
-          <Field
-            label={page.config.only}
-            htmlFor="pref-only"
-            hint={page.config.onlyHint}
-            error={form.formState.errors.only?.message}
-          >
-            <Input
-              id="pref-only"
-              inputMode="numeric"
-              placeholder="10023"
-              {...form.register('only')}
-            />
-            {onlyIds.length === 1 ? (
-              <div className="mt-1.5">
-                <SellerId id={onlyIds[0]} />
-              </div>
-            ) : null}
-          </Field>
-
-          <div className="space-y-3 sm:col-span-2">
-            <label className="inline-flex items-start gap-2 text-[13px] text-ink">
-              <input
-                type="checkbox"
-                className="mt-0.5 h-3.5 w-3.5 accent-brand"
-                {...form.register('allowFallback')}
-              />
-              <span>
-                {page.config.allowFallback}
-                <span className="mt-0.5 block text-[13px] leading-5 text-ink-3">
-                  {page.config.allowFallbackHint}
-                </span>
-              </span>
-            </label>
-            <label className="flex items-start gap-2 text-[13px] text-ink">
-              <input
-                type="checkbox"
-                className="mt-0.5 h-3.5 w-3.5 accent-brand"
-                {...form.register('officialOnly')}
-              />
-              <span>
-                {page.config.officialOnly}
-                <span className="mt-0.5 block text-[13px] leading-5 text-ink-3">
-                  {page.config.officialOnlyHint}
-                </span>
-              </span>
-            </label>
-          </div>
+          <KeyRoutingFields form={form} idPrefix="pref" />
 
           {form.formState.errors.root?.message ? (
             <p
@@ -443,7 +302,7 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
         </form>
       </Section>
 
-      <ModelsSection tokenId={tokenId} models={models} />
+      <ModelsSection tokenId={tokenId} models={models} modelScope={pref?.model_scope ?? 'selected'} />
 
       <Section className="mt-10" title={page.danger.title}>
         <div className="flex flex-col gap-3 rounded-md border border-danger/20 bg-danger/5 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
@@ -483,38 +342,15 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
   )
 }
 
-function SellerChips({ ids, onRemove }: { ids: number[]; onRemove: (id: number) => void }) {
-  if (ids.length === 0) {
-    return <p className="mt-1.5 text-[13px] text-ink-3">{page.sellerIds.empty}</p>
-  }
-  return (
-    <div className="mt-2 flex flex-wrap gap-1.5">
-      {ids.map((sellerId) => (
-        <span
-          key={sellerId}
-          className="inline-flex items-center gap-1 rounded-full border border-line bg-bg-soft px-2.5 py-1"
-        >
-          <SellerId id={sellerId} />
-          <button
-            type="button"
-            className="ml-0.5 grid h-4 w-4 place-items-center rounded-full text-ink-3 hover:bg-danger/10 hover:text-danger"
-            aria-label={`${shared.remove} ${sellerId}`}
-            onClick={() => onRemove(sellerId)}
-          >
-            ×
-          </button>
-        </span>
-      ))}
-    </div>
-  )
-}
 
 function ModelsSection({
   tokenId,
   models,
+  modelScope,
 }: {
   tokenId: number
   models: KeyDetail['models']
+  modelScope: 'all' | 'selected'
 }) {
   const toast = useToast()
   const queryClient = useQueryClient()
@@ -585,6 +421,10 @@ function ModelsSection({
 
   return (
     <Section className="mt-9" title={page.models.title} hint={page.models.hint}>
+      {modelScope === 'all' ? (
+        <Notice title={page.models.allScopeTitle}>{page.models.allScopeHint}</Notice>
+      ) : (
+        <>
       {models.length === 0 ? (
         <Empty
           title={page.models.emptyTitle}
@@ -685,6 +525,8 @@ function ModelsSection({
           </div>
         )}
       </div>
+        </>
+      )}
     </Section>
   )
 }

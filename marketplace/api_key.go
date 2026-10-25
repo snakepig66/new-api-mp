@@ -31,6 +31,10 @@ func RegisterKeyRoutes(g *gin.RouterGroup) { registerKeyRoutes(g) }
 // to already carry UserAuth (and to be gated on Enabled() by the caller).
 // Route wiring into RegisterRoutes is done centrally in api.go.
 func registerKeyRoutes(g *gin.RouterGroup) {
+	// POST /key creates the token, its preference row and its model list in a
+	// single transaction (no partial key). GET/PUT /key/pref handle later
+	// edits.
+	g.POST("/key", postCreateKey)
 	g.GET("/key/pref", getKeyPref)
 	g.PUT("/key/pref", putKeyPref)
 	g.POST("/key/models", postKeyModel)
@@ -124,6 +128,7 @@ func parseTokenIDQuery(c *gin.Context) (int64, bool) {
 type keyPrefUpdateRequest struct {
 	TokenID         int64   `json:"token_id"`
 	Strategy        string  `json:"strategy"`
+	ModelScope      string  `json:"model_scope"`
 	PriceCapMilli   int64   `json:"price_cap_milli"`
 	PreferSellerIDs []int64 `json:"prefer_seller_ids"`
 	BlockSellerIDs  []int64 `json:"block_seller_ids"`
@@ -148,6 +153,7 @@ type keyModelJSON struct {
 type keyPrefJSON struct {
 	TokenID         int64          `json:"token_id"`
 	Strategy        string         `json:"strategy"`
+	ModelScope      string         `json:"model_scope"`
 	PriceCapMilli   int64          `json:"price_cap_milli"`
 	PreferSellerIDs []int64        `json:"prefer_seller_ids"`
 	BlockSellerIDs  []int64        `json:"block_seller_ids"`
@@ -171,9 +177,14 @@ func toKeyModelJSON(rows []KeyModel) []keyModelJSON {
 }
 
 func toKeyPrefJSON(pref KeyPref, models []KeyModel) keyPrefJSON {
+	scope := pref.ModelScope
+	if scope == "" {
+		scope = ModelScopeSelected
+	}
 	return keyPrefJSON{
 		TokenID:         pref.TokenID,
 		Strategy:        pref.Strategy,
+		ModelScope:      scope,
 		PriceCapMilli:   pref.PriceCapMilli,
 		PreferSellerIDs: pref.PreferSellerIDs,
 		BlockSellerIDs:  pref.BlockSellerIDs,
@@ -245,6 +256,7 @@ func putKeyPref(c *gin.Context) {
 	}
 	in := KeyPrefInput{
 		Strategy:        req.Strategy,
+		ModelScope:      req.ModelScope,
 		PriceCapMilli:   req.PriceCapMilli,
 		PreferSellerIDs: req.PreferSellerIDs,
 		BlockSellerIDs:  req.BlockSellerIDs,

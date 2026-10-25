@@ -87,6 +87,7 @@ export type KeyWizardValues = z.infer<typeof keyWizardSchema>
 
 export interface PrefFormValues {
   strategy: Strategy
+  modelScope: 'all' | 'selected'
   priceCap: string
   rpm: string
   prefer: string
@@ -106,6 +107,7 @@ const strategySchema = z.enum(['cheapest', 'balanced', 'stable'])
 export const prefFormSchema = z
   .object({
     strategy: strategySchema,
+    modelScope: z.enum(['all', 'selected']),
     priceCap: z.string(),
     rpm: z.string(),
     prefer: z.string(),
@@ -168,6 +170,7 @@ export function prefFormToInput(tokenId: number, values: PrefFormValues): KeyPre
   return {
     token_id: tokenId,
     strategy: values.strategy,
+    model_scope: values.modelScope,
     price_cap_milli: parseMultiplierToMilli(values.priceCap) ?? 0,
     prefer_seller_ids: parseSellerIds(values.prefer).ids,
     block_seller_ids: parseSellerIds(values.block).ids,
@@ -183,6 +186,7 @@ export function prefToFormValues(
   pref:
     | {
         strategy: Strategy
+        model_scope?: 'all' | 'selected'
         price_cap_milli: number
         prefer_seller_ids: number[]
         block_seller_ids: number[]
@@ -196,6 +200,7 @@ export function prefToFormValues(
 ): PrefFormValues {
   return {
     strategy: pref && STRATEGIES.includes(pref.strategy) ? pref.strategy : 'balanced',
+    modelScope: pref?.model_scope === 'all' ? 'all' : 'selected',
     priceCap: pref ? milliToMultiplierInput(pref.price_cap_milli) : '',
     rpm: pref && pref.rpm > 0 ? String(pref.rpm) : '',
     prefer: pref ? pref.prefer_seller_ids.join(', ') : '',

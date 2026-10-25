@@ -49,6 +49,7 @@ describe('key wizard validation', () => {
 describe('key detail preference form', () => {
   const base = {
     strategy: 'balanced' as const,
+    modelScope: 'selected' as const,
     priceCap: '0.85',
     rpm: '60',
     prefer: '10023, 10024',
@@ -65,6 +66,7 @@ describe('key detail preference form', () => {
     expect(prefFormToInput(7, parsed.data)).toEqual({
       token_id: 7,
       strategy: 'balanced',
+      model_scope: 'selected',
       price_cap_milli: 850,
       prefer_seller_ids: [10023, 10024],
       block_seller_ids: [],
@@ -100,6 +102,7 @@ describe('key detail preference form', () => {
   it('hydrates defaults from a missing preference row', () => {
     expect(prefToFormValues(null)).toEqual({
       strategy: 'balanced',
+      modelScope: 'selected',
       priceCap: '',
       rpm: '',
       prefer: '',

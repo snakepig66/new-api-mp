@@ -483,3 +483,26 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 - `go build ./...`、`go vet ./...` 通过。
 - `go test ./marketplace/ -count=1` 通过；Linux 服务器全量 `go build ./... && go vet ./... && go test ./... -count=1` 全部通过。本机 Windows 仅 Telegram OAuth / HTTP2 / NTLM 等既有环境用例失败。
 - 前端 `bun run typecheck`、`vitest 112/112` 通过。
+
+## Key 创建改版（2026-10-25）
+
+### 产品
+- 新建 Key 从四步向导改成**一屏弹窗**：名称可选（不填由后端分配 `Key N`）、四个用途预设（均衡 / 最省钱 / 最稳定 / 仅指定模型）、默认折叠的「自定义设置」。
+- 预设只是前端初始值：均衡 = 全部模型 + balanced；最省钱 = 全部模型 + cheapest；最稳定 = 全部模型 + stable + 只用官方渠道；仅指定模型 = selected + 模型勾选。
+- 任意字段或花费上限被改动后，预设显示为「自定义」。
+- 「仅指定模型」直接展开模型列表，可勾选并给单模型设价格上限。
+- 自定义设置里包含：从已有 Key 复制设置、模型范围、路由策略、Key 价格上限、单模型上限、花费上限、RPM、优选/拉黑/只用某一家、允许回落、只用官方渠道。
+- 创建成功后弹窗内直接显示完整 Key 并提供复制，可「完成」或「查看详情」；完整 Key 只显示一次。
+- 详情页复用同一套 `KeyRoutingFields`，并新增模型范围展示：全部模型时隐藏逐个添加区，改为说明。
+
+### 后端
+- `mp_key_prefs` 新增 `model_scope`（all / selected，默认 selected 兼容旧 Key）；`GET/PUT /key/pref` 已透出并支持修改。
+- 新增 `POST /api/marketplace/key`：一次事务写 token + KeyPref + KeyModel，任一模型或偏好不合法则整体回滚；返回 id、name、完整 key、model_scope、models。
+- `model_scope=all` 的 Key 不再要求 `mp_key_models` 行，按 Key 级价格上限选路；`selected` 仍要求模型行。
+- 名称留空时分配第一个未使用的 `Key N`；仍受用户 Key 数量上限约束。
+- 创建接口返回完整 Key 仅此一次，日志与其它接口不输出 Key。
+
+### 验收
+- `go build ./...` / `go vet ./...` / Linux 全量 `go test ./...` 通过。
+- `bun run typecheck` 通过；vitest 112/112 通过（schema 用例已补 `model_scope`）。
+- 已部署；`POST /api/marketplace/key` 未登录返回 401，广场接口正常。

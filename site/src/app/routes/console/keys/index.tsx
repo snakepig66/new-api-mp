@@ -51,11 +51,12 @@ function KeysPage() {
   const navigate = useNavigate()
   const [wizardOpen, setWizardOpen] = useState(false)
 
-  function handleCreated(tokenId: number | null) {
+  function handleCreated() {
     void queryClient.invalidateQueries({ queryKey: ['console', 'keys'] })
-    if (tokenId !== null) {
-      void navigate({ to: '/console/keys/$id', params: { id: String(tokenId) } })
-    }
+  }
+
+  function openDetail(tokenId: number) {
+    void navigate({ to: '/console/keys/$id', params: { id: String(tokenId) } })
   }
 
   return (
@@ -116,6 +117,7 @@ function KeysPage() {
         open={wizardOpen}
         onOpenChange={setWizardOpen}
         onCreated={handleCreated}
+        onOpenDetail={openDetail}
       />
     </>
   )
@@ -139,7 +141,9 @@ function KeyRow({ item }: { item: ConsoleKey }) {
       </TableCell>
       <TableCell numeric>
         <span className="text-[13px]">
-          {copy.pages.consoleKeys.modelsUnit(pref?.models.length ?? 0)}
+          {pref?.model_scope === 'all'
+            ? copy.pages.consoleKeys.createDialog.scope.all
+            : copy.pages.consoleKeys.modelsUnit(pref?.models.length ?? 0)}
         </span>
       </TableCell>
       <TableCell>

@@ -326,3 +326,80 @@ func TestAPIKeyBadRequest(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Contains(t, w.Body.String(), "model_not_added")
 }
+
+// TestCreateKeyAllModelsAtomic covers the one-shot POST /key: the token, the
+// preference row and the model rows are written together. An all-models key
+// has no mp_key_models rows and still passes the relay's key-model gate.
+func TestCreateKeyAllModelsAtomic(t *testing.T) {
+	f := newKeyAPIFixture(t)
+	w := f.do(t, http.MethodPost, "/api/marketplace/key", map[string]any{
+		"name":            "",
+		"strategy":        "cheapest",
+		"model_scope":     "all",
+		"spend_cap_micro": 12_000_000,
+		"rpm":             60,
+		"official_only":   true,
+	}, f.buyerID)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	body := decodeKeyAPIBody(t, w)
+	assert.NotEmpty(t, body["key"], "create returns the full key exactly once")
+	assert.Equal(t, "Key 1", body["name"])
+	id := int64(apiNum(t, body, "id"))
+	require.NotZero(t, id)
+
+	var token model.Token
+	require.NoError(t, f.db.Where("id = ?", id).Take(&token).Error)
+	assert.Equal(t, "Key 1", token.Name)
+	assert.False(t, token.UnlimitedQuota)
+	assert.EqualValues(t, 12_000_000, token.RemainQuota)
+
+	pref, err := GetKeyPref(f.db, id)
+	require.NoError(t, err)
+	assert.Equal(t, ModelScopeAll, pref.ModelScope)
+	assert.Equal(t, StrategyCheapest, pref.Strategy)
+	assert.EqualValues(t, 60, pref.RPM)
+	assert.True(t, pref.OfficialOnly)
+	assert.Empty(t, mustListKeyModels(t, f.db, id))
+
+	cap, err := keyModelCapMilli(f.db, int(id), "deepseek-flash")
+	require.NoError(t, err, "an all-models key may call any catalog model")
+	assert.Zero(t, cap)
+}
+
+// TestCreateKeySelectedModels checks the selected scope and the atomic rollback:
+// an unknown model must not leave a token or preference behind.
+func TestCreateKeySelectedModels(t *testing.T) {
+	f := newKeyAPIFixture(t)
+	w := f.do(t, http.MethodPost, "/api/marketplace/key", map[string]any{
+		"name":        "team-a",
+		"model_scope": "selected",
+		"models": []map[string]any{
+			{"model": "deepseek-flash", "price_cap_milli": 800},
+			{"model": "deepseek-v4-pro", "price_cap_milli": 0},
+		},
+	}, f.buyerID)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	id := int64(apiNum(t, decodeKeyAPIBody(t, w), "id"))
+	models := mustListKeyModels(t, f.db, id)
+	require.Len(t, models, 2)
+	assert.EqualValues(t, 800, models[0].PriceCapMilli)
+
+	before := countRows(t, f.db, &model.Token{})
+	w = f.do(t, http.MethodPost, "/api/marketplace/key", map[string]any{
+		"name":        "broken",
+		"model_scope": "selected",
+		"models":      []map[string]any{{"model": "no-such-model"}},
+	}, f.buyerID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.EqualValues(t, before, countRows(t, f.db, &model.Token{}), "a failed create must roll the token back")
+	var prefCount int64
+	require.NoError(t, f.db.Model(&KeyPref{}).Where("token_id NOT IN (?)", []int64{int64(f.tokenID), id}).Count(&prefCount).Error)
+	assert.Zero(t, prefCount)
+}
+
+func mustListKeyModels(t *testing.T, db *gorm.DB, tokenID int64) []KeyModel {
+	t.Helper()
+	rows, err := ListKeyModels(db, tokenID)
+	require.NoError(t, err)
+	return rows
+}

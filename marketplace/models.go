@@ -143,9 +143,13 @@ const (
 // KeyPref holds a buyer token's marketplace routing preferences (§3.6).
 // TokenID references the upstream tokens table.
 type KeyPref struct {
-	ID              int64   `gorm:"primaryKey"`
-	TokenID         int64   `gorm:"not null;uniqueIndex"`
-	Strategy        string  `gorm:"size:16;not null"`
+	ID       int64  `gorm:"primaryKey"`
+	TokenID  int64  `gorm:"not null;uniqueIndex"`
+	Strategy string `gorm:"size:16;not null"`
+	// ModelScope is "all" (every marketplace model) or "selected" (only the
+	// rows in mp_key_models). An empty value is treated as "selected" for
+	// keys created before the column existed.
+	ModelScope      string  `gorm:"size:16;not null;default:selected"`
 	PriceCapMilli   int64   `gorm:"not null"` // 0 = no cap
 	PreferSellerIDs []int64 `gorm:"type:text;serializer:json"`
 	BlockSellerIDs  []int64 `gorm:"type:text;serializer:json"`

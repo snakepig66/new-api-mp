@@ -20,14 +20,21 @@ import (
 // material (§2.3).
 var (
 	ErrKeyPrefNotFound   = errors.New("marketplace: key preference not found")
+	ErrKeyModelScope     = errors.New("marketplace: model_scope must be all or selected")
 	ErrModelAlreadyAdded = errors.New("marketplace: model already added to this key")
 	ErrModelNotAdded     = errors.New("marketplace: model not added to this key")
 )
 
 // KeyPrefInput is one write of a buyer key's marketplace routing preferences
 // (§3.6).
+const (
+	ModelScopeAll      = "all"
+	ModelScopeSelected = "selected"
+)
+
 type KeyPrefInput struct {
 	Strategy        string  // cheapest / balanced / stable; empty = balanced
+	ModelScope      string  // all / selected; empty keeps the current scope
 	PriceCapMilli   int64   // 0 = 不限
 	PreferSellerIDs []int64 // 优选名单
 	BlockSellerIDs  []int64 // 拉黑名单
@@ -46,6 +53,9 @@ func (in KeyPrefInput) validate() error {
 	case StrategyCheapest, StrategyBalanced, StrategyStable:
 	default:
 		return fmt.Errorf("marketplace: invalid strategy %q", in.Strategy)
+	}
+	if in.ModelScope != "" && in.ModelScope != ModelScopeAll && in.ModelScope != ModelScopeSelected {
+		return ErrKeyModelScope
 	}
 	if in.PriceCapMilli < 0 {
 		return errors.New("marketplace: price cap must be >= 0")
@@ -81,6 +91,13 @@ func UpsertKeyPref(db *gorm.DB, tokenID int64, in KeyPrefInput) error {
 	case err != nil:
 		return err
 	}
+	if in.ModelScope == "" {
+		if pref.ModelScope == "" {
+			pref.ModelScope = ModelScopeSelected
+		}
+	} else {
+		pref.ModelScope = in.ModelScope
+	}
 	pref.Strategy = in.Strategy
 	pref.PriceCapMilli = in.PriceCapMilli
 	pref.PreferSellerIDs = in.PreferSellerIDs
@@ -90,6 +107,29 @@ func UpsertKeyPref(db *gorm.DB, tokenID int64, in KeyPrefInput) error {
 	pref.RPM = in.RPM
 	pref.OfficialOnly = in.OfficialOnly
 	return db.Save(&pref).Error
+}
+
+// KeyPrefAllowsModel reports whether the key may call modelName under its
+// model scope. A key with no preference row keeps the legacy selected-only
+// behavior; an "all" key is limited only by the marketplace catalog when the
+// relay checks for a live listing.
+func KeyPrefAllowsModel(db *gorm.DB, tokenID int64, modelName string) (bool, error) {
+	pref, err := GetKeyPref(db, tokenID)
+	if errors.Is(err, ErrKeyPrefNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if pref.ModelScope == ModelScopeAll {
+		return true, nil
+	}
+	var cnt int64
+	if err := db.Model(&KeyModel{}).Where("token_id = ? AND model = ?", tokenID, modelName).
+		Count(&cnt).Error; err != nil {
+		return false, err
+	}
+	return cnt > 0, nil
 }
 
 // GetKeyPref returns the preference row of one buyer token, or

@@ -42,12 +42,16 @@ export const TOKEN_STATUS_EXHAUSTED = 4
 
 export type Strategy = 'cheapest' | 'balanced' | 'stable'
 
+export type ModelScope = 'all' | 'selected'
+
 export const STRATEGIES: Strategy[] = ['cheapest', 'balanced', 'stable']
 
 /** GET/PUT /api/marketplace/key/pref */
 export interface KeyPref {
   token_id: number
   strategy: Strategy
+  /** all = every marketplace model; selected = only the rows in models. */
+  model_scope: ModelScope
   /** Multiplier cap in milli (850 = 0.85x); 0 means no cap. */
   price_cap_milli: number
   prefer_seller_ids: number[]
@@ -147,6 +151,7 @@ export interface WalletLedgerEntry {
 export interface KeyPrefInput {
   token_id: number
   strategy: Strategy
+  model_scope: ModelScope
   price_cap_milli: number
   prefer_seller_ids: number[]
   block_seller_ids: number[]
@@ -156,17 +161,30 @@ export interface KeyPrefInput {
   official_only: boolean
 }
 
+/** One-shot POST /marketplace/key body (presets are expanded by the UI). */
 export interface CreateKeyInput {
+  /** Empty lets the backend assign "Key N". */
   name: string
   strategy: Strategy
+  model_scope: ModelScope
   /** null = unlimited spend cap; otherwise integer micro-yuan. */
   spend_cap_micro: number | null
+  price_cap_milli: number
+  rpm: number
+  prefer_seller_ids: number[]
+  block_seller_ids: number[]
+  only_seller_id: number
+  allow_fallback: boolean
+  official_only: boolean
   models: { model: string; price_cap_milli: number }[]
 }
 
 export interface CreateKeyResult {
-  tokenId: number | null
-  prefSaved: boolean
-  addedModels: string[]
-  failures: { model: string; message: string }[]
+  id: number
+  name: string
+  /** Returned exactly once by the create call. */
+  key: string
+  model_scope: ModelScope
+  models: KeyModel[]
+  strategy: Strategy
 }

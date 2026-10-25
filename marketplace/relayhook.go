@@ -645,6 +645,17 @@ func hasLiveListingForModel(db *gorm.DB, modelName string) (bool, error) {
 // mp_key_prefs cap; 0 means no cap. ErrModelNotAddedToKey when the model was
 // never added to the key (§4.3 step 1).
 func keyModelCapMilli(db *gorm.DB, tokenID int, modelName string) (int64, error) {
+	var pref KeyPref
+	prefErr := db.Where("token_id = ?", tokenID).Take(&pref).Error
+	if prefErr != nil && !errors.Is(prefErr, gorm.ErrRecordNotFound) {
+		return 0, prefErr
+	}
+	// A key created with model_scope=all may call any marketplace model; the
+	// marketplace catalog and live-listing checks happen before this function.
+	// Its per-model cap is the key-level cap.
+	if prefErr == nil && pref.ModelScope == ModelScopeAll {
+		return pref.PriceCapMilli, nil
+	}
 	var km KeyModel
 	err := db.Where("token_id = ? AND model = ?", tokenID, modelName).Take(&km).Error
 	if err != nil {
@@ -656,15 +667,10 @@ func keyModelCapMilli(db *gorm.DB, tokenID int, modelName string) (int64, error)
 	if km.PriceCapMilli > 0 {
 		return km.PriceCapMilli, nil
 	}
-	var pref KeyPref
-	err = db.Where("token_id = ?", tokenID).Take(&pref).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return 0, nil
-		}
-		return 0, err
+	if prefErr == nil {
+		return pref.PriceCapMilli, nil
 	}
-	return pref.PriceCapMilli, nil
+	return 0, nil
 }
 
 // buyerRPMLimit returns the buyer KeyPref's per-buyer RPM limit (0 = no
