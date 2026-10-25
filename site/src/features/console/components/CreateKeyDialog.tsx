@@ -11,9 +11,11 @@ import { Button, Dialog, Input, useToast } from '@/ui'
 
 import { consoleKeysQuery, createKey } from '../api'
 import {
+  dateTimeInputToUnix,
   microToYuanInput,
   milliToMultiplierInput,
   parseYuanToMicro,
+  unixToDateTimeInput,
 } from '../format'
 import {
   buildModelSelection,
@@ -71,6 +73,9 @@ export function CreateKeyDialog({
   const [spendCap, setSpendCap] = useState('')
   const [selection, setSelection] = useState<ModelSelection>({})
   const [copyFrom, setCopyFrom] = useState('')
+  const [neverExpires, setNeverExpires] = useState(true)
+  const [expiresAt, setExpiresAt] = useState('')
+  const [allowIps, setAllowIps] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [created, setCreated] = useState<CreateKeyResult | null>(null)
@@ -83,6 +88,9 @@ export function CreateKeyDialog({
     setSpendCap('')
     setSelection({})
     setCopyFrom('')
+    setNeverExpires(true)
+    setExpiresAt('')
+    setAllowIps('')
     setError(null)
     setSubmitting(false)
     setCreated(null)
@@ -112,6 +120,14 @@ export function CreateKeyDialog({
     setSpendCap(
       item.token.unlimited_quota ? '' : microToYuanInput(item.token.remain_quota),
     )
+    if (item.token.expired_time > 0) {
+      setNeverExpires(false)
+      setExpiresAt(unixToDateTimeInput(item.token.expired_time))
+    } else {
+      setNeverExpires(true)
+      setExpiresAt('')
+    }
+    setAllowIps(item.token.allow_ips ?? '')
     setError(null)
   }
 
@@ -139,6 +155,15 @@ export function CreateKeyDialog({
       setError(dialogCopy.errors.spendInvalid)
       return
     }
+    let expiredTime = -1
+    if (!neverExpires) {
+      const parsed = dateTimeInputToUnix(expiresAt)
+      if (parsed === null || parsed <= Math.floor(Date.now() / 1000)) {
+        setError(dialogCopy.errors.expiryInvalid)
+        return
+      }
+      expiredTime = parsed
+    }
     const prefPayload = prefFormToInput(0, current)
 
     setSubmitting(true)
@@ -155,6 +180,8 @@ export function CreateKeyDialog({
         only_seller_id: prefPayload.only_seller_id,
         allow_fallback: prefPayload.allow_fallback,
         official_only: prefPayload.official_only,
+        expired_time: expiredTime,
+        allow_ips: allowIps,
         models: modelsPayload,
       })
       onCreated(result.id)
@@ -322,6 +349,50 @@ export function CreateKeyDialog({
                   ))}
                 </select>
               </Field>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field
+                  label={dialogCopy.expiry.label}
+                  htmlFor="create-key-expiry"
+                  hint={dialogCopy.expiry.hint}
+                >
+                  <Input
+                    id="create-key-expiry"
+                    type="datetime-local"
+                    disabled={neverExpires}
+                    value={expiresAt}
+                    onChange={(event) => setExpiresAt(event.target.value)}
+                  />
+                  <label className="mt-2 inline-flex items-center gap-2 text-[13px] text-ink">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 accent-brand"
+                      checked={neverExpires}
+                      onChange={(event) => {
+                        setNeverExpires(event.target.checked)
+                        if (event.target.checked) setExpiresAt('')
+                      }}
+                    />
+                    {dialogCopy.expiry.never}
+                  </label>
+                </Field>
+
+                <Field
+                  label={dialogCopy.allowIps.label}
+                  htmlFor="create-key-allow-ips"
+                  hint={dialogCopy.allowIps.hint}
+                >
+                  <textarea
+                    id="create-key-allow-ips"
+                    rows={3}
+                    spellCheck={false}
+                    className="w-full resize-y rounded-md border border-transparent bg-bg-soft px-3 py-2 font-mono text-[13px] text-ink transition-colors placeholder:text-ink-3 focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft"
+                    placeholder={dialogCopy.allowIps.placeholder}
+                    value={allowIps}
+                    onChange={(event) => setAllowIps(event.target.value)}
+                  />
+                </Field>
+              </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <KeyRoutingFields form={form} idPrefix="create-key" showScope={false} />

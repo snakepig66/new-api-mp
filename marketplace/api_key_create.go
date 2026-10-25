@@ -36,18 +36,21 @@ type keyCreateModel struct {
 // concept: the client sends the expanded fields, so the backend stores only
 // the existing token/preference/model concepts plus model_scope.
 type keyCreateRequest struct {
-	Name            string           `json:"name"`
-	Strategy        string           `json:"strategy"`
-	ModelScope      string           `json:"model_scope"`
-	PriceCapMilli   int64            `json:"price_cap_milli"`
-	SpendCapMicro   *int64           `json:"spend_cap_micro"` // null = unlimited
-	RPM             int              `json:"rpm"`
-	PreferSellerIDs []int64          `json:"prefer_seller_ids"`
-	BlockSellerIDs  []int64          `json:"block_seller_ids"`
-	OnlySellerID    int64            `json:"only_seller_id"`
-	AllowFallback   bool             `json:"allow_fallback"`
-	OfficialOnly    bool             `json:"official_only"`
-	Models          []keyCreateModel `json:"models"`
+	Name            string  `json:"name"`
+	Strategy        string  `json:"strategy"`
+	ModelScope      string  `json:"model_scope"`
+	PriceCapMilli   int64   `json:"price_cap_milli"`
+	SpendCapMicro   *int64  `json:"spend_cap_micro"` // null = unlimited
+	RPM             int     `json:"rpm"`
+	PreferSellerIDs []int64 `json:"prefer_seller_ids"`
+	BlockSellerIDs  []int64 `json:"block_seller_ids"`
+	OnlySellerID    int64   `json:"only_seller_id"`
+	AllowFallback   bool    `json:"allow_fallback"`
+	OfficialOnly    bool    `json:"official_only"`
+	// ExpiredTime is a Unix second timestamp; -1 or 0 means never.
+	ExpiredTime int64            `json:"expired_time"`
+	AllowIps    *string          `json:"allow_ips"`
+	Models      []keyCreateModel `json:"models"`
 }
 
 // postCreateKey creates a buyer key, its routing preference and its selected
@@ -168,6 +171,16 @@ func postCreateKey(c *gin.Context) {
 		writeKeyAPIBadRequest(c, "invalid_spend_cap", "spend cap is out of range")
 		return
 	}
+	expiredTime, err := normalizeKeyExpiry(req.ExpiredTime)
+	if err != nil {
+		writeKeyAPIBadRequest(c, "invalid_expired_time", err.Error())
+		return
+	}
+	allowIPs, err := normalizeKeyAllowIPs(keyAllowIPsString(req.AllowIps))
+	if err != nil {
+		writeKeyAPIBadRequest(c, "invalid_allow_ips", err.Error())
+		return
+	}
 	key, err := common.GenerateKey()
 	if err != nil {
 		writeKeyAPIInternal(c, "generate token key: "+err.Error())
@@ -180,7 +193,8 @@ func postCreateKey(c *gin.Context) {
 		Status:              common.TokenStatusEnabled,
 		CreatedTime:         common.GetTimestamp(),
 		AccessedTime:        common.GetTimestamp(),
-		ExpiredTime:         -1,
+		ExpiredTime:         expiredTime,
+		AllowIps:            allowIPs,
 		RemainQuota:         int(spendCap),
 		UnlimitedQuota:      unlimited,
 		AllowUserQuotaQuery: true,

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { copy } from '@/copy'
 import { ApiError } from '@/lib/api'
@@ -19,10 +19,17 @@ import {
   TableHeaderCell,
   TableRow,
   Tag,
+  buttonClasses,
   useToast,
 } from '@/ui'
 
-import { redeemCode, walletLedgerQuery, walletQuery } from '@/features/console/api'
+import {
+  redeemCode,
+  requestEpayTopup,
+  topupInfoQuery,
+  walletLedgerQuery,
+  walletQuery,
+} from '@/features/console/api'
 import {
   ErrorBlock,
   Section,
@@ -105,19 +112,7 @@ function WalletPage() {
       )}
 
       <div className="mt-6 grid gap-4 lg:grid-cols-2">
-        <section className="rounded-md border border-line bg-bg p-6">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-[14px] font-semibold tracking-tight text-ink">
-              {page.recharge.title}
-            </h2>
-            <Tag tone="neutral">{page.recharge.soon}</Tag>
-          </div>
-          <p className="mt-2 text-[13px] leading-6 text-ink-3">{page.recharge.body}</p>
-          <Button className="mt-4" variant="secondary" disabled>
-            {page.recharge.action}
-          </Button>
-        </section>
-
+        <RechargePanel />
         <RedeemPanel />
       </div>
 
@@ -200,6 +195,228 @@ function WalletPage() {
       </Section>
     </>
   )
+}
+
+function RechargePanel() {
+  const toast = useToast()
+  const queryClient = useQueryClient()
+  const info = useQuery(topupInfoQuery())
+  const [amount, setAmount] = useState('')
+  const [method, setMethod] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const methods = info.data?.pay_methods ?? []
+  const amountOptions = info.data?.amount_options ?? []
+
+  useEffect(() => {
+    const data = info.data
+    if (!data) return
+    setMethod((current) => {
+      if (current) return current
+      const preferred = data.pay_methods?.find((item) => item.type === 'alipay')
+      return preferred?.type ?? data.pay_methods?.[0]?.type ?? ''
+    })
+    setAmount((current) => {
+      if (current) return current
+      const first = data.amount_options?.[0]
+      return first ? String(first) : ''
+    })
+  }, [info.data])
+
+  async function submit() {
+    setError(null)
+    const data = info.data
+    if (!data || !method) return
+    const value = Number(amount)
+    if (!amount.trim()) {
+      setError(page.recharge.errors.amountRequired)
+      return
+    }
+    if (!Number.isInteger(value) || value <= 0) {
+      setError(page.recharge.errors.amountInvalid)
+      return
+    }
+    const selected = methods.find((item) => item.type === method)
+    const methodMin = Number(selected?.min_topup ?? 0)
+    const min = Math.max(data.min_topup || 0, Number.isFinite(methodMin) ? methodMin : 0)
+    if (value < min) {
+      setError(page.recharge.errors.tooLow(String(min)))
+      return
+    }
+    setSubmitting(true)
+    try {
+      const payment = await requestEpayTopup(value, method)
+      if (!payment?.url || !payment.data) {
+        throw new ApiError(200, undefined, page.recharge.errors.failed)
+      }
+      toast.show({ title: page.recharge.redirecting, tone: 'success' })
+      submitPaymentForm(payment.url, payment.data)
+      await queryClient.invalidateQueries({ queryKey: ['console', 'topup-info'] })
+    } catch (payError) {
+      setError(
+        payError instanceof ApiError ? payError.message : page.recharge.errors.failed,
+      )
+      setSubmitting(false)
+    }
+  }
+
+  const amountNumber = Number(amount)
+  const discount = Number.isInteger(amountNumber)
+    ? info.data?.discount?.[String(amountNumber)]
+    : undefined
+
+  return (
+    <section className="rounded-md border border-line bg-bg p-6">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+          {page.recharge.title}
+        </h2>
+        {info.data?.enable_online_topup && methods.length > 0 ? (
+          <Tag tone="brand">
+            {methods.find((item) => item.type === method)?.name ?? methods[0]?.name}
+          </Tag>
+        ) : (
+          <Tag tone="neutral">{page.recharge.unavailable}</Tag>
+        )}
+      </div>
+
+      {info.isPending ? (
+        <div className="mt-4 space-y-3">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-32" />
+        </div>
+      ) : info.isError ? (
+        <ErrorBlock className="mt-4" error={info.error} onRetry={() => void info.refetch()} />
+      ) : !info.data.enable_online_topup || methods.length === 0 ? (
+        <>
+          <p className="mt-2 text-[13px] leading-6 text-ink-3">
+            {page.recharge.unavailableBody}
+          </p>
+          {info.data.topup_link ? (
+            <a
+              href={info.data.topup_link}
+              target="_blank"
+              rel="noreferrer"
+              className={buttonClasses('secondary', 'md', 'mt-4')}
+            >
+              {page.recharge.topupLink}
+            </a>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <p className="mt-2 text-[13px] leading-6 text-ink-3">{page.recharge.body}</p>
+
+          <div className="mt-4">
+            <label
+              htmlFor="recharge-amount"
+              className="mb-2 block text-[14px] font-medium text-ink"
+            >
+              {page.recharge.amount}
+            </label>
+            {amountOptions.length > 0 ? (
+              <div className="mb-2 flex flex-wrap gap-2">
+                {amountOptions.map((option) => {
+                  const active = amount === String(option)
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setAmount(String(option))}
+                      className={
+                        active
+                          ? 'rounded-full border border-brand bg-brand-soft px-3.5 py-1.5 text-[13px] font-medium text-brand-ink'
+                          : 'rounded-full border border-line bg-bg px-3.5 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-line-strong hover:text-ink'
+                      }
+                    >
+                      {option} 元
+                    </button>
+                  )
+                })}
+              </div>
+            ) : null}
+            <div className="flex items-center gap-2">
+              <Input
+                id="recharge-amount"
+                inputMode="numeric"
+                placeholder={page.recharge.amountPlaceholder}
+                value={amount}
+                invalid={Boolean(error)}
+                onChange={(event) => setAmount(event.target.value)}
+              />
+              <span className="shrink-0 text-[13px] text-ink-3">元</span>
+            </div>
+            <p className="mt-1.5 text-[13px] leading-5 text-ink-3">
+              {page.recharge.min(String(info.data.min_topup))}
+              {discount ? ` · ${page.recharge.discount(formatDiscount(discount))}` : ''}
+            </p>
+          </div>
+
+          {methods.length > 1 ? (
+            <div className="mt-4">
+              <div className="mb-2 text-[14px] font-medium text-ink">
+                {page.recharge.method}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {methods.map((item) => (
+                  <button
+                    key={item.type}
+                    type="button"
+                    aria-pressed={method === item.type}
+                    onClick={() => setMethod(item.type)}
+                    className={
+                      method === item.type
+                        ? 'rounded-full border border-brand bg-brand-soft px-3.5 py-1.5 text-[13px] font-medium text-brand-ink'
+                        : 'rounded-full border border-line bg-bg px-3.5 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-line-strong hover:text-ink'
+                    }
+                  >
+                    {item.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {error ? (
+            <p role="alert" className="mt-3 text-[13px] leading-5 text-danger">
+              {error}
+            </p>
+          ) : null}
+
+          <Button className="mt-4" loading={submitting} onClick={() => void submit()}>
+            {submitting ? page.recharge.paying : page.recharge.action}
+          </Button>
+          <p className="mt-3 text-[13px] leading-5 text-ink-3">{page.recharge.hint}</p>
+        </>
+      )}
+    </section>
+  )
+}
+
+function formatDiscount(discount: number): string {
+  if (!Number.isFinite(discount) || discount <= 0) return '—'
+  return (discount * 10).toFixed(1).replace(/\.0$/, '')
+}
+
+/** Navigate the whole tab to the gateway with its hidden form fields. */
+function submitPaymentForm(url: string, params: Record<string, string>) {
+  const form = document.createElement('form')
+  form.action = url
+  form.method = 'POST'
+  form.style.display = 'none'
+  for (const [key, value] of Object.entries(params)) {
+    const input = document.createElement('input')
+    input.type = 'hidden'
+    input.name = key
+    input.value = String(value)
+    form.appendChild(input)
+  }
+  document.body.appendChild(form)
+  form.submit()
+  form.remove()
 }
 
 function LedgerStatus({ status }: { status: string }) {

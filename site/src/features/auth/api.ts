@@ -86,6 +86,34 @@ export async function sendEmailCode(email: string, turnstile?: string): Promise<
   })
 }
 
+/**
+ * GET /api/reset_password?email=&turnstile= — always answers success so the
+ * form cannot be used to discover registered addresses.
+ */
+export async function requestPasswordReset(email: string, turnstile?: string): Promise<void> {
+  await api.get<unknown>('/reset_password', {
+    query: { email, ...(turnstile ? { turnstile } : {}) },
+    skipAuthRetry: true,
+  })
+}
+
+/**
+ * POST /api/user/reset — consumes the emailed token and returns the freshly
+ * generated password. The backend has no "choose your own password" variant
+ * for this flow, so the page must show the returned value once.
+ */
+export async function resetPassword(email: string, token: string): Promise<string> {
+  const password = await api.post<string>(
+    '/user/reset',
+    { email, token },
+    { skipAuthRetry: true },
+  )
+  if (typeof password !== 'string' || !password) {
+    throw new ApiError(200, undefined, copy.pages.resetPassword.failed)
+  }
+  return password
+}
+
 const OAUTH_REDIRECT_KEY = 'token-market.oauth.redirect'
 
 export function rememberOAuthRedirect(path: string): void {

@@ -14,10 +14,12 @@ import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AgreementRouteImport } from './routes/agreement'
 import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as DocsRouteImport } from './routes/docs'
+import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as SellerRouteImport } from './routes/seller'
+import { Route as UsageLogsRouteImport } from './routes/usage-logs'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
 import { Route as AdminChannelModelsRouteImport } from './routes/admin/channel-models'
 import { Route as AdminHolidaysRouteImport } from './routes/admin/holidays'
@@ -28,6 +30,7 @@ import { Route as AdminPoolRouteImport } from './routes/admin/pool'
 import { Route as AdminPricesRouteImport } from './routes/admin/prices'
 import { Route as AdminToolsRouteImport } from './routes/admin/tools'
 import { Route as ConsoleIndexRouteImport } from './routes/console/index'
+import { Route as ConsoleAccountRouteImport } from './routes/console/account'
 import { Route as ConsoleRecordsRouteImport } from './routes/console/records'
 import { Route as ConsoleWalletRouteImport } from './routes/console/wallet'
 import { Route as ModelsIndexRouteImport } from './routes/models/index'
@@ -37,6 +40,7 @@ import { Route as SellerIndexRouteImport } from './routes/seller/index'
 import { Route as SellerOnboardingRouteImport } from './routes/seller/onboarding'
 import { Route as SellerPayoutsRouteImport } from './routes/seller/payouts'
 import { Route as SellerRecordsRouteImport } from './routes/seller/records'
+import { Route as UserResetRouteImport } from './routes/user/reset'
 import { Route as ConsoleKeysIndexRouteImport } from './routes/console/keys/index'
 import { Route as ConsoleKeysIdRouteImport } from './routes/console/keys/$id'
 import { Route as SellerListingsIndexRouteImport } from './routes/seller/listings/index'
@@ -67,6 +71,11 @@ const DocsRoute = DocsRouteImport.update({
   path: '/docs',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
+  id: '/forgot-password',
+  path: '/forgot-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -85,6 +94,11 @@ const RegisterRoute = RegisterRouteImport.update({
 const SellerRoute = SellerRouteImport.update({
   id: '/seller',
   path: '/seller',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UsageLogsRoute = UsageLogsRouteImport.update({
+  id: '/usage-logs',
+  path: '/usage-logs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
@@ -137,6 +151,11 @@ const ConsoleIndexRoute = ConsoleIndexRouteImport.update({
   path: '/',
   getParentRoute: () => ConsoleRoute,
 } as any)
+const ConsoleAccountRoute = ConsoleAccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => ConsoleRoute,
+} as any)
 const ConsoleRecordsRoute = ConsoleRecordsRouteImport.update({
   id: '/records',
   path: '/records',
@@ -182,6 +201,11 @@ const SellerRecordsRoute = SellerRecordsRouteImport.update({
   path: '/records',
   getParentRoute: () => SellerRoute,
 } as any)
+const UserResetRoute = UserResetRouteImport.update({
+  id: '/user/reset',
+  path: '/user/reset',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConsoleKeysIndexRoute = ConsoleKeysIndexRouteImport.update({
   id: '/keys/',
   path: '/keys/',
@@ -209,10 +233,12 @@ export interface FileRoutesByFullPath {
   '/agreement': typeof AgreementRoute
   '/console': typeof ConsoleRouteWithChildren
   '/docs': typeof DocsRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
   '/seller': typeof SellerRouteWithChildren
+  '/usage-logs': typeof UsageLogsRoute
   '/admin/channel-models': typeof AdminChannelModelsRoute
   '/admin/holidays': typeof AdminHolidaysRoute
   '/admin/listings': typeof AdminListingsRoute
@@ -221,6 +247,7 @@ export interface FileRoutesByFullPath {
   '/admin/pool': typeof AdminPoolRoute
   '/admin/prices': typeof AdminPricesRoute
   '/admin/tools': typeof AdminToolsRoute
+  '/console/account': typeof ConsoleAccountRoute
   '/console/records': typeof ConsoleRecordsRoute
   '/console/wallet': typeof ConsoleWalletRoute
   '/models/$id': typeof ModelsIdRoute
@@ -228,6 +255,7 @@ export interface FileRoutesByFullPath {
   '/seller/onboarding': typeof SellerOnboardingRoute
   '/seller/payouts': typeof SellerPayoutsRoute
   '/seller/records': typeof SellerRecordsRoute
+  '/user/reset': typeof UserResetRoute
   '/admin/': typeof AdminIndexRoute
   '/console/': typeof ConsoleIndexRoute
   '/models/': typeof ModelsIndexRoute
@@ -241,9 +269,11 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/agreement': typeof AgreementRoute
   '/docs': typeof DocsRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
+  '/usage-logs': typeof UsageLogsRoute
   '/admin/channel-models': typeof AdminChannelModelsRoute
   '/admin/holidays': typeof AdminHolidaysRoute
   '/admin/listings': typeof AdminListingsRoute
@@ -252,6 +282,7 @@ export interface FileRoutesByTo {
   '/admin/pool': typeof AdminPoolRoute
   '/admin/prices': typeof AdminPricesRoute
   '/admin/tools': typeof AdminToolsRoute
+  '/console/account': typeof ConsoleAccountRoute
   '/console/records': typeof ConsoleRecordsRoute
   '/console/wallet': typeof ConsoleWalletRoute
   '/models/$id': typeof ModelsIdRoute
@@ -259,6 +290,7 @@ export interface FileRoutesByTo {
   '/seller/onboarding': typeof SellerOnboardingRoute
   '/seller/payouts': typeof SellerPayoutsRoute
   '/seller/records': typeof SellerRecordsRoute
+  '/user/reset': typeof UserResetRoute
   '/admin': typeof AdminIndexRoute
   '/console': typeof ConsoleIndexRoute
   '/models': typeof ModelsIndexRoute
@@ -275,10 +307,12 @@ export interface FileRoutesById {
   '/agreement': typeof AgreementRoute
   '/console': typeof ConsoleRouteWithChildren
   '/docs': typeof DocsRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
   '/seller': typeof SellerRouteWithChildren
+  '/usage-logs': typeof UsageLogsRoute
   '/admin/channel-models': typeof AdminChannelModelsRoute
   '/admin/holidays': typeof AdminHolidaysRoute
   '/admin/listings': typeof AdminListingsRoute
@@ -287,6 +321,7 @@ export interface FileRoutesById {
   '/admin/pool': typeof AdminPoolRoute
   '/admin/prices': typeof AdminPricesRoute
   '/admin/tools': typeof AdminToolsRoute
+  '/console/account': typeof ConsoleAccountRoute
   '/console/records': typeof ConsoleRecordsRoute
   '/console/wallet': typeof ConsoleWalletRoute
   '/models/$id': typeof ModelsIdRoute
@@ -294,6 +329,7 @@ export interface FileRoutesById {
   '/seller/onboarding': typeof SellerOnboardingRoute
   '/seller/payouts': typeof SellerPayoutsRoute
   '/seller/records': typeof SellerRecordsRoute
+  '/user/reset': typeof UserResetRoute
   '/admin/': typeof AdminIndexRoute
   '/console/': typeof ConsoleIndexRoute
   '/models/': typeof ModelsIndexRoute
@@ -311,10 +347,12 @@ export interface FileRouteTypes {
     | '/agreement'
     | '/console'
     | '/docs'
+    | '/forgot-password'
     | '/login'
     | '/privacy'
     | '/register'
     | '/seller'
+    | '/usage-logs'
     | '/admin/channel-models'
     | '/admin/holidays'
     | '/admin/listings'
@@ -323,6 +361,7 @@ export interface FileRouteTypes {
     | '/admin/pool'
     | '/admin/prices'
     | '/admin/tools'
+    | '/console/account'
     | '/console/records'
     | '/console/wallet'
     | '/models/$id'
@@ -330,6 +369,7 @@ export interface FileRouteTypes {
     | '/seller/onboarding'
     | '/seller/payouts'
     | '/seller/records'
+    | '/user/reset'
     | '/admin/'
     | '/console/'
     | '/models/'
@@ -343,9 +383,11 @@ export interface FileRouteTypes {
     | '/'
     | '/agreement'
     | '/docs'
+    | '/forgot-password'
     | '/login'
     | '/privacy'
     | '/register'
+    | '/usage-logs'
     | '/admin/channel-models'
     | '/admin/holidays'
     | '/admin/listings'
@@ -354,6 +396,7 @@ export interface FileRouteTypes {
     | '/admin/pool'
     | '/admin/prices'
     | '/admin/tools'
+    | '/console/account'
     | '/console/records'
     | '/console/wallet'
     | '/models/$id'
@@ -361,6 +404,7 @@ export interface FileRouteTypes {
     | '/seller/onboarding'
     | '/seller/payouts'
     | '/seller/records'
+    | '/user/reset'
     | '/admin'
     | '/console'
     | '/models'
@@ -376,10 +420,12 @@ export interface FileRouteTypes {
     | '/agreement'
     | '/console'
     | '/docs'
+    | '/forgot-password'
     | '/login'
     | '/privacy'
     | '/register'
     | '/seller'
+    | '/usage-logs'
     | '/admin/channel-models'
     | '/admin/holidays'
     | '/admin/listings'
@@ -388,6 +434,7 @@ export interface FileRouteTypes {
     | '/admin/pool'
     | '/admin/prices'
     | '/admin/tools'
+    | '/console/account'
     | '/console/records'
     | '/console/wallet'
     | '/models/$id'
@@ -395,6 +442,7 @@ export interface FileRouteTypes {
     | '/seller/onboarding'
     | '/seller/payouts'
     | '/seller/records'
+    | '/user/reset'
     | '/admin/'
     | '/console/'
     | '/models/'
@@ -411,12 +459,15 @@ export interface RootRouteChildren {
   AgreementRoute: typeof AgreementRoute
   ConsoleRoute: typeof ConsoleRouteWithChildren
   DocsRoute: typeof DocsRoute
+  ForgotPasswordRoute: typeof ForgotPasswordRoute
   LoginRoute: typeof LoginRoute
   PrivacyRoute: typeof PrivacyRoute
   RegisterRoute: typeof RegisterRoute
   SellerRoute: typeof SellerRouteWithChildren
+  UsageLogsRoute: typeof UsageLogsRoute
   ModelsIdRoute: typeof ModelsIdRoute
   OauthProviderRoute: typeof OauthProviderRoute
+  UserResetRoute: typeof UserResetRoute
   ModelsIndexRoute: typeof ModelsIndexRoute
 }
 
@@ -457,6 +508,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/forgot-password': {
+      id: '/forgot-password'
+      path: '/forgot-password'
+      fullPath: '/forgot-password'
+      preLoaderRoute: typeof ForgotPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -483,6 +541,13 @@ declare module '@tanstack/react-router' {
       path: '/seller'
       fullPath: '/seller'
       preLoaderRoute: typeof SellerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/usage-logs': {
+      id: '/usage-logs'
+      path: '/usage-logs'
+      fullPath: '/usage-logs'
+      preLoaderRoute: typeof UsageLogsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/': {
@@ -555,6 +620,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleIndexRouteImport
       parentRoute: typeof ConsoleRoute
     }
+    '/console/account': {
+      id: '/console/account'
+      path: '/account'
+      fullPath: '/console/account'
+      preLoaderRoute: typeof ConsoleAccountRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
     '/console/records': {
       id: '/console/records'
       path: '/records'
@@ -618,6 +690,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SellerRecordsRouteImport
       parentRoute: typeof SellerRoute
     }
+    '/user/reset': {
+      id: '/user/reset'
+      path: '/user/reset'
+      fullPath: '/user/reset'
+      preLoaderRoute: typeof UserResetRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/console/keys/': {
       id: '/console/keys/'
       path: '/keys'
@@ -676,6 +755,7 @@ const AdminRouteChildren: AdminRouteChildren = {
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
 interface ConsoleRouteChildren {
+  ConsoleAccountRoute: typeof ConsoleAccountRoute
   ConsoleRecordsRoute: typeof ConsoleRecordsRoute
   ConsoleWalletRoute: typeof ConsoleWalletRoute
   ConsoleIndexRoute: typeof ConsoleIndexRoute
@@ -684,6 +764,7 @@ interface ConsoleRouteChildren {
 }
 
 const ConsoleRouteChildren: ConsoleRouteChildren = {
+  ConsoleAccountRoute: ConsoleAccountRoute,
   ConsoleRecordsRoute: ConsoleRecordsRoute,
   ConsoleWalletRoute: ConsoleWalletRoute,
   ConsoleIndexRoute: ConsoleIndexRoute,
@@ -721,12 +802,15 @@ const rootRouteChildren: RootRouteChildren = {
   AgreementRoute: AgreementRoute,
   ConsoleRoute: ConsoleRouteWithChildren,
   DocsRoute: DocsRoute,
+  ForgotPasswordRoute: ForgotPasswordRoute,
   LoginRoute: LoginRoute,
   PrivacyRoute: PrivacyRoute,
   RegisterRoute: RegisterRoute,
   SellerRoute: SellerRouteWithChildren,
+  UsageLogsRoute: UsageLogsRoute,
   ModelsIdRoute: ModelsIdRoute,
   OauthProviderRoute: OauthProviderRoute,
+  UserResetRoute: UserResetRoute,
   ModelsIndexRoute: ModelsIndexRoute,
 }
 export const routeTree = rootRouteImport

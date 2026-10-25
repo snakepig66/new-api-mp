@@ -18,12 +18,16 @@ import type {
   ConsoleKey,
   CreateKeyInput,
   CreateKeyResult,
+  EpayPayment,
   KeyDetail,
   KeyModel,
   KeyPref,
   KeyPrefInput,
+  KeyTokenLimits,
+  KeyTokenLimitsInput,
   PageInfo,
   TokenRecord,
+  TopupInfo,
   UsageRecord,
   UsageRecordDetail,
   UsageStats,
@@ -141,6 +145,13 @@ export async function saveKeyPref(input: KeyPrefInput): Promise<KeyPref> {
   return api.put<KeyPref>('/marketplace/key/pref', input)
 }
 
+/** PUT /marketplace/key/token — expiry and IP whitelist on the token row. */
+export async function saveKeyTokenLimits(
+  input: KeyTokenLimitsInput,
+): Promise<KeyTokenLimits> {
+  return api.put<KeyTokenLimits>('/marketplace/key/token', input)
+}
+
 export async function addKeyModel(
   tokenId: number,
   model: string,
@@ -181,4 +192,25 @@ export async function revealTokenKey(tokenId: number): Promise<string> {
 export async function redeemCode(code: string): Promise<number> {
   const quota = await api.post<number>('/user/topup', { key: code })
   return typeof quota === 'number' ? quota : 0
+}
+
+export const topupInfoQuery = () =>
+  queryOptions({
+    queryKey: ['console', 'topup-info'],
+    queryFn: () => api.get<TopupInfo>('/user/topup/info'),
+    staleTime: 5 * 60_000,
+  })
+
+/**
+ * POST /user/pay — the epay response is not an envelope: it carries the
+ * gateway URL plus hidden form fields the browser must POST to it.
+ */
+export async function requestEpayTopup(
+  amount: number,
+  paymentMethod: string,
+): Promise<EpayPayment> {
+  return api.post<EpayPayment>('/user/pay', {
+    amount,
+    payment_method: paymentMethod,
+  })
 }

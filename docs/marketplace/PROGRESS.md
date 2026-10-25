@@ -519,3 +519,27 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 - 广场列表/详情接口新增 `aliases` 字段，供 ModelPicker 按别名搜索。
 - 品牌统一为 LLM Jar：`copy.brand.name`、页脚、标题、meta 全部更新；LogoMark/Logo 支持 mono 变体，登录页深色区使用白色 mono 标识；全站已无「词元市场」。
 - 测试：新增 `ModelPicker.test.tsx`（厂家筛选、别名搜索、组全选/半选、上限启用、空态）与 `CreateKeyDialog.test.tsx`（默认 all 提交、指定模型空选报错、复制已有 Key 回填）；typecheck 通过，vitest 118/118 通过，Linux 全量 Go 测试通过，已部署。
+
+## 账号、充值、Key 限制（2026-10-25）
+
+### 忘记密码与修改密码
+- 登录页密码框右侧新增「忘记密码？」入口。
+- `/forgot-password`：输入注册邮箱 + Turnstile，调用 `GET /api/reset_password`；无论邮箱是否存在都提示已发送，避免账号枚举。
+- `/user/reset`：邮件链接落点（与后端 `ServerAddress/user/reset?email=&token=` 对齐）。用户点击确认后调用 `POST /api/user/reset`，后端生成随机新密码并一次性返回；页面展示并支持复制，提示旧密码立即失效。
+- `/console/account`：新增账号页。展示用户名/显示名称；修改密码分两步：先 `GET /api/verify/methods?scope=account.password.change` 确认密码验证可用，再用 `POST /api/verify` 换取一次性 proof，最后带 `X-Security-Proof` 调用 `PUT /api/user/self`（同时带 `original_password`）。成功后应用后端轮换的 access token，其它设备会话失效。
+- 没有密码的第三方登录账号显示「未设置密码」说明，不展示修改表单；有 2FA/Passkey 但策略不接受密码验证时显示后端不可用原因。
+
+### 支付宝充值
+- 钱包页充值卡片改为真实支付：读取 `GET /api/user/topup/info`，按 `pay_methods` 展示支付方式（默认选中 alipay），金额支持 `amount_options` 快捷金额与自定义整数金额，校验全局/单渠道最低金额并显示折扣。
+- `POST /api/user/pay` 返回 epay 网关地址与隐藏字段，前端用整页 POST 表单跳转；支付完成回到 `/usage-logs`，站点将其重定向到钱包页。
+- 未配置在线支付时展示「暂未开放」，若配置了 `topup_link` 则给出跳转入口；兑换码流程不变。
+
+### Key 过期时间与 IP 白名单
+- `POST /api/marketplace/key` 新增 `expired_time`（Unix 秒，-1/0 = 永久）与 `allow_ips`（每行一个 IP/CIDR）；创建时校验并写入上游 token。
+- 新增 `PUT /api/marketplace/key/token`，只更新这两个 token 字段；继承过期时间的 Key 在延长后自动恢复启用，手动停用的 Key 不会被误启用。
+- 新建 Key 弹窗的「自定义设置」新增过期时间（datetime-local + 永不过期）与 IP 白名单（多行，支持 CIDR）；Key 详情页新增「有效期与访问限制」卡片可随时修改。
+- 后端拒绝过去时间与非法 IP/CIDR，失败创建不落任何 token。
+
+### 验收
+- `go build ./...`、`go vet ./...` 通过；`go test ./marketplace/` 通过（新增过期时间/IP 白名单与更新接口用例）。
+- 前端 `npm run build`、`tsc --noEmit` 通过；vitest 119/119 通过。

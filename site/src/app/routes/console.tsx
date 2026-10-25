@@ -23,6 +23,7 @@ const tabs = [
   { to: '/console/keys' as const, label: copy.pages.console.nav.keys, exact: false },
   { to: '/console/records' as const, label: copy.pages.console.nav.records, exact: false },
   { to: '/console/wallet' as const, label: copy.pages.console.nav.wallet, exact: false },
+  { to: '/console/account' as const, label: copy.pages.console.nav.account, exact: false },
 ]
 
 const shell = copy.consoleShell

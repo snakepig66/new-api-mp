@@ -102,3 +102,20 @@ export function prettyJson(raw: string | null | undefined): string {
     return text
   }
 }
+
+/** Unix seconds -> the value datetime-local expects (browser local time). */
+export function unixToDateTimeInput(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return ''
+  const date = new Date(seconds * 1000)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+/** datetime-local value -> Unix seconds; blank or invalid -> null. */
+export function dateTimeInputToUnix(raw: string): number | null {
+  const text = raw.trim()
+  if (!text) return null
+  const millis = new Date(text).getTime()
+  if (!Number.isFinite(millis)) return null
+  return Math.floor(millis / 1000)
+}

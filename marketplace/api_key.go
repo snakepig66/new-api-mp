@@ -35,6 +35,7 @@ func registerKeyRoutes(g *gin.RouterGroup) {
 	// single transaction (no partial key). GET/PUT /key/pref handle later
 	// edits.
 	g.POST("/key", postCreateKey)
+	g.PUT("/key/token", putKeyTokenLimits)
 	g.GET("/key/pref", getKeyPref)
 	g.PUT("/key/pref", putKeyPref)
 	g.POST("/key/models", postKeyModel)

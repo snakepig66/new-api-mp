@@ -11,6 +11,7 @@ import {
   Button,
   Dialog,
   Empty,
+  Input,
   Tag,
   buttonClasses,
   useToast,
@@ -23,6 +24,7 @@ import {
   removeKeyModel,
   revealTokenKey,
   saveKeyPref,
+  saveKeyTokenLimits,
   setTokenStatus,
 } from '@/features/console/api'
 import {
@@ -30,9 +32,13 @@ import {
   PageSkeleton,
   Section,
 } from '@/features/console/components/DataState'
-import { Notice } from '@/features/console/components/form'
+import { Field, Notice } from '@/features/console/components/form'
 import { KeyRoutingFields } from '@/features/console/components/KeyRoutingFields'
-import { milliToMultiplierInput } from '@/features/console/format'
+import {
+  dateTimeInputToUnix,
+  milliToMultiplierInput,
+  unixToDateTimeInput,
+} from '@/features/console/format'
 import { tokenStatusMeta } from '@/features/console/labels'
 import {
   buildModelSelection,
@@ -45,6 +51,7 @@ import {
   TOKEN_STATUS_DISABLED,
   TOKEN_STATUS_ENABLED,
   type KeyDetail,
+  type TokenRecord,
 } from '@/features/console/types'
 import { ModelPicker, type ModelSelection } from '@/features/market/ModelPicker'
 
@@ -295,6 +302,8 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
         </form>
       </Section>
 
+      <KeyLimitsSection tokenId={tokenId} token={token} />
+
       <ModelsSection
         tokenId={tokenId}
         models={models}
@@ -340,6 +349,104 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
   )
 }
 
+
+function KeyLimitsSection({ tokenId, token }: { tokenId: number; token: TokenRecord }) {
+  const toast = useToast()
+  const queryClient = useQueryClient()
+  const [never, setNever] = useState(token.expired_time <= 0)
+  const [expiresAt, setExpiresAt] = useState(unixToDateTimeInput(token.expired_time))
+  const [allowIps, setAllowIps] = useState(token.allow_ips ?? '')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    setNever(token.expired_time <= 0)
+    setExpiresAt(unixToDateTimeInput(token.expired_time))
+    setAllowIps(token.allow_ips ?? '')
+  }, [token.expired_time, token.allow_ips])
+
+  async function save() {
+    let expiredTime = -1
+    if (!never) {
+      const parsed = dateTimeInputToUnix(expiresAt)
+      if (parsed === null || parsed <= Math.floor(Date.now() / 1000)) {
+        toast.show({ title: page.limits.expiryInvalid, tone: 'error' })
+        return
+      }
+      expiredTime = parsed
+    }
+    setSaving(true)
+    try {
+      await saveKeyTokenLimits({
+        token_id: tokenId,
+        expired_time: expiredTime,
+        allow_ips: allowIps,
+      })
+      toast.show({ title: page.limits.saved, tone: 'success' })
+      await queryClient.invalidateQueries({ queryKey: ['console', 'key', tokenId] })
+      await queryClient.invalidateQueries({ queryKey: ['console', 'keys'] })
+    } catch (error) {
+      toast.show({
+        title: error instanceof ApiError ? error.message : copy.pages.consoleShared.errorHint,
+        tone: 'error',
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Section className="mt-9" title={page.limits.title} hint={page.limits.hint}>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field
+          label={page.limits.expiry}
+          htmlFor="key-limits-expiry"
+          hint={page.limits.expiryHint}
+        >
+          <Input
+            id="key-limits-expiry"
+            type="datetime-local"
+            disabled={never}
+            value={expiresAt}
+            onChange={(event) => setExpiresAt(event.target.value)}
+          />
+          <label className="mt-2 inline-flex items-center gap-2 text-[13px] text-ink">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-brand"
+              checked={never}
+              onChange={(event) => {
+                setNever(event.target.checked)
+                if (event.target.checked) setExpiresAt('')
+              }}
+            />
+            {page.limits.never}
+          </label>
+        </Field>
+
+        <Field
+          label={page.limits.allowIps}
+          htmlFor="key-limits-allow-ips"
+          hint={page.limits.allowIpsHint}
+        >
+          <textarea
+            id="key-limits-allow-ips"
+            rows={3}
+            spellCheck={false}
+            className="w-full resize-y rounded-md border border-transparent bg-bg-soft px-3 py-2 font-mono text-[13px] text-ink transition-colors placeholder:text-ink-3 focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft"
+            placeholder={page.limits.allowIpsPlaceholder}
+            value={allowIps}
+            onChange={(event) => setAllowIps(event.target.value)}
+          />
+        </Field>
+      </div>
+      <div className="mt-4 flex justify-end">
+        <Button loading={saving} onClick={() => void save()}>
+          {saving ? page.limits.saving : page.limits.save}
+        </Button>
+      </div>
+    </Section>
+  )
+}
 
 function ModelsSection({
   tokenId,

@@ -192,4 +192,24 @@ describe('CreateKeyDialog', () => {
     expect(cap.value).toBe('0.8')
     expect((screen.getByLabelText('路由策略') as HTMLSelectElement).value).toBe('cheapest')
   })
+
+  it('submits a custom expiry and IP whitelist from the custom settings', async () => {
+    renderDialog()
+    fireEvent.click(await screen.findByText('自定义设置'))
+
+    fireEvent.click(screen.getByLabelText('永不过期'))
+    const future = new Date(Date.now() + 7 * 24 * 3600 * 1000)
+    const pad = (value: number) => String(value).padStart(2, '0')
+    const localValue = `${future.getFullYear()}-${pad(future.getMonth() + 1)}-${pad(future.getDate())}T${pad(future.getHours())}:${pad(future.getMinutes())}`
+    fireEvent.change(screen.getByLabelText('过期时间'), { target: { value: localValue } })
+    fireEvent.change(screen.getByLabelText('IP 白名单'), {
+      target: { value: '203.0.113.10\n198.51.100.0/24' },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '创建 Key' }))
+
+    await waitFor(() => expect(createdBody).not.toBeNull())
+    expect(createdBody?.expired_time).toBe(Math.floor(new Date(localValue).getTime() / 1000))
+    expect(createdBody?.allow_ips).toBe('203.0.113.10\n198.51.100.0/24')
+  })
 })

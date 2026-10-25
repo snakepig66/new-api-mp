@@ -176,6 +176,10 @@ export interface CreateKeyInput {
   only_seller_id: number
   allow_fallback: boolean
   official_only: boolean
+  /** Unix seconds; -1 means never expires. */
+  expired_time: number
+  /** One IP or CIDR per line; empty means no restriction. */
+  allow_ips: string
   models: { model: string; price_cap_milli: number }[]
 }
 
@@ -187,4 +191,45 @@ export interface CreateKeyResult {
   model_scope: ModelScope
   models: KeyModel[]
   strategy: Strategy
+}
+
+/** PUT /api/marketplace/key/token */
+export interface KeyTokenLimitsInput {
+  token_id: number
+  /** Unix seconds; -1 means never expires. */
+  expired_time: number
+  /** One IP or CIDR per line; empty means no restriction. */
+  allow_ips: string
+}
+
+export interface KeyTokenLimits {
+  expired_time: number
+  allow_ips: string
+}
+
+/** GET /api/user/topup/info */
+export interface TopupPayMethod {
+  name: string
+  type: string
+  color?: string
+  icon?: string
+  min_topup?: string
+}
+
+export interface TopupInfo {
+  enable_online_topup: boolean
+  enable_redemption?: boolean
+  pay_methods: TopupPayMethod[] | null
+  min_topup: number
+  amount_options: number[] | null
+  discount: Record<string, number> | null
+  topup_link: string
+  payment_compliance_confirmed?: boolean
+}
+
+/** POST /api/user/pay — epay never wraps this answer in an envelope. */
+export interface EpayPayment {
+  message: string
+  data: Record<string, string>
+  url: string
 }

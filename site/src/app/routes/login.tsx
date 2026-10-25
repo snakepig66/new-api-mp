@@ -112,9 +112,17 @@ function LoginPage() {
         </div>
 
         <div>
-          <label htmlFor="login-password" className="mb-2 block text-[13px] font-medium text-ink">
-            {page.password}
-          </label>
+          <div className="mb-2 flex items-baseline justify-between gap-3">
+            <label htmlFor="login-password" className="block text-[13px] font-medium text-ink">
+              {page.password}
+            </label>
+            <Link
+              to="/forgot-password"
+              className="text-[13px] text-ink-3 transition-colors hover:text-brand hover:underline"
+            >
+              {page.forgot}
+            </Link>
+          </div>
           <PasswordInput
             id="login-password"
             autoComplete="current-password"
