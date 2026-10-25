@@ -28,6 +28,8 @@ export interface SquareTierPrices {
 export interface SquareModel {
   /** One row per standard model; upstream channels are aggregated behind it. */
   model: string
+  /** Alternate names accepted by the relay; used by the key model picker search. */
+  aliases?: string[]
   /** Original vendor (原厂) used for the vendor pills and price books. */
   origin_vendor: string
   vendor: string

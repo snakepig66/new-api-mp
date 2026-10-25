@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
 
-import { copy } from '@/copy'
 import { Logo } from '@/ui'
 
 export interface AuthPoint {
@@ -25,7 +24,7 @@ export function AuthSplit({ headline, body, points, children }: AuthSplitProps) 
     <div className="min-h-dvh bg-bg lg:grid lg:grid-cols-[45%_55%]">
       <div className="relative overflow-hidden bg-[linear-gradient(160deg,#1c2b8f_0%,#4d6bfe_100%)] px-6 py-8 text-white sm:px-10 lg:flex lg:flex-col lg:justify-between lg:px-16 lg:py-16">
         <div>
-          <p className="text-[14px] font-medium tracking-tight text-white/80">{copy.brand.name}</p>
+          <Logo markSize={20} mono className="text-white" />
           <h1 className="mt-3 max-w-[460px] text-[24px] font-semibold leading-[1.2] tracking-[-0.02em] sm:text-[28px] lg:mt-10 lg:text-[32px]">
             {headline}
           </h1>

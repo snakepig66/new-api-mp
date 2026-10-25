@@ -5,7 +5,7 @@
 
 export const copy = {
   brand: {
-    name: 'LLMJar',
+    name: 'LLM Jar',
     tagline: '同一个 Key，用官方模型更便宜',
     description:
       '把分散的官方模型额度汇总成一个市场：价格、倍率、可用率都摆在同一张表里，按量结算，失败不收费。',
@@ -91,7 +91,7 @@ export const copy = {
   },
 
   footer: {
-    copyright: '© 2026 LLMJar',
+    copyright: '© 2026 LLM Jar',
     company: '运营主体：待定',
     icp: 'ICP 备案号：待填',
     terms: '用户协议',
@@ -214,6 +214,26 @@ export const copy = {
       error: {
         title: '模型行情加载失败',
         reason: '广场接口没有返回数据，请稍后重试。',
+      },
+      picker: {
+        allVendors: '全部',
+        searchPlaceholder: '搜索模型名称或别名',
+        searchAria: '按模型名称或别名搜索',
+        selectedCount: (count: number) => `已选 ${count} 个`,
+        clear: '清空',
+        selectAllFiltered: '全选筛选结果',
+        selectGroup: '全选该厂家',
+        clearGroup: '取消该厂家',
+        groupCount: (selected: number, total: number) => `${selected} / ${total}`,
+        capLabel: '上限',
+        capPlaceholder: '0.85',
+        priceLabel: '输入价',
+        emptyAll: '广场暂无可售模型',
+        emptyFiltered: '没有匹配的模型',
+        clearFilter: '清除筛选',
+        loading: '正在读取模型',
+        error: '模型列表加载失败',
+        retry: '重试',
       },
       flat: '平价',
       flatHint: '该模型不区分峰谷时段',
@@ -606,34 +626,18 @@ console.log(response.choices[0].message.content)
       lead: '一个 Key 绑定一组模型和一套路由策略；改策略不影响已经发出的请求。',
       create: '新建 Key',
       createTitle: '新建 API Key',
-      createLead: '选一个用途预设直接创建；需要细调再展开自定义设置。',
+      createLead: '默认可调用全部模型；需要限制再选指定模型或展开自定义设置。',
       createDialog: {
         title: '新建 API Key',
         description: '只有创建后这一次能看到完整 Key，请立即复制保存。',
         nameLabel: 'Key 名称',
         namePlaceholder: '不填默认「Key 1」',
         nameHint: '可选，最多 50 个字，只有你能看到。',
-        presetLabel: '用途预设',
-        custom: '自定义',
-        presets: {
-          balanced: { label: '均衡', hint: '全部模型，价格与稳定兼顾' },
-          cheapest: { label: '最省钱', hint: '全部模型，优先最低价' },
-          stable: { label: '最稳定', hint: '只用官方渠道，稳定优先' },
-          selected: { label: '仅指定模型', hint: '只允许调用勾选的模型' },
-        },
         models: {
-          label: '指定模型',
-          hint: '勾选后这个 Key 只能调用这些模型；可给单个模型设价格上限。',
-          search: '搜索模型或厂商',
-          selectAll: '全选当前结果',
-          clear: '清空',
           selected: (count: number) => `已选 ${count} 个`,
-          noMatch: '没有匹配的模型。',
-          empty: '模型广场暂时没有可售模型。',
-          capPlaceholder: '如 0.85，留空不限',
         },
         advanced: '自定义设置',
-        advancedHint: '模型范围、路由策略、花费上限、RPM 和分享者偏好都收在这里。',
+        advancedHint: '路由策略、价格上限、RPM 和分享者偏好都收在这里。',
         copyFrom: {
           label: '从已有 Key 复制设置',
           none: '不复制',
@@ -655,7 +659,6 @@ console.log(response.choices[0].message.content)
         copyKey: '复制 Key',
         done: '完成',
         viewDetail: '查看详情',
-        changePreset: '当前设置已偏离预设，显示为「自定义」',
         errors: {
           nameTooLong: '名称不能超过 50 个字',
           modelsRequired: '请至少勾选一个模型',
@@ -840,6 +843,12 @@ console.log(response.choices[0].message.content)
         noModels: '模型广场暂时没有在售模型。',
         allScopeTitle: '这个 Key 使用全部模型',
         allScopeHint: '模型范围设为「全部模型」时，平台目录里新增的模型会自动可用，不需要逐个添加；需要单独设上限时，在上方把模型范围改成「仅指定模型」。',
+        scopeLabel: '模型范围',
+        save: '保存模型设置',
+        saving: '正在保存',
+        saved: '模型设置已保存',
+        required: '请至少勾选一个模型',
+        capInvalid: '价格上限要写成 0 到 1 之间的小数，例如 0.85',
       },
       status: {
         enable: '启用 Key',

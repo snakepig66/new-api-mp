@@ -1,24 +1,16 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 
 import { copy } from '@/copy'
 import { ApiError } from '@/lib/api'
 import { formatYuan } from '@/lib/money'
-import { formatDateTime } from '@/lib/time'
 import {
   Button,
   Dialog,
   Empty,
-  Input,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
   Tag,
   buttonClasses,
   useToast,
@@ -38,11 +30,12 @@ import {
   PageSkeleton,
   Section,
 } from '@/features/console/components/DataState'
-import { Field, Notice, Select } from '@/features/console/components/form'
+import { Notice } from '@/features/console/components/form'
 import { KeyRoutingFields } from '@/features/console/components/KeyRoutingFields'
-import { milliToMultiplierInput, parseMultiplierToMilli } from '@/features/console/format'
+import { milliToMultiplierInput } from '@/features/console/format'
 import { tokenStatusMeta } from '@/features/console/labels'
 import {
+  buildModelSelection,
   prefFormSchema,
   prefFormToInput,
   prefToFormValues,
@@ -53,7 +46,7 @@ import {
   TOKEN_STATUS_ENABLED,
   type KeyDetail,
 } from '@/features/console/types'
-import { squareModelsQuery } from '@/features/market/api'
+import { ModelPicker, type ModelSelection } from '@/features/market/ModelPicker'
 
 export const Route = createFileRoute('/console/keys/$id')({
   component: KeyDetailPage,
@@ -302,7 +295,12 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
         </form>
       </Section>
 
-      <ModelsSection tokenId={tokenId} models={models} modelScope={pref?.model_scope ?? 'selected'} />
+      <ModelsSection
+        tokenId={tokenId}
+        models={models}
+        modelScope={pref?.model_scope ?? 'selected'}
+        pref={pref}
+      />
 
       <Section className="mt-10" title={page.danger.title}>
         <div className="flex flex-col gap-3 rounded-md border border-danger/20 bg-danger/5 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
@@ -347,67 +345,67 @@ function ModelsSection({
   tokenId,
   models,
   modelScope,
+  pref,
 }: {
   tokenId: number
   models: KeyDetail['models']
   modelScope: 'all' | 'selected'
+  pref: KeyDetail['pref']
 }) {
   const toast = useToast()
   const queryClient = useQueryClient()
-  const square = useQuery({ ...squareModelsQuery(), enabled: true })
-  const [selectedModel, setSelectedModel] = useState('')
-  const [cap, setCap] = useState('')
-  const [adding, setAdding] = useState(false)
-  const [removing, setRemoving] = useState<string | null>(null)
+  const [scope, setScope] = useState<'all' | 'selected'>(modelScope)
+  const [selection, setSelection] = useState<ModelSelection>(() => modelsToSelection(models))
+  const [saving, setSaving] = useState(false)
 
-  const available = useMemo(() => {
-    const attached = new Set(models.map((model) => model.model))
-    const seen = new Set<string>()
-    return (square.data ?? []).filter((model) => {
-      if (attached.has(model.model) || seen.has(model.model)) return false
-      seen.add(model.model)
-      return true
-    })
-  }, [models, square.data])
+  useEffect(() => {
+    setScope(modelScope)
+  }, [modelScope])
 
-  const effectiveModel = available.some((model) => model.model === selectedModel)
-    ? selectedModel
-    : available[0]?.model ?? ''
+  useEffect(() => {
+    setSelection(modelsToSelection(models))
+  }, [models])
 
   async function refresh() {
     await queryClient.invalidateQueries({ queryKey: ['console', 'key', tokenId] })
     await queryClient.invalidateQueries({ queryKey: ['console', 'keys'] })
   }
 
-  async function handleAdd() {
-    if (!effectiveModel) return
-    const milli = parseMultiplierToMilli(cap)
-    if (milli === null) {
-      toast.show({ title: page.errors.priceCapInvalid, tone: 'error' })
-      return
+  async function save() {
+    let next = new Map<string, number>()
+    if (scope === 'selected') {
+      const parsed = buildModelSelection(selection)
+      if (!parsed.ok) {
+        toast.show({
+          title: parsed.error === page.models.capInvalid ? page.models.capInvalid : page.models.required,
+          tone: 'error',
+        })
+        return
+      }
+      next = new Map(parsed.models.map((model) => [model.model, model.price_cap_milli]))
     }
-    setAdding(true)
-    try {
-      await addKeyModel(tokenId, effectiveModel, milli)
-      toast.show({ title: page.models.added, tone: 'success' })
-      setCap('')
-      setSelectedModel('')
-      await refresh()
-    } catch (error) {
-      toast.show({
-        title: error instanceof ApiError ? error.message : copy.pages.consoleShared.errorHint,
-        tone: 'error',
-      })
-    } finally {
-      setAdding(false)
-    }
-  }
 
-  async function handleRemove(model: string) {
-    setRemoving(model)
+    setSaving(true)
     try {
-      await removeKeyModel(tokenId, model)
-      toast.show({ title: page.models.removed, tone: 'success' })
+      if (scope !== modelScope || !pref) {
+        await saveKeyPref({
+          ...prefFormToInput(tokenId, prefToFormValues(pref)),
+          model_scope: scope,
+        })
+      }
+      if (scope === 'selected') {
+        const current = new Map(models.map((model) => [model.model, model.price_cap_milli]))
+        for (const model of current.keys()) {
+          if (!next.has(model)) await removeKeyModel(tokenId, model)
+        }
+        for (const [model, cap] of next) {
+          const had = current.get(model)
+          if (had === cap) continue
+          if (had !== undefined) await removeKeyModel(tokenId, model)
+          await addKeyModel(tokenId, model, cap)
+        }
+      }
+      toast.show({ title: page.models.saved, tone: 'success' })
       await refresh()
     } catch (error) {
       toast.show({
@@ -415,120 +413,86 @@ function ModelsSection({
         tone: 'error',
       })
     } finally {
-      setRemoving(null)
+      setSaving(false)
     }
   }
 
   return (
     <Section className="mt-9" title={page.models.title} hint={page.models.hint}>
-      {modelScope === 'all' ? (
-        <Notice title={page.models.allScopeTitle}>{page.models.allScopeHint}</Notice>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-[14px] font-medium text-ink">{page.models.scopeLabel}</div>
+          <div className="mt-2 inline-flex rounded-md border border-line bg-bg-soft p-0.5">
+            <ScopeButton active={scope === 'all'} onClick={() => setScope('all')} label={page.models.allScopeTitle} />
+            <ScopeButton
+              active={scope === 'selected'}
+              onClick={() => setScope('selected')}
+              label={copy.pages.consoleKeys.createDialog.scope.selected}
+            />
+          </div>
+        </div>
+        <span className="tabular-nums text-[13px] text-ink-3">
+          {scope === 'all'
+            ? copy.pages.consoleKeys.createDialog.scope.all
+            : copy.pages.consoleKeys.modelsUnit(models.length)}
+        </span>
+      </div>
+
+      {scope === 'all' ? (
+        <Notice className="mt-4" title={page.models.allScopeTitle}>
+          {page.models.allScopeHint}
+        </Notice>
       ) : (
         <>
-      {models.length === 0 ? (
-        <Empty
-          title={page.models.emptyTitle}
-          reason={page.models.emptyReason}
-          next={page.models.emptyNext}
-        />
-      ) : (
-        <Table minWidth={620}>
-          <TableHead>
-            <TableRow interactive={false}>
-              <TableHeaderCell>{page.models.columns.model}</TableHeaderCell>
-              <TableHeaderCell numeric>{page.models.columns.cap}</TableHeaderCell>
-              <TableHeaderCell>{page.models.columns.added}</TableHeaderCell>
-              <TableHeaderCell>{page.models.columns.actions}</TableHeaderCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {models.map((model) => (
-              <TableRow key={model.model}>
-                <TableCell className="tabular-nums text-[13px]">{model.model}</TableCell>
-                <TableCell numeric className="text-[13px]">
-                  {model.price_cap_milli > 0
-                    ? `${milliToMultiplierInput(model.price_cap_milli)}x`
-                    : page.models.capFollow}
-                </TableCell>
-                <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
-                  {formatDateTime(model.added_at)}
-                </TableCell>
-                <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    loading={removing === model.model}
-                    onClick={() => void handleRemove(model.model)}
-                  >
-                    {page.models.remove}
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
-
-      <div className="mt-4 border-t border-line pt-4">
-        <div className="text-[13px] font-medium text-ink">{page.models.addTitle}</div>
-        {square.isError ? (
-          <ErrorBlock
-            className="mt-2"
-            error={square.error}
-            onRetry={() => void square.refetch()}
-          />
-        ) : square.isPending ? (
-          <p className="mt-2 text-[13px] text-ink-3">{shared.loadingOne}</p>
-        ) : available.length === 0 ? (
-          <p className="mt-2 text-[13px] text-ink-3">
-            {models.length > 0 ? page.models.allAdded : page.models.noModels}
-          </p>
-        ) : (
-          <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end">
-            <Field
-              label={page.models.addModel}
-              htmlFor="add-key-model"
-              className="flex-1"
-            >
-              <Select
-                id="add-key-model"
-                value={effectiveModel}
-                onChange={(event) => setSelectedModel(event.target.value)}
-              >
-                {available.map((model) => (
-                  <option key={model.model} value={model.model}>
-                    {model.model} · {model.vendor}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field
-              label={page.models.addCap}
-              htmlFor="add-key-model-cap"
-              className="sm:w-44"
-            >
-              <Input
-                id="add-key-model-cap"
-                inputMode="decimal"
-                placeholder="0.85"
-                value={cap}
-                onChange={(event) => setCap(event.target.value)}
-              />
-            </Field>
-            <Button
-              className="shrink-0"
-              loading={adding}
-              onClick={() => void handleAdd()}
-            >
-              {adding ? page.models.adding : page.models.add}
+          <div className="mt-4">
+            <ModelPicker
+              selection={selection}
+              onChange={setSelection}
+              idPrefix={`key-${tokenId}`}
+            />
+          </div>
+          <div className="mt-4 flex justify-end">
+            <Button loading={saving} onClick={() => void save()}>
+              {saving ? page.models.saving : page.models.save}
             </Button>
           </div>
-        )}
-      </div>
         </>
       )}
     </Section>
   )
+}
+
+function ScopeButton({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean
+  onClick: () => void
+  label: string
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={
+        active
+          ? 'rounded-sm bg-bg px-3 py-1.5 text-[13px] font-medium text-ink shadow-sm'
+          : 'rounded-sm px-3 py-1.5 text-[13px] text-ink-3 hover:text-ink'
+      }
+    >
+      {label}
+    </button>
+  )
+}
+
+function modelsToSelection(rows: KeyDetail['models']): ModelSelection {
+  const selection: ModelSelection = {}
+  for (const model of rows) {
+    selection[model.model] = milliToMultiplierInput(model.price_cap_milli)
+  }
+  return selection
 }
 
 async function writeClipboard(text: string): Promise<boolean> {

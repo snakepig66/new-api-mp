@@ -164,6 +164,7 @@ func TestApiSquareModels(t *testing.T) {
 	require.Len(t, items, pricedModelCount(t, f.db), "one row per priced standard model")
 
 	flash := findSquareItem(t, items, "deepseek-flash")
+	assert.Contains(t, flash["aliases"], "DeepSeek-Flash", "the key picker searches aliases")
 	assert.Equal(t, "deepseek", flash["origin_vendor"])
 	assert.Equal(t, "deepseek", flash["vendor"], "vendor stays as an origin_vendor alias for old frontends")
 	assert.Equal(t, int64(2), apiNum(t, flash, "listing_count"), "two live listings")

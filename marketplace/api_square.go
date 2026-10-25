@@ -74,6 +74,7 @@ type squareTierPrices struct {
 // working; new clients should read origin_vendor.
 type squareModelEntry struct {
 	Model            string                      `json:"model"`
+	Aliases          []string                    `json:"aliases"`
 	OriginVendor     string                      `json:"origin_vendor"`
 	Vendor           string                      `json:"vendor"`
 	Tier             string                      `json:"tier"`
@@ -387,6 +388,7 @@ func buildSquareEntry(db *gorm.DB, cal *Calendar, model ModelPool, s *squareSupp
 	tier := cal.TierAt(now)
 	entry := squareModelEntry{
 		Model:            model.Name,
+		Aliases:          parseStringList(model.Aliases),
 		OriginVendor:     origin,
 		Vendor:           origin,
 		Tier:             tier,

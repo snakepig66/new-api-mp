@@ -506,3 +506,16 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 - `go build ./...` / `go vet ./...` / Linux 全量 `go test ./...` 通过。
 - `bun run typecheck` 通过；vitest 112/112 通过（schema 用例已补 `model_scope`）。
 - 已部署；`POST /api/marketplace/key` 未登录返回 401，广场接口正常。
+
+## Key 弹窗 v2 与厂家选模型（2026-10-25）
+
+- 新建 Key 弹窗去掉用途预设，改为：名称（可选）→ 模型范围分段按钮（全部模型默认 / 指定模型）→ 花费上限（可选）→ 折叠的「自定义设置」（路由策略、价格上限、RPM、分享者偏好、只用官方渠道、允许回落、从已有 Key 复制）→ 创建。
+- 新增 `features/market/ModelPicker.tsx`，创建弹窗与 Key 详情页共用：
+  - 数据来自 `squareModelsQuery()` 与 `/marketplace/vendors`，按 `origin_vendor` 分组，不再把渠道名当厂家。
+  - 厂家 Pill（全部 + 各原厂，可横向滚动）+ 模型名/别名搜索。
+  - 组头 sticky，组复选框支持全选/取消/半选；行内复选框、标准名、当前档输入价、单模型价格上限（勾选后可编辑）。
+  - 底部显示已选数量、清空、全选筛选结果；区分「广场暂无可售模型」和「没有匹配」两种空态。
+- Key 详情页模型区复用 ModelPicker，顶部切换模型范围；保存时按差异执行 add/remove（价格上限变化走先删后加），模型范围通过 `PUT /key/pref` 保存。
+- 广场列表/详情接口新增 `aliases` 字段，供 ModelPicker 按别名搜索。
+- 品牌统一为 LLM Jar：`copy.brand.name`、页脚、标题、meta 全部更新；LogoMark/Logo 支持 mono 变体，登录页深色区使用白色 mono 标识；全站已无「词元市场」。
+- 测试：新增 `ModelPicker.test.tsx`（厂家筛选、别名搜索、组全选/半选、上限启用、空态）与 `CreateKeyDialog.test.tsx`（默认 all 提交、指定模型空选报错、复制已有 Key 回填）；typecheck 通过，vitest 118/118 通过，Linux 全量 Go 测试通过，已部署。

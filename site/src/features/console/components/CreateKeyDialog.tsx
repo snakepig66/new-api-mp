@@ -1,13 +1,13 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 
 import { copy } from '@/copy'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { squareModelsQuery, type SquareModel } from '@/features/market/api'
-import { Button, Dialog, Empty, Input, Tag, useToast } from '@/ui'
+import { ModelPicker, type ModelSelection } from '@/features/market/ModelPicker'
+import { Button, Dialog, Input, useToast } from '@/ui'
 
 import { consoleKeysQuery, createKey } from '../api'
 import {
@@ -24,15 +24,13 @@ import {
   type PrefFormValues,
 } from '../schemas'
 import type { CreateKeyResult } from '../types'
-import { ErrorBlock, Skeleton } from './DataState'
 import { Field } from './form'
 import { KeyRoutingFields } from './KeyRoutingFields'
 
 const page = copy.pages.consoleKeys
 const dialogCopy = page.createDialog
+const scopeCopy = dialogCopy.scope
 const shared = copy.pages.consoleShared
-
-type PresetKey = 'balanced' | 'cheapest' | 'stable' | 'selected' | 'custom'
 
 const defaultPref: PrefFormValues = {
   strategy: 'balanced',
@@ -44,13 +42,6 @@ const defaultPref: PrefFormValues = {
   only: '',
   allowFallback: false,
   officialOnly: false,
-}
-
-const presetDefaults: Record<Exclude<PresetKey, 'custom'>, PrefFormValues> = {
-  balanced: { ...defaultPref },
-  cheapest: { ...defaultPref, strategy: 'cheapest' },
-  stable: { ...defaultPref, strategy: 'stable', officialOnly: true },
-  selected: { ...defaultPref, modelScope: 'selected' },
 }
 
 export interface CreateKeyDialogProps {
@@ -67,7 +58,7 @@ export function CreateKeyDialog({
   onOpenDetail,
 }: CreateKeyDialogProps) {
   const toast = useToast()
-  const modelsQuery = useQuery({ ...squareModelsQuery(), enabled: open })
+  const queryClient = useQueryClient()
   const keysQuery = useQuery({ ...consoleKeysQuery(), enabled: open })
 
   const form = useForm<PrefFormValues>({
@@ -78,8 +69,7 @@ export function CreateKeyDialog({
 
   const [name, setName] = useState('')
   const [spendCap, setSpendCap] = useState('')
-  const [search, setSearch] = useState('')
-  const [selection, setSelection] = useState<Record<string, string>>({})
+  const [selection, setSelection] = useState<ModelSelection>({})
   const [copyFrom, setCopyFrom] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -91,7 +81,6 @@ export function CreateKeyDialog({
     form.reset(defaultPref)
     setName('')
     setSpendCap('')
-    setSearch('')
     setSelection({})
     setCopyFrom('')
     setError(null)
@@ -100,52 +89,12 @@ export function CreateKeyDialog({
     setCopied(false)
   }, [form, open])
 
-  const models = modelsQuery.data ?? []
-  const filtered = useMemo(() => {
-    const keyword = search.trim().toLowerCase()
-    if (!keyword) return models
-    return models.filter(
-      (model) =>
-        model.model.toLowerCase().includes(keyword) ||
-        model.vendor.toLowerCase().includes(keyword),
-    )
-  }, [models, search])
-
-  const preset = derivePreset(values, spendCap)
+  const scope = values.modelScope
   const selectedCount = Object.keys(selection).length
 
-  function applyPreset(next: Exclude<PresetKey, 'custom'>) {
-    form.reset(presetDefaults[next])
-    setSpendCap('')
+  function setScope(next: 'all' | 'selected') {
+    form.setValue('modelScope', next, { shouldDirty: true })
     setError(null)
-    if (next !== 'selected') {
-      setSelection({})
-    }
-  }
-
-  function toggleModel(model: string) {
-    setSelection((current) => {
-      if (model in current) {
-        const next = { ...current }
-        delete next[model]
-        return next
-      }
-      return { ...current, [model]: '' }
-    })
-  }
-
-  function setCap(model: string, value: string) {
-    setSelection((current) => ({ ...current, [model]: value }))
-  }
-
-  function selectAll() {
-    setSelection((current) => {
-      const next = { ...current }
-      for (const model of filtered) {
-        if (!(model.model in next)) next[model.model] = ''
-      }
-      return next
-    })
   }
 
   function applyCopySettings(rawID: string) {
@@ -155,7 +104,7 @@ export function CreateKeyDialog({
     const item = keysQuery.data?.find((entry) => entry.token.id === id)
     if (!item) return
     form.reset(prefToFormValues(item.pref))
-    const nextSelection: Record<string, string> = {}
+    const nextSelection: ModelSelection = {}
     for (const model of item.pref?.models ?? []) {
       nextSelection[model.model] = milliToMultiplierInput(model.price_cap_milli)
     }
@@ -209,6 +158,8 @@ export function CreateKeyDialog({
         models: modelsPayload,
       })
       onCreated(result.id)
+      void queryClient.invalidateQueries({ queryKey: ['console', 'keys'] })
+      void queryClient.invalidateQueries({ queryKey: ['tokens', 'list'] })
       setCreated(result)
       toast.show({ title: dialogCopy.successTitle, tone: 'success' })
     } catch (submitError) {
@@ -302,59 +253,42 @@ export function CreateKeyDialog({
           </Field>
 
           <div>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-[14px] font-medium text-ink">{dialogCopy.presetLabel}</span>
-              {preset === 'custom' ? <Tag tone="neutral">{dialogCopy.custom}</Tag> : null}
+            <div className="text-[14px] font-medium text-ink">{scopeCopy.label}</div>
+            <div className="mt-2 inline-flex rounded-md border border-line bg-bg-soft p-0.5">
+              <ScopeButton
+                active={scope === 'all'}
+                onClick={() => setScope('all')}
+                label={scopeCopy.all}
+              />
+              <ScopeButton
+                active={scope === 'selected'}
+                onClick={() => setScope('selected')}
+                label={scopeCopy.selected}
+              />
             </div>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              {(['balanced', 'cheapest', 'stable', 'selected'] as const).map((key) => {
-                const presetCopy = dialogCopy.presets[key]
-                const active = preset === key
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => applyPreset(key)}
-                    className={cn(
-                      'rounded-md border px-3 py-3 text-left transition-colors',
-                      active
-                        ? 'border-brand bg-brand-soft'
-                        : 'border-line bg-bg hover:border-line-strong hover:bg-bg-soft/60',
-                    )}
-                  >
-                    <span className="flex items-center justify-between gap-2">
-                      <span className="text-[13px] font-medium text-ink">{presetCopy.label}</span>
-                      {active ? <Tag tone="brand">{shared.confirm}</Tag> : null}
-                    </span>
-                    <span className="mt-1 block text-[13px] leading-5 text-ink-3">
-                      {presetCopy.hint}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-            {preset === 'custom' ? (
-              <p className="mt-2 text-[13px] text-ink-3">{dialogCopy.changePreset}</p>
-            ) : null}
+            <p className="mt-1.5 text-[13px] leading-5 text-ink-3">{scopeCopy.hint}</p>
           </div>
 
-          {values.modelScope === 'selected' ? (
-            <ModelPicker
-              models={filtered}
-              allModels={models}
-              pending={modelsQuery.isPending}
-              error={modelsQuery.error}
-              onRetry={() => void modelsQuery.refetch()}
-              search={search}
-              onSearch={setSearch}
-              selection={selection}
-              onToggle={toggleModel}
-              onCap={setCap}
-              onSelectAll={selectAll}
-              onClear={() => setSelection({})}
-            />
+          {scope === 'selected' ? (
+            <ModelPicker selection={selection} onChange={setSelection} idPrefix="create-key" />
           ) : null}
+
+          <Field
+            label={dialogCopy.spendLabel}
+            htmlFor="create-key-spend"
+            hint={dialogCopy.spendHint}
+          >
+            <div className="flex items-center gap-2">
+              <Input
+                id="create-key-spend"
+                inputMode="decimal"
+                placeholder={dialogCopy.spendPlaceholder}
+                value={spendCap}
+                onChange={(event) => setSpendCap(event.target.value)}
+              />
+              <span className="shrink-0 text-[13px] text-ink-3">元</span>
+            </div>
+          </Field>
 
           <details className="rounded-md border border-line">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-[14px] font-medium text-ink">
@@ -390,26 +324,10 @@ export function CreateKeyDialog({
               </Field>
 
               <div className="grid gap-4 sm:grid-cols-2">
-                <KeyRoutingFields form={form} idPrefix="create" />
-                <Field
-                  label={dialogCopy.spendLabel}
-                  htmlFor="create-key-spend"
-                  hint={dialogCopy.spendHint}
-                >
-                  <div className="flex items-center gap-2">
-                    <Input
-                      id="create-key-spend"
-                      inputMode="decimal"
-                      placeholder={dialogCopy.spendPlaceholder}
-                      value={spendCap}
-                      onChange={(event) => setSpendCap(event.target.value)}
-                    />
-                    <span className="shrink-0 text-[13px] text-ink-3">元</span>
-                  </div>
-                </Field>
+                <KeyRoutingFields form={form} idPrefix="create-key" showScope={false} />
               </div>
 
-              {values.modelScope === 'selected' && selectedCount > 0 ? (
+              {scope === 'selected' && selectedCount > 0 ? (
                 <p className="text-[13px] text-ink-3">
                   {dialogCopy.models.selected(selectedCount)}
                 </p>
@@ -422,26 +340,28 @@ export function CreateKeyDialog({
   )
 }
 
-function derivePreset(values: PrefFormValues, spendCap: string): PresetKey {
-  if (spendCap.trim()) return 'custom'
-  const restEmpty =
-    !values.priceCap.trim() &&
-    !values.rpm.trim() &&
-    !values.prefer.trim() &&
-    !values.block.trim() &&
-    !values.only.trim() &&
-    !values.allowFallback
-  if (!restEmpty) return 'custom'
-
-  if (values.modelScope === 'selected') {
-    return values.strategy === 'balanced' && !values.officialOnly ? 'selected' : 'custom'
-  }
-  if (values.officialOnly) {
-    return values.strategy === 'stable' ? 'stable' : 'custom'
-  }
-  if (values.strategy === 'balanced') return 'balanced'
-  if (values.strategy === 'cheapest') return 'cheapest'
-  return 'custom'
+function ScopeButton({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean
+  onClick: () => void
+  label: string
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        'rounded-sm px-3 py-1.5 text-[13px] transition-colors',
+        active ? 'bg-bg font-medium text-ink shadow-sm' : 'text-ink-3 hover:text-ink',
+      )}
+    >
+      {label}
+    </button>
+  )
 }
 
 function CreatedKey({
@@ -473,132 +393,13 @@ function CreatedKey({
         <span>
           {copy.pages.consoleKeys.columns.models}：
           {result.model_scope === 'all'
-            ? dialogCopy.scope.all
+            ? scopeCopy.all
             : page.modelsUnit(result.models.length)}
         </span>
         <span>
           {copy.pages.consoleKeys.columns.strategy}：
           {copy.pages.consoleKeys.strategy[result.strategy]}
         </span>
-      </div>
-    </div>
-  )
-}
-
-function ModelPicker({
-  models,
-  allModels,
-  pending,
-  error,
-  onRetry,
-  search,
-  onSearch,
-  selection,
-  onToggle,
-  onCap,
-  onSelectAll,
-  onClear,
-}: {
-  models: SquareModel[]
-  allModels: SquareModel[]
-  pending: boolean
-  error: unknown
-  onRetry: () => void
-  search: string
-  onSearch: (value: string) => void
-  selection: Record<string, string>
-  onToggle: (model: string) => void
-  onCap: (model: string, value: string) => void
-  onSelectAll: () => void
-  onClear: () => void
-}) {
-  return (
-    <div>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="text-[14px] font-medium text-ink">{dialogCopy.models.label}</div>
-          <p className="mt-0.5 text-[13px] text-ink-3">{dialogCopy.models.hint}</p>
-        </div>
-        <span className="tabular-nums text-[13px] text-brand-ink">
-          {dialogCopy.models.selected(Object.keys(selection).length)}
-        </span>
-      </div>
-
-      <div className="mt-2 flex flex-wrap gap-2">
-        <Input
-          aria-label={dialogCopy.models.search}
-          placeholder={dialogCopy.models.search}
-          className="min-w-[140px] flex-1"
-          value={search}
-          onChange={(event) => onSearch(event.target.value)}
-        />
-        <Button variant="secondary" size="md" className="shrink-0" onClick={onSelectAll}>
-          {dialogCopy.models.selectAll}
-        </Button>
-        <Button variant="ghost" size="md" className="shrink-0" onClick={onClear}>
-          {dialogCopy.models.clear}
-        </Button>
-      </div>
-
-      <div className="mt-2 max-h-56 overflow-y-auto rounded-md border border-line">
-        {pending ? (
-          <div className="space-y-2 p-3">
-            <Skeleton className="h-5" />
-            <Skeleton className="h-5" />
-            <Skeleton className="h-5" />
-          </div>
-        ) : error ? (
-          <ErrorBlock className="m-3" error={error} onRetry={onRetry} />
-        ) : models.length === 0 ? (
-          <Empty
-            className="border-0"
-            title={allModels.length === 0 ? dialogCopy.models.empty : undefined}
-            reason={allModels.length === 0 ? '' : dialogCopy.models.noMatch}
-          />
-        ) : (
-          <ul className="divide-y divide-line">
-            {models.map((model) => {
-              const checked = model.model in selection
-              return (
-                <li
-                  key={model.model}
-                  className={cn(
-                    'flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 transition-colors',
-                    checked ? 'bg-brand-soft/50' : 'bg-bg hover:bg-bg-soft/60',
-                  )}
-                >
-                  <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
-                    <input
-                      type="checkbox"
-                      className="h-3.5 w-3.5 shrink-0 accent-brand"
-                      checked={checked}
-                      onChange={() => onToggle(model.model)}
-                    />
-                    <span className="min-w-0">
-                      <span className="block truncate text-[13px] text-ink">{model.model}</span>
-                      <span className="block text-[13px] text-ink-3">
-                        {model.vendor} · {model.channel_count} 个渠道
-                      </span>
-                    </span>
-                  </label>
-                  <label className="flex shrink-0 items-center gap-1.5 text-[13px] text-ink-3">
-                    <span className="whitespace-nowrap">{page.wizard.models.capLabel}</span>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      disabled={!checked}
-                      aria-label={`${model.model} ${page.wizard.models.capLabel}`}
-                      placeholder={dialogCopy.models.capPlaceholder}
-                      value={selection[model.model] ?? ''}
-                      onChange={(event) => onCap(model.model, event.target.value)}
-                      className="h-8 w-32 rounded-sm border border-transparent bg-bg-soft px-2 tabular-nums text-[13px] text-ink disabled:bg-bg-soft disabled:text-ink-3"
-                    />
-                  </label>
-                </li>
-              )
-            })}
-          </ul>
-        )}
       </div>
     </div>
   )
