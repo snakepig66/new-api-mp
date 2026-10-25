@@ -330,3 +330,16 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
   - `DisplayInCurrencyEnabled` 旧布尔开关只区分「货币 / tokens」，不再把已选的人民币改回美元（单测覆盖）。
 - 线上 `/api/status` 实测：`quota_display_type=CNY`、`display_in_currency=true`、`usd_exchange_rate=1`、`quota_per_unit=1000000`。
 - 注意：汇率改为 1 后，旧控制台里按 USD 计价的渠道余额会按面值显示；本站上游（DeepSeek/tipig）均为人民币计价，符合预期。
+
+---
+
+## 开放分享：每个账号都可以分享（2026-10-25）
+
+- 原实现沿用 §3.1 旧文案：签协议 → 实名 → 绑定支付宝，三项齐全才 active，未开通时整个分享者控制台被重定向回开通页——等于不是「每个人都能分享」。
+- 现改为开放分享：**签完分享者协议即 active，可直接挂单**；实名与支付宝收款账户降级为「提现前」步骤，不影响挂单。
+  - `nextSellerStatus` 只要求 agreement_version；`RequireActiveSeller` 仍是挂单/提现的写入门槛。
+  - 提现新增收款账户校验（`ErrPayoutAccountMissing`）：未绑定收款账户申请提现返回 400「payout account is not bound」，前端映射为「提现前需要先绑定支付宝收款账户」并禁用按钮、给出绑定入口。
+  - 开通页重构：未开通只显示协议一步；开通后显示「已开通，可以挂单了」+ 去挂单入口，下方是标「提现前」的可选实名/收款卡片。
+  - 文案更新：lead、步骤标题/提示、状态 Badge（未开通/已开通）、错误提示；步骤条对 2/3 步标注「提现前」。
+- 测试：Go 开通流程断言改为签协议即 active，新增 `TestPayoutRequiresBoundAccount`（未绑账户 400 → 绑定后进入余额校验 409）；marketplace 全量测试绿，前端 96 测试绿。
+- 线上实测（普通新账号 10015，已清理）：GET /me exists=false → 只提交协议 → status=active、progress 显示实名/收款未完成 → 挂单列表 200 → 提现 400 payout account is not bound。

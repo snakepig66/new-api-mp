@@ -95,7 +95,8 @@ export function isListingKeyReplaceable(status: string): boolean {
 export function isSellerActive(seller: SellerIdentity | undefined | null): boolean {
   if (!seller?.exists) return false
   if (seller.status === 'active') return true
-  // An active row is expected to have next_step=done; treat that as active too
+  // Sharing opens on the agreement alone, so an active row may still have the
+  // optional real-name/payout steps left. next_step=done also counts as active
   // so a stale status field never locks the console.
   return seller.progress.next_step === 'done'
 }

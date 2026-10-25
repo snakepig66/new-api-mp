@@ -19,10 +19,7 @@ import {
 import { Field } from '@/features/seller/components'
 import { notify } from '@/features/seller/components'
 import { sellerErrorMessage } from '@/features/seller/errors'
-import {
-  completedStepCount,
-  sellerStepIndex,
-} from '@/features/seller/status'
+import { completedStepCount, isSellerActive, sellerStepIndex } from '@/features/seller/status'
 
 export const Route = createFileRoute('/seller/onboarding')({
   component: SellerOnboardingPage,
@@ -83,23 +80,20 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
     <section aria-label={page.progress} className="mt-6 rounded-md border border-line bg-bg p-6">
       <div className="flex items-baseline justify-between">
         <h2 className="text-[16px] font-semibold tracking-tight text-ink">{page.progress}</h2>
-        <span className="tabular-nums text-[13px] text-ink-3">
-          {done}/3
-        </span>
+        <span className="tabular-nums text-[13px] text-ink-3">{done}/3</span>
       </div>
       <ol className="mt-5 grid gap-3 sm:grid-cols-3">
         {page.stepTitles.map((title, index) => {
           const completed = index < current
           const active = index === current && current < 3
+          const optional = index > 0
           return (
             <li
               key={title}
               aria-current={active ? 'step' : undefined}
               className={cn(
                 'relative rounded-md border p-4',
-                active
-                  ? 'border-brand bg-brand-soft/50'
-                  : 'border-line bg-bg',
+                active ? 'border-brand bg-brand-soft/50' : 'border-line bg-bg',
               )}
             >
               <div className="flex items-center gap-2">
@@ -136,10 +130,9 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
                 >
                   {title}
                 </span>
+                {optional ? <Tag>{page.state.optional}</Tag> : null}
               </div>
-              <p className="mt-2 text-[13px] leading-5 text-ink-3">
-                {page.stepHints[index]}
-              </p>
+              <p className="mt-2 text-[13px] leading-5 text-ink-3">{page.stepHints[index]}</p>
               <p className="mt-1 text-[13px] text-ink-3">
                 {completed ? page.state.done : active ? page.state.current : page.state.todo}
               </p>
@@ -148,6 +141,158 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
         })}
       </ol>
     </section>
+  )
+}
+
+interface OptionalCardProps {
+  onSubmit: (input: OnboardingInput) => void
+  pending: boolean
+  errorText: string | null
+}
+
+function RealNameCard({ onSubmit, pending, errorText }: OptionalCardProps) {
+  const form = useForm<RealNameForm>({
+    resolver: zodResolver(realNameSchema),
+    defaultValues: { real_name: '', id_card_masked: '' },
+    mode: 'onTouched',
+  })
+
+  return (
+    <section className="mt-6 rounded-md border border-line bg-bg p-6">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+          {page.realName.title}
+        </h2>
+        <Tag>{page.state.optional}</Tag>
+      </div>
+      <form
+        className="mt-5 space-y-5"
+        onSubmit={form.handleSubmit((values) =>
+          onSubmit({
+            real_name: values.real_name,
+            id_card_masked: values.id_card_masked,
+          }),
+        )}
+      >
+        <p className="text-[13px] leading-6 text-ink-3">{page.realName.lead}</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label={page.realName.nameLabel}
+            htmlFor="real-name"
+            hint={page.realName.nameHint}
+            error={form.formState.errors.real_name?.message}
+          >
+            <Input
+              id="real-name"
+              autoComplete="name"
+              placeholder={page.realName.namePlaceholder}
+              invalid={Boolean(form.formState.errors.real_name)}
+              {...form.register('real_name')}
+            />
+          </Field>
+          <Field
+            label={page.realName.idLabel}
+            htmlFor="id-card"
+            hint={page.realName.idHint}
+            error={form.formState.errors.id_card_masked?.message}
+          >
+            <Input
+              id="id-card"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={page.realName.idPlaceholder}
+              invalid={Boolean(form.formState.errors.id_card_masked)}
+              {...form.register('id_card_masked')}
+            />
+          </Field>
+        </div>
+
+        {errorText ? (
+          <p className="text-[13px] text-danger" role="alert">
+            {errorText}
+          </p>
+        ) : null}
+
+        <div className="flex justify-end border-t border-line pt-4">
+          <Button type="submit" loading={pending}>
+            {pending ? page.realName.submitting : page.realName.submit}
+          </Button>
+        </div>
+      </form>
+    </section>
+  )
+}
+
+function AlipayCard({ onSubmit, pending, errorText }: OptionalCardProps) {
+  const form = useForm<AlipayForm>({
+    resolver: zodResolver(alipaySchema),
+    defaultValues: { alipay_account: '' },
+    mode: 'onTouched',
+  })
+
+  return (
+    <section className="mt-6 rounded-md border border-line bg-bg p-6">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-[16px] font-semibold tracking-tight text-ink">{page.alipay.title}</h2>
+        <Tag>{page.state.optional}</Tag>
+      </div>
+      <form
+        className="mt-5 space-y-5"
+        onSubmit={form.handleSubmit((values) =>
+          onSubmit({ alipay_account: values.alipay_account }),
+        )}
+      >
+        <p className="text-[13px] leading-6 text-ink-3">{page.alipay.lead}</p>
+        <Field
+          label={page.alipay.accountLabel}
+          htmlFor="alipay-account"
+          hint={page.alipay.hint}
+          error={form.formState.errors.alipay_account?.message}
+        >
+          <Input
+            id="alipay-account"
+            autoComplete="off"
+            placeholder={page.alipay.accountPlaceholder}
+            invalid={Boolean(form.formState.errors.alipay_account)}
+            {...form.register('alipay_account')}
+          />
+        </Field>
+
+        {errorText ? (
+          <p className="text-[13px] text-danger" role="alert">
+            {errorText}
+          </p>
+        ) : null}
+
+        <div className="flex justify-end border-t border-line pt-4">
+          <Button type="submit" loading={pending}>
+            {pending ? page.alipay.submitting : page.alipay.submit}
+          </Button>
+        </div>
+      </form>
+    </section>
+  )
+}
+
+function OptionalDone({ label }: { label: string }) {
+  return (
+    <div className="mt-3 flex items-center gap-2 text-[13px] text-ink-3">
+      <span
+        className="grid h-4 w-4 place-items-center rounded-full bg-brand-soft text-brand-ink"
+        aria-hidden="true"
+      >
+        <svg width="9" height="9" viewBox="0 0 12 12" fill="none">
+          <path
+            d="M2.5 6.2l2.2 2.2 4.8-5"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </span>
+      {label}
+    </div>
   )
 }
 
@@ -169,23 +314,10 @@ function SellerOnboardingPage() {
     },
   })
 
-  const realNameForm = useForm<RealNameForm>({
-    resolver: zodResolver(realNameSchema),
-    defaultValues: { real_name: '', id_card_masked: '' },
-    mode: 'onTouched',
-  })
-  const alipayForm = useForm<AlipayForm>({
-    resolver: zodResolver(alipaySchema),
-    defaultValues: { alipay_account: '' },
-    mode: 'onTouched',
-  })
-
   if (!seller) return null
 
   const blocked = seller.exists && (seller.status === 'banned' || seller.status === 'closed')
-  const current = sellerStepIndex(seller.progress)
-  const finished = seller.progress.next_step === 'done'
-
+  const active = isSellerActive(seller)
   const errorText = mutation.isError ? sellerErrorMessage(mutation.error) : null
 
   function submit(input: OnboardingInput) {
@@ -199,7 +331,7 @@ function SellerOnboardingPage() {
         title={page.title}
         lead={page.lead}
         actions={
-          finished ? (
+          active ? (
             <Tag tone="brand" dot>
               {page.activeBadge}
             </Tag>
@@ -222,203 +354,103 @@ function SellerOnboardingPage() {
         <>
           <StepRail seller={seller} />
 
-          {finished ? (
-            <Empty
-              className="mt-6"
-              title={page.done.title}
-              reason={page.done.reason}
-              next={page.done.next}
-              action={
-                <div className="flex flex-wrap gap-2">
-                  <Link to="/seller" className={buttonClasses('primary', 'md')}>
-                    {page.done.overview}
-                  </Link>
-                  <Link
-                    to="/seller/listings/new"
-                    className={buttonClasses('secondary', 'md')}
-                  >
+          {active ? (
+            <>
+              <section className="mt-6 rounded-md border border-line bg-bg p-6">
+                <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+                  {page.done.title}
+                </h2>
+                <p className="mt-2 text-[14px] leading-6 text-ink-2">{page.done.reason}</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Link to="/seller/listings/new" className={buttonClasses('primary', 'md')}>
                     {page.done.newListing}
                   </Link>
+                  <Link to="/seller" className={buttonClasses('secondary', 'md')}>
+                    {page.done.overview}
+                  </Link>
                 </div>
-              }
-            />
+              </section>
+
+              <p className="mt-4 text-[13px] text-ink-3">{page.optionalHint}</p>
+
+              {seller.progress.real_name_verified ? (
+                <OptionalDone label={page.realName.done} />
+              ) : (
+                <RealNameCard
+                  onSubmit={submit}
+                  pending={mutation.isPending}
+                  errorText={errorText}
+                />
+              )}
+
+              {seller.progress.payout_account_bound ? (
+                <OptionalDone label={page.alipay.done} />
+              ) : (
+                <AlipayCard onSubmit={submit} pending={mutation.isPending} errorText={errorText} />
+              )}
+            </>
           ) : (
             <section className="mt-6 rounded-md border border-line bg-bg p-6">
               <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-4">
                 <h2 className="text-[16px] font-semibold tracking-tight text-ink">
-                  {page.stepTitles[current]}
+                  {page.agreement.title}
                 </h2>
-                <span className="tabular-nums text-[13px] text-ink-3">
-                  0{current + 1} / 03
-                </span>
+                <Tag>{page.agreement.version}</Tag>
               </header>
 
-              <div className="pt-5">
-                {current === 0 ? (
-                  <div className="space-y-5">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-[13px] text-ink-3">
-                        {page.agreement.hint}
-                      </p>
-                      <Tag>{page.agreement.version}</Tag>
-                    </div>
+              <div className="space-y-5 pt-5">
+                <p className="text-[13px] text-ink-3">{page.agreement.hint}</p>
 
-                    <ol className="divide-y divide-line/70 border-y border-line">
-                      {page.agreement.clauses.map((clause) => (
-                        <li key={clause.title} className="py-3.5">
-                          <h3 className="text-[13px] font-medium text-ink">
-                            {clause.title}
-                          </h3>
-                          <p className="mt-1 text-[13px] leading-6 text-ink-3">
-                            {clause.body}
-                          </p>
-                        </li>
-                      ))}
-                    </ol>
+                <ol className="divide-y divide-line/70 border-y border-line">
+                  {page.agreement.clauses.map((clause) => (
+                    <li key={clause.title} className="py-3.5">
+                      <h3 className="text-[13px] font-medium text-ink">{clause.title}</h3>
+                      <p className="mt-1 text-[13px] leading-6 text-ink-3">{clause.body}</p>
+                    </li>
+                  ))}
+                </ol>
 
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <label className="flex cursor-pointer items-start gap-2 text-[13px] text-ink">
-                        <input
-                          type="checkbox"
-                          checked={accepted}
-                          onChange={(event) => setAccepted(event.target.checked)}
-                          className="mt-0.5 h-4 w-4 accent-brand"
-                        />
-                        <span>{page.agreement.checkbox}</span>
-                      </label>
-                      <span className="flex items-center gap-4">
-                        <Link
-                          to="/agreement"
-                          className="text-[13px] text-brand underline-offset-4 hover:underline"
-                        >
-                          {copy.footer.terms}
-                        </Link>
-                        <Link
-                          to="/privacy"
-                          className="text-[13px] text-brand underline-offset-4 hover:underline"
-                        >
-                          {copy.footer.privacy}
-                        </Link>
-                      </span>
-                    </div>
-
-                    {errorText ? (
-                      <p className="text-[13px] text-danger" role="alert">
-                        {errorText}
-                      </p>
-                    ) : null}
-
-                    <div className="flex justify-end border-t border-line pt-4">
-                      <Button
-                        disabled={!accepted}
-                        loading={mutation.isPending}
-                        onClick={() => submit({ agreement_version: 'v1' })}
-                      >
-                        {mutation.isPending
-                          ? page.agreement.submitting
-                          : page.agreement.submit}
-                      </Button>
-                    </div>
-                  </div>
-                ) : null}
-
-                {current === 1 ? (
-                  <form
-                    className="space-y-5"
-                    onSubmit={realNameForm.handleSubmit((values) =>
-                      submit({
-                        real_name: values.real_name,
-                        id_card_masked: values.id_card_masked,
-                      }),
-                    )}
-                  >
-                    <p className="text-[13px] leading-6 text-ink-3">{page.realName.lead}</p>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <Field
-                        label={page.realName.nameLabel}
-                        htmlFor="real-name"
-                        hint={page.realName.nameHint}
-                        error={realNameForm.formState.errors.real_name?.message}
-                      >
-                        <Input
-                          id="real-name"
-                          autoComplete="name"
-                          placeholder={page.realName.namePlaceholder}
-                          invalid={Boolean(realNameForm.formState.errors.real_name)}
-                          {...realNameForm.register('real_name')}
-                        />
-                      </Field>
-                      <Field
-                        label={page.realName.idLabel}
-                        htmlFor="id-card"
-                        hint={page.realName.idHint}
-                        error={realNameForm.formState.errors.id_card_masked?.message}
-                      >
-                        <Input
-                          id="id-card"
-                          autoComplete="off"
-                          spellCheck={false}
-                          placeholder={page.realName.idPlaceholder}
-                          invalid={Boolean(realNameForm.formState.errors.id_card_masked)}
-                          {...realNameForm.register('id_card_masked')}
-                        />
-                      </Field>
-                    </div>
-
-                    {errorText ? (
-                      <p className="text-[13px] text-danger" role="alert">
-                        {errorText}
-                      </p>
-                    ) : null}
-
-                    <div className="flex justify-end border-t border-line pt-4">
-                      <Button type="submit" loading={mutation.isPending}>
-                        {mutation.isPending
-                          ? page.realName.submitting
-                          : page.realName.submit}
-                      </Button>
-                    </div>
-                  </form>
-                ) : null}
-
-                {current === 2 ? (
-                  <form
-                    className="space-y-5"
-                    onSubmit={alipayForm.handleSubmit((values) =>
-                      submit({ alipay_account: values.alipay_account }),
-                    )}
-                  >
-                    <p className="text-[13px] leading-6 text-ink-3">{page.alipay.lead}</p>
-                    <Field
-                      label={page.alipay.accountLabel}
-                      htmlFor="alipay-account"
-                      hint={page.alipay.hint}
-                      error={alipayForm.formState.errors.alipay_account?.message}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <label className="flex cursor-pointer items-start gap-2 text-[13px] text-ink">
+                    <input
+                      type="checkbox"
+                      checked={accepted}
+                      onChange={(event) => setAccepted(event.target.checked)}
+                      className="mt-0.5 h-4 w-4 accent-brand"
+                    />
+                    <span>{page.agreement.checkbox}</span>
+                  </label>
+                  <span className="flex items-center gap-4">
+                    <Link
+                      to="/agreement"
+                      className="text-[13px] text-brand underline-offset-4 hover:underline"
                     >
-                      <Input
-                        id="alipay-account"
-                        autoComplete="off"
-                        placeholder={page.alipay.accountPlaceholder}
-                        invalid={Boolean(alipayForm.formState.errors.alipay_account)}
-                        {...alipayForm.register('alipay_account')}
-                      />
-                    </Field>
+                      {copy.footer.terms}
+                    </Link>
+                    <Link
+                      to="/privacy"
+                      className="text-[13px] text-brand underline-offset-4 hover:underline"
+                    >
+                      {copy.footer.privacy}
+                    </Link>
+                  </span>
+                </div>
 
-                    {errorText ? (
-                      <p className="text-[13px] text-danger" role="alert">
-                        {errorText}
-                      </p>
-                    ) : null}
-
-                    <div className="flex justify-end border-t border-line pt-4">
-                      <Button type="submit" loading={mutation.isPending}>
-                        {mutation.isPending
-                          ? page.alipay.submitting
-                          : page.alipay.submit}
-                      </Button>
-                    </div>
-                  </form>
+                {errorText ? (
+                  <p className="text-[13px] text-danger" role="alert">
+                    {errorText}
+                  </p>
                 ) : null}
+
+                <div className="flex justify-end border-t border-line pt-4">
+                  <Button
+                    disabled={!accepted}
+                    loading={mutation.isPending}
+                    onClick={() => submit({ agreement_version: 'v1' })}
+                  >
+                    {mutation.isPending ? page.agreement.submitting : page.agreement.submit}
+                  </Button>
+                </div>
               </div>
             </section>
           )}

@@ -3,6 +3,7 @@ package marketplace
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -44,6 +45,10 @@ var (
 	// ErrPayoutDuplicate is returned when an idempotency key is reused with
 	// different parameters.
 	ErrPayoutDuplicate = errors.New("marketplace: duplicate idempotency key")
+	// ErrPayoutAccountMissing is returned when the seller has not bound a
+	// payout account yet. Sharing is open to everyone, so this is checked at
+	// withdrawal time instead of onboarding time.
+	ErrPayoutAccountMissing = errors.New("marketplace: payout account is not bound")
 )
 
 // activePayoutStatuses are the statuses that reserve withdrawable balance.
@@ -123,6 +128,12 @@ func RequestPayout(db *gorm.DB, sellerID, amountMicro int64, idempotencyKey stri
 				return ErrPayoutNotFound
 			}
 			return err
+		}
+		// Sharing is open to every account; the payout account is what money
+		// can actually be sent to, so it is required here rather than at
+		// onboarding (§3.1 open sharing).
+		if strings.TrimSpace(seller.PayoutAccount) == "" {
+			return ErrPayoutAccountMissing
 		}
 
 		// Weekly frequency: no non-rejected payout may already exist in the

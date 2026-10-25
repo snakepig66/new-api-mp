@@ -25,6 +25,7 @@ func newPayoutSeller(t *testing.T, db *gorm.DB, sellerID, balanceMicro int64) {
 		Status:           "active",
 		RealNameStatus:   "verified",
 		AgreementVersion: "v1",
+		PayoutAccount:    "fixture-encrypted-account",
 		CreditScore:      100,
 	}).Error)
 	require.NoError(t, db.Create(&LedgerEntry{

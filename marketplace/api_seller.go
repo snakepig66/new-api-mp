@@ -53,7 +53,7 @@ func registerSellerRoutes(g *gin.RouterGroup) {
 //
 // It covers:
 //
-//	POST /seller/onboarding       M9 协议 → 实名 → 支付宝
+//	POST /seller/onboarding       协议（必填）→ 实名 / 支付宝（提现前）
 //	GET  /me                      current user + seller progress
 //	POST /seller/listings/probe   dry-run key check (no DB write)
 //	GET  /seller/listings/:id     detail + recent probes + pause reason
@@ -187,7 +187,8 @@ func postSellerListing(c *gin.Context) {
 	if db == nil {
 		return
 	}
-	// M9: only an active (协议 + 实名 + 收款账户) seller may open listings.
+	// 分享对每个账号开放：签完协议（active）即可开挂单，实名与收款账户
+	// 不再是挂单前置条件。
 	if err := RequireActiveSeller(db, sellerID); err != nil {
 		status, msg := sellerGateStatus(err)
 		common.ApiErrorStatus(c, status, errors.New(msg))
@@ -477,8 +478,8 @@ func postSellerPayout(c *gin.Context) {
 	if db == nil {
 		return
 	}
-	// M9: payouts require an active seller (the mp_sellers row is written by
-	// the onboarding flow, not by this handler).
+	// Payouts require an active seller; the payout account itself is checked
+	// inside RequestPayout so a seller who has not bound one gets a clear 400.
 	if err := RequireActiveSeller(db, sellerID); err != nil {
 		status, msg := sellerGateStatus(err)
 		common.ApiErrorStatus(c, status, errors.New(msg))
@@ -499,6 +500,8 @@ func postSellerPayout(c *gin.Context) {
 	payout, err := RequestPayout(db, sellerID, req.AmountMicro, req.IdempotencyKey, time.Now())
 	if err != nil {
 		switch {
+		case errors.Is(err, ErrPayoutAccountMissing):
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("payout account is not bound"))
 		case errors.Is(err, ErrPayoutBelowMinimum):
 			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("payout amount is below the minimum"))
 		case errors.Is(err, ErrPayoutTooFrequent):

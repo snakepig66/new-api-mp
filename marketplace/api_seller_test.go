@@ -371,23 +371,24 @@ func TestSellerOnboardingFlow(t *testing.T) {
 	}, userID)
 	require.Equal(t, http.StatusBadRequest, w.Code)
 
-	// 2. Correct agreement → record created as pending, next step real_name.
+	// 2. Correct agreement → active immediately (open sharing); real-name and
+	// payout onboarding stay as optional nudges for withdrawal.
 	w = f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
 		"agreement_version": CurrentSellerAgreementVersion,
 	}, userID)
 	require.Equal(t, http.StatusOK, w.Code)
 	seller := onboardingSellerView(t, w)
 	assert.Equal(t, true, seller["exists"])
-	assert.Equal(t, SellerStatusPending, seller["status"])
+	assert.Equal(t, SellerStatusActive, seller["status"])
 	assert.Equal(t, "real_name", seller["progress"].(map[string]any)["next_step"])
 
-	// 3. Real name alone advances the wizard but does not activate.
+	// 3. Real name alone advances the optional rail without touching activation.
 	w = f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
 		"real_name": "张三",
 	}, userID)
 	require.Equal(t, http.StatusOK, w.Code)
 	seller = onboardingSellerView(t, w)
-	assert.Equal(t, SellerStatusPending, seller["status"])
+	assert.Equal(t, SellerStatusActive, seller["status"])
 	assert.Equal(t, "payout_account", seller["progress"].(map[string]any)["next_step"])
 
 	// 4. Invalid real name / plaintext id / bad alipay → 400 and no state change.
@@ -479,6 +480,42 @@ func TestSellerOnboardingInactiveWriteRejected(t *testing.T) {
 		"amount_micro": 50_000_000, "idempotency_key": "stranger-payout",
 	}, int(f.stranger))
 	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// TestPayoutRequiresBoundAccount covers the other half of open sharing: a
+// seller activated by the agreement alone may list, but the first withdrawal
+// asks for a payout account instead of silently accepting an unusable request.
+func TestPayoutRequiresBoundAccount(t *testing.T) {
+	f := newSellerAPIFixture(t)
+	userID := int(f.buyerID)
+
+	w := f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
+		"agreement_version": CurrentSellerAgreementVersion,
+	}, userID)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, SellerStatusActive, onboardingSellerView(t, w)["status"])
+
+	w = f.do(t, http.MethodPost, "/api/marketplace/seller/payouts", map[string]any{
+		"amount_micro": 50_000_000, "idempotency_key": "no-account-payout",
+	}, userID)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "payout account is not bound")
+
+	// Binding the account lets the request reach the balance check, which is
+	// the next gate for this account (it has no seller income).
+	w = f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
+		"alipay_account": "payout-gate@example.com",
+	}, userID)
+	require.Equal(t, http.StatusOK, w.Code)
+	seller := onboardingSellerView(t, w)
+	assert.Equal(t, SellerStatusActive, seller["status"])
+	assert.Equal(t, "real_name", seller["progress"].(map[string]any)["next_step"])
+
+	w = f.do(t, http.MethodPost, "/api/marketplace/seller/payouts", map[string]any{
+		"amount_micro": 50_000_000, "idempotency_key": "no-account-payout-2",
+	}, userID)
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Contains(t, w.Body.String(), "insufficient available balance")
 }
 
 // ---------------------------------------------------------------------------

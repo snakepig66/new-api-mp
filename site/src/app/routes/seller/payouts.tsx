@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 
 import { copy } from '@/copy'
@@ -18,10 +18,12 @@ import {
   TableHeaderCell,
   TableRow,
   Tag,
+  buttonClasses,
   useToast,
 } from '@/ui'
 
 import {
+  meQuery,
   requestPayout,
   sellerBalanceQuery,
   sellerPayoutsQuery,
@@ -162,6 +164,8 @@ function SellerPayoutsPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const balance = useQuery(sellerBalanceQuery())
   const payouts = useQuery(sellerPayoutsQuery(pageNumber, PAGE_SIZE))
+  const me = useQuery(meQuery())
+  const needsPayoutAccount = me.data ? !me.data.seller.progress.payout_account_bound : false
 
   if (balance.isPending) return <PageSkeleton />
 
@@ -193,7 +197,7 @@ function SellerPayoutsPage() {
         lead={page.lead}
         actions={
           <Button
-            disabled={!canRequest}
+            disabled={!canRequest || needsPayoutAccount}
             onClick={() => {
               setDialogOpen(true)
             }}
@@ -202,6 +206,17 @@ function SellerPayoutsPage() {
           </Button>
         }
       />
+
+      {needsPayoutAccount ? (
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-bg px-5 py-4">
+          <p className="text-[13px] leading-6 text-ink-2">
+            {copy.pages.sellerOnboarding.payoutNotice}
+          </p>
+          <Link to="/seller/onboarding" className={buttonClasses('secondary', 'sm')}>
+            {copy.pages.sellerOnboarding.bindAccount}
+          </Link>
+        </div>
+      ) : null}
 
       <section className="mt-6 grid gap-6 rounded-md border border-line bg-bg p-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <div>

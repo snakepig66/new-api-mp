@@ -4,11 +4,11 @@ package marketplace
 //
 // The seller identity is an extension of a user account:
 //
-//	(no record) → pending (协议已签) → active (实名 + 支付宝收款账户已绑定)
+//	(no record) → pending (协议已签) → active (协议生效，人人可分享)
 //
-// banned / closed are reserved terminal states. Only an active seller may open
-// listings or request a payout (M9); every other write answers the console's
-// uniform 403 envelope.
+// 分享对每个账号开放：签完协议即 active，可直接开挂单。实名与支付宝收款
+// 账户不再是「能不能分享」的前置条件，而是「能不能提现」的前置条件——
+// 提现时由 RequestPayout 再校验。banned / closed 为保留终态。
 //
 // Privacy contract (§2.3/§3.1): the real name and the ID-card number are only
 // format-validated — the plaintext is never stored, logged or returned. The
@@ -250,16 +250,15 @@ func decryptPayoutAccount(stored string) (string, error) {
 // withdrawable balances, then pause/ban every listing) is intentionally not
 // implemented in this phase. The closed status is reserved for it.
 
-// nextSellerStatus promotes a pending seller to active once the agreement, the
-// real-name check and the payout account are all in place. Active is never
-// downgraded implicitly and reserved terminal states are left untouched.
+// nextSellerStatus promotes to active as soon as the agreement is signed, so
+// every account can share without real-name or payout onboarding. Those two
+// steps stay optional here and become gates only at withdrawal time. Active is
+// never downgraded implicitly and reserved terminal states are left untouched.
 func nextSellerStatus(s Seller) string {
 	if s.Status == SellerStatusBanned || s.Status == SellerStatusClosed {
 		return s.Status
 	}
-	if strings.TrimSpace(s.AgreementVersion) != "" &&
-		s.RealNameStatus == SellerRealNameVerified &&
-		strings.TrimSpace(s.PayoutAccount) != "" {
+	if strings.TrimSpace(s.AgreementVersion) != "" {
 		return SellerStatusActive
 	}
 	if s.Status == SellerStatusActive {
