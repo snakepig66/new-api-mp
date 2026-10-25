@@ -607,7 +607,8 @@ func postSellerListingProbe(c *gin.Context) {
 	if _, ok := sellerUserID(c); !ok {
 		return
 	}
-	if db := sellerDB(c); db == nil {
+	db := sellerDB(c)
+	if db == nil {
 		return
 	}
 	var req sellerProbeRequest
@@ -625,10 +626,25 @@ func postSellerListingProbe(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("vendor is not whitelisted"))
 		return
 	}
+	// The probe verifies the vendor's upstream names: resolve each platform
+	// model through the admin-editable channel map (OFFICIAL-CHANNELS §3).
+	upstreamModels := make([]string, 0, len(req.Models))
+	probeModel := ""
 	for _, m := range req.Models {
 		if !slices.Contains(vendor.Models, m) {
 			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("model is not served by this vendor"))
 			return
+		}
+		upstream, mapped := ChannelModelResolve(db, vendor.ID, m)
+		if !mapped {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("model has no upstream mapping for this vendor"))
+			return
+		}
+		if !slices.Contains(upstreamModels, upstream) {
+			upstreamModels = append(upstreamModels, upstream)
+		}
+		if probeModel == "" {
+			probeModel = upstream
 		}
 	}
 
@@ -640,19 +656,21 @@ func postSellerListingProbe(c *gin.Context) {
 		return
 	}
 	defer limiter.Release()
-	res := VerifyListingKey(ctx, client, vendor, apiKey)
+	res := VerifyListingKeyWithModel(ctx, client, vendor, apiKey, probeModel)
 
-	// Only models the platform actually whitelists for this vendor are
-	// advertised; requested models missing from the key flip ok to false.
-	available := make([]string, 0, len(res.Models))
-	for _, m := range res.Models {
-		if slices.Contains(vendor.Models, m) && !slices.Contains(available, m) {
+	// Return platform model ids, not upstream names: the seller console only
+	// knows the standard catalogue. A requested model missing from the key's
+	// upstream list flips ok to false.
+	available := make([]string, 0, len(req.Models))
+	for _, m := range req.Models {
+		upstream, _ := ChannelModelResolve(db, vendor.ID, m)
+		if slices.Contains(res.Models, upstream) && !slices.Contains(available, m) {
 			available = append(available, m)
 		}
 	}
 	missing := make([]string, 0)
 	for _, m := range req.Models {
-		if !slices.Contains(res.Models, m) {
+		if !slices.Contains(available, m) {
 			missing = append(missing, m)
 		}
 	}

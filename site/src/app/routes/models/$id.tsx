@@ -17,7 +17,8 @@ import { CopyButton } from '@/features/market/copy-button'
 import { PeakBar } from '@/features/market/peak-bar'
 import { QueryError } from '@/features/market/query-error'
 import { currentBaseUrl } from '@/features/market/url'
-import { vendorLabel } from '@/features/market/vendors'
+import { isOfficialVendor, toVendorLookup, vendorLabel } from '@/features/market/vendors'
+import { vendorsQuery } from '@/features/seller/api'
 import { ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -248,6 +249,8 @@ function ModelDetailPage() {
   const { id } = Route.useParams()
   const page = copy.pages.modelDetail
   const detail = useQuery(squareModelQuery(id))
+  const vendors = useQuery(vendorsQuery())
+  const vendorMeta = toVendorLookup(vendors.data ?? [])
   const baseUrl = currentBaseUrl()
 
   if (detail.isPending) {
@@ -317,7 +320,10 @@ function ModelDetailPage() {
           <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-ink">
             {data.model}
           </h1>
-          <Tag>{vendorLabel(data.vendor)}</Tag>
+          <Tag>{vendorLabel(data.vendor, vendorMeta)}</Tag>
+          {isOfficialVendor(data.vendor, vendorMeta) ? (
+            <Tag tone="brand">{copy.pages.models.officialChannel}</Tag>
+          ) : null}
         </div>
         {capabilities.length > 0 ? (
           <div className="mt-3 flex flex-wrap items-center gap-2">

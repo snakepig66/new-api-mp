@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { vendorLabel, vendorOptions } from './vendors'
+import {
+  isOfficialVendor,
+  toVendorLookup,
+  vendorLabel,
+  vendorOptions,
+} from './vendors'
 
 describe('vendor labels', () => {
   it('maps known slugs to Chinese display names', () => {
@@ -12,6 +17,21 @@ describe('vendor labels', () => {
 
   it('falls back to the raw slug for unknown vendors', () => {
     expect(vendorLabel('acme-ai')).toBe('acme-ai')
+  })
+
+  it('prefers catalogue display names when a metadata lookup is given', () => {
+    const lookup = toVendorLookup([
+      { id: 'volcengine', display_name: '火山方舟', tier: 'official' },
+    ])
+    expect(vendorLabel('volcengine', lookup)).toBe('火山方舟')
+    expect(vendorLabel('acme-ai', lookup)).toBe('acme-ai')
+    expect(isOfficialVendor('volcengine', lookup)).toBe(true)
+    expect(isOfficialVendor('acme-ai', lookup)).toBe(false)
+  })
+
+  it('accepts a plain-object lookup too', () => {
+    const lookup = { deepseek: { display_name: '深度求索', tier: 'official' } }
+    expect(vendorLabel('deepseek', lookup)).toBe('深度求索')
   })
 
   it('dedupes and sorts options for the pill row', () => {

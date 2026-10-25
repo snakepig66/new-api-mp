@@ -18,6 +18,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -59,6 +60,11 @@ func registerAdminRootRoutes(g *gin.RouterGroup) {
 	g.POST("/admin/payouts/:id/mark-paid", adminMarkPayoutPaid)
 	g.POST("/admin/reverse", adminReverse)
 	g.GET("/admin/deanon", adminDeanon)
+	// 渠道模型映射表: 平台标准模型 ID → 上游模型名. Editing this table controls
+	// which托管模型 can be listed, so it shares the same root-only gate.
+	g.GET("/admin/channel-models", adminListChannelModels)
+	g.PUT("/admin/channel-models", adminPutChannelModel)
+	g.DELETE("/admin/channel-models", adminDeleteChannelModel)
 }
 
 // adminRequireRoot is the L5 defense-in-depth gate for 提现审批 / 冲正 /
@@ -214,8 +220,8 @@ func adminPostPrice(c *gin.Context) {
 	common.ApiSuccess(c, row)
 }
 
-// adminListPrices serves GET /admin/prices?model= — the price-book rows,
-// newest version first. Without model it lists every row.
+// adminListPrices serves GET /admin/prices?model=&vendor=&tier= — the
+// price-book rows, newest version first. Without filters it lists every row.
 func adminListPrices(c *gin.Context) {
 	db := adminDB(c)
 	if db == nil {
@@ -224,6 +230,12 @@ func adminListPrices(c *gin.Context) {
 	q := db.Model(&PriceBook{})
 	if model := c.Query("model"); model != "" {
 		q = q.Where("model = ?", model)
+	}
+	if vendor := c.Query("vendor"); vendor != "" {
+		q = q.Where("vendor = ?", vendor)
+	}
+	if tier := c.Query("tier"); tier != "" {
+		q = q.Where("tier = ?", tier)
 	}
 	var rows []PriceBook
 	if err := q.Order("model ASC").Order("vendor ASC").Order("tier ASC").Order("version DESC").Find(&rows).Error; err != nil {
@@ -772,4 +784,97 @@ func adminDeanon(c *gin.Context) {
 		}
 	}
 	common.ApiErrorStatus(c, http.StatusNotFound, errors.New("no buyer matches this code for the seller"))
+}
+
+// ---------------------------------------------------------------------------
+// 渠道模型映射表: 后台维护 平台标准模型 ID → 上游模型名. 只有映射表里的模型
+// 才允许上架; 同一 vendor 下的 upstream 唯一 (见 channelmap.go 的说明).
+// ---------------------------------------------------------------------------
+
+// adminChannelModelRequest is the PUT /admin/channel-models body.
+type adminChannelModelRequest struct {
+	Vendor        string `json:"vendor"`
+	Model         string `json:"model"`
+	UpstreamModel string `json:"upstream_model"`
+}
+
+// adminListChannelModels serves GET /admin/channel-models, ordered by
+// (vendor, model) so the console renders a stable table.
+func adminListChannelModels(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	rows := make([]ChannelModelMap, 0)
+	if err := db.Order("vendor ASC").Order("model ASC").Find(&rows).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query channel model map"))
+		return
+	}
+	common.ApiSuccess(c, gin.H{"items": rows})
+}
+
+// adminPutChannelModel serves PUT /admin/channel-models — create or update one
+// mapping and return the stored row. A duplicate upstream under the same vendor
+// is a 409.
+func adminPutChannelModel(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	var req adminChannelModelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	if err := UpsertChannelModel(db, req.Vendor, req.Model, req.UpstreamModel); err != nil {
+		switch {
+		case errors.Is(err, ErrChannelModelEmpty):
+			common.ApiErrorStatus(c, http.StatusBadRequest, ErrChannelModelEmpty)
+		case errors.Is(err, ErrChannelModelUpstreamTaken):
+			common.ApiErrorStatus(c, http.StatusConflict, ErrChannelModelUpstreamTaken)
+		default:
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to save channel model mapping"))
+		}
+		return
+	}
+	var row ChannelModelMap
+	if err := db.Where("vendor = ? AND model = ?",
+		strings.TrimSpace(req.Vendor), strings.TrimSpace(req.Model)).Take(&row).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to load channel model mapping"))
+		return
+	}
+	common.ApiSuccess(c, row)
+}
+
+// adminDeleteChannelModel serves DELETE /admin/channel-models?vendor=&model=.
+// Deleting an absent mapping still succeeds (idempotent).
+func adminDeleteChannelModel(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	vendor := strings.TrimSpace(c.Query("vendor"))
+	model := strings.TrimSpace(c.Query("model"))
+	if vendor == "" || model == "" {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("vendor and model are required"))
+		return
+	}
+	if err := DeleteChannelModel(db, vendor, model); err != nil {
+		if errors.Is(err, ErrChannelModelEmpty) {
+			common.ApiErrorStatus(c, http.StatusBadRequest, ErrChannelModelEmpty)
+			return
+		}
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to delete channel model mapping"))
+		return
+	}
+	common.ApiSuccess(c, gin.H{"vendor": vendor, "model": model})
 }

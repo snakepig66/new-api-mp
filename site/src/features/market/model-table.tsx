@@ -15,13 +15,15 @@ import {
 } from '@/ui'
 
 import type { SquareModel, SquareModelDetail, SquareTierPrices } from './api'
-import { vendorLabel } from './vendors'
+import { isOfficialVendor, vendorLabel, type VendorLookup } from './vendors'
 
 export interface ModelTableProps {
   models: SquareModel[]
   /** Detail enrichment for 官方价 / 最低倍率 (the list endpoint lacks both). */
   details?: Map<string, SquareModelDetail>
   detailsLoading?: boolean
+  /** Vendor catalogue metadata; enables display names and the official tag. */
+  vendorMeta?: VendorLookup
   loading?: boolean
   skeletonRows?: number
   minWidth?: number
@@ -63,6 +65,7 @@ export function ModelTable({
   models,
   details,
   detailsLoading = false,
+  vendorMeta,
   loading = false,
   skeletonRows = 6,
   minWidth = 960,
@@ -132,8 +135,13 @@ export function ModelTable({
                       <span className="block truncate text-[15px] font-medium text-ink transition-colors hover:text-brand-ink">
                         {model.model}
                       </span>
-                      <span className="block truncate text-[13px] text-ink-3">
-                        {vendorLabel(model.vendor)}
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="truncate text-[13px] text-ink-3">
+                          {vendorLabel(model.vendor, vendorMeta)}
+                        </span>
+                        {isOfficialVendor(model.vendor, vendorMeta) ? (
+                          <Tag tone="brand">{copy.pages.models.officialChannel}</Tag>
+                        ) : null}
                       </span>
                     </Link>
                   </TableCell>

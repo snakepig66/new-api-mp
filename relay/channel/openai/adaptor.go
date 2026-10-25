@@ -180,12 +180,29 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		url = strings.Replace(url, "{model}", info.UpstreamModelName, -1)
 		return url, nil
 	default:
+		// MP-HOOK: a marketplace pass-through channel answers Claude-format
+		// requests at the vendor's native Messages endpoint. The body is
+		// forwarded verbatim (claude_handler honors PassThroughBodyEnabled), so
+		// the vendor sees its own Anthropic protocol instead of a conversion.
+		if info.RelayFormat == types.RelayFormatClaude &&
+			info.ChannelSetting.MPAnthropicMessagesURL != "" &&
+			info.RelayMode != relayconstant.RelayModeResponses &&
+			info.RelayMode != relayconstant.RelayModeResponsesCompact {
+			return info.ChannelSetting.MPAnthropicMessagesURL, nil
+		}
 		if (info.RelayFormat == types.RelayFormatClaude || info.RelayFormat == types.RelayFormatGemini) &&
 			info.RelayMode != relayconstant.RelayModeResponses &&
 			info.RelayMode != relayconstant.RelayModeResponsesCompact {
 			return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
 		}
-		return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, info.RequestURLPath, info.ChannelType), nil
+		// MP-HOOK: marketplace vendor bases such as Ark /api/v3 or Bailian
+		// /compatible-mode/v1 already carry the version segment; dropping the
+		// buyer's /v1 keeps the upstream path at /chat/completions.
+		requestPath := info.RequestURLPath
+		if info.ChannelSetting.MPStripV1Prefix {
+			requestPath = strings.TrimPrefix(requestPath, "/v1")
+		}
+		return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, requestPath, info.ChannelType), nil
 	}
 }
 
@@ -194,6 +211,11 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 	if info.ChannelType == constant.ChannelTypeAzure {
 		header.Set("api-key", info.ApiKey)
 		return nil
+	}
+	// MP-HOOK: vendors' native Anthropic endpoints expect x-api-key; the
+	// marketplace channel still carries the same seller key.
+	if info.RelayFormat == types.RelayFormatClaude && info.ChannelSetting.MPAnthropicMessagesURL != "" {
+		header.Set("x-api-key", info.ApiKey)
 	}
 	if info.ChannelType == constant.ChannelTypeOpenAI && "" != info.Organization {
 		header.Set("OpenAI-Organization", info.Organization)

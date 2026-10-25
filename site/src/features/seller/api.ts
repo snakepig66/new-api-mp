@@ -11,6 +11,7 @@
 import { queryOptions } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
+import { queryClient } from '@/lib/query-client'
 
 import type { SquareModelDetail } from '@/features/market/api'
 
@@ -212,18 +213,34 @@ export interface PayoutInput {
 }
 
 // ---------------------------------------------------------------------------
-// 厂商白名单
+// 官方渠道白名单
 // ---------------------------------------------------------------------------
 
-/**
- * Vendor whitelist fallback. The backend currently exposes the whitelist only
- * through MP_EXTRA_VENDORS / marketplace internals; there is no public endpoint
- * yet. When one arrives (GET /marketplace/vendors), replace this constant.
- */
-export const SELLER_VENDORS = [{ id: 'deepseek', name: 'DeepSeek' }] as const
+export interface SellerVendor {
+  id: string
+  display_name: string
+  tier: string
+  protocols: { openai: string; anthropic: string }
+  models: string[]
+  passthrough_body: boolean
+}
 
-export function vendorName(id: string): string {
-  return SELLER_VENDORS.find((vendor) => vendor.id === id)?.name ?? id
+export const vendorsQuery = () =>
+  queryOptions({
+    queryKey: ['marketplace', 'vendors'],
+    queryFn: () => api.get<SellerVendor[]>('/marketplace/vendors'),
+    staleTime: 60_000,
+  })
+
+/**
+ * Display name for a vendor slug. Prefers the vendors list already in the
+ * query cache; callers that already fetched it can pass it directly. Falls
+ * back to the slug when the vendor is unknown or the list has not loaded.
+ */
+export function vendorName(id: string, vendors?: readonly SellerVendor[]): string {
+  const list =
+    vendors ?? queryClient.getQueryData<SellerVendor[]>(vendorsQuery().queryKey)
+  return list?.find((vendor) => vendor.id === id)?.display_name ?? id
 }
 
 // ---------------------------------------------------------------------------

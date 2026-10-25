@@ -60,8 +60,20 @@ type VerifyResult struct {
 // caching. The last step spends real vendor credit — it is skipped whenever
 // the result can no longer turn OK (invalid key or zero models).
 func VerifyListingKey(ctx context.Context, client *http.Client, vendor Vendor, apiKey string) VerifyResult {
+	probeModel := ""
+	if len(vendor.Models) > 0 {
+		probeModel = vendor.Models[0]
+	}
+	return VerifyListingKeyWithModel(ctx, client, vendor, apiKey, probeModel)
+}
+
+// VerifyListingKeyWithModel is VerifyListingKey with an explicit upstream
+// probe model. Callers resolve it from the channel_model_map, so the paid
+// minimal chat call names a model the vendor really exposes (the platform
+// model id and the upstream name differ on hosted channels).
+func VerifyListingKeyWithModel(ctx context.Context, client *http.Client, vendor Vendor, apiKey, probeModel string) VerifyResult {
 	var res VerifyResult
-	base := strings.TrimSuffix(vendor.BaseURL, "/")
+	base := VendorOpenAIBase(vendor)
 
 	// 1. Key validity + model list + latency.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/models", nil)
@@ -110,9 +122,9 @@ func VerifyListingKey(ctx context.Context, client *http.Client, vendor Vendor, a
 
 	// 3. Prompt-cache probe. NOTE: this call costs real vendor credit (one
 	// chat completion with max_tokens=1); it runs only while the result can
-	// still flip OK to true.
-	if len(res.Models) > 0 && len(vendor.Models) > 0 {
-		res.PromptCacheSupport = probePromptCacheSupport(ctx, client, base, vendor.Models[0], apiKey)
+	// still flip OK to true. probeModel is the vendor's upstream name.
+	if len(res.Models) > 0 && probeModel != "" {
+		res.PromptCacheSupport = probePromptCacheSupport(ctx, client, base, probeModel, apiKey)
 	}
 
 	// 4. Verdict.

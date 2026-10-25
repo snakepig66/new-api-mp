@@ -28,6 +28,7 @@ const shell = copy.consoleShell
 const tabs = [
   { to: '/admin/prices', label: nav.prices },
   { to: '/admin/per-call-prices', label: nav.perCallPrices },
+  { to: '/admin/channel-models', label: nav.channelModels },
   { to: '/admin/holidays', label: nav.holidays },
   { to: '/admin/listings', label: nav.listings },
   { to: '/admin/payouts', label: nav.payouts },

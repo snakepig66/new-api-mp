@@ -6,7 +6,8 @@ import { copy } from '@/copy'
 import { squareModelsQuery, useSquareModelDetails } from '@/features/market/api'
 import { ModelTable } from '@/features/market/model-table'
 import { QueryError } from '@/features/market/query-error'
-import { vendorOptions } from '@/features/market/vendors'
+import { toVendorLookup, vendorOptions } from '@/features/market/vendors'
+import { vendorsQuery } from '@/features/seller/api'
 import { cn } from '@/lib/cn'
 import { formatMultiplier } from '@/lib/multiplier'
 import { Button, Empty, Input, PageHeader, buttonClasses } from '@/ui'
@@ -44,11 +45,16 @@ function Pill({
 export function ModelsPage() {
   const modelsCopy = copy.pages.models
   const models = useQuery(squareModelsQuery())
+  const vendors = useQuery(vendorsQuery())
   const [vendor, setVendor] = useState<string | null>(null)
   const [search, setSearch] = useState('')
 
   const rows = models.data ?? []
-  const pills = useMemo(() => vendorOptions(rows.map((row) => row.vendor)), [rows])
+  const vendorMeta = useMemo(() => toVendorLookup(vendors.data ?? []), [vendors.data])
+  const pills = useMemo(
+    () => vendorOptions(rows.map((row) => row.vendor), vendorMeta),
+    [rows, vendorMeta],
+  )
   const query = search.trim().toLowerCase()
 
   const filtered = useMemo(() => {
@@ -179,7 +185,12 @@ export function ModelsPage() {
                 {modelsCopy.filteredCount(filtered.length, rows.length)}
               </p>
             ) : null}
-            <ModelTable models={filtered} details={details} detailsLoading={detailsLoading} />
+            <ModelTable
+              models={filtered}
+              details={details}
+              detailsLoading={detailsLoading}
+              vendorMeta={vendorMeta}
+            />
           </>
         )}
       </div>

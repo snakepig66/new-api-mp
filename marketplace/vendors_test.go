@@ -1,6 +1,7 @@
 package marketplace
 
 import (
+	"net/url"
 	"os"
 	"testing"
 
@@ -58,8 +59,9 @@ func TestVendorWhitelistMiss(t *testing.T) {
 
 func TestVendorIDs(t *testing.T) {
 	ids := VendorIDs()
-	require.Len(t, ids, 1, "the production whitelist holds official channels only (H8: tipig is not built in)")
-	assert.Equal(t, "deepseek", ids[0])
+	require.Equal(t, []string{
+		"deepseek", "volcengine-ark", "aliyun-bailian", "moonshot", "zhipu", "minimax",
+	}, ids, "the production whitelist holds the OFFICIAL-CHANNELS §1 channels only (H8: tipig is not built in)")
 }
 
 func TestVendorModelsAreCopied(t *testing.T) {
@@ -84,21 +86,23 @@ func TestVendorExtraFromEnv(t *testing.T) {
 	assert.True(t, v.PassthroughBody)
 
 	ids := VendorIDs()
-	assert.Equal(t, []string{"deepseek", "tipig"}, ids)
-	assert.Contains(t, VendorBaseURLHosts(), "api.tipig.cloud",
+	assert.Equal(t, []string{
+		"deepseek", "volcengine-ark", "aliyun-bailian", "moonshot", "zhipu", "minimax", "tipig",
+	}, ids)
+	assert.Contains(t, VendorHosts(), "api.tipig.cloud",
 		"injected base URLs seed the egress whitelist")
 
 	// Idempotent: reloading the same environment yields the same whitelist.
 	require.NoError(t, LoadExtraVendorsFromEnv())
 	require.NoError(t, LoadExtraVendorsFromEnv())
-	assert.Equal(t, []string{"deepseek", "tipig"}, VendorIDs())
+	assert.Len(t, VendorIDs(), 7)
 
 	// Clearing the variable removes the injected vendor again.
 	require.NoError(t, os.Unsetenv(ExtraVendorsEnv))
 	require.NoError(t, LoadExtraVendorsFromEnv())
 	_, ok = VendorByID("tipig")
 	assert.False(t, ok, "an unset MP_EXTRA_VENDORS clears the injected vendors")
-	assert.Equal(t, []string{"deepseek"}, VendorIDs())
+	assert.Len(t, VendorIDs(), 6)
 }
 
 func TestVendorExtraInvalidEnv(t *testing.T) {
@@ -109,6 +113,7 @@ func TestVendorExtraInvalidEnv(t *testing.T) {
 		"relative base":    `[{"id":"tipig","base_url":"/v1"}]`,
 		"duplicate id":     `[{"id":"tipig","base_url":"https://a.example"},{"id":"tipig","base_url":"https://b.example"}]`,
 		"collides builtin": `[{"id":"deepseek","base_url":"https://evil.example"}]`,
+		"bad adaptor":      `[{"id":"tipig","base_url":"https://a.example","adaptor":"claude"}]`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			orig, had := os.LookupEnv(ExtraVendorsEnv)
@@ -124,4 +129,69 @@ func TestVendorExtraInvalidEnv(t *testing.T) {
 			assert.Error(t, LoadExtraVendorsFromEnv(), "invalid MP_EXTRA_VENDORS must be rejected")
 		})
 	}
+}
+
+// OFFICIAL-CHANNELS §1: every built-in channel carries both protocol bases and
+// the right tier, and the workspace-domain pattern is anchored.
+func TestOfficialVendorProtocols(t *testing.T) {
+	for _, id := range []string{"deepseek", "volcengine-ark", "aliyun-bailian", "moonshot", "zhipu", "minimax"} {
+		v, ok := VendorByID(id)
+		require.Truef(t, ok, "%s must be whitelisted", id)
+		assert.Equal(t, VendorTierOfficial, v.Tier, id)
+		assert.Equal(t, "https", mustScheme(t, VendorOpenAIBase(v)), id)
+		assert.Contains(t, VendorAnthropicMessagesURL(v), "/v1/messages",
+			"%s must expose a native Messages endpoint", id)
+		assert.NotEmpty(t, v.DisplayName)
+	}
+
+	hosts := VendorHosts()
+	for _, host := range []string{
+		"api.deepseek.com",
+		"ark.cn-beijing.volces.com",
+		"dashscope.aliyuncs.com",
+		"api.moonshot.cn",
+		"open.bigmodel.cn",
+		"api.minimaxi.com",
+	} {
+		assert.Contains(t, hosts, host)
+	}
+
+	// The Bailian workspace pattern is anchored by SetEgressPatterns: only the
+	// documented subdomain shape passes.
+	require.NoError(t, SetEgressPatterns(VendorHostPatterns()))
+	t.Cleanup(func() { _ = SetEgressPatterns(nil) })
+	assert.NoError(t, CheckEgressHost("ws-1.cn-beijing.maas.aliyuncs.com"))
+	assert.Error(t, CheckEgressHost("evil.cn-beijing.maas.aliyuncs.com.example.com"))
+	assert.Error(t, CheckEgressHost("cn-beijing.maas.aliyuncs.com"))
+}
+
+func TestVendorDenyRules(t *testing.T) {
+	bailian, ok := VendorByID("aliyun-bailian")
+	require.True(t, ok)
+	assert.True(t, VendorKeyDenied(bailian, "sk-sp-123"), "Token Plan key must be refused")
+	assert.True(t, VendorKeyDenied(bailian, "SK-WS-123"), "prefix match is case-insensitive")
+	assert.False(t, VendorKeyDenied(bailian, "sk-123"))
+
+	ark, ok := VendorByID("volcengine-ark")
+	require.True(t, ok)
+	assert.True(t, VendorPathDenied(ark, "/api/coding/v3"))
+	assert.True(t, VendorPathDenied(ark, "/api/plan"))
+	assert.False(t, VendorPathDenied(ark, "/api/coder"), "segment boundary only")
+
+	// Built-in protocol bases never hit their own deny list.
+	for _, id := range VendorIDs() {
+		v, _ := VendorByID(id)
+		for _, u := range []string{v.Protocols.OpenAI, v.Protocols.Anthropic} {
+			parsed, err := url.Parse(u)
+			require.NoError(t, err)
+			assert.Falsef(t, VendorPathDenied(v, parsed.Path), "%s protocol base %s hits deny list", id, u)
+		}
+	}
+}
+
+func mustScheme(t *testing.T, raw string) string {
+	t.Helper()
+	u, err := url.Parse(raw)
+	require.NoError(t, err)
+	return u.Scheme
 }

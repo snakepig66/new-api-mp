@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -152,9 +153,14 @@ func decodeAdminBody(t *testing.T, w *httptest.ResponseRecorder) map[string]any 
 }
 
 // addAdminListing opens one listing for the fixture seller and returns it.
+// The key carries a counter because Windows clocks can return the same
+// UnixNano value for two calls microseconds apart, which would trip the
+// one-key-per-platform rule inside a single test.
+var adminTestKeySeq atomic.Int64
+
 func (f *adminAPIFixture) addAdminListing(t *testing.T, status string) Listing {
 	t.Helper()
-	key := "sk-admin-test-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	key := "sk-admin-test-" + strconv.FormatInt(adminTestKeySeq.Add(1), 10) + "-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	listing, err := CreateListing(f.db, CreateListingInput{
 		SellerID:        f.sellerID,
 		VendorID:        SeedVendorDeepSeek,
@@ -188,8 +194,8 @@ func TestAdminPriceBookAddVersionAndList(t *testing.T) {
 	assert.EqualValues(t, 2, row.Version)
 	assert.EqualValues(t, 2_000_000, row.InputMicroPerMTok)
 
-	// Listing with ?model= returns both versions, newest first.
-	w = f.do(t, http.MethodGet, "/api/marketplace/admin/prices?model=deepseek-flash", nil, f.adminID)
+	// Listing with ?model=&vendor=&tier= returns both versions, newest first.
+	w = f.do(t, http.MethodGet, "/api/marketplace/admin/prices?model=deepseek-flash&vendor=deepseek&tier=offpeak", nil, f.adminID)
 	require.Equal(t, http.StatusOK, w.Code)
 	body = decodeAdminBody(t, w)
 	items, ok := body["data"].([]any)
@@ -597,4 +603,123 @@ func TestAdminSelfPayoutForbidden(t *testing.T) {
 	var row Payout
 	require.NoError(t, f.db.Where("id = ?", payout.ID).Take(&row).Error)
 	assert.Equal(t, PayoutPending, row.Status)
+}
+
+// ---------------------------------------------------------------------------
+// 渠道模型映射表 admin API
+// ---------------------------------------------------------------------------
+
+// TestAdminChannelModelsAPI covers GET/PUT/DELETE of the channel-model mapping
+// table, its (vendor, model) ordering, conflict handling and the root-only
+// gate.
+func TestAdminChannelModelsAPI(t *testing.T) {
+	f := newAdminAPIFixture(t)
+	// The regular marketplace migration does not own this table (it is wired by
+	// the channel-map module), so create and seed it explicitly.
+	require.NoError(t, MigrateChannelModelMap(f.db))
+	require.NoError(t, SeedChannelModelMap(f.db))
+
+	const path = "/api/marketplace/admin/channel-models"
+
+	// GET lists the seed, ordered by (vendor, model).
+	w := f.do(t, http.MethodGet, path, nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	data, ok := decodeAdminBody(t, w)["data"].(map[string]any)
+	require.True(t, ok)
+	items, ok := data["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, len(channelModelSeeds))
+	prevVendor, prevModel := "", ""
+	for i, item := range items {
+		row, ok := item.(map[string]any)
+		require.True(t, ok)
+		vendor, _ := row["vendor"].(string)
+		model, _ := row["model"].(string)
+		require.NotEmpty(t, vendor)
+		require.NotEmpty(t, model)
+		assert.Contains(t, row, "upstream_model")
+		assert.Contains(t, row, "id")
+		if i > 0 {
+			assert.True(t, vendor > prevVendor || (vendor == prevVendor && model >= prevModel),
+				"items must be ordered by (vendor, model): %s/%s after %s/%s",
+				vendor, model, prevVendor, prevModel)
+		}
+		prevVendor, prevModel = vendor, model
+	}
+
+	// PUT creates a new mapping and returns the stored row.
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"vendor": "test-vendor", "model": "std-a", "upstream_model": "up-a",
+	}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	row, ok := decodeAdminBody(t, w)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "test-vendor", row["vendor"])
+	assert.Equal(t, "std-a", row["model"])
+	assert.Equal(t, "up-a", row["upstream_model"])
+	assert.NotZero(t, row["id"])
+
+	upstream, ok := ChannelModelResolve(f.db, "test-vendor", "std-a")
+	require.True(t, ok)
+	assert.Equal(t, "up-a", upstream)
+
+	// PUT for the same (vendor, model) updates upstream_model in place.
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"vendor": "test-vendor", "model": "std-a", "upstream_model": "up-b",
+	}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	row, ok = decodeAdminBody(t, w)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "up-b", row["upstream_model"])
+	var cnt int64
+	require.NoError(t, f.db.Model(&ChannelModelMap{}).
+		Where("vendor = ? AND model = ?", "test-vendor", "std-a").Count(&cnt).Error)
+	assert.EqualValues(t, 1, cnt, "update must not insert a duplicate row")
+
+	// A second model in the same vendor may not reuse the upstream → 409.
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"vendor": "test-vendor", "model": "std-b", "upstream_model": "up-b",
+	}, f.adminID)
+	assert.Equal(t, http.StatusConflict, w.Code)
+	_, ok = ChannelModelResolve(f.db, "test-vendor", "std-b")
+	assert.False(t, ok)
+
+	// Blank fields → 400.
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"vendor": "  ", "model": "std-b", "upstream_model": "up-x",
+	}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// Non-root administrators are rejected (defense in depth behind RootAuth),
+	// and the rejected DELETE leaves the row untouched.
+	nonRoot := common.RoleAdminUser
+	w = f.doRole(t, http.MethodGet, path, nil, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	w = f.doRole(t, http.MethodPut, path, map[string]any{
+		"vendor": "test-vendor", "model": "std-a", "upstream_model": "up-x",
+	}, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	w = f.doRole(t, http.MethodDelete, path+"?vendor=test-vendor&model=std-a", nil, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	upstream, ok = ChannelModelResolve(f.db, "test-vendor", "std-a")
+	require.True(t, ok)
+	assert.Equal(t, "up-b", upstream, "forbidden requests must not modify the table")
+
+	// No session → 401 from the auth middleware stand-in.
+	w = f.do(t, http.MethodGet, path, nil, 0)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+
+	// DELETE removes the mapping; a repeated DELETE is still 200.
+	w = f.do(t, http.MethodDelete, path+"?vendor=test-vendor&model=std-a", nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	_, ok = ChannelModelResolve(f.db, "test-vendor", "std-a")
+	assert.False(t, ok)
+	w = f.do(t, http.MethodDelete, path+"?vendor=test-vendor&model=std-a", nil, f.adminID)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Missing query parameters → 400.
+	w = f.do(t, http.MethodDelete, path, nil, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	w = f.do(t, http.MethodDelete, path+"?vendor=test-vendor", nil, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

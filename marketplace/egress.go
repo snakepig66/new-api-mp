@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -20,11 +21,36 @@ var ErrEgressDenied = errors.New("marketplace: egress denied")
 
 // egressDomains is the egress whitelist configured by SetEgressDomains. Each
 // call replaces the slice wholesale (it is never mutated in place); readers
-// hold egressMu for the read.
+// hold egressMu for the read. egressPatterns holds vendor-declared strict
+// subdomain patterns (Bailian workspace domains); a host passes when it
+// matches an exact/suffix entry OR one anchored pattern.
 var (
-	egressMu      sync.RWMutex
-	egressDomains []string
+	egressMu       sync.RWMutex
+	egressDomains  []string
+	egressPatterns []*regexp.Regexp
 )
+
+// SetEgressPatterns replaces the strict host-pattern whitelist. Patterns are
+// compiled with both anchors added, so a pattern can never match a substring;
+// an invalid pattern is an error so Init fails instead of running open.
+func SetEgressPatterns(patterns []string) error {
+	compiled := make([]*regexp.Regexp, 0, len(patterns))
+	for _, p := range patterns {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		re, err := regexp.Compile("^(?:" + p + ")$")
+		if err != nil {
+			return fmt.Errorf("marketplace: invalid egress host pattern %q: %w", p, err)
+		}
+		compiled = append(compiled, re)
+	}
+	egressMu.Lock()
+	egressPatterns = compiled
+	egressMu.Unlock()
+	return nil
+}
 
 // Non-public ranges that netip.Addr's classification helpers do not cover on
 // their own (§3.11, review L2). Checked with netip.Prefix.Contains, which is
@@ -85,9 +111,15 @@ func CheckEgressHost(host string) error {
 	}
 	egressMu.RLock()
 	domains := egressDomains
+	patterns := egressPatterns
 	egressMu.RUnlock()
 	for _, d := range domains {
 		if host == d || strings.HasSuffix(host, "."+d) {
+			return nil
+		}
+	}
+	for _, re := range patterns {
+		if re.MatchString(host) {
 			return nil
 		}
 	}

@@ -19,6 +19,7 @@ import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as SellerRouteImport } from './routes/seller'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
+import { Route as AdminChannelModelsRouteImport } from './routes/admin/channel-models'
 import { Route as AdminHolidaysRouteImport } from './routes/admin/holidays'
 import { Route as AdminListingsRouteImport } from './routes/admin/listings'
 import { Route as AdminPayoutsRouteImport } from './routes/admin/payouts'
@@ -88,6 +89,11 @@ const SellerRoute = SellerRouteImport.update({
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminChannelModelsRoute = AdminChannelModelsRouteImport.update({
+  id: '/channel-models',
+  path: '/channel-models',
   getParentRoute: () => AdminRoute,
 } as any)
 const AdminHolidaysRoute = AdminHolidaysRouteImport.update({
@@ -201,6 +207,7 @@ export interface FileRoutesByFullPath {
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
   '/seller': typeof SellerRouteWithChildren
+  '/admin/channel-models': typeof AdminChannelModelsRoute
   '/admin/holidays': typeof AdminHolidaysRoute
   '/admin/listings': typeof AdminListingsRoute
   '/admin/payouts': typeof AdminPayoutsRoute
@@ -230,6 +237,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
+  '/admin/channel-models': typeof AdminChannelModelsRoute
   '/admin/holidays': typeof AdminHolidaysRoute
   '/admin/listings': typeof AdminListingsRoute
   '/admin/payouts': typeof AdminPayoutsRoute
@@ -263,6 +271,7 @@ export interface FileRoutesById {
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
   '/seller': typeof SellerRouteWithChildren
+  '/admin/channel-models': typeof AdminChannelModelsRoute
   '/admin/holidays': typeof AdminHolidaysRoute
   '/admin/listings': typeof AdminListingsRoute
   '/admin/payouts': typeof AdminPayoutsRoute
@@ -297,6 +306,7 @@ export interface FileRouteTypes {
     | '/privacy'
     | '/register'
     | '/seller'
+    | '/admin/channel-models'
     | '/admin/holidays'
     | '/admin/listings'
     | '/admin/payouts'
@@ -326,6 +336,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/privacy'
     | '/register'
+    | '/admin/channel-models'
     | '/admin/holidays'
     | '/admin/listings'
     | '/admin/payouts'
@@ -358,6 +369,7 @@ export interface FileRouteTypes {
     | '/privacy'
     | '/register'
     | '/seller'
+    | '/admin/channel-models'
     | '/admin/holidays'
     | '/admin/listings'
     | '/admin/payouts'
@@ -466,6 +478,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/admin/'
       preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/channel-models': {
+      id: '/admin/channel-models'
+      path: '/channel-models'
+      fullPath: '/admin/channel-models'
+      preLoaderRoute: typeof AdminChannelModelsRouteImport
       parentRoute: typeof AdminRoute
     }
     '/admin/holidays': {
@@ -612,6 +631,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AdminRouteChildren {
+  AdminChannelModelsRoute: typeof AdminChannelModelsRoute
   AdminHolidaysRoute: typeof AdminHolidaysRoute
   AdminListingsRoute: typeof AdminListingsRoute
   AdminPayoutsRoute: typeof AdminPayoutsRoute
@@ -622,6 +642,7 @@ interface AdminRouteChildren {
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
+  AdminChannelModelsRoute: AdminChannelModelsRoute,
   AdminHolidaysRoute: AdminHolidaysRoute,
   AdminListingsRoute: AdminListingsRoute,
   AdminPayoutsRoute: AdminPayoutsRoute,

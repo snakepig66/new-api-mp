@@ -90,6 +90,26 @@ func SeedPrices(db *gorm.DB) error {
 				EffectiveAt: tokenEffective},
 		)
 	}
+	// OFFICIAL-CHANNELS §3: cloud platforms that host the same model are
+	// priced at the model's original vendor price, so the square never shows
+	// two different baselines for one model id. Copy the DeepSeek books under
+	// each official cloud channel instead of inventing platform prices.
+	officialBooks := make([]PriceBook, 0, 4)
+	for _, b := range books {
+		if b.Vendor == SeedVendorDeepSeek {
+			officialBooks = append(officialBooks, b)
+		}
+	}
+	for _, vendorID := range []string{"volcengine-ark", "aliyun-bailian"} {
+		if _, ok := VendorByID(vendorID); !ok {
+			continue
+		}
+		for _, b := range officialBooks {
+			copied := b
+			copied.Vendor = vendorID
+			books = append(books, copied)
+		}
+	}
 	for i := range books {
 		b := &books[i]
 		var cnt int64

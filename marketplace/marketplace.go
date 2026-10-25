@@ -45,16 +45,29 @@ func Init(db *gorm.DB) error {
 		return fmt.Errorf("marketplace init: %w", err)
 	}
 	// Egress whitelist (§3.11/§4.5): MP_EGRESS_DOMAINS overrides the built-in
-	// list derived from the whitelisted vendors' fixed base URLs.
+	// host list derived from the whitelisted vendors' protocol URLs; the
+	// vendor-declared subdomain patterns (Bailian workspace domains) always
+	// apply and are anchored by SetEgressPatterns.
 	if domains := os.Getenv("MP_EGRESS_DOMAINS"); domains != "" {
 		SetEgressDomains(strings.Split(domains, ","))
 	} else {
-		SetEgressDomains(VendorBaseURLHosts())
+		SetEgressDomains(VendorHosts())
+	}
+	if err := SetEgressPatterns(VendorHostPatterns()); err != nil {
+		return fmt.Errorf("marketplace init: %w", err)
 	}
 	if err := Migrate(db); err != nil {
 		return fmt.Errorf("marketplace init: %w", err)
 	}
 	if err := SeedPrices(db); err != nil {
+		return fmt.Errorf("marketplace seed: %w", err)
+	}
+	// 官方渠道模型映射（OFFICIAL-CHANNELS §3）：平台标准模型 ID ↔ 各渠道
+	// 上游模型名，后台可编辑；挂单只接受映射表里有且价目覆盖的组合。
+	if err := MigrateChannelModelMap(db); err != nil {
+		return fmt.Errorf("marketplace init: %w", err)
+	}
+	if err := SeedChannelModelMap(db); err != nil {
 		return fmt.Errorf("marketplace seed: %w", err)
 	}
 	// §4.5: the §3.7 retry semantics (最多换 2 家) need at least two upstream

@@ -1,6 +1,24 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
-import { normalizePayout } from './api'
+import { queryClient } from '@/lib/query-client'
+
+import { normalizePayout, vendorName, vendorsQuery, type SellerVendor } from './api'
+
+const deepseek: SellerVendor = {
+  id: 'deepseek',
+  display_name: 'DeepSeek',
+  tier: 'official',
+  protocols: {
+    openai: 'https://api.deepseek.com',
+    anthropic: 'https://api.deepseek.com/anthropic',
+  },
+  models: ['deepseek-flash', 'deepseek-v4-pro'],
+  passthrough_body: true,
+}
+
+afterEach(() => {
+  queryClient.clear()
+})
 
 describe('normalizePayout', () => {
   it('accepts the Go-shaped payout keys (no json tags on the struct)', () => {
@@ -40,5 +58,18 @@ describe('normalizePayout', () => {
     expect(payout.amount_micro).toBe('50000000')
     expect(payout.status).toBe('paid')
     expect(payout.created_at).toBe('1700000000')
+  })
+})
+
+describe('vendorName', () => {
+  it('resolves the display name from an explicit vendors list', () => {
+    expect(vendorName('deepseek', [deepseek])).toBe('DeepSeek')
+    expect(vendorName('unknown', [deepseek])).toBe('unknown')
+  })
+
+  it('reads the vendors query cache before falling back to the slug', () => {
+    queryClient.setQueryData(vendorsQuery().queryKey, [deepseek])
+    expect(vendorName('deepseek')).toBe('DeepSeek')
+    expect(vendorName('acme-ai')).toBe('acme-ai')
   })
 })

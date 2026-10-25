@@ -205,7 +205,14 @@ func patrolOneListing(db *gorm.DB, limiter *VerifyLimiter, l *Listing) error {
 		limiter.Release()
 		return ErrVendorNotWhitelisted
 	}
-	res := VerifyListingKey(ctx, EgressHTTPClient(), vendor, apiKey)
+	probeModel := ""
+	for _, m := range l.Models {
+		if upstream, mapped := ChannelModelResolve(db, l.Vendor, m); mapped {
+			probeModel = upstream
+			break
+		}
+	}
+	res := VerifyListingKeyWithModel(ctx, EgressHTTPClient(), vendor, apiKey, probeModel)
 	limiter.Release()
 
 	detail, err := common.Marshal(map[string]any{

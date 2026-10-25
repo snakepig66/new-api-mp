@@ -218,4 +218,11 @@ func migrateAll(t *testing.T, db *gorm.DB) {
 		require.NoError(t, db.Exec("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT)").Error)
 	}
 	require.NoError(t, Migrate(db))
+	// The channel_model_map is part of the production schema and every
+	// listing now requires a mapping row (OFFICIAL-CHANNELS §3), so fixtures
+	// carry the same seed a real deployment writes at Init. The seeded price
+	// books are what make those mappings listable.
+	require.NoError(t, MigrateChannelModelMap(db))
+	require.NoError(t, SeedChannelModelMap(db))
+	require.NoError(t, SeedPrices(db))
 }

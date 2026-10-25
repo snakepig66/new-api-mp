@@ -22,11 +22,11 @@ import {
 } from '@/ui'
 
 import {
-  SELLER_VENDORS,
   createListing,
   probeListing,
   sellerListingsQuery,
   squareModelForSeller,
+  vendorsQuery,
   type ProbeResult,
 } from '@/features/seller/api'
 import { Field, notify, Skeleton, selectClass } from '@/features/seller/components'
@@ -233,7 +233,7 @@ function ProbeSummary({ probe }: { probe: ProbeResult }) {
   )
 }
 
-function NewListingPage() {
+export function NewListingPage() {
   const toast = useToast()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -259,10 +259,22 @@ function NewListingPage() {
   const values = form.watch()
   const { fields, append, remove } = useFieldArray({ control: form.control, name: 'hours' })
 
+  const vendors = useQuery(vendorsQuery())
+  // The official grid only holds official channels; injected or future
+  // third-party sources arrive through the custom-URL tier, which is not open
+  // yet, so they must never appear as selectable here.
+  const vendorList = (vendors.data ?? []).filter((vendor) => vendor.tier === 'official')
+  const selectedVendor = vendorList.find((vendor) => vendor.id === values.vendor_id)
+  const vendorModels = selectedVendor?.models ?? []
+  const vendorHasModels = Boolean(selectedVendor && vendorModels.length > 0)
+
   const probe = useMutation({
     mutationFn: probeListing,
     onSuccess: (result) => {
-      form.setValue('models', result.models, { shouldValidate: true })
+      // The writable catalog is the channel's priced model list; keep only the
+      // models the probe says this key can actually call.
+      const available = result.models.filter((model) => vendorModels.includes(model))
+      form.setValue('models', available, { shouldValidate: true })
     },
   })
 
@@ -314,6 +326,7 @@ function NewListingPage() {
 
   async function handleNext() {
     if (step === 0) {
+      if (!vendorHasModels) return
       if (!(await form.trigger(['vendor_id']))) return
       setStep(1)
       return
@@ -326,6 +339,7 @@ function NewListingPage() {
       return
     }
     if (step === 2) {
+      if (!vendorHasModels) return
       if (!(await form.trigger(['models']))) return
       if (!probe.data?.ok) return
       setStep(3)
@@ -364,6 +378,12 @@ function NewListingPage() {
     form.setValue('models', next, { shouldValidate: true, shouldDirty: true })
   }
 
+  function selectVendor(id: string) {
+    form.setValue('vendor_id', id, { shouldValidate: true, shouldDirty: true })
+    form.setValue('models', [], { shouldValidate: true })
+    probe.reset()
+  }
+
   const submitError = create.isError ? sellerErrorMessage(create.error) : null
   const probedModels = probe.data?.models ?? []
 
@@ -388,44 +408,128 @@ function NewListingPage() {
 
         <div className="pt-5">
           {step === 0 ? (
-            <div className="space-y-4">
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-[13px] font-medium text-ink">{page.channel.label}</h3>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  <label className="flex cursor-default items-start justify-between gap-3 rounded-md border border-brand bg-brand-soft/60 px-4 py-3.5">
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-2 text-[14px] font-medium text-ink">
+                        {page.channel.official.title}
+                        <Tag tone="brand">{page.channel.official.badge}</Tag>
+                      </span>
+                      <span className="mt-1 block text-[13px] leading-5 text-ink-3">
+                        {page.channel.official.description}
+                      </span>
+                    </span>
+                    <input
+                      type="radio"
+                      name="channel-tier"
+                      checked
+                      readOnly
+                      aria-label={page.channel.official.title}
+                      className="mt-0.5 h-4 w-4 accent-brand"
+                    />
+                  </label>
+                  <div
+                    aria-disabled="true"
+                    className="flex items-start justify-between gap-3 rounded-md border border-line bg-bg-soft px-4 py-3.5 opacity-70"
+                  >
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-2 text-[14px] font-medium text-ink-3">
+                        {page.channel.thirdParty.title}
+                        <Tag>{page.channel.thirdParty.badge}</Tag>
+                      </span>
+                      <span className="mt-1 block text-[13px] leading-5 text-ink-3">
+                        {page.channel.thirdParty.description}
+                      </span>
+                    </span>
+                    <input
+                      type="radio"
+                      name="channel-tier"
+                      disabled
+                      aria-label={page.channel.thirdParty.title}
+                      className="mt-0.5 h-4 w-4 shrink-0 accent-brand"
+                    />
+                  </div>
+                </div>
+              </div>
+
               <Field
                 label={page.vendor.label}
                 hint={page.vendor.hint}
                 error={form.formState.errors.vendor_id?.message}
               >
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {SELLER_VENDORS.map((vendor) => {
-                    const checked = values.vendor_id === vendor.id
-                    return (
-                      <label
-                        key={vendor.id}
-                        className={cn(
-                          'flex cursor-pointer items-center justify-between gap-3 rounded-md border px-4 py-3.5 transition-colors',
-                          checked
-                            ? 'border-brand bg-brand-soft/60'
-                            : 'border-line bg-bg hover:border-brand/40',
-                        )}
+                {vendors.isPending ? (
+                  <div className="grid gap-2 sm:grid-cols-3" aria-busy="true" aria-live="polite">
+                    <span className="sr-only">{page.vendor.loading}</span>
+                    {Array.from({ length: 6 }, (_, index) => (
+                      <Skeleton key={index} className="h-[62px] w-full" />
+                    ))}
+                  </div>
+                ) : vendors.isError ? (
+                  <div className="rounded-md border border-danger/25 bg-danger/10 px-4 py-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[13px] leading-5 text-danger">
+                        {page.vendor.loadFailed}
+                      </p>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => void vendors.refetch()}
                       >
-                        <span>
-                          <span className="block text-[13px] font-medium text-ink">
-                            {vendor.name}
+                        {copy.actions.retry}
+                      </Button>
+                    </div>
+                  </div>
+                ) : vendorList.length === 0 ? (
+                  <p className="text-[13px] leading-5 text-ink-3">{page.vendor.empty}</p>
+                ) : (
+                  <div
+                    role="radiogroup"
+                    aria-label={page.vendor.label}
+                    className="grid gap-2 sm:grid-cols-3"
+                  >
+                    {vendorList.map((vendor) => {
+                      const checked = values.vendor_id === vendor.id
+                      return (
+                        <label
+                          key={vendor.id}
+                          className={cn(
+                            'flex cursor-pointer items-center justify-between gap-3 rounded-md border px-4 py-3.5 transition-colors',
+                            checked
+                              ? 'border-brand bg-brand-soft/60'
+                              : 'border-line bg-bg hover:border-brand/40',
+                          )}
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate text-[13px] font-medium text-ink">
+                              {vendor.display_name}
+                            </span>
+                            <span className="block truncate tabular-nums text-[13px] text-ink-3">
+                              {vendor.id}
+                            </span>
                           </span>
-                          <span className="tabular-nums text-[13px] text-ink-3">
-                            {vendor.id}
-                          </span>
-                        </span>
-                        <input
-                          type="radio"
-                          value={vendor.id}
-                          className="h-4 w-4 accent-brand"
-                          {...form.register('vendor_id')}
-                        />
-                      </label>
-                    )
-                  })}
-                </div>
+                          <input
+                            type="radio"
+                            name="vendor_id"
+                            value={vendor.id}
+                            checked={checked}
+                            onChange={() => selectVendor(vendor.id)}
+                            className="h-4 w-4 shrink-0 accent-brand"
+                          />
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
               </Field>
+
+              {selectedVendor && !vendorHasModels ? (
+                <p className="text-[13px] leading-5 text-warn" role="status">
+                  {page.vendor.modelsEmpty}
+                </p>
+              ) : null}
             </div>
           ) : null}
 
@@ -485,31 +589,40 @@ function NewListingPage() {
                         {page.verify.modelsTitle}
                       </h3>
                       <span className="text-[13px] text-ink-3">
-                        {page.verify.selected(values.models.length, probedModels.length)}
+                        {page.verify.selected(values.models.length, vendorModels.length)}
                       </span>
                     </div>
                     <p className="mt-1 text-[13px] text-ink-3">{page.verify.modelsHint}</p>
 
-                    {probedModels.length === 0 ? (
-                      <p className="mt-3 text-[13px] text-warn">
-                        {page.verify.modelsEmpty}
+                    {vendorModels.length === 0 ? (
+                      <p className="mt-3 text-[13px] text-warn" role="status">
+                        {page.vendor.modelsEmpty}
                       </p>
                     ) : (
                       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                        {probedModels.map((model) => (
-                          <label
-                            key={model}
-                            className="flex cursor-pointer items-center gap-2 rounded-md border border-line px-3 py-2 text-[13px] text-ink hover:border-brand/40"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={values.models.includes(model)}
-                              onChange={(event) => toggleModel(model, event.target.checked)}
-                              className="h-4 w-4 accent-brand"
-                            />
-                            <span className="tabular-nums">{model}</span>
-                          </label>
-                        ))}
+                        {vendorModels.map((model) => {
+                          const callable = probedModels.includes(model)
+                          return (
+                            <label
+                              key={model}
+                              className={cn(
+                                'flex items-center gap-2 rounded-md border border-line px-3 py-2 text-[13px]',
+                                callable
+                                  ? 'cursor-pointer text-ink hover:border-brand/40'
+                                  : 'cursor-not-allowed text-ink-3 opacity-70',
+                              )}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={values.models.includes(model)}
+                                disabled={!callable}
+                                onChange={(event) => toggleModel(model, event.target.checked)}
+                                className="h-4 w-4 accent-brand"
+                              />
+                              <span className="tabular-nums">{model}</span>
+                            </label>
+                          )
+                        })}
                       </div>
                     )}
                     {form.formState.errors.models?.message ? (
@@ -849,7 +962,11 @@ function NewListingPage() {
             {step < 3 ? (
               <Button
                 onClick={() => void handleNext()}
-                disabled={!canLeaveStep(step, snapshot) || probe.isPending}
+                disabled={
+                  !canLeaveStep(step, snapshot) ||
+                  ((step === 0 || step === 2) && !vendorHasModels) ||
+                  probe.isPending
+                }
               >
                 {page.actions.next}
               </Button>

@@ -343,3 +343,29 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
   - 文案更新：lead、步骤标题/提示、状态 Badge（未开通/已开通）、错误提示；步骤条对 2/3 步标注「提现前」。
 - 测试：Go 开通流程断言改为签协议即 active，新增 `TestPayoutRequiresBoundAccount`（未绑账户 400 → 绑定后进入余额校验 409）；marketplace 全量测试绿，前端 96 测试绿。
 - 线上实测（普通新账号 10015，已清理）：GET /me exists=false → 只提交协议 → status=active、progress 显示实名/收款未完成 → 挂单列表 200 → 提现 400 payout account is not bound。
+
+---
+
+## 官方渠道白名单（OFFICIAL-CHANNELS.md，2026-10-25 完成）
+
+### 后端
+- `vendors.go` 扩展为渠道定义：`{id, display_name, tier, protocols{openai,anthropic}, models, passthrough_body, deny_paths, deny_key_prefixes, allow_host_pattern, adaptor, strip_v1_prefix}`。内置 6 家官方渠道：DeepSeek、火山方舟、阿里云百炼、Kimi（moonshot）、智谱 BigModel、MiniMax；tipig 只能经 `MP_EXTRA_VENDORS` 注入（tier=third_party），不进生产白名单。
+- 出网白名单由渠道协议 URL 生成；百炼业务空间域名用锚定正则 `^[a-z0-9-]+\.cn-beijing\.maas\.aliyuncs\.com$`（`SetEgressPatterns`，非法正则直接启动失败）。
+- 拒收规则：百炼 `sk-sp-` / `sk-ws-` 前缀在挂单校验阶段拒绝；火山 `/api/coding`、`/api/plan`、智谱 `/api/coding/paas/v4`、百炼 `/apps/coding` 为 deny path；内置协议 URL 在启动/挂单时校验不得命中 deny path。
+- 新增 `mp_channel_model_map`（vendor + 平台模型 ID → 上游模型名，后台可编辑）：种子含 deepseek/火山/百炼的 DeepSeek 模型映射与 Kimi/智谱/MiniMax 自映射；`MP_EXTRA_VENDORS` 渠道自动补身份映射。挂单只接受「有映射 + 有官方价目」的组合。
+- 云平台托管同款模型按原厂官方价计价：启动时为火山/百炼复制 DeepSeek 价目（价格与 deepseek 完全一致），广场不会出现第二个基准价。
+- 验真探针用渠道的 OpenAI base，并按映射用上游模型名做最小调用；返回模型按映射反解回平台模型 ID。
+- 转发：挂单渠道按 `adaptor` 选择 DeepSeek/OpenAI 类型，BaseURL 为渠道 OpenAI 协议地址；`model_mapping` 把平台模型改写为上游模型名。新增 OpenAI 适配器 MP-HOOK：`mp_strip_v1_prefix`（渠道 base 已含版本段时去掉买家路径的 `/v1`）、`mp_anthropic_messages_url` + `x-api-key`（Claude 格式请求原样转发到厂商原生 Messages 端点）。
+- 新接口 `GET /api/marketplace/vendors`（公开，返回可上架模型 = 静态目录 ∩ 映射 ∩ 价目），管理接口 `GET/PUT/DELETE /api/marketplace/admin/channel-models`；管理价目列表支持 `vendor`/`tier` 过滤。
+- 测试：市场包全量 3/3 稳定通过（含修正一个 Windows 时钟精度导致的偶发重复 key 夹具问题）；`go build ./...` 绿。
+
+### 前端
+- 挂单向导第 1 步分「官方渠道 / 第三方渠道（即将开放）」；官方渠道网格来自 `/marketplace/vendors`，模型列表随渠道变化，无可用模型时禁止下一步并提示联系运营配置。
+- 模型广场列表/详情显示「官方渠道」标签；渠道名由接口元数据提供，未知回退 slug。
+- 新增 `/admin/channel-models` 管理页（新增/更新/删除映射）。
+- 文案全站统一为「官方渠道」；typecheck + 103 项 vitest 全绿。
+
+### 说明 / 待配置
+- Kimi、智谱、MiniMax 的模型目前没有平台价目，`/vendors` 会返回空 models，向导中不可选；补价目（管理价目表）后即可上架。
+- 火山/百炼的上游模型名种子取自规范示意值（如 `deepseek-v3-2-*`、`deepseek-v3.2*`），上线前需用真实 key 探测并用管理页校正。
+- 第二批量（百炼新加坡、混元、千帆）未启用。

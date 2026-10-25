@@ -35,6 +35,15 @@ type ChannelSettings struct {
 	// TLSInsecureSkipVerify accepts upstream certificates that fail
 	// verification, such as self-signed ones, for this channel only.
 	TLSInsecureSkipVerify bool `json:"tls_insecure_skip_verify,omitempty"`
+	// MPStripV1Prefix is set on marketplace-managed channels whose fixed base
+	// URL already carries the vendor's version segment (Ark /api/v3, Bailian
+	// /compatible-mode/v1, ...). The buyer's leading /v1 is dropped so the
+	// upstream path is /chat/completions instead of /v1/chat/completions.
+	MPStripV1Prefix bool `json:"mp_strip_v1_prefix,omitempty"`
+	// MPAnthropicMessagesURL is the vendor-native Messages endpoint. A
+	// marketplace pass-through channel answers Claude-format requests by
+	// forwarding the buyer's raw body to this URL instead of converting it.
+	MPAnthropicMessagesURL string `json:"mp_anthropic_messages_url,omitempty"`
 }
 
 // BindsTaskPlugin reports whether the channel is bound to the task plugin,

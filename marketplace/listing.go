@@ -3,6 +3,7 @@ package marketplace
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -23,6 +24,14 @@ var (
 	ErrMultiplierTooSoon    = errors.New("marketplace: multiplier was changed less than 10 minutes ago")
 	ErrListingNotFound      = errors.New("marketplace: listing not found")
 	ErrVendorNotWhitelisted = errors.New("marketplace: vendor is not whitelisted")
+	// ErrVendorKeyDenied refuses personal-plan credentials (OFFICIAL-CHANNELS §2).
+	ErrVendorKeyDenied = errors.New("marketplace: this key belongs to a personal plan")
+	// ErrVendorModelUnmapped refuses a model the vendor has no upstream
+	// mapping for (OFFICIAL-CHANNELS §3 channel_model_map).
+	ErrVendorModelUnmapped = errors.New("marketplace: model has no upstream mapping for this vendor")
+	// ErrVendorModelUnpriced refuses a model without an official price book
+	// for this vendor (cloud-hosted models are priced at the original price).
+	ErrVendorModelUnpriced = errors.New("marketplace: model has no price book for this vendor")
 )
 
 const (
@@ -66,12 +75,25 @@ func (in CreateListingInput) validate() (Vendor, error) {
 		// for the same upstream credential (M5); the message never echoes it.
 		return Vendor{}, err
 	}
+	// §2 of OFFICIAL-CHANNELS: personal-plan keys are refused before storage,
+	// so a coding/token-plan subscription can never be resold through the
+	// marketplace. The message names the plan, never the key.
+	if VendorKeyDenied(vendor, in.APIKey) {
+		return Vendor{}, fmt.Errorf("%w: %q refuses personal-plan keys", ErrVendorKeyDenied, vendor.ID)
+	}
 	if len(in.Models) == 0 {
 		return Vendor{}, errors.New("marketplace: at least one model is required")
 	}
 	for _, m := range in.Models {
 		if !slices.Contains(vendor.Models, m) {
 			return Vendor{}, fmt.Errorf("marketplace: model %q is not served by vendor %q", m, vendor.ID)
+		}
+	}
+	// Every protocol URL must stay outside the denied personal-plan paths;
+	// this is a whitelist invariant (sellers cannot supply URLs).
+	for _, u := range []string{vendor.Protocols.OpenAI, vendor.Protocols.Anthropic} {
+		if parsed, err := url.Parse(u); err == nil && VendorPathDenied(vendor, parsed.Path) {
+			return Vendor{}, fmt.Errorf("marketplace: vendor %q base url hits a denied path", vendor.ID)
 		}
 	}
 	if in.MultiplierMilli < 1 || in.MultiplierMilli > 1000 {
@@ -118,6 +140,28 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 	}
 	models := dedupModels(in.Models)
 
+	// OFFICIAL-CHANNELS §3: a cloud-hosted model may only be listed when the
+	// vendor has a channel_model_map row for it (the platform standard id maps
+	// to the vendor's upstream name) and the official price book covers that
+	// (model, vendor). Both are admin-editable; nothing here guesses a name.
+	channelMapping := make(map[string]string, len(models))
+	for _, m := range models {
+		upstream, ok := ChannelModelResolve(db, vendor.ID, m)
+		if !ok {
+			return Listing{}, fmt.Errorf("%w: %q has no upstream mapping for vendor %q", ErrVendorModelUnmapped, m, vendor.ID)
+		}
+		var priced int64
+		if err := db.Model(&PriceBook{}).
+			Where("model = ? AND vendor = ? AND effective_at <= ?", m, vendor.ID, time.Now()).
+			Count(&priced).Error; err != nil {
+			return Listing{}, err
+		}
+		if priced == 0 {
+			return Listing{}, fmt.Errorf("%w: %q has no official price for vendor %q", ErrVendorModelUnpriced, m, vendor.ID)
+		}
+		channelMapping[m] = upstream
+	}
+
 	var listing Listing
 	err = db.Transaction(func(tx *gorm.DB) error {
 		var existing int64
@@ -131,11 +175,16 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 			return fmt.Errorf("%w (fp %s)", ErrDuplicateKey, fingerprint[:8])
 		}
 
-		// The v1 whitelist holds only DeepSeek, so the upstream channel type
-		// is fixed; a second vendor adds its own type mapping here.
-		baseURL := vendor.BaseURL
+		// One listing = one upstream channel pinned to the vendor's fixed base
+		// URL. The adaptor and path handling come from the vendor definition
+		// (OFFICIAL-CHANNELS §4.1); sellers never supply an address.
+		baseURL := VendorOpenAIBase(vendor)
+		channelType := constant.ChannelTypeOpenAI
+		if vendor.Adaptor == VendorAdaptorDeepSeek {
+			channelType = constant.ChannelTypeDeepSeek
+		}
 		channel := model.Channel{
-			Type:        constant.ChannelTypeDeepSeek,
+			Type:        channelType,
 			Key:         "mp-managed:" + fingerprint[:8],
 			Name:        fmt.Sprintf("mp:%s:%d", vendor.ID, in.SellerID),
 			Status:      common.ChannelStatusManuallyDisabled,
@@ -144,11 +193,33 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 			Group:       "default",
 			CreatedTime: time.Now().Unix(),
 		}
+		// The buyer speaks the platform model id; the channel rewrites it to
+		// the vendor's upstream name (standard new-api model_mapping).
+		if mappingJSON, merr := common.Marshal(channelMapping); merr == nil {
+			mappingText := string(mappingJSON)
+			channel.ModelMapping = &mappingText
+		} else {
+			return fmt.Errorf("marketplace: encode model mapping: %w", merr)
+		}
 		// Multi-protocol vendors relay the buyer's raw body (native OpenAI +
 		// Anthropic) instead of the adaptor's conversion (§3.10).
+		setting := map[string]any{}
 		if vendor.PassthroughBody {
-			setting := `{"pass_through_body_enabled":true}`
-			channel.Setting = &setting
+			setting["pass_through_body_enabled"] = true
+		}
+		if vendor.StripV1Prefix {
+			setting["mp_strip_v1_prefix"] = true
+		}
+		if messagesURL := VendorAnthropicMessagesURL(vendor); messagesURL != "" {
+			setting["mp_anthropic_messages_url"] = messagesURL
+		}
+		if len(setting) > 0 {
+			settingJSON, serr := common.Marshal(setting)
+			if serr != nil {
+				return fmt.Errorf("marketplace: encode channel setting: %w", serr)
+			}
+			settingText := string(settingJSON)
+			channel.Setting = &settingText
 		}
 		if err := tx.Create(&channel).Error; err != nil {
 			return fmt.Errorf("marketplace: create upstream channel: %w", err)
