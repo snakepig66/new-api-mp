@@ -38,10 +38,13 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
+let statsBody: unknown = { success: false, message: 'unavailable' }
+let statsStatus = 503
+
 const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
   const url = String(input)
   if (url.startsWith('/api/marketplace/stats/public')) {
-    return jsonResponse({ success: false, message: 'unavailable' }, 503)
+    return jsonResponse(statsBody, statsStatus)
   }
   if (url.startsWith('/api/marketplace/square/models/')) {
     const [item] = squareItems
@@ -63,6 +66,8 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
 
 beforeEach(() => {
   fetchMock.mockClear()
+  statsBody = { success: false, message: 'unavailable' }
+  statsStatus = 503
   vi.stubGlobal('fetch', fetchMock)
 })
 
@@ -112,6 +117,34 @@ describe('home page', () => {
     expect(screen.queryByText('在售模型')).toBeNull()
     expect(screen.queryByText('实时数据接入后显示')).toBeNull()
     expect(screen.queryByText('示例')).toBeNull()
+  })
+
+  it('hides the stats strip when stats succeed but nothing is on sale', async () => {
+    statsBody = { success: true, data: { models_on_sale: 0, min_multiplier_milli: 0, today_requests: 5 } }
+    statsStatus = 200
+    renderHome()
+
+    expect(await screen.findByText('deepseek-chat')).toBeTruthy()
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/marketplace/stats/public'),
+        expect.anything(),
+      )
+    })
+
+    // §0：无在售挂单时最低倍率只能显示「—」，整条隐藏而不是出占位数字。
+    expect(screen.queryByText('在售模型')).toBeNull()
+    expect(screen.queryByText('今日调用量')).toBeNull()
+  })
+
+  it('shows the stats strip with real numbers once models are on sale', async () => {
+    statsBody = { success: true, data: { models_on_sale: 3, min_multiplier_milli: 120, today_requests: 5 } }
+    statsStatus = 200
+    renderHome()
+
+    expect(await screen.findByText('在售模型')).toBeTruthy()
+    expect(screen.getByText('0.12x')).toBeTruthy()
+    expect(screen.getByText('今日调用量')).toBeTruthy()
   })
 
   it('renders the hero CTA and the copyable curl example', async () => {

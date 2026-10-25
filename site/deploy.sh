@@ -85,7 +85,7 @@ step "5/7 确保 $ENV_FILE 含 MP_FRONTEND=site"
 "
 
 step "6/7 服务器上重新编译（CGO_ENABLED=0 $GO_BIN build，重新 embed 新 dist）"
-"${SSH[@]}" "cd '$TARGET_DIR' && CGO_ENABLED=0 '$GO_BIN' build -o new-api ."
+"${SSH[@]}" "cd '$TARGET_DIR' && CGO_ENABLED=0 '$GO_BIN' build -o new-api-linux ."
 
 step "7/7 重启 systemd 服务（sudo systemctl restart $SERVICE）"
 "${SSH[@]}" "sudo systemctl restart '$SERVICE' && sleep 1 && sudo systemctl --no-pager --lines=5 status '$SERVICE' || true"

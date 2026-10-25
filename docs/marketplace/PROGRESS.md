@@ -287,3 +287,24 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 - §9-2 无货模型：默认隐藏（广场不出行；详情页直达可访问并提示「暂时没人挂单」）。要改灰显改 features/market 的过滤一处。
 - §9-3 旧后台：保留 /ops-legacy（仅超管）。要移除改 router 一处 + 关 MP_FRONTEND 切换。
 - §10（MARKETPLACE-DEV）：T+7/流式截断不收费/改倍率不回验真/买家自加模型已按默认实现；402、只接 DeepSeek 官方、RPM 400、按模型覆盖倍率与 model@分享者 未实现待确认。
+
+---
+
+## 视觉改版（VISUAL-SPEC.md，DeepSeek 风格，2026-10-25 完成并验收）
+
+### 实现
+- §1 令牌整体替换 styles.css @theme：唯一强调蓝 #4d6bfe、近黑 CTA #0f1115、Inter、8/12/20/pill 圆角、无阴影；旧青绿（#0e9f8e/#087266/mint/teal）全站清零（源码与线上 grep 均零命中，favicon/logo.svg/theme-color 同步换蓝）。
+- §0 先修：deploy.sh 顺序改为构建→上传→哈希校验→MP_FRONTEND=site→**重编译二进制**→重启（embed 读取新 dist）；index.html no-cache、assets immutable；路由 errorComponent 识别 chunk 加载失败并自动 reload 一次、中文错误页；占位文案（运营主体/ICP/示例徽标/版式示例/筛选将开放/实时数据接入后）全部下线。
+- §4 逐页改法 V3（公开区）/V4（控制台）两波完成；类名清理 260+168 处。
+
+### 部署关键修复
+- deploy.sh 编译目标 `new-api` 而 systemd 运行 `new-api-linux`：重启后仍是旧二进制。改为 `go build -o new-api-linux`，部署后 systemctl 确认主进程为新编译产物。
+
+### §5 验收（全部通过）
+- 全站 grep：旧色/rounded-[4px]/text-[11/text-[12.5px] 零命中；等宽字体仅代码块。
+- 浏览器实测（IAB，线上）：首页/模型广场/文档/登录 1440px 逐页截图核验（蓝强调、黑胶囊 CTA、hero 蓝白渐变、/docs 三栏+brand-soft 激活胶囊+深色代码块、登录分屏左深蓝渐变）；390px 移动端四页 scrollWidth==clientWidth 无横向溢出、无白屏、无占位文案（首页汉堡菜单/标题缩放正常）。
+- /models/deepseek-flash 部署后整页导航（硬刷新）渲染正常，无 chunk 报错。
+- 首页数据条按 §0 收紧：models_on_sale=0 时整条隐藏（不出「0 / —」占位观感），补 2 条单测，vitest 96/96 绿。
+
+### 待定项更新
+- §9-1 产品名仍为默认「词元市场」；logo 已按 VISUAL-SPEC 蓝点风格（待正式定名后出正式版）。

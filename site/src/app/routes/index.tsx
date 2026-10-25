@@ -37,7 +37,9 @@ export function HomePage() {
 
   const sampleModel = top[0]?.model ?? 'deepseek-flash'
   const baseUrl = currentBaseUrl()
-  const statsReady = stats.data !== undefined
+  // §0：没有在售挂单时（最低倍率只能显示占位）整条数据条隐藏，不出
+  // 「0 / —」这种占位观感的数字。
+  const statsReady = stats.data !== undefined && stats.data.models_on_sale > 0
 
   return (
     <div>
