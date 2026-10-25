@@ -2,7 +2,9 @@
 
 ## 服务器
 
+- 生产地址：`https://llmjar.com`（`www.llmjar.com` 同样可用）
 - 公网 IP：`47.76.231.181`
+- DNS：Cloudflare，`A @` 与 `A www` 均指向 `47.76.231.181`（DNS only）
 - 系统：Ubuntu 22.04.5 LTS x86_64
 - 应用目录：`/opt/llmjar`
 - 源码目录：`/opt/llmjar/src`
@@ -10,7 +12,8 @@
 - SQLite：`/opt/llmjar/one-api.db`
 - 环境文件：`/etc/llmjar.env`（含 `MP_KEY_SECRET`，权限 `600 root:root`）
 - systemd：`llmjar.service`，运行用户 `llmjar`
-- nginx：`/etc/nginx/sites-available/llmjar`，80 → `127.0.0.1:3000`
+- nginx：`/etc/nginx/sites-available/llmjar`；80 全量 301 到 `https://llmjar.com`，443 → `127.0.0.1:3000`
+- 证书：Let's Encrypt，`/etc/letsencrypt/live/llmjar.com/`，certbot 自动续期
 - 日志：`journalctl -u llmjar -f`
 
 ## 常用命令
@@ -71,10 +74,15 @@ PY
 ## 重要约束
 
 - `MP_KEY_SECRET` 必须另行备份；丢失后所有卖家上游 Key 无法解密。
-- 当前站点是 HTTP，`ServerAddress=http://47.76.231.181`。有域名后：
-  1. 在 nginx 上配置 443 和证书（或换 Caddy 自动证书）。
-  2. 把 `ServerAddress` 改为 `https://域名`。
-  3. 在 `/etc/llmjar.env` 增加 `SESSION_COOKIE_SECURE=true` 并重启。
+- 当前站点是 HTTPS：`ServerAddress=https://llmjar.com`。`/etc/llmjar.env` 中：
+  - `SESSION_COOKIE_SECURE=true`
+  - `SESSION_COOKIE_TRUSTED_URL=https://llmjar.com,https://www.llmjar.com`
+- 证书续期检查：
+  ```bash
+  ssh -i ~/.ssh/llmjar_prod_ed25519 root@47.76.231.181 \
+    'certbot renew --dry-run && systemctl list-timers | grep certbot'
+  ```
+- Cloudflare 如果以后打开橙云代理，SSL/TLS 模式需要设为 **Full (strict)**；当前保持 DNS only。
 - 支付配置（`PayAddress` / `EpayId` / `EpayKey`）和 SMTP 目前为空，充值、忘记密码入口保持关闭；配置后 epay 回调地址为 `<ServerAddress>/api/user/epay/notify`。
 - 旧 instabox 机器保留作为回滚，确认新站稳定后再停用。
 - 生产机安全组只需放行 22、80、443；不要对公网开放 3000，nginx 已负责反代。
