@@ -318,3 +318,49 @@ func TestQuoteNoPriceBook(t *testing.T) {
 		MultiplierMilli: 1000, At: at, InputTokens: 1})
 	assert.ErrorIs(t, err, ErrNoPrice)
 }
+
+// A hosting channel (volcengine-ark) has no price book of its own: the
+// official book lives under the standard model's original vendor (deepseek).
+// pricingContext resolves both that owner and the channel coefficient, and
+// Quote must price through them (§3.5).
+func TestQuoteChannelOriginAndCoefficient(t *testing.T) {
+	db, cal := newQuoteFixture(t)
+	at := shTime(2026, time.October, 21, 20, 0, 0) // deepseek off-peak
+
+	// Remove the hosted-channel copies so only the original vendor's book
+	// remains, and set the channel coefficient to 0.5.
+	require.NoError(t, db.Where("vendor = ? AND model = ?", "volcengine-ark", "deepseek-flash").
+		Delete(&PriceBook{}).Error)
+	require.NoError(t, db.Model(&ChannelModel{}).
+		Where("channel_slug = ? AND model = ?", "volcengine-ark", "deepseek-flash").
+		Update("coefficient_milli", 500).Error)
+
+	origin, coefficient := pricingContext(db, "volcengine-ark", "deepseek-flash")
+	require.Equal(t, SeedVendorDeepSeek, origin)
+	require.Equal(t, int64(500), coefficient)
+
+	// Without the origin resolution the hosted channel has no price book.
+	_, err := Quote(db, cal, QuoteInput{Model: "deepseek-flash", Vendor: "volcengine-ark",
+		MultiplierMilli: 1000, At: at, InputTokens: 1_000_000})
+	assert.ErrorIs(t, err, ErrNoPrice, "the hosted channel slug alone has no price book")
+
+	// Off-peak input is 1 元/M = 1_000_000 微元/M officially; coefficient 0.5
+	// halves it.
+	res, err := Quote(db, cal, QuoteInput{
+		Model: "deepseek-flash", Vendor: "volcengine-ark",
+		OriginVendor: origin, CoefficientMilli: coefficient,
+		MultiplierMilli: 1000, At: at, InputTokens: 1_000_000,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, Micro(500_000), res.TokenDebit)
+	assert.Equal(t, int64(500), res.CoefficientMilli, "QuoteResult reports the effective coefficient")
+	assert.Equal(t, Micro(1_000_000), res.OfficialCost, "official cost ignores the channel coefficient")
+
+	// A zero coefficient falls back to 1000 and is reported as such.
+	res, err = Quote(db, cal, QuoteInput{
+		Model: "deepseek-flash", Vendor: SeedVendorDeepSeek,
+		MultiplierMilli: 1000, At: at, InputTokens: 1_000_000,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1000), res.CoefficientMilli)
+}

@@ -94,21 +94,27 @@ func TestFingerprintCompareTolerance(t *testing.T) {
 		candidateTokens int64
 		candidateNoUse  bool
 		wantRatio       float64
+		wantChecked     bool
 		wantWithin      bool
 		wantFail        string
 	}{
-		{name: "identical tokenizer", officialTokens: 10, candidateTokens: 10,
-			wantRatio: 1, wantWithin: true},
-		{name: "three percent drift", officialTokens: 100, candidateTokens: 103,
-			wantRatio: 1.03, wantWithin: false},
-		{name: "candidate reports zero", officialTokens: 10, candidateTokens: 0,
+		{name: "identical tokenizer", officialTokens: 100, candidateTokens: 100,
+			wantRatio: 1, wantChecked: true, wantWithin: true},
+		{name: "five percent drift is within", officialTokens: 100, candidateTokens: 105,
+			wantRatio: 1.05, wantChecked: true, wantWithin: true},
+		{name: "absolute tolerance covers tiny prompts", officialTokens: 21, candidateTokens: 24,
+			wantRatio: 1.1429, wantChecked: true, wantWithin: true},
+		{name: "drift beyond both tolerances", officialTokens: 100, candidateTokens: 110,
+			wantRatio: 1.1, wantChecked: true, wantWithin: false},
+		{name: "candidate reports zero", officialTokens: 100, candidateTokens: 0,
 			wantFail: "missing prompt token usage"},
-		{name: "candidate omits usage", officialTokens: 10, candidateNoUse: true,
+		{name: "candidate omits usage", officialTokens: 100, candidateNoUse: true,
 			wantFail: "missing prompt token usage"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			resetFingerprintCacheForTest()
 			officialMock := &fingerprintChatMock{promptTokens: tc.officialTokens}
 			candidateMock := &fingerprintChatMock{promptTokens: tc.candidateTokens, noUsage: tc.candidateNoUse}
 			officialSrv := httptest.NewServer(officialMock)
@@ -124,6 +130,8 @@ func TestFingerprintCompareTolerance(t *testing.T) {
 
 			if tc.wantFail != "" {
 				assert.Equal(t, tc.wantFail, res.FailReason)
+				assert.False(t, res.Checked, "a failed comparison is not checked")
+				assert.False(t, res.Comparable)
 				assert.False(t, res.WithinTolerance)
 				return
 			}
@@ -131,6 +139,8 @@ func TestFingerprintCompareTolerance(t *testing.T) {
 			assert.Equal(t, tc.officialTokens, res.PromptTokensOfficial)
 			assert.Equal(t, tc.candidateTokens, res.PromptTokensCandidate)
 			assert.InDelta(t, tc.wantRatio, res.Ratio, 0.00005)
+			assert.Equal(t, tc.wantChecked, res.Checked)
+			assert.Equal(t, tc.wantChecked, res.Comparable)
 			assert.Equal(t, tc.wantWithin, res.WithinTolerance)
 
 			// Both requests carry the minimal paid settings and the bearer key,
@@ -147,11 +157,31 @@ func TestFingerprintCompareTolerance(t *testing.T) {
 			assert.NotContains(t, res.FailReason, "sk-candidate-secret")
 		})
 	}
+
+	t.Run("official prompt below the minimum is unchecked, not a mismatch", func(t *testing.T) {
+		resetFingerprintCacheForTest()
+		officialMock := &fingerprintChatMock{promptTokens: 10}
+		candidateMock := &fingerprintChatMock{promptTokens: 40}
+		officialSrv := httptest.NewServer(officialMock)
+		candidateSrv := httptest.NewServer(candidateMock)
+		t.Cleanup(officialSrv.Close)
+		t.Cleanup(candidateSrv.Close)
+
+		res := CompareFingerprint(context.Background(), officialSrv.Client(),
+			newFingerprintVendor(t, officialSrv), "sk-official", "official-upstream",
+			newFingerprintVendor(t, candidateSrv), "sk-candidate", "candidate-upstream",
+			"tiny prompt")
+		assert.False(t, res.Checked)
+		assert.False(t, res.Comparable)
+		assert.False(t, res.WithinTolerance)
+		assert.Equal(t, "prompt too short to compare", res.FailReason)
+	})
 }
 
 func TestFingerprintCompareFailurePaths(t *testing.T) {
 	run := func(t *testing.T, officialStatus, candidateStatus int, ctx context.Context, officialDelay time.Duration) FingerprintResult {
 		t.Helper()
+		resetFingerprintCacheForTest()
 		officialMock := &fingerprintChatMock{promptTokens: 10, status: officialStatus, delay: officialDelay}
 		candidateMock := &fingerprintChatMock{promptTokens: 10, status: candidateStatus}
 		officialSrv := httptest.NewServer(officialMock)
@@ -190,8 +220,9 @@ func TestFingerprintCompareFailurePaths(t *testing.T) {
 }
 
 func TestFingerprintHTTPClientOverride(t *testing.T) {
-	officialMock := &fingerprintChatMock{promptTokens: 10}
-	candidateMock := &fingerprintChatMock{promptTokens: 10}
+	resetFingerprintCacheForTest()
+	officialMock := &fingerprintChatMock{promptTokens: 100}
+	candidateMock := &fingerprintChatMock{promptTokens: 100}
 	officialSrv := httptest.NewServer(officialMock)
 	candidateSrv := httptest.NewServer(candidateMock)
 	t.Cleanup(officialSrv.Close)
@@ -207,8 +238,136 @@ func TestFingerprintHTTPClientOverride(t *testing.T) {
 		newFingerprintVendor(t, officialSrv), "sk-official", "official-upstream",
 		newFingerprintVendor(t, candidateSrv), "sk-candidate", "candidate-upstream",
 		"prompt")
+	assert.True(t, res.Checked)
 	assert.True(t, res.WithinTolerance)
 	assert.Empty(t, res.FailReason)
+}
+
+func TestFingerprintOfficialCacheSingleCall(t *testing.T) {
+	resetFingerprintCacheForTest()
+	officialMock := &fingerprintChatMock{promptTokens: 100}
+	candidateMock := &fingerprintChatMock{promptTokens: 100}
+	officialSrv := httptest.NewServer(officialMock)
+	candidateSrv := httptest.NewServer(candidateMock)
+	t.Cleanup(officialSrv.Close)
+	t.Cleanup(candidateSrv.Close)
+
+	call := func() FingerprintResult {
+		return CompareFingerprint(context.Background(), officialSrv.Client(),
+			newFingerprintVendor(t, officialSrv), "sk-official", "official-upstream",
+			newFingerprintVendor(t, candidateSrv), "sk-candidate", "candidate-upstream",
+			"same prompt")
+	}
+	first := call()
+	second := call()
+	assert.True(t, first.Checked)
+	assert.True(t, second.Checked)
+	assert.EqualValues(t, 1, officialMock.calls.Load(),
+		"the official endpoint is called once per cached prompt")
+	assert.EqualValues(t, 2, candidateMock.calls.Load(),
+		"the candidate is always called; only the official side is cached")
+}
+
+func TestFingerprintCacheSeparatesPromptAndModel(t *testing.T) {
+	resetFingerprintCacheForTest()
+	officialMock := &fingerprintChatMock{promptTokens: 100}
+	candidateMock := &fingerprintChatMock{promptTokens: 100}
+	officialSrv := httptest.NewServer(officialMock)
+	candidateSrv := httptest.NewServer(candidateMock)
+	t.Cleanup(officialSrv.Close)
+	t.Cleanup(candidateSrv.Close)
+
+	compare := func(prompt, officialModel string) {
+		t.Helper()
+		res := CompareFingerprint(context.Background(), officialSrv.Client(),
+			newFingerprintVendor(t, officialSrv), "sk-official", officialModel,
+			newFingerprintVendor(t, candidateSrv), "sk-candidate", "candidate-upstream",
+			prompt)
+		require.True(t, res.Checked)
+	}
+	compare("prompt-a", "official-upstream")
+	compare("prompt-b", "official-upstream")
+	compare("prompt-a", "other-official-model")
+	compare("prompt-a", "official-upstream") // cached again
+
+	assert.EqualValues(t, 3, officialMock.calls.Load(),
+		"different prompts/models must not share a cache entry")
+	assert.EqualValues(t, 4, candidateMock.calls.Load())
+}
+
+func TestFingerprintOfficialFailureNotCached(t *testing.T) {
+	resetFingerprintCacheForTest()
+	officialMock := &fingerprintChatMock{promptTokens: 100, status: http.StatusInternalServerError}
+	candidateMock := &fingerprintChatMock{promptTokens: 100}
+	officialSrv := httptest.NewServer(officialMock)
+	candidateSrv := httptest.NewServer(candidateMock)
+	t.Cleanup(officialSrv.Close)
+	t.Cleanup(candidateSrv.Close)
+
+	compare := func() FingerprintResult {
+		return CompareFingerprint(context.Background(), officialSrv.Client(),
+			newFingerprintVendor(t, officialSrv), "sk-official", "official-upstream",
+			newFingerprintVendor(t, candidateSrv), "sk-candidate", "candidate-upstream",
+			"retry prompt")
+	}
+	failed := compare()
+	require.NotEmpty(t, failed.FailReason)
+	assert.False(t, failed.Checked)
+
+	// The failed official call left nothing in the cache, so the next call
+	// retries (and now succeeds).
+	officialMock.status = http.StatusOK
+	ok := compare()
+	require.Empty(t, ok.FailReason)
+	assert.True(t, ok.Checked)
+	assert.EqualValues(t, 2, officialMock.calls.Load(), "a failure must not be cached")
+}
+
+func TestFingerprintOfficialCacheExpires(t *testing.T) {
+	resetFingerprintCacheForTest()
+	oldClock := fingerprintCacheNow
+	t.Cleanup(func() { fingerprintCacheNow = oldClock })
+
+	t0 := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	now := t0
+	fingerprintCacheNow = func() time.Time { return now }
+
+	officialMock := &fingerprintChatMock{promptTokens: 100}
+	candidateMock := &fingerprintChatMock{promptTokens: 100}
+	officialSrv := httptest.NewServer(officialMock)
+	candidateSrv := httptest.NewServer(candidateMock)
+	t.Cleanup(officialSrv.Close)
+	t.Cleanup(candidateSrv.Close)
+
+	compare := func() {
+		t.Helper()
+		res := CompareFingerprint(context.Background(), officialSrv.Client(),
+			newFingerprintVendor(t, officialSrv), "sk-official", "official-upstream",
+			newFingerprintVendor(t, candidateSrv), "sk-candidate", "candidate-upstream",
+			"expiring prompt")
+		require.True(t, res.Checked)
+	}
+	compare()
+	compare()
+	assert.EqualValues(t, 1, officialMock.calls.Load(), "a fresh entry is reused")
+
+	now = t0.Add(fingerprintCacheTTL + time.Second)
+	compare()
+	assert.EqualValues(t, 2, officialMock.calls.Load(),
+		"an expired entry is discarded and the official endpoint retried")
+}
+
+func TestFingerprintCacheIsBounded(t *testing.T) {
+	resetFingerprintCacheForTest()
+	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < fingerprintCacheMaxEntries+32; i++ {
+		fingerprintCachePut(fmt.Sprintf("key-%d", i), int64(i+1), now)
+	}
+	fingerprintTokenCache.mu.Lock()
+	size := len(fingerprintTokenCache.entries)
+	fingerprintTokenCache.mu.Unlock()
+	assert.Equal(t, fingerprintCacheMaxEntries, size,
+		"the cache evicts rows once it reaches the cap")
 }
 
 func TestFingerprintPlatformKeys(t *testing.T) {

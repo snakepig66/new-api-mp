@@ -17,14 +17,18 @@
 第二批候选：腾讯混元（api.hunyuan.cloud.tencent.com/v1）、百度千帆（qianfan.baidubce.com/v2）。
 硅基流动这类聚合平台不算官方，归入第三方。
 
-## 2. 必须拒绝的「同域名套餐接口」
-套餐额度只限个人在编程工具里使用，拿来转售违反厂商条款，量大还会被封号。
+## 2. 套餐接口与套餐 key 的处理
 
-| 平台 | 拒绝的路径 / key |
+官方渠道（`kind=official`）只接受按量付费的官方 key；套餐额度不是按量商品，默认不在官方渠道转售。
+
+| 场景 | 处理 |
 |---|---|
-| 火山方舟 | `/api/coding`、`/api/coding/v3`（Coding Plan）；`/api/plan`、`/api/plan/v3`（Agent Plan） |
-| 百炼 | `coding.dashscope.aliyuncs.com`；`token-plan.*.maas.aliyuncs.com`；key 前缀为 `sk-sp-`（Token Plan）或 `sk-ws-`（Coding Plan）的直接拒绝；`trial.*` 试用域名 |
-| 其他家 | 各家 Coding Plan 的专属地址同样拒绝（例如智谱 `/api/coding/paas/v4`），上线前逐家确认 |
+| 官方渠道收到套餐路径 / key | 直接拒绝：火山 `/api/coding`、`/api/plan`；百炼 `coding.dashscope.aliyuncs.com`、`token-plan.*.maas.aliyuncs.com`、`sk-sp-` / `sk-ws-` 前缀；智谱 `/api/coding/paas/v4` |
+| 卖家想把套餐 key 上架 | 只能选择独立的 `kind=plan` 渠道（火山 Coding Plan、百炼 Coding Plan），由管理员维护 `key_pattern`、`quota_window`、`exhaustion_signature` |
+| 套餐渠道额度耗尽 | 只暂停当前这一个挂单到下一个额度窗口，不暂停整个渠道、不算故障；窗口到期自动恢复 |
+| key 填错渠道 | 套餐 key 填官方渠道或官方 key 填套餐渠道都会被 `key_pattern` 拒绝，换 key 时同样校验 |
+
+套餐渠道上架前必须核对厂商条款并由管理员在管理后台录入 `terms_url`、`terms_checked_at`；平台不代替卖家判断转售是否被允许。套餐额度是**每个账号各自**的，所以任何一次耗尽都只影响对应挂单，不能牵连同渠道的其他卖家。
 
 ## 3. 云平台托管模型的定价与验真
 - 火山、百炼托管的第三方模型（例如火山上的 DeepSeek-V3.2），按**模型原厂官方价**计价、按卖家倍率结算。不使用云平台自己的价格，避免同一个模型在广场上出现两个基准价。

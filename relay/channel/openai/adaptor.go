@@ -185,6 +185,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		// forwarded verbatim (claude_handler honors PassThroughBodyEnabled), so
 		// the vendor sees its own Anthropic protocol instead of a conversion.
 		if info.RelayFormat == types.RelayFormatClaude &&
+			info.ChannelSetting.PassThroughBodyEnabled &&
 			info.ChannelSetting.MPAnthropicMessagesURL != "" &&
 			info.RelayMode != relayconstant.RelayModeResponses &&
 			info.RelayMode != relayconstant.RelayModeResponsesCompact {
@@ -214,7 +215,8 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 	}
 	// MP-HOOK: vendors' native Anthropic endpoints expect x-api-key; the
 	// marketplace channel still carries the same seller key.
-	if info.RelayFormat == types.RelayFormatClaude && info.ChannelSetting.MPAnthropicMessagesURL != "" {
+	if info.RelayFormat == types.RelayFormatClaude && info.ChannelSetting.PassThroughBodyEnabled &&
+		info.ChannelSetting.MPAnthropicMessagesURL != "" {
 		header.Set("x-api-key", info.ApiKey)
 	}
 	if info.ChannelType == constant.ChannelTypeOpenAI && "" != info.Organization {

@@ -23,6 +23,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -124,11 +126,12 @@ var (
 	ErrChannelPoolSlugRequired      = errors.New("channel slug is required")
 	ErrChannelPoolKindInvalid       = errors.New("kind must be official, plan or third_party")
 	ErrChannelPoolKeyPatternInvalid = errors.New("key_pattern is not a valid regular expression")
+	ErrChannelPoolProtocolURL       = errors.New("channel protocol URLs must be absolute https URLs (http is allowed only for loopback tests)")
 	ErrChannelPoolStatusInvalid     = errors.New("status must be active or disabled")
 	ErrChannelPoolInUse             = errors.New("channel is referenced by a listing")
 	ErrChannelPoolNotFound          = errors.New("channel not found")
 	ErrChannelModelFieldsRequired   = errors.New("channel_slug, upstream_model and model are required")
-	ErrChannelModelCoefficient      = errors.New("coefficient_milli must be between 1 and 10000")
+	ErrChannelModelCoefficient      = errors.New("coefficient_milli must be between 1 and 1000 (a channel may not charge above the official price)")
 	ErrChannelModelStatusInvalid    = errors.New("status must be active, paused or banned")
 	ErrChannelModelDifferences      = errors.New("differences must be a JSON object")
 	ErrChannelModelConflict         = errors.New("channel model mapping conflicts with an existing row")
@@ -300,15 +303,24 @@ var poolChannelModelSeeds = []ChannelModel{
 	{ChannelSlug: "deepseek", UpstreamModel: "deepseek-v4-pro", Model: "deepseek-v4-pro",
 		CoefficientMilli: 1000, Verified: true, FingerprintRatio: 1.0, Status: PoolStatusActive},
 
+	// Hosted DeepSeek on a cloud platform is NOT the origin model until a
+	// fingerprint comparison proves it. The upstream ids below are seed
+	// guesses (V3.2 vs V4-Pro), so these rows start unverified; an operator
+	// must correct the mapping and verify them in /admin/pool before they can
+	// be sold.
 	{ChannelSlug: "volcengine-ark", UpstreamModel: "deepseek-v3-2-flash", Model: "deepseek-flash",
-		CoefficientMilli: 1000, Differences: `{"host":"volcengine-ark"}`, Verified: true, FingerprintRatio: 1.0, Status: PoolStatusActive},
+		CoefficientMilli: 1000, Differences: `{"host":"volcengine-ark","unverified_reason":"upstream mapping not confirmed"}`,
+		Verified: false, FingerprintRatio: 0, Status: PoolStatusActive},
 	{ChannelSlug: "volcengine-ark", UpstreamModel: "deepseek-v3-2", Model: "deepseek-v4-pro",
-		CoefficientMilli: 1000, Differences: `{"host":"volcengine-ark"}`, Verified: true, FingerprintRatio: 1.0, Status: PoolStatusActive},
+		CoefficientMilli: 1000, Differences: `{"host":"volcengine-ark","unverified_reason":"upstream mapping not confirmed"}`,
+		Verified: false, FingerprintRatio: 0, Status: PoolStatusActive},
 
 	{ChannelSlug: "aliyun-bailian", UpstreamModel: "deepseek-v3.2-flash", Model: "deepseek-flash",
-		CoefficientMilli: 1000, Verified: true, FingerprintRatio: 1.0, Status: PoolStatusActive},
+		CoefficientMilli: 1000, Differences: `{"host":"aliyun-bailian","unverified_reason":"upstream mapping not confirmed"}`,
+		Verified: false, FingerprintRatio: 0, Status: PoolStatusActive},
 	{ChannelSlug: "aliyun-bailian", UpstreamModel: "deepseek-v3.2", Model: "deepseek-v4-pro",
-		CoefficientMilli: 1000, Verified: true, FingerprintRatio: 1.0, Status: PoolStatusActive},
+		CoefficientMilli: 1000, Differences: `{"host":"aliyun-bailian","unverified_reason":"upstream mapping not confirmed"}`,
+		Verified: false, FingerprintRatio: 0, Status: PoolStatusActive},
 
 	{ChannelSlug: "moonshot", UpstreamModel: "kimi-k2", Model: "kimi-k2",
 		CoefficientMilli: 1000, Verified: true, FingerprintRatio: 1.0, Status: PoolStatusActive},
@@ -422,6 +434,9 @@ func SeedModelChannelPool(db *gorm.DB) error {
 		}
 	}
 
+	if err := demoteUnverifiedHostedSeeds(db); err != nil {
+		return err
+	}
 	if err := migrateLegacyChannelModelMap(db); err != nil {
 		return err
 	}
@@ -434,6 +449,27 @@ func SeedModelChannelPool(db *gorm.DB) error {
 // migrateLegacyChannelModelMap copies mp_channel_model_map into
 // mp_channel_models. The legacy table is kept for rollback. Existing rows are
 // skipped, so a second startup is a no-op.
+// demoteUnverifiedHostedSeeds clears the legacy "verified" flag on
+// qualifications that were never actually verified: verified=true with no
+// verified_at on a channel that is not the model's origin vendor. The seeded
+// cloud-hosted DeepSeek rows (and anything copied from the legacy map) fall
+// into this set, so a mapping guess can never be sold as the origin model.
+// A real verification stamps verified_at, so an administrator's verified row
+// is never touched by a later restart.
+func demoteUnverifiedHostedSeeds(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&ChannelModel{}) || !db.Migrator().HasTable(&ModelPool{}) {
+		return nil
+	}
+	err := db.Exec(`UPDATE mp_channel_models SET verified = ?, fingerprint_ratio = ?
+		WHERE verified = ? AND verified_at IS NULL
+		AND channel_slug NOT IN (SELECT origin_vendor FROM mp_models WHERE mp_models.name = mp_channel_models.model)`,
+		false, 0, true).Error
+	if err != nil {
+		return fmt.Errorf("marketplace: demote unverified hosted seeds: %w", err)
+	}
+	return nil
+}
+
 func migrateLegacyChannelModelMap(db *gorm.DB) error {
 	if !db.Migrator().HasTable("mp_channel_model_map") {
 		return nil
@@ -464,8 +500,8 @@ func migrateLegacyChannelModelMap(db *gorm.DB) error {
 			UpstreamModel:    upstream,
 			Model:            model,
 			CoefficientMilli: 1000,
-			Verified:         true,
-			FingerprintRatio: 1.0,
+			Verified:         false,
+			FingerprintRatio: 0,
 			Status:           PoolStatusActive,
 		}
 		if err := db.Create(&row).Error; err != nil {
@@ -561,8 +597,21 @@ func migratePoolListings(db *gorm.DB) error {
 		if mapped {
 			continue
 		}
+		// A draft/verifying listing was never sellable; leave it in draft
+		// (a verifying row goes back to draft) instead of turning it into a
+		// paused row the seller could resume. Only live/canary supply is
+		// paused, and it carries a system reason so a seller cannot lift it.
+		if listing.Status != ListingLive && listing.Status != ListingCanary {
+			if listing.Status == ListingVerifying {
+				if err := db.Model(&Listing{}).Where("id = ?", listing.ID).
+					Update("status", ListingDraft).Error; err != nil {
+					return fmt.Errorf("marketplace: revert unmapped verifying listing %d: %w", listing.ID, err)
+				}
+			}
+			continue
+		}
 		if err := db.Model(&Listing{}).Where("id = ?", listing.ID).
-			Update("status", ListingPaused).Error; err != nil {
+			Updates(map[string]any{"status": ListingPaused, "pause_reason": "migration"}).Error; err != nil {
 			return fmt.Errorf("marketplace: pause unmapped listing %d: %w", listing.ID, err)
 		}
 		if !hasProbeTable {
@@ -635,13 +684,24 @@ func ModelPoolResolveAlias(db *gorm.DB, input string) (string, bool) {
 	if needle == "" {
 		return "", false
 	}
-	rows := ModelPoolAll(db)
-	for _, row := range rows {
-		if strings.ToLower(strings.TrimSpace(row.Name)) == needle {
-			return row.Name, true
-		}
+	// Exact name first: one indexed lower(name) lookup instead of loading the
+	// whole pool on every request.
+	var exact ModelPool
+	err := db.Where("status = ? AND LOWER(name) = ?", PoolStatusActive, needle).Take(&exact).Error
+	if err == nil {
+		return exact.Name, true
 	}
-	for _, row := range rows {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", false
+	}
+	// Aliases are a JSON array in one text column. A LIKE probe narrows the
+	// candidate set; the exact comparison below keeps substring matches out.
+	var candidates []ModelPool
+	if err := db.Where("status = ? AND LOWER(aliases) LIKE ?", PoolStatusActive, "%\""+needle+"\"%").
+		Find(&candidates).Error; err != nil {
+		return "", false
+	}
+	for _, row := range candidates {
 		for _, alias := range parseStringList(row.Aliases) {
 			if strings.ToLower(strings.TrimSpace(alias)) == needle {
 				return row.Name, true
@@ -649,6 +709,87 @@ func ModelPoolResolveAlias(db *gorm.DB, input string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// activeModelPool lists only active standard models: a retired/paused model
+// must stop resolving, otherwise an old buyer key could keep routing traffic
+// to a model the operator deliberately withdrew.
+func activeModelPool(db *gorm.DB) []ModelPool {
+	out := make([]ModelPool, 0)
+	if db == nil {
+		return out
+	}
+	if err := db.Where("status = ?", PoolStatusActive).Order("name ASC").Find(&out).Error; err != nil {
+		return []ModelPool{}
+	}
+	return out
+}
+
+// ModelPoolSuggestion returns the closest active model name for a failed
+// lookup (empty when nothing is close). It powers the "did you mean" part of
+// the 400/503 response so a buyer can correct a typo without guessing.
+func ModelPoolSuggestion(db *gorm.DB, input string) string {
+	needle := strings.ToLower(strings.TrimSpace(input))
+	if needle == "" {
+		return ""
+	}
+	best, bestDist := "", 4 // accept edits up to 3
+	for _, row := range activeModelPool(db) {
+		candidates := append([]string{row.Name}, parseStringList(row.Aliases)...)
+		for _, cand := range candidates {
+			c := strings.ToLower(strings.TrimSpace(cand))
+			if c == "" {
+				continue
+			}
+			d := levenshtein(needle, c)
+			if d == 0 {
+				// The caller resolved this name; there is nothing to suggest.
+				return ""
+			}
+			if strings.HasPrefix(c, needle) || strings.HasPrefix(needle, c) {
+				if len(c) >= 4 && d < bestDist+1 {
+					d = 1
+				}
+			}
+			if d < bestDist {
+				best, bestDist = row.Name, d
+			}
+		}
+	}
+	return best
+}
+
+// levenshtein is the edit distance used by ModelPoolSuggestion. Inputs are
+// already lower-cased; the pool is small, so the quadratic table is fine.
+func levenshtein(a, b string) int {
+	ar, br := []rune(a), []rune(b)
+	prev := make([]int, len(br)+1)
+	cur := make([]int, len(br)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ar); i++ {
+		cur[0] = i
+		for j := 1; j <= len(br); j++ {
+			cost := 1
+			if ar[i-1] == br[j-1] {
+				cost = 0
+			}
+			cur[j] = minInt(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(br)]
+}
+
+func minInt(v ...int) int {
+	m := v[0]
+	for _, x := range v[1:] {
+		if x < m {
+			m = x
+		}
+	}
+	return m
 }
 
 // ---------------------------------------------------------------------------
@@ -704,6 +845,9 @@ func ChannelPoolCreateOrUpdate(db *gorm.DB, ch ChannelPool) (ChannelPool, error)
 			return ChannelPool{}, ErrChannelPoolKeyPatternInvalid
 		}
 	}
+	if err := validateChannelProtocolURLs(ch.Protocols); err != nil {
+		return ChannelPool{}, err
+	}
 	if ch.Status == "" {
 		ch.Status = PoolStatusActive
 	}
@@ -746,6 +890,42 @@ func ChannelPoolCreateOrUpdate(db *gorm.DB, ch ChannelPool) (ChannelPool, error)
 		return ChannelPool{}, fmt.Errorf("marketplace: update channel pool: %w", err)
 	}
 	return reloadChannelPool(db, ch.Slug)
+}
+
+// validateChannelProtocolURLs rejects plaintext or relative upstream URLs.
+// An administrator-entered channel is automatically added to the egress
+// allow-list, so accepting http:// would let any MITM read seller keys. http
+// is accepted only for loopback hosts, which tests use.
+func validateChannelProtocolURLs(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "{}" {
+		return nil
+	}
+	var protocols VendorProtocols
+	if err := json.Unmarshal([]byte(raw), &protocols); err != nil {
+		return ErrChannelPoolProtocolURL
+	}
+	for _, value := range []string{protocols.OpenAI, protocols.Anthropic} {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		u, err := url.Parse(value)
+		if err != nil || u.Host == "" || u.User != nil {
+			return ErrChannelPoolProtocolURL
+		}
+		switch strings.ToLower(u.Scheme) {
+		case "https":
+		case "http":
+			host := u.Hostname()
+			if host != "localhost" && host != "127.0.0.1" && host != "::1" && net.ParseIP(host) == nil {
+				return ErrChannelPoolProtocolURL
+			}
+		default:
+			return ErrChannelPoolProtocolURL
+		}
+	}
+	return nil
 }
 
 // reloadChannelPool re-reads a just-written row, surfacing a missing row as an
@@ -860,7 +1040,7 @@ func UpsertChannelModelPool(db *gorm.DB, cm ChannelModel) (ChannelModel, error) 
 	if _, ok := ModelPoolByName(db, cm.Model); !ok {
 		return ChannelModel{}, ErrModelPoolNotFound
 	}
-	if cm.CoefficientMilli < 1 || cm.CoefficientMilli > 10000 {
+	if cm.CoefficientMilli < 1 || cm.CoefficientMilli > 1000 {
 		return ChannelModel{}, ErrChannelModelCoefficient
 	}
 	if cm.Differences != "" && !isJSONObject(cm.Differences) {

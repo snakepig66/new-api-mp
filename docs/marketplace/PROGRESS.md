@@ -452,3 +452,34 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
   源 URL 记在 `marketplace/seed.go` 的注释里。
 - 未收录的模型：`kimi-k2`、`glm-4.6`、`minimax-m2`（无当前官网价）；`kimi-k2.7-code-highspeed`
   等高速版可后续在管理后台补行。
+
+## 验收整改（2026-10-25，P0/P1/P2）
+
+### P0 已修
+- **托管渠道结算**：结算改为 `pricingContext()` 解析原厂与系数，按原厂价目 × 渠道系数 × 倍率计价；预冻结/实扣使用同一公式与同一时刻。`QuoteResult.CoefficientMilli` 补齐。
+- **非流式响应改写**：包装 writer 时删除 `Content-Length`，改写后由 Go 重新计算；同时支持上游模型名的日期/版本后缀（`-0813`、`-20251025` 等）。
+- **指纹误封**：只有官方与候选都成功取得 `prompt_tokens` 才计数（`fingerprint_checked`）；欠费/429/网络错误/未比较不计入。容差改为相对 5% 或绝对差 ≤3 token，官方 prompt <20 token 视为不可判定。连续 2 次暂停该挂单，连续 3 次仍只暂停该挂单并写运维告警，**不再自动封禁渠道×模型**，封禁必须人工确认。
+- **套餐额度粒度**：运行时只暂停触发耗尽的那一个挂单，不再停整个渠道；仅当上游状态码为 429/402/403 且命中 `exhaustion_signature` 才认定。
+- **种子数据**：火山/百炼托管的 DeepSeek 映射不再冒充 `deepseek-v4-pro`，一律 `verified=false`；启动时会把「verified 但没有 verified_at」的非原厂行降级，真实人工验真（有 verified_at）不受影响。
+
+### P1 已修
+- 非透传渠道的 `/v1/messages` 不再把 OpenAI 格式发到厂商 Anthropic 端点；原生 Messages URL 仅在 `pass_through_body_enabled` 时启用。
+- 透传仅在「所选模型上游名 = 标准名」时开启；有改名时走映射转换路径。管理后台新建渠道默认不再勾选透传。
+- 管理后台修改/删除渠道映射后，已有挂单的上游 channel `model_mapping` 立即重写。
+- 换 key 重新校验渠道 `key_pattern` 与 deny 前缀，套餐 key 不能换进官方渠道。
+- 被平台暂停的挂单（migration/巡检/指纹/额度）卖家不能自行恢复；卖家只能恢复自己手动暂停的挂单。
+- 选路价格上限按 `倍率 × 系数` 的实际有效倍率比较；系数上限收紧为 1000，渠道不允许高于官方价。
+- `quota_window` 支持 `mode=rolling`（滚动窗口）和 `mode=weekly`（指定星期几 + 时分），旧零点对齐周期保持兼容。
+- 挂单验证会逐个检查所选模型是否在 key 的 `/models` 列表中，并用上游名做缓存探测；平台持有原厂 key 时同步做指纹抽检，指纹不符只回 draft，不封禁。
+- 管理员录入的渠道 URL 必须是 https（仅回环地址允许 http），禁止 userinfo；保存后立即刷新出网白名单。
+- 迁移只暂停 live/canary 挂单并写 `pause_reason=migration`；draft/verifying 不会被变成卖家可恢复的 paused。
+
+### P2 已修
+- 官方侧指纹 token 计数按（原厂、上游模型、prompt）缓存 30 分钟，候选侧每次实调；并发安全、上限 512 条、失败不缓存。
+- 别名解析改为先走 `LOWER(name)` 查询，再对 aliases 做 LIKE 缩小范围；只解析 active 模型。找不到时给出最近模型名建议。
+- `OFFICIAL-CHANNELS.md` §2 已改为「套餐 key 只能进 plan 渠道」的新口径。
+
+### 验收
+- `go build ./...`、`go vet ./...` 通过。
+- `go test ./marketplace/ -count=1` 通过；Linux 服务器全量 `go build ./... && go vet ./... && go test ./... -count=1` 全部通过。本机 Windows 仅 Telegram OAuth / HTTP2 / NTLM 等既有环境用例失败。
+- 前端 `bun run typecheck`、`vitest 112/112` 通过。

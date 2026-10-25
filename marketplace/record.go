@@ -168,10 +168,22 @@ func SettleRelay(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage
 		if db == nil || cal == nil {
 			quoteErr = errors.New("marketplace is not initialized")
 		} else {
+			// MODEL-CHANNEL-POOL §3.5: the official price book is keyed by the
+			// standard model's original vendor, not the hosting channel slug, and
+			// the channel's coefficient scales that official price. Reuse the
+			// values captured by the last pre-freeze (a retry updates them with
+			// the new listing) so an admin edit mid-request cannot make the
+			// settle disagree with the frozen amount.
+			origin, coefficient := s.preFreeze.OriginVendor, s.preFreeze.CoefficientMilli
+			if origin == "" || coefficient <= 0 {
+				origin, coefficient = pricingContext(db, listing.Vendor, s.model)
+			}
 			quote, quoteErr = Quote(db, cal, QuoteInput{
-				Model:           s.model,
-				Vendor:          listing.Vendor,
-				MultiplierMilli: listing.MultiplierMilli,
+				Model:            s.model,
+				Vendor:           listing.Vendor,
+				OriginVendor:     origin,
+				CoefficientMilli: coefficient,
+				MultiplierMilli:  listing.MultiplierMilli,
 				// 整条请求（含重试链）用首次预冻结时刻重算 (§3.3/§4.3).
 				At:               freezeAt,
 				InputTokens:      u.inputTokens,

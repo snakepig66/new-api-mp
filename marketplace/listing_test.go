@@ -448,3 +448,85 @@ func TestListingErrorsNeverContainKeyMaterial(t *testing.T) {
 	require.ErrorIs(t, err, ErrDuplicateKey)
 	assert.False(t, strings.Contains(err.Error(), listingTestKey+"x"), "§2.3: no key material in errors")
 }
+
+// TestReplaceKeyValidatesChannelPattern makes sure a key swap cannot move a
+// plan key into an official channel (or vice versa) without re-checking the
+// channel's key_pattern.
+func TestReplaceKeyValidatesChannelPattern(t *testing.T) {
+	db := newListingTestDB(t)
+	listing := Listing{
+		SellerID: 1, ChannelID: 1, Vendor: "aliyun-bailian-coding-plan",
+		Models: []string{"deepseek-v4-pro"}, MultiplierMilli: 500, Status: ListingLive,
+		KeyFingerprint: "fp-replace-pattern", KeyCiphertext: []byte("old"), Version: 1,
+	}
+	require.NoError(t, db.Create(&listing).Error)
+
+	err := ReplaceKey(db, listing.ID, "sk-official-looking-key")
+	assert.ErrorIs(t, err, ErrVendorKeyPattern)
+
+	require.NoError(t, ReplaceKey(db, listing.ID, "sk-sp-plan-key-123"))
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingVerifying, row.Status, "a key swap always re-verifies")
+}
+
+// TestCreateListingDisablesPassthroughWhenRenaming checks the P1 interaction:
+// raw-body passthrough skips model mapping, so it must be off whenever any
+// selected model's upstream id differs from its standard id.
+func TestCreateListingDisablesPassthroughWhenRenaming(t *testing.T) {
+	db := newListingTestDB(t)
+	// The hosted DeepSeek mapping is unverified after the seed; verify it so
+	// the listing can be created, then inspect the generated channel.
+	require.NoError(t, db.Model(&ChannelModel{}).
+		Where("channel_slug = ? AND model = ?", "volcengine-ark", "deepseek-flash").
+		Updates(map[string]any{"verified": true, "fingerprint_ratio": 1.0}).Error)
+
+	listing, err := CreateListing(db, CreateListingInput{
+		SellerID: 1, VendorID: "volcengine-ark", APIKey: uniqueTestKey("sk-ark-rename"),
+		Models: []string{"deepseek-flash"}, MultiplierMilli: 500,
+	})
+	require.NoError(t, err)
+	var ch model.Channel
+	require.NoError(t, db.Where("id = ?", listing.ChannelID).Take(&ch).Error)
+	setting := ""
+	if ch.Setting != nil {
+		setting = *ch.Setting
+	}
+	assert.NotContains(t, setting, "pass_through_body_enabled", "renamed model must go through the mapping path")
+	assert.Contains(t, setting, "mp_strip_v1_prefix")
+
+	// An identity mapping (DeepSeek origin) keeps passthrough enabled.
+	origin, err := CreateListing(db, CreateListingInput{
+		SellerID: 2, VendorID: "deepseek", APIKey: uniqueTestKey("sk-ds-identity"),
+		Models: []string{"deepseek-flash"}, MultiplierMilli: 500,
+	})
+	require.NoError(t, err)
+	var originCh model.Channel
+	require.NoError(t, db.Where("id = ?", origin.ChannelID).Take(&originCh).Error)
+	originSetting := ""
+	if originCh.Setting != nil {
+		originSetting = *originCh.Setting
+	}
+	assert.Contains(t, originSetting, "pass_through_body_enabled")
+}
+
+// TestRefreshListingChannelMapping updates the pinned upstream name on every
+// listing channel for a (channel, model) pair, and removes it on deletion.
+func TestRefreshListingChannelMapping(t *testing.T) {
+	db := newListingTestDB(t)
+	listing := createTestListing(t, db, 1, uniqueTestKey("sk-refresh-map"))
+
+	require.NoError(t, RefreshListingChannelMapping(db, "deepseek", "deepseek-flash", "deepseek-flash-dated"))
+	var ch model.Channel
+	require.NoError(t, db.Where("id = ?", listing.ChannelID).Take(&ch).Error)
+	var mapping map[string]string
+	require.NoError(t, common.Unmarshal([]byte(ch.GetModelMapping()), &mapping))
+	assert.Equal(t, "deepseek-flash-dated", mapping["deepseek-flash"])
+
+	require.NoError(t, RefreshListingChannelMapping(db, "deepseek", "deepseek-flash", ""))
+	require.NoError(t, db.Where("id = ?", listing.ChannelID).Take(&ch).Error)
+	mapping = nil
+	require.NoError(t, common.Unmarshal([]byte(ch.GetModelMapping()), &mapping))
+	_, exists := mapping["deepseek-flash"]
+	assert.False(t, exists)
+}

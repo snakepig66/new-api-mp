@@ -361,6 +361,11 @@ func TestApiSquareModelDetail(t *testing.T) {
 	f := newSquareFixture(t)
 	f.addListing(t, 9001, []string{"deepseek-flash"}, 300, ListingLive)
 	f.addListing(t, 9002, []string{"deepseek-flash"}, 500, ListingLive)
+	// Hosted cloud rows ship unverified (the seed cannot prove the upstream
+	// mapping). Simulate the administrator verifying them here.
+	require.NoError(t, f.db.Model(&ChannelModel{}).
+		Where("channel_slug IN ? AND model = ?", []string{"volcengine-ark", "aliyun-bailian"}, "deepseek-flash").
+		Updates(map[string]any{"verified": true, "fingerprint_ratio": 1.0}).Error)
 
 	w := f.get(t, "/api/marketplace/square/models/deepseek-flash")
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())

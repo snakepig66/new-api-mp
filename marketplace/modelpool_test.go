@@ -190,11 +190,11 @@ func TestUpsertChannelModelPoolConflictsAndValidation(t *testing.T) {
 	// A valid new qualification.
 	row, err := UpsertChannelModelPool(db, ChannelModel{
 		ChannelSlug: "moonshot", UpstreamModel: "glm-5.3-ms", Model: "glm-5.3",
-		CoefficientMilli: 1200, Differences: `{"no_tools":true}`, Status: PoolStatusActive,
+		CoefficientMilli: 1000, Differences: `{"no_tools":true}`, Status: PoolStatusActive,
 	})
 	require.NoError(t, err)
 	assert.NotZero(t, row.ID)
-	assert.EqualValues(t, 1200, row.CoefficientMilli)
+	assert.EqualValues(t, 1000, row.CoefficientMilli)
 
 	// Updating the same (channel, upstream) row updates in place.
 	row, err = UpsertChannelModelPool(db, ChannelModel{
@@ -256,7 +256,7 @@ func TestLegacyChannelMapMigrationIdempotent(t *testing.T) {
 	assert.Equal(t, "legacy-model", rows[0].Model)
 	assert.Equal(t, "legacy-upstream", rows[0].UpstreamModel)
 	assert.EqualValues(t, 1000, rows[0].CoefficientMilli)
-	assert.True(t, rows[0].Verified)
+	assert.False(t, rows[0].Verified, "legacy map rows are not verified until a probe proves them")
 	assert.Equal(t, PoolStatusActive, rows[0].Status)
 
 	// The legacy table is retained.
@@ -333,14 +333,13 @@ func TestSeedModelChannelPoolPausesUnmappedListings(t *testing.T) {
 	}
 	assert.Equal(t, ListingLive, reload(live.ID).Status, "fully mapped listing is untouched")
 	assert.Equal(t, ListingPaused, reload(ghost.ID).Status, "listing with an unknown channel is paused")
-	assert.Equal(t, ListingPaused, reload(unmapped.ID).Status, "listing with an unmapped model is paused")
+	assert.Equal(t, ListingDraft, reload(unmapped.ID).Status, "an unmapped verifying listing returns to draft, not a resumable pause")
 	assert.Equal(t, ListingBanned, reload(banned.ID).Status, "banned is terminal")
 
 	var probes []Probe
 	require.NoError(t, db.Where("type = ?", "migration").Order("listing_id ASC").Find(&probes).Error)
-	require.Len(t, probes, 2, "one migration probe per paused listing, no duplicates on restart")
+	require.Len(t, probes, 1, "only live supply gets a migration pause probe")
 	assert.EqualValues(t, ghost.ID, probes[0].ListingID)
-	assert.EqualValues(t, unmapped.ID, probes[1].ListingID)
 	for _, probe := range probes {
 		assert.False(t, probe.OK)
 		assert.Equal(t, poolMigrationFailReason, probe.Detail)
@@ -404,4 +403,93 @@ func TestSeedCatalogCoversCommonModels(t *testing.T) {
 			assert.Equal(t, tc.model, qualified.UpstreamModel)
 		})
 	}
+}
+
+// TestHostedCloudSeedsStartUnverified pins the P0 seed rule: a cloud channel's
+// guessed upstream id (volcengine/aliyun DeepSeek) is never sellable until an
+// operator verifies it, and a restart demotes rows that were flagged verified
+// without a verified_at stamp.
+func TestHostedCloudSeedsStartUnverified(t *testing.T) {
+	db := newTestDB(t)
+	migrateAll(t, db)
+	seedPool(t, db)
+
+	for _, slug := range []string{"volcengine-ark", "aliyun-bailian"} {
+		cm, ok := ChannelModelFor(db, slug, "deepseek-flash")
+		require.True(t, ok, slug)
+		assert.False(t, cm.Verified, "%s hosted DeepSeek must start unverified", slug)
+		assert.Zero(t, cm.FingerprintRatio)
+	}
+	origin, ok := ChannelModelFor(db, "deepseek", "deepseek-flash")
+	require.True(t, ok)
+	assert.True(t, origin.Verified, "the origin channel keeps its seed verification")
+
+	// Simulate the old seed (verified=true, no verified_at) and restart.
+	require.NoError(t, db.Model(&ChannelModel{}).
+		Where("channel_slug = ? AND model = ?", "volcengine-ark", "deepseek-flash").
+		Updates(map[string]any{"verified": true, "fingerprint_ratio": 1.0, "verified_at": nil}).Error)
+	require.NoError(t, SeedModelChannelPool(db))
+	cm, _ := ChannelModelFor(db, "volcengine-ark", "deepseek-flash")
+	assert.False(t, cm.Verified, "a legacy flag without a verification stamp is demoted")
+
+	// A real admin verification survives later restarts.
+	now := time.Now()
+	require.NoError(t, db.Model(&ChannelModel{}).
+		Where("channel_slug = ? AND model = ?", "volcengine-ark", "deepseek-flash").
+		Updates(map[string]any{"verified": true, "verified_at": &now, "fingerprint_ratio": 1.0}).Error)
+	require.NoError(t, SeedModelChannelPool(db))
+	cm, _ = ChannelModelFor(db, "volcengine-ark", "deepseek-flash")
+	assert.True(t, cm.Verified, "verified_at marks a real check and must not be demoted")
+}
+
+// TestModelPoolAliasActiveOnlyAndSuggestion checks that retired models stop
+// resolving and that a typo gets a useful suggestion.
+func TestModelPoolAliasActiveOnlyAndSuggestion(t *testing.T) {
+	db := newTestDB(t)
+	migrateAll(t, db)
+	seedPool(t, db)
+
+	got, ok := ModelPoolResolveAlias(db, "GLM5.3")
+	require.True(t, ok)
+	assert.Equal(t, "glm-5.3", got)
+
+	assert.Empty(t, ModelPoolSuggestion(db, "deepseek-flash"), "exact names need no suggestion")
+	assert.Equal(t, "deepseek-flash", ModelPoolSuggestion(db, "deepsek-flash"))
+
+	require.NoError(t, db.Model(&ModelPool{}).Where("name = ?", "glm-5.3").
+		Update("status", PoolStatusRetired).Error)
+	_, ok = ModelPoolResolveAlias(db, "GLM5.3")
+	assert.False(t, ok, "a retired model must not resolve")
+	assert.Empty(t, ModelPoolSuggestion(db, "completely-unrelated-name"))
+}
+
+// TestChannelProtocolURLsRequireTLS rejects plaintext or relative upstream
+// URLs, because admin-entered hosts are automatically added to egress.
+func TestChannelProtocolURLsRequireTLS(t *testing.T) {
+	db := newTestDB(t)
+	migrateAll(t, db)
+
+	base := ChannelPool{Slug: "url-test", Name: "URL test", Kind: ChannelKindOfficial, Status: PoolStatusActive}
+	for _, raw := range []string{
+		`{"openai":"http://evil.example.com"}`,
+		`{"openai":"api.example.com/v1"}`,
+		`{"openai":"https://user:pass@example.com"}`,
+		`{"anthropic":"ftp://example.com"}`,
+	} {
+		ch := base
+		ch.Protocols = raw
+		_, err := ChannelPoolCreateOrUpdate(db, ch)
+		assert.ErrorIs(t, err, ErrChannelPoolProtocolURL, raw)
+	}
+
+	httpsOK := base
+	httpsOK.Protocols = `{"openai":"https://api.example.com/v1","anthropic":"https://api.example.com/anthropic"}`
+	_, err := ChannelPoolCreateOrUpdate(db, httpsOK)
+	require.NoError(t, err)
+
+	loopbackOK := base
+	loopbackOK.Slug = "url-test-local"
+	loopbackOK.Protocols = `{"openai":"http://127.0.0.1:18080/v1"}`
+	_, err = ChannelPoolCreateOrUpdate(db, loopbackOK)
+	require.NoError(t, err, "loopback http is allowed for local test servers")
 }

@@ -473,6 +473,13 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 		return nil, true, http.StatusServiceUnavailable, errors.New("marketplace: failed to query listings")
 	}
 	if !anyListing {
+		// A typo close to a catalog model gets a helpful 400 instead of
+		// falling through to a generic upstream "model not found". Anything
+		// unrelated still belongs to the regular relay.
+		if suggestion := ModelPoolSuggestion(db, modelName); suggestion != "" {
+			return nil, true, http.StatusBadRequest,
+				fmt.Errorf("unknown model %q; did you mean %q?", requestedModel, suggestion)
+		}
 		return nil, false, 0, nil
 	}
 	if !has {
@@ -1235,13 +1242,23 @@ func ProcessRelayChannelError(c *gin.Context, apiErr *types.NewAPIError) {
 }
 
 // planQuotaExhaustedForListing reports whether apiErr carries the exhaustion
-// signature of a kind=plan channel behind listing, and suspends that channel's
-// listings until the next quota-window boundary. It is the classification hook
-// used by ProcessRelayChannelError and returns false for non-plan channels,
-// empty signatures, missing listings and invalid quota windows. The upstream
-// message is never logged or returned.
+// signature of a kind=plan channel behind listing, and suspends that one
+// listing until the next quota-window boundary. The upstream must also have
+// answered 429/402/403: a matching substring in an ordinary 5xx or network
+// error must not take a healthy listing out of rotation.
+//
+// It is the classification hook used by ProcessRelayChannelError and returns
+// false for non-plan channels, empty signatures, missing listings, non-quota
+// status codes and invalid quota windows. The upstream message is never logged
+// or returned.
 func planQuotaExhaustedForListing(db *gorm.DB, listing Listing, apiErr *types.NewAPIError) bool {
 	if db == nil || apiErr == nil || listing.ID == 0 {
+		return false
+	}
+	switch apiErr.StatusCode {
+	case http.StatusTooManyRequests, http.StatusPaymentRequired, http.StatusForbidden:
+		// Only these statuses can mean "the plan's quota is used up".
+	default:
 		return false
 	}
 	ch, ok := ChannelPoolBySlug(db, listing.Vendor)
@@ -1251,8 +1268,10 @@ func planQuotaExhaustedForListing(db *gorm.DB, listing Listing, apiErr *types.Ne
 	if !PlanQuotaExhausted(ch, apiErr.Error()) {
 		return false
 	}
-	if _, err := SuspendPlanListings(db, ch.Slug, time.Now()); err != nil {
-		common.SysError(common.LogText("marketplace: suspend plan channel %s: %s", ch.Slug, err.Error()))
+	// Pause only the listing that hit the quota; other listings on the same
+	// channel keep serving (they may use different keys/quotas).
+	if _, err := SuspendPlanListing(db, listing.ID, time.Now()); err != nil {
+		common.SysError(common.LogText("marketplace: suspend plan listing %d: %s", listing.ID, err.Error()))
 		return false
 	}
 	return true

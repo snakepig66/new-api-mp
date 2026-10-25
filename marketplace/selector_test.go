@@ -340,6 +340,51 @@ func TestSelect(t *testing.T) {
 		assert.Equal(t, int64(500), got.MultiplierMilli, "a cap equal to the multiplier admits it")
 	})
 
+	t.Run("the buyer cap uses multiplier × channel coefficient", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		// Coefficient 0.5 halves the effective price: 900 × 500 / 1000 = 450.
+		require.NoError(t, db.Model(&ChannelModel{}).
+			Where("channel_slug = ? AND model = ?", SeedVendorDeepSeek, "deepseek-flash").
+			Update("coefficient_milli", 500).Error)
+		a := addSelectorListing(t, db, "fp-a", func(l *Listing) { l.MultiplierMilli = 900 })
+		s := newSelector()
+		got, err := s.Select(db, SelectInput{
+			Model: "deepseek-flash", Now: now, MaxMultiplierMilli: 600,
+		})
+		require.NoError(t, err, "effective 450 is below the 600 cap")
+		assert.Equal(t, a.ID, got.ID)
+
+		// The same effective price is enforced by ReselectChannel, which goes
+		// through SelectWithProbe; a cap below 450 excludes it.
+		_, _, err = s.SelectWithProbe(db, SelectInput{
+			Model: "deepseek-flash", Now: now, MaxMultiplierMilli: 449,
+		})
+		assert.ErrorIs(t, err, ErrNoListingAvailable)
+	})
+
+	t.Run("a coefficient above 1000 is rejected", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		require.NoError(t, db.Model(&ChannelModel{}).
+			Where("channel_slug = ? AND model = ?", SeedVendorDeepSeek, "deepseek-flash").
+			Update("coefficient_milli", 2000).Error)
+		addSelectorListing(t, db, "fp-a", func(l *Listing) { l.MultiplierMilli = 100 })
+		s := newSelector()
+		_, err := s.Select(db, SelectInput{Model: "deepseek-flash", Now: now})
+		assert.ErrorIs(t, err, ErrNoListingAvailable,
+			"a mark-up above official price must never be selectable")
+	})
+
+	t.Run("a coefficient of 1000 is the default official price", func(t *testing.T) {
+		assert.Equal(t, int64(900), effectiveMultiplierMilli(900, 1000))
+		assert.Equal(t, int64(450), effectiveMultiplierMilli(900, 500))
+		assert.Equal(t, int64(901), effectiveMultiplierMilli(900, 1001),
+			"ceil rounds fractional milli up (1001 here just exercises the math)")
+		assert.Equal(t, int64(900), effectiveMultiplierMilli(900, 0),
+			"a missing/zero coefficient means 1000")
+	})
+
 	t.Run("the lower multiplier wins", func(t *testing.T) {
 		db := newTestDB(t)
 		migrateAll(t, db)

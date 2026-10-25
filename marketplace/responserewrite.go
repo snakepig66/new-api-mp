@@ -5,12 +5,18 @@ package marketplace
 // The buyer asks for a standard model id (or an alias that normalizes to one),
 // but the upstream channel sends its own name. Every marketplace request gets a
 // writer wrapper that replaces only JSON `"model": "<known upstream>"` values
-// with the standard name. Two properties matter:
+// with the standard name. Three properties matter:
 //
-//   - Only the exact upstream names selected for this request are replaced, so
-//     a `"model"` string inside message content is never touched.
+//   - Only the upstream names selected for this request are replaced, so a
+//     `"model"` string inside message content is never touched. An upstream
+//     name optionally followed by a date/version suffix (`-`, `_`, `.`, `@` or
+//     `/`), e.g. `deepseek-v4-pro-0813`, is also matched.
 //   - SSE frames are rewritten line by line (the buffer keeps partial lines),
 //     while a regular JSON body is rewritten per write.
+//   - Rewriting can change the body length, so a survivor Content-Length from
+//     the upstream would make the client stop early (unexpected EOF). The
+//     header is dropped when the wrapper is installed and again before every
+//     non-SSE write.
 //
 // Non-marketplace requests never get the wrapper.
 
@@ -38,6 +44,9 @@ type modelRewriteWriter struct {
 }
 
 func newModelRewriteWriter(w gin.ResponseWriter, standard string) *modelRewriteWriter {
+	// The rewrite may change the body length, so the upstream's Content-Length
+	// is never valid for the rewritten response.
+	w.Header().Del("Content-Length")
 	return &modelRewriteWriter{
 		ResponseWriter: w,
 		standard:       standard,
@@ -59,9 +68,11 @@ func (w *modelRewriteWriter) setUpstream(names ...string) {
 			continue
 		}
 		// Match only a JSON string value under the exact "model" key. The
-		// value is escaped because upstream ids may contain '.' or other
+		// upstream may append a date/version suffix to its registered name, so
+		// allow an optional suffix starting with one of the usual separators.
+		// The value is escaped because upstream ids may contain '.' or other
 		// regex metacharacters.
-		pattern := `"model"\s*:\s*"` + regexp.QuoteMeta(name) + `"`
+		pattern := `"model"\s*:\s*"` + regexp.QuoteMeta(name) + `(?:[-_.@/][^"]*)?"`
 		w.names[name] = regexp.MustCompile(pattern)
 	}
 }
@@ -71,9 +82,12 @@ func (w *modelRewriteWriter) rewrite(data []byte) []byte {
 		return data
 	}
 	out := data
+	replacement := []byte(`"model":"` + w.standard + `"`)
 	for _, re := range w.names {
 		if re.Match(out) {
-			out = re.ReplaceAll(out, []byte(`"model":"`+w.standard+`"`))
+			// Literal replacement: a '$' in the standard id must not be read as a
+			// capture-group expansion.
+			out = re.ReplaceAllLiteral(out, replacement)
 		}
 	}
 	return out
@@ -89,6 +103,9 @@ func (w *modelRewriteWriter) Write(data []byte) (int, error) {
 		w.sseKnown = true
 	}
 	if !w.sse {
+		// The upstream may set Content-Length after the wrapper was installed;
+		// drop it again right before the (possibly shorter/longer) body write.
+		w.Header().Del("Content-Length")
 		_, err := w.ResponseWriter.Write(w.rewrite(data))
 		return len(data), err
 	}

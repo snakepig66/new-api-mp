@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -38,6 +39,25 @@ func countRequests(t *testing.T, db *gorm.DB, requestID string) int64 {
 	var n int64
 	require.NoError(t, db.Model(&Request{}).Where("request_id = ?", requestID).Count(&n).Error)
 	return n
+}
+
+// addListingForVendor creates one live listing for an arbitrary whitelisted
+// vendor, so a test can exercise a hosting channel (e.g. volcengine-ark) whose
+// upstream name differs from the standard model id.
+func addListingForVendor(t *testing.T, f *relayFixture, vendorID, model string, multiplierMilli int64) Listing {
+	t.Helper()
+	key := fmt.Sprintf("sk-relayhook-test-key-%d", addListingKeySeq.Add(1))
+	listing, err := CreateListing(f.db, CreateListingInput{
+		SellerID:        f.sellerID,
+		VendorID:        vendorID,
+		APIKey:          key,
+		Models:          []string{model},
+		MultiplierMilli: multiplierMilli,
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.db.Model(&Listing{}).Where("id = ?", listing.ID).Update("status", ListingLive).Error)
+	listing.Status = ListingLive
+	return listing
 }
 
 func ledgerRows(t *testing.T, db *gorm.DB, requestID string) []LedgerEntry {
@@ -121,7 +141,70 @@ func TestSettleRelaySuccess(t *testing.T) {
 	assert.Len(t, ledgerRows(t, f.db, "req_relayhook_test"), 3)
 }
 
-// H3: when the buyer's balance can no longer cover the settle top-up, the
+// A hosted channel settles through the standard model's original vendor price
+// book and the channel coefficient, exactly like the pre-freeze (§3.5). Before
+// the fix, Quote looked for a price book under the channel slug and failed with
+// no price book for products such as 火山方舟.
+func TestSettleRelayChannelOriginAndCoefficient(t *testing.T) {
+	f := newRelayFixture(t, 10_000_000)
+
+	// Remove the hosted-channel price copy and set the channel coefficient to
+	// 0.5; only deepseek's official book remains.
+	require.NoError(t, f.db.Where("vendor = ? AND model = ?", "volcengine-ark", "deepseek-flash").
+		Delete(&PriceBook{}).Error)
+	require.NoError(t, f.db.Model(&ChannelModel{}).
+		Where("channel_slug = ? AND model = ?", "volcengine-ark", "deepseek-flash").
+		Updates(map[string]any{"coefficient_milli": 500, "verified": true, "fingerprint_ratio": 1.0}).Error)
+
+	addListingForVendor(t, f, "volcengine-ark", "deepseek-flash", 1000)
+	f.addKeyModel(t, 77, "deepseek-flash", 0)
+	c := f.newRelayContext(t, []byte(`{"model":"deepseek-flash","max_tokens":100}`))
+	_, handled, _, err := BeginDistribute(c, "deepseek-flash")
+	require.NoError(t, err)
+	require.True(t, handled)
+	maxTokens := uint(100)
+	info := newChatInfo("deepseek-flash", &maxTokens)
+	require.Nil(t, PrepareBilling(c, info, stubEstimator(1000)))
+
+	s := CurrentRelaySession(c)
+	require.Equal(t, "volcengine-ark", s.CurrentListing().Vendor)
+
+	// Actual usage equals the pre-freeze quantities, so the pre-freeze and the
+	// settle must charge the same amount.
+	usage := &dto.Usage{PromptTokens: 1000, CompletionTokens: 100}
+	micro := SettleRelay(c, info, usage)
+	require.Greater(t, micro, 0, "a hosted channel with no own price book must settle via its origin vendor")
+
+	expected, err := Quote(f.db, f.cal, QuoteInput{
+		Model: "deepseek-flash", Vendor: "volcengine-ark",
+		OriginVendor: SeedVendorDeepSeek, CoefficientMilli: 500,
+		MultiplierMilli: 1000, At: s.FreezeAt(),
+		InputTokens: 1000, OutputTokens: 100,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int(expected.TotalDebit), micro)
+	assert.Equal(t, expected.TotalDebit, s.preFreeze.TotalDebit,
+		"pre-freeze and settlement use the same origin vendor + coefficient formula")
+	assert.Equal(t, int64(500), expected.CoefficientMilli)
+
+	// Coefficient 1000 prices the same usage at the official rate; 500 is half.
+	full, err := Quote(f.db, f.cal, QuoteInput{
+		Model: "deepseek-flash", Vendor: "volcengine-ark",
+		OriginVendor: SeedVendorDeepSeek, CoefficientMilli: 1000,
+		MultiplierMilli: 1000, At: s.FreezeAt(),
+		InputTokens: 1000, OutputTokens: 100,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, (full.TotalDebit+1)/2, expected.TotalDebit, "coefficient 500 halves the official quote")
+
+	// The settling charge is correctly booked.
+	var rec Request
+	require.NoError(t, f.db.Where("request_id = ?", "req_relayhook_test").Take(&rec).Error)
+	assert.Equal(t, RequestSuccess, rec.Status)
+	assert.Equal(t, int64(micro), rec.TotalDebitMicro)
+	assert.Equal(t, int64(expected.OfficialCost), rec.OfficialCostMicro)
+}
+
 // ledger books only what was actually collected and the difference is recorded
 // in the retry chain — never a seller credit for money the platform never got.
 func TestSettleRelayShortfallBooksCollected(t *testing.T) {

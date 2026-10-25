@@ -1456,6 +1456,9 @@ func adminPoolPutChannelModel(c *gin.Context) {
 		}
 		return
 	}
+	if err := RefreshListingChannelMapping(db, row.ChannelSlug, row.Model, row.UpstreamModel); err != nil {
+		common.SysError(common.LogText("marketplace: refresh listing mapping for %s/%s: %s", row.ChannelSlug, row.Model, err.Error()))
+	}
 	common.ApiSuccess(c, toAdminPoolChannelModelView(row))
 }
 
@@ -1474,6 +1477,7 @@ func adminPoolDeleteChannelModel(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, ErrChannelModelFieldsRequired)
 		return
 	}
+	existing, existed := channelModelByUpstream(db, slug, upstream)
 	if err := DeleteChannelModelPool(db, slug, upstream); err != nil {
 		if errors.Is(err, ErrChannelModelFieldsRequired) {
 			common.ApiErrorStatus(c, http.StatusBadRequest, ErrChannelModelFieldsRequired)
@@ -1481,6 +1485,11 @@ func adminPoolDeleteChannelModel(c *gin.Context) {
 		}
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to delete channel model"))
 		return
+	}
+	if existed {
+		if err := RefreshListingChannelMapping(db, slug, existing.Model, ""); err != nil {
+			common.SysError(common.LogText("marketplace: drop listing mapping for %s/%s: %s", slug, existing.Model, err.Error()))
+		}
 	}
 	common.ApiSuccess(c, gin.H{"channel_slug": slug, "upstream_model": upstream})
 }

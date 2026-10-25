@@ -30,14 +30,29 @@ import (
 const PauseReasonPlanQuotaExhausted = "plan_quota_exhausted"
 
 // quotaWindow is the parsed quota_window JSON. reset_timezone defaults to UTC
-// when absent; an unknown zone or a non-positive period is an invalid config.
+// when absent. Supported shapes (backwards compatible):
+//
+//	{"period_seconds":18000,"reset_timezone":"Asia/Shanghai"}
+//	    fixed windows anchored at local midnight (legacy default)
+//	{"mode":"rolling","period_seconds":18000,"reset_timezone":"Asia/Shanghai"}
+//	    the next reset is simply now + period_seconds
+//	{"mode":"weekly","period_seconds":604800,"weekday":1,"hour":0,"minute":0,
+//	 "reset_timezone":"Asia/Shanghai"}
+//	    the next occurrence of the given local weekday/time (weekday 0 = Sunday)
 type quotaWindow struct {
+	Mode          string `json:"mode"`
 	PeriodSeconds int64  `json:"period_seconds"`
 	ResetTimezone string `json:"reset_timezone"`
+	// Weekday/Hour/Minute drive mode=weekly. Pointers distinguish "absent"
+	// from 0 (weekday 0 is Sunday; hour/minute 0 are valid values).
+	Weekday *int `json:"weekday"`
+	Hour    *int `json:"hour"`
+	Minute  *int `json:"minute"`
 }
 
 // parseQuotaWindow parses and validates ch.QuotaWindow. It returns ok=false
-// for invalid JSON, a non-positive period, or an unknown reset_timezone.
+// for invalid JSON, an unknown mode, a non-positive period (fixed/rolling), an
+// out-of-range weekly schedule, or an unknown reset_timezone.
 func parseQuotaWindow(ch ChannelPool) (quotaWindow, bool) {
 	var cfg quotaWindow
 	raw := strings.TrimSpace(ch.QuotaWindow)
@@ -47,7 +62,28 @@ func parseQuotaWindow(ch ChannelPool) (quotaWindow, bool) {
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		return quotaWindow{}, false
 	}
-	if cfg.PeriodSeconds <= 0 {
+	switch cfg.Mode {
+	case "":
+		if cfg.PeriodSeconds <= 0 {
+			return quotaWindow{}, false
+		}
+	case "rolling":
+		if cfg.PeriodSeconds <= 0 {
+			return quotaWindow{}, false
+		}
+	case "weekly":
+		// period_seconds is optional here (kept for backwards compatibility);
+		// the weekday/time fields define the schedule.
+		if cfg.Weekday == nil || *cfg.Weekday < 0 || *cfg.Weekday > 6 {
+			return quotaWindow{}, false
+		}
+		if cfg.Hour != nil && (*cfg.Hour < 0 || *cfg.Hour > 23) {
+			return quotaWindow{}, false
+		}
+		if cfg.Minute != nil && (*cfg.Minute < 0 || *cfg.Minute > 59) {
+			return quotaWindow{}, false
+		}
+	default:
 		return quotaWindow{}, false
 	}
 	return cfg, true
@@ -71,11 +107,18 @@ func PlanQuotaExhausted(ch ChannelPool, upstreamMessage string) bool {
 // NextQuotaReset returns the first quota-window boundary strictly after now,
 // computed in the channel's reset_timezone.
 //
-// Boundaries are anchored at local midnight and repeat every period_seconds
-// (e.g. 00:00, 05:00, 10:00, 15:00, 20:00 for the seeded 5-hour Shanghai
-// window). When the period does not divide the local day, the last boundary of
-// a day is the following local midnight, so the window never drifts across
-// calendar days. An invalid configuration returns false.
+// mode="" (legacy): boundaries are anchored at local midnight and repeat every
+// period_seconds (e.g. 00:00, 05:00, 10:00, 15:00, 20:00 for the seeded 5-hour
+// Shanghai window). When the period does not divide the local day, the last
+// boundary of a day is the following local midnight, so the window never drifts
+// across calendar days.
+//
+// mode="rolling": the next boundary is now + period_seconds.
+//
+// mode="weekly": the next occurrence of the configured local weekday at
+// hour:minute (weekday 0 = Sunday, hour/minute default to 0).
+//
+// An invalid configuration returns false.
 func NextQuotaReset(ch ChannelPool, now time.Time) (time.Time, bool) {
 	cfg, ok := parseQuotaWindow(ch)
 	if !ok {
@@ -92,6 +135,26 @@ func NextQuotaReset(ch ChannelPool, now time.Time) (time.Time, bool) {
 	if now.IsZero() {
 		now = time.Now()
 	}
+	switch cfg.Mode {
+	case "rolling":
+		return now.Add(time.Duration(cfg.PeriodSeconds) * time.Second), true
+	case "weekly":
+		hour, minute := 0, 0
+		if cfg.Hour != nil {
+			hour = *cfg.Hour
+		}
+		if cfg.Minute != nil {
+			minute = *cfg.Minute
+		}
+		local := now.In(loc)
+		daysAhead := (int(*cfg.Weekday) - int(local.Weekday()) + 7) % 7
+		next := time.Date(local.Year(), local.Month(), local.Day()+daysAhead,
+			hour, minute, 0, 0, loc)
+		if !next.After(local) {
+			next = next.AddDate(0, 0, 7)
+		}
+		return next, true
+	}
 	local := now.In(loc)
 	year, month, day := local.Date()
 	midnight := time.Date(year, month, day, 0, 0, 0, 0, loc)
@@ -106,12 +169,69 @@ func NextQuotaReset(ch ChannelPool, now time.Time) (time.Time, bool) {
 	return next, true
 }
 
+// SuspendPlanListing pauses exactly one plan-channel listing until its next
+// quota-window boundary. It is the runtime path used when the upstream reports
+// the exhaustion signature: one bad key/quota must never stop the other
+// listings of the same channel. The previous lifecycle status is preserved in
+// PreviousStatus so ResumePlanListings can restore it.
+//
+// The call is idempotent: a listing already paused for
+// PauseReasonPlanQuotaExhausted is left untouched and reports changed=false.
+// A non-plan channel, a missing channel and a listing that is not live/canary
+// are also reported as changed=false with no error; only a real database or
+// configuration failure returns an error.
+func SuspendPlanListing(db *gorm.DB, listingID int64, now time.Time) (bool, error) {
+	if db == nil {
+		return false, errors.New("marketplace: suspend plan listing: nil database")
+	}
+	if listingID <= 0 {
+		return false, errors.New("marketplace: suspend plan listing: invalid listing id")
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	l, err := GetListing(db, listingID)
+	if err != nil {
+		return false, err
+	}
+	ch, ok := ChannelPoolBySlug(db, l.Vendor)
+	if !ok || ch.Kind != ChannelKindPlan {
+		// Not a plan channel: never pause it from this path.
+		return false, nil
+	}
+	if l.Status == ListingPaused && l.PauseReason == PauseReasonPlanQuotaExhausted {
+		return false, nil
+	}
+	if l.Status != ListingLive && l.Status != ListingCanary {
+		return false, nil
+	}
+	resumeAt, ok := NextQuotaReset(ch, now)
+	if !ok {
+		return false, fmt.Errorf("marketplace: suspend plan listing %d: channel %q has an invalid quota_window", listingID, l.Vendor)
+	}
+	res := db.Model(&Listing{}).
+		Where("id = ? AND status IN ?", listingID, []string{ListingLive, ListingCanary}).
+		Updates(map[string]any{
+			"status":          ListingPaused,
+			"pause_reason":    PauseReasonPlanQuotaExhausted,
+			"resume_at":       resumeAt,
+			"previous_status": gorm.Expr("status"),
+			"updated_at":      now,
+		})
+	if res.Error != nil {
+		return false, fmt.Errorf("marketplace: suspend plan listing %d: %w", listingID, res.Error)
+	}
+	return res.RowsAffected > 0, nil
+}
+
 // SuspendPlanListings pauses every live/canary listing of channelSlug until
-// the next quota-window boundary and returns the number of rows changed. The
-// previous lifecycle status is preserved in PreviousStatus so the resume job
-// can restore canary listings to canary. It is idempotent: rows already marked
-// PauseReasonPlanQuotaExhausted are left untouched (their ResumeAt and
-// PreviousStatus are not overwritten).
+// the next quota-window boundary and returns the number of rows changed. It is
+// retained for explicit administrator action only: runtime quota-exhaustion
+// handling calls SuspendPlanListing, so one exhausted key cannot take the whole
+// channel down. The previous lifecycle status is preserved in PreviousStatus so
+// the resume job can restore canary listings to canary. It is idempotent: rows
+// already marked PauseReasonPlanQuotaExhausted are left untouched (their
+// ResumeAt and PreviousStatus are not overwritten).
 //
 // The whole update is one statement, so a concurrently selected listing either
 // sees its old status or the suspended one; no probe, credit score or failure

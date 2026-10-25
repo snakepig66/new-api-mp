@@ -83,7 +83,11 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		if info.ChannelSetting.PassThroughBodyEnabled {
 			return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, info.RequestURLPath, info.ChannelType), nil
 		}
-		return fmt.Sprintf("%s/anthropic/v1/messages", info.ChannelBaseUrl), nil
+		// Non-passthrough Claude requests are converted to OpenAI format by
+		// the adaptor, so they must go to the OpenAI-compatible endpoint;
+		// sending them to /anthropic/v1/messages would hand the vendor the
+		// wrong protocol.
+		return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
 	default:
 		if !strings.HasSuffix(info.ChannelBaseUrl, "/beta") {
 			fimBaseUrl += "/beta"

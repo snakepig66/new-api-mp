@@ -1,7 +1,8 @@
 package marketplace
 
 import (
-	"context"
+	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -9,11 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 )
 
@@ -212,47 +213,251 @@ func patrolLiveListingsWithClient(db *gorm.DB, client *http.Client, now time.Tim
 	return nil
 }
 
-// patrolOneListingWithClient is patrolOneListing with the client injected.
-func patrolOneListingWithClient(db *gorm.DB, limiter *VerifyLimiter, client *http.Client, l *Listing) error {
-	apiKey, err := DecryptListingKey(l.KeyCiphertext)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := limiter.Acquire(ctx); err != nil {
-		return err
-	}
-	vendor, ok := VendorByID(l.Vendor)
-	if !ok {
-		limiter.Release()
-		return ErrVendorNotWhitelisted
-	}
-	res := VerifyListingKey(ctx, client, vendor, apiKey)
-	limiter.Release()
+// fingerprintPatrolHandler mocks one upstream serving both the listing key and
+// the platform key. The chat prompt_tokens depend on which bearer token is
+// used, so the same URL can act as both the official and candidate endpoint.
+type fingerprintPatrolHandler struct {
+	officialKey      string
+	officialTokens   int64
+	candidateTokens  int64
+	candidateNoUsage bool
+}
 
-	detail, err := common.Marshal(map[string]any{
-		"key_valid":    res.KeyValid,
-		"models":       len(res.Models),
-		"has_balance":  res.BalanceMicro != nil,
-		"prompt_cache": res.PromptCacheSupport,
-		"fail_reason":  res.FailReason,
+func (h *fingerprintPatrolHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	switch r.URL.Path {
+	case "/models":
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"deepseek-flash"}]}`))
+	case "/user/balance":
+		_, _ = w.Write([]byte(`{"balance_infos":[{"currency":"CNY","total_balance":"5.00"}]}`))
+	case "/chat/completions":
+		tokens := h.candidateTokens
+		official := r.Header.Get("Authorization") == "Bearer "+h.officialKey
+		if official {
+			tokens = h.officialTokens
+		} else if h.candidateNoUsage {
+			_, _ = w.Write([]byte(`{"choices":[]}`))
+			return
+		}
+		_, _ = fmt.Fprintf(w,
+			`{"choices":[{"message":{"content":"x"}}],"usage":{"prompt_tokens":%d,"prompt_cache_hit_tokens":1,"prompt_cache_miss_tokens":1}}`,
+			tokens)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+// newFingerprintPatrolListing creates a live listing on the seeded deepseek
+// channel (whose model pool entry originates from the same vendor) and returns
+// it plus an httptest client that redirects every probe to h.
+func newFingerprintPatrolListing(t *testing.T, db *gorm.DB, h *fingerprintPatrolHandler) (Listing, *http.Client) {
+	t.Helper()
+	l, err := CreateListing(db, CreateListingInput{
+		SellerID:        10023,
+		VendorID:        SeedVendorDeepSeek,
+		APIKey:          uniqueTestKey("sk-fingerprint-patrol"),
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 500,
 	})
-	if err != nil {
-		detail = []byte("{}")
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&Listing{}).Where("id = ?", l.ID).
+		Update("status", ListingLive).Error)
+	l, err = GetListing(db, l.ID)
+	require.NoError(t, err)
+
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	target, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+	return l, &http.Client{Transport: rewriteTransport{target: target}}
+}
+
+func lastPatrolProbe(t *testing.T, db *gorm.DB, listingID int64) Probe {
+	t.Helper()
+	var p Probe
+	require.NoError(t, db.Where("listing_id = ? AND type = ?", listingID, ProbeTypePatrol).
+		Order("id DESC").Take(&p).Error)
+	return p
+}
+
+// lastFingerprintPatrolProbe skips AutoPauseListing annotation rows, which are
+// also type=patrol but carry no fingerprint verdict.
+func lastFingerprintPatrolProbe(t *testing.T, db *gorm.DB, listingID int64) Probe {
+	t.Helper()
+	var p Probe
+	require.NoError(t, db.Where("listing_id = ? AND type = ? AND detail LIKE ?",
+		listingID, ProbeTypePatrol, `%"fingerprint_checked"%`).
+		Order("id DESC").Take(&p).Error)
+	return p
+}
+
+// A comparison that never actually ran (missing usage, billing error, 429,
+// network failure) must be recorded as unchecked and must not extend the
+// mismatch streak. This test runs the patrol twice: the first comparison is
+// unusable, the second is a real mismatch, and the streak stays at one.
+func TestJobsFingerprintUncheckedDoesNotCount(t *testing.T) {
+	db := newListingTestDB(t)
+	const officialKey = "sk-platform-fingerprint"
+	t.Setenv(PlatformKeysEnv, `{"deepseek":"`+officialKey+`"}`)
+	oldClient := fingerprintHTTPClient
+	fingerprintHTTPClient = nil
+	t.Cleanup(func() { fingerprintHTTPClient = oldClient })
+
+	h := &fingerprintPatrolHandler{
+		officialKey:      officialKey,
+		officialTokens:   100,
+		candidateTokens:  500,
+		candidateNoUsage: true,
 	}
-	probe := Probe{
-		ListingID: l.ID,
-		Type:      ProbeTypePatrol,
-		OK:        res.OK,
-		LatencyMs: res.LatencyMs,
-		Detail:    string(detail),
+	listing, client := newFingerprintPatrolListing(t, db, h)
+	limiter := NewVerifyLimiter(VerifyMaxConcurrent, VerifyPerMinute)
+
+	require.NoError(t, patrolOneListingWithClient(db, limiter, client, &listing))
+	probe := lastPatrolProbe(t, db, listing.ID)
+	assert.Contains(t, probe.Detail, `"fingerprint_checked":false`)
+	assert.NotContains(t, probe.Detail, `"fingerprint_ok"`,
+		"fingerprint_ok is written only for a real comparison")
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingLive, row.Status)
+
+	// A real mismatch now: the unchecked run must not count, so the streak is
+	// exactly one and the listing stays live.
+	h.candidateNoUsage = false
+	require.NoError(t, patrolOneListingWithClient(db, limiter, client, &listing))
+	probe = lastPatrolProbe(t, db, listing.ID)
+	assert.Contains(t, probe.Detail, `"fingerprint_checked":true`)
+	assert.Contains(t, probe.Detail, `"fingerprint_ok":false`)
+	consecutive, err := consecutiveFingerprintMismatches(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, consecutive, "the failed comparison was skipped, not counted")
+	row, err = GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingLive, row.Status, "one real mismatch does not pause")
+}
+
+// A 429/402/403 during verification (or a billing failure) is a patrol
+// failure, never a fingerprint mismatch: the listing may be paused for the key
+// failure, but the fingerprint streak stays empty.
+func TestJobsFingerprintBillingAnd429DoNotCount(t *testing.T) {
+	db := newListingTestDB(t)
+	const officialKey = "sk-platform-fingerprint-paid"
+	t.Setenv(PlatformKeysEnv, `{"deepseek":"`+officialKey+`"}`)
+	oldClient := fingerprintHTTPClient
+	fingerprintHTTPClient = nil
+	t.Cleanup(func() { fingerprintHTTPClient = oldClient })
+
+	h := &fingerprintPatrolHandler{officialKey: officialKey, officialTokens: 100, candidateTokens: 500}
+	listing, _ := newFingerprintPatrolListing(t, db, h)
+	limiter := NewVerifyLimiter(VerifyMaxConcurrent, VerifyPerMinute)
+
+	// Seed one real mismatch so a wrongly counted status failure would reach
+	// two strikes and pause the listing.
+	require.NoError(t, db.Create(&Probe{
+		ListingID: listing.ID, Type: ProbeTypePatrol, OK: false,
+		Detail: `{"fingerprint_checked":true,"fingerprint_ok":false}`,
+	}).Error)
+
+	// The candidate now answers 429 on /models, so VerifyListingKey fails and
+	// the fingerprint is never attempted.
+	srv429 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"insufficient balance"}}`))
+	}))
+	t.Cleanup(srv429.Close)
+	target, err := url.Parse(srv429.URL)
+	require.NoError(t, err)
+	client429 := &http.Client{Transport: rewriteTransport{target: target}}
+
+	require.NoError(t, patrolOneListingWithClient(db, limiter, client429, &listing))
+	probe := lastFingerprintPatrolProbe(t, db, listing.ID)
+	assert.Contains(t, probe.Detail, `"fingerprint_checked":false`)
+	assert.NotContains(t, probe.Detail, `"fingerprint_ok":false`,
+		"a 429 must not be written as a fingerprint mismatch")
+
+	consecutive, err := consecutiveFingerprintMismatches(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, consecutive, "only the pre-seeded real comparison counts")
+}
+
+// Three real mismatches pause the listing and raise one SysError alert, but
+// the channel-model qualification must stay active: banning is a manual
+// operator action.
+func TestJobsFingerprintThreeStrikesNeverBans(t *testing.T) {
+	db := newListingTestDB(t)
+	const officialKey = "sk-platform-fingerprint-ban"
+	t.Setenv(PlatformKeysEnv, `{"deepseek":"`+officialKey+`"}`)
+	oldClient := fingerprintHTTPClient
+	fingerprintHTTPClient = nil
+	t.Cleanup(func() { fingerprintHTTPClient = oldClient })
+
+	h := &fingerprintPatrolHandler{officialKey: officialKey, officialTokens: 100, candidateTokens: 500}
+	listing, client := newFingerprintPatrolListing(t, db, h)
+	limiter := NewVerifyLimiter(VerifyMaxConcurrent, VerifyPerMinute)
+
+	var alerts bytes.Buffer
+	oldWriter := gin.DefaultErrorWriter
+	gin.DefaultErrorWriter = &alerts
+	t.Cleanup(func() { gin.DefaultErrorWriter = oldWriter })
+
+	// Strike one: still live.
+	require.NoError(t, patrolOneListingWithClient(db, limiter, client, &listing))
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingLive, row.Status)
+
+	// Strike two: paused (current listing only).
+	require.NoError(t, patrolOneListingWithClient(db, limiter, client, &listing))
+	row, err = GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingPaused, row.Status)
+	pauseProbe := lastPatrolProbe(t, db, listing.ID)
+	assert.Contains(t, pauseProbe.Detail, "fingerprint mismatch (2 consecutive)")
+
+	// Strike three: the direct call still records the third mismatch and must
+	// escalate to an alert without banning anything.
+	require.NoError(t, patrolOneListingWithClient(db, limiter, client, &listing))
+	row, err = GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingPaused, row.Status)
+
+	cm, ok := ChannelModelFor(db, SeedVendorDeepSeek, "deepseek-flash")
+	require.True(t, ok)
+	assert.Equal(t, PoolStatusActive, cm.Status,
+		"the channel model is never banned automatically (manual review only)")
+	assert.Contains(t, alerts.String(), "fingerprint mismatch (3 consecutive)")
+	assert.Contains(t, alerts.String(), "listing")
+	assert.Contains(t, alerts.String(), SeedVendorDeepSeek)
+	assert.Contains(t, alerts.String(), "deepseek-flash")
+}
+
+// The streak walker skips unchecked records (without breaking) and stops at
+// the newest real match.
+func TestJobsFingerprintStreakSkipsUnchecked(t *testing.T) {
+	db := newListingTestDB(t)
+	listing := addSelectorListing(t, db, "fp-streak", nil)
+	details := []string{
+		`{"fingerprint_checked":true,"fingerprint_ok":true}`,
+		`{"fingerprint_checked":false,"fingerprint_reason":"prompt too short to compare"}`,
+		`{"fingerprint_checked":true,"fingerprint_ok":false}`,
+		`{"auto_paused":true,"reason":"patrol failed: vendor /models returned 429"}`,
+		`{"fingerprint_checked":true,"fingerprint_ok":false}`,
 	}
-	if err := db.Create(&probe).Error; err != nil {
-		return err
+	for _, detail := range details {
+		require.NoError(t, db.Create(&Probe{
+			ListingID: listing.ID, Type: ProbeTypePatrol, Detail: detail,
+		}).Error)
 	}
-	if !res.OK {
-		return AutoPauseListing(db, l.ID, "patrol failed: "+res.FailReason)
-	}
-	return nil
+	consecutive, err := consecutiveFingerprintMismatches(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 2, consecutive, "unchecked rows are skipped, the match stops the walk")
+
+	// An even newer unchecked row must not reset the streak either.
+	require.NoError(t, db.Create(&Probe{
+		ListingID: listing.ID, Type: ProbeTypePatrol,
+		Detail: `{"fingerprint_checked":false}`,
+	}).Error)
+	consecutive, err = consecutiveFingerprintMismatches(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 2, consecutive)
 }

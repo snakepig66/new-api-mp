@@ -6,9 +6,11 @@ package marketplace
 // /models (VerifyChannelKey). A model qualification enters the pool after a
 // tokenizer fingerprint comparison: the same verify prompt is sent to the
 // official channel (platform key) and to the candidate channel (seller or
-// platform key), and usage.prompt_tokens is compared. A ratio within 2% of
-// 1.0 means both upstreams tokenize the text the same way, i.e. the candidate
-// really serves the same model.
+// platform key), and usage.prompt_tokens is compared. A ratio within 5% of
+// 1.0 (or an absolute difference of at most 3 tokens) means both upstreams
+// tokenize the text the same way, i.e. the candidate really serves the same
+// model. A comparison that could not actually run is reported as
+// Checked=false and never counts as a mismatch.
 //
 // Keys used here never leave memory: PlatformKeyForVendor parses the
 // MP_PLATFORM_KEYS environment variable on demand, stores nothing, logs
@@ -17,11 +19,14 @@ package marketplace
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"math"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -34,8 +39,19 @@ import (
 const PlatformKeysEnv = "MP_PLATFORM_KEYS"
 
 // fingerprintTolerance is the accepted relative difference between the
-// candidate and official prompt-token counts (误差 ≤ 2%).
-const fingerprintTolerance = 0.02
+// candidate and official prompt-token counts (误差 ≤ 5%).
+const fingerprintTolerance = 0.05
+
+// fingerprintAbsoluteTolerance is the accepted absolute difference in
+// prompt tokens. Small prompts tokenize to only a handful of tokens, where a
+// relative bound alone would be too strict: |candidate-official| <= 3 passes
+// even when the ratio is outside fingerprintTolerance.
+const fingerprintAbsoluteTolerance = 3
+
+// fingerprintMinPromptTokens is the smallest official prompt-token count that
+// can be judged. Below it the sample is too small for either tolerance to be
+// meaningful, so the comparison is reported as unchecked, not as a mismatch.
+const fingerprintMinPromptTokens = 20
 
 // defaultFingerprintPrompt is used when a model pool row has no verify prompt.
 // It mixes Chinese, Latin, digits and punctuation so tokenizer differences
@@ -47,6 +63,99 @@ const defaultFingerprintPrompt = "请用一句话解释下面这段文本的含�
 // CompareFingerprint. It exists for tests that need to redirect egress; nil
 // means "use the caller's client".
 var fingerprintHTTPClient *http.Client
+
+const (
+	// fingerprintCacheTTL is how long an official prompt_tokens result is
+	// reused. The patrol job runs every 30 minutes, so one official call per
+	// model/prompt per patrol round is enough.
+	fingerprintCacheTTL = 30 * time.Minute
+	// fingerprintCacheMaxEntries bounds the process-local cache. Eviction
+	// first drops expired rows, then the oldest row, so it never grows without
+	// limit.
+	fingerprintCacheMaxEntries = 512
+)
+
+// fingerprintCacheEntry holds only token counts and timestamps. Keys and
+// credentials are deliberately never stored.
+type fingerprintCacheEntry struct {
+	promptTokens int64
+	createdAt    time.Time
+	expiresAt    time.Time
+}
+
+// fingerprintTokenCache is the process-local official-side cache. Candidate
+// calls are never cached: only the official tokenizer answer is stable across
+// patrol rounds.
+var fingerprintTokenCache = struct {
+	mu      sync.Mutex
+	entries map[string]fingerprintCacheEntry
+}{entries: make(map[string]fingerprintCacheEntry)}
+
+// fingerprintCacheNow is a seam for tests that need to exercise TTL expiry
+// without sleeping for 30 minutes.
+var fingerprintCacheNow = time.Now
+
+// fingerprintCacheKey identifies one official tokenization result by vendor,
+// upstream model and a hash of the prompt. The prompt is hashed so the cache
+// holds no potentially sensitive text.
+func fingerprintCacheKey(vendorID, upstreamModel, prompt string) string {
+	sum := sha256.Sum256([]byte(prompt))
+	return vendorID + "\x00" + upstreamModel + "\x00" + hex.EncodeToString(sum[:])
+}
+
+// fingerprintCacheGet returns a cached official prompt_tokens count. An
+// expired row is removed on read.
+func fingerprintCacheGet(key string, now time.Time) (int64, bool) {
+	fingerprintTokenCache.mu.Lock()
+	defer fingerprintTokenCache.mu.Unlock()
+	entry, ok := fingerprintTokenCache.entries[key]
+	if !ok {
+		return 0, false
+	}
+	if !now.Before(entry.expiresAt) {
+		delete(fingerprintTokenCache.entries, key)
+		return 0, false
+	}
+	return entry.promptTokens, true
+}
+
+// fingerprintCachePut stores a successful official result, evicting expired
+// rows first and then the oldest row while the cache is at its size cap.
+func fingerprintCachePut(key string, promptTokens int64, now time.Time) {
+	fingerprintTokenCache.mu.Lock()
+	defer fingerprintTokenCache.mu.Unlock()
+	entries := fingerprintTokenCache.entries
+	if len(entries) >= fingerprintCacheMaxEntries {
+		for k, entry := range entries {
+			if !now.Before(entry.expiresAt) {
+				delete(entries, k)
+			}
+		}
+		for len(entries) >= fingerprintCacheMaxEntries {
+			oldestKey := ""
+			var oldest time.Time
+			for k, entry := range entries {
+				if oldestKey == "" || entry.createdAt.Before(oldest) {
+					oldestKey, oldest = k, entry.createdAt
+				}
+			}
+			delete(entries, oldestKey)
+		}
+	}
+	entries[key] = fingerprintCacheEntry{
+		promptTokens: promptTokens,
+		createdAt:    now,
+		expiresAt:    now.Add(fingerprintCacheTTL),
+	}
+}
+
+// resetFingerprintCacheForTest clears the official-side cache. Tests call it
+// to keep one case's cached token count from leaking into the next.
+func resetFingerprintCacheForTest() {
+	fingerprintTokenCache.mu.Lock()
+	fingerprintTokenCache.entries = make(map[string]fingerprintCacheEntry)
+	fingerprintTokenCache.mu.Unlock()
+}
 
 // PlatformKeyForVendor returns the platform key for vendor from
 // MP_PLATFORM_KEYS. The map is parsed in memory and never logged or written to
@@ -85,15 +194,26 @@ type FingerprintResult struct {
 	PromptTokensOfficial  int64
 	PromptTokensCandidate int64
 	Ratio                 float64 // candidate/official, 1.0 = identical
-	WithinTolerance       bool    // |ratio-1| <= 0.02
-	FailReason            string  // short English; never contains a key or upstream body
+	// Checked reports whether both sides returned usable prompt_tokens and a
+	// comparison actually happened. Transport errors, non-200 responses,
+	// missing usage and prompts too small to judge all leave it false; such a
+	// result must never count towards a mismatch streak.
+	Checked bool
+	// Comparable is a synonym for Checked kept for callers that spell the
+	// "was this result a real comparison?" question that way.
+	Comparable      bool
+	WithinTolerance bool   // |ratio-1| <= 0.05 or |candidate-official| <= 3
+	FailReason      string // short English; never contains a key or upstream body
 }
 
 // CompareFingerprint sends the same prompt to the official and candidate
 // OpenAI-compatible /chat/completions endpoints (each with its own upstream
-// model name) and compares usage.prompt_tokens. It always spends two minimal
-// completions (max_tokens=1, temperature=0); failures are reported in
-// FailReason and never echo a key or the upstream body.
+// model name) and compares usage.prompt_tokens. The official result is cached
+// in-process for fingerprintCacheTTL, keyed by vendor + upstream model +
+// prompt hash, so the patrol job does not hit the official endpoint once per
+// listing. The candidate is always called; cache hits and failures never carry
+// keys or upstream bodies. It always spends at most one candidate completion
+// (max_tokens=1, temperature=0); failures are reported in FailReason.
 func CompareFingerprint(ctx context.Context, client *http.Client,
 	official Vendor, officialKey, officialUpstreamModel string,
 	candidate Vendor, candidateKey, candidateUpstreamModel string,
@@ -106,10 +226,21 @@ func CompareFingerprint(ctx context.Context, client *http.Client,
 	}
 
 	var res FingerprintResult
-	officialTokens, fail := fingerprintPromptTokens(ctx, client, official, officialKey, officialUpstreamModel, prompt)
-	if fail != "" {
-		res.FailReason = fingerprintFailReason("official", fail)
-		return res
+	now := fingerprintCacheNow()
+	cacheKey := fingerprintCacheKey(official.ID, officialUpstreamModel, prompt)
+	officialTokens, cached := fingerprintCacheGet(cacheKey, now)
+	if !cached {
+		var fail string
+		officialTokens, fail = fingerprintPromptTokens(ctx, client, official, officialKey, officialUpstreamModel, prompt)
+		if fail != "" {
+			// Failures are never cached: the next patrol must retry the
+			// official endpoint.
+			res.FailReason = fingerprintFailReason("official", fail)
+			return res
+		}
+		if officialTokens > 0 {
+			fingerprintCachePut(cacheKey, officialTokens, now)
+		}
 	}
 	candidateTokens, fail := fingerprintPromptTokens(ctx, client, candidate, candidateKey, candidateUpstreamModel, prompt)
 	if fail != "" {
@@ -123,9 +254,22 @@ func CompareFingerprint(ctx context.Context, client *http.Client,
 		res.FailReason = "missing prompt token usage"
 		return res
 	}
+	if officialTokens < fingerprintMinPromptTokens {
+		// Too few tokens to judge: a single tokenizer quirk would look like a
+		// huge relative drift. Report unchecked, never a failure (P0).
+		res.FailReason = "prompt too short to compare"
+		return res
+	}
 	ratio := float64(candidateTokens) / float64(officialTokens)
+	diff := officialTokens - candidateTokens
+	if diff < 0 {
+		diff = -diff
+	}
 	res.Ratio = math.Round(ratio*10000) / 10000
-	res.WithinTolerance = math.Abs(ratio-1) <= fingerprintTolerance
+	res.Checked = true
+	res.Comparable = true
+	res.WithinTolerance = math.Abs(ratio-1) <= fingerprintTolerance+1e-9 ||
+		diff <= fingerprintAbsoluteTolerance
 	return res
 }
 

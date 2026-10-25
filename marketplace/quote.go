@@ -22,9 +22,9 @@ type QuoteInput struct {
 	OriginVendor string
 	// CoefficientMilli is the channel-model price coefficient (1000 = official
 	// price). <= 0 is treated as 1000.
-	CoefficientMilli int64
-	MultiplierMilli  int64     // 倍率千分值, must be 1..1000 (§3.2)
-	At               time.Time // pricing instant = pre-freeze moment (§3.3)
+	CoefficientMilli                                             int64
+	MultiplierMilli                                              int64     // 倍率千分值, must be 1..1000 (§3.2)
+	At                                                           time.Time // pricing instant = pre-freeze moment (§3.3)
 	InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens int64
 	SearchCount, FetchCount                                      int64
 }
@@ -34,6 +34,7 @@ type QuoteInput struct {
 // function.
 type QuoteResult struct {
 	Model, Vendor, Tier               string           // Tier is the tier actually priced (flat after fallback)
+	OriginVendor                      string           // price-book owner used for this quote
 	PriceVersion                      int64            // token price-book version
 	ToolPriceVersions                 map[string]int64 // item -> version, only for items with count > 0
 	MultiplierMilli                   int64
@@ -129,10 +130,12 @@ func Quote(db *gorm.DB, cal *Calendar, in QuoteInput) (QuoteResult, error) {
 	return QuoteResult{
 		Model:             in.Model,
 		Vendor:            in.Vendor,
+		OriginVendor:      origin,
 		Tier:              pb.Tier,
 		PriceVersion:      pb.Version,
 		ToolPriceVersions: toolVersions,
 		MultiplierMilli:   in.MultiplierMilli,
+		CoefficientMilli:  coefficient,
 		TokenDebit:        tokenDebit,
 		ToolDebit:         toolDebit,
 		TotalDebit:        tokenDebit + toolDebit,

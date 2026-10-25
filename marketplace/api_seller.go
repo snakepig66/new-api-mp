@@ -423,7 +423,11 @@ func resumeSellerListing(c *gin.Context) {
 	if _, ok := requireOwnListing(c, db, id, sellerID); !ok {
 		return
 	}
-	if err := ResumeListing(db, id); err != nil {
+	if err := ResumeSellerListing(db, id); err != nil {
+		if errors.Is(err, ErrListingSystemPaused) {
+			common.ApiErrorStatus(c, http.StatusConflict, ErrListingSystemPaused)
+			return
+		}
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
 		return
 	}

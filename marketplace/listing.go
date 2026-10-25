@@ -36,6 +36,10 @@ var (
 	// ErrVendorKeyPattern refuses a key that does not match the channel's
 	// key_pattern (plan keys pasted into the wrong channel).
 	ErrVendorKeyPattern = errors.New("marketplace: key does not match this channel's key pattern")
+	// ErrListingSystemPaused refuses a seller resume of a listing the platform
+	// paused (patrol failure, migration, plan quota, report). Only a pause the
+	// seller initiated may be lifted by the seller.
+	ErrListingSystemPaused = errors.New("marketplace: listing was paused by the platform; contact support")
 )
 
 const (
@@ -175,11 +179,8 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 	}
 	// Plan channels carry a key pattern; an official-plan key pasted into the
 	// wrong channel is rejected before it is encrypted (MODEL-CHANNEL-POOL §4).
-	if channel, ok := ChannelPoolBySlug(db, vendor.ID); ok && strings.TrimSpace(channel.KeyPattern) != "" {
-		re, err := regexp.Compile(channel.KeyPattern)
-		if err == nil && !re.MatchString(in.APIKey) {
-			return Listing{}, ErrVendorKeyPattern
-		}
+	if err := validateChannelAPIKey(db, vendor.ID, in.APIKey); err != nil {
+		return Listing{}, err
 	}
 
 	var listing Listing
@@ -222,15 +223,25 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 			return fmt.Errorf("marketplace: encode model mapping: %w", merr)
 		}
 		// Multi-protocol vendors relay the buyer's raw body (native OpenAI +
-		// Anthropic) instead of the adaptor's conversion (§3.10).
+		// Anthropic) instead of the adaptor's conversion (§3.10). Raw-body
+		// forwarding skips new-api's model mapping, so it is only safe when
+		// every selected model's upstream id is identical. A renamed model
+		// would otherwise reach the vendor under the platform name.
+		allIdentity := true
+		for _, m := range models {
+			if channelMapping[m] != m {
+				allIdentity = false
+				break
+			}
+		}
 		setting := map[string]any{}
-		if vendor.PassthroughBody {
+		if vendor.PassthroughBody && allIdentity {
 			setting["pass_through_body_enabled"] = true
 		}
 		if vendor.StripV1Prefix {
 			setting["mp_strip_v1_prefix"] = true
 		}
-		if messagesURL := VendorAnthropicMessagesURL(vendor); messagesURL != "" {
+		if messagesURL := VendorAnthropicMessagesURL(vendor); messagesURL != "" && vendor.PassthroughBody && allIdentity {
 			setting["mp_anthropic_messages_url"] = messagesURL
 		}
 		if len(setting) > 0 {
@@ -348,9 +359,130 @@ func PauseListing(db *gorm.DB, id int64) error {
 	return TransitionListing(db, id, ListingLive, ListingPaused)
 }
 
-// ResumeListing moves paused → live.
+// ResumeListing moves paused → live. It is the platform-side edge: it does
+// not ask who paused the listing, so only jobs/admin paths may use it.
 func ResumeListing(db *gorm.DB, id int64) error {
 	return TransitionListing(db, id, ListingPaused, ListingLive)
+}
+
+// ResumeSellerListing is the seller-facing resume edge: it refuses a listing
+// the platform paused (non-empty pause_reason or a pending resume_at). A
+// system pause is only lifted by the job or an administrator, so a seller
+// cannot undo a patrol/migration/fingerprint pause and resume selling.
+func ResumeSellerListing(db *gorm.DB, id int64) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		var row Listing
+		if err := lockForUpdate(tx).Where("id = ?", id).First(&row).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrListingNotFound
+			}
+			return err
+		}
+		if row.Status != ListingPaused {
+			return fmt.Errorf("%w: %s -> live", ErrInvalidTransition, row.Status)
+		}
+		if strings.TrimSpace(row.PauseReason) != "" || row.ResumeAt != nil {
+			return ErrListingSystemPaused
+		}
+		res := tx.Model(&Listing{}).
+			Where("id = ? AND status = ? AND (pause_reason IS NULL OR pause_reason = '')", id, ListingPaused).
+			Updates(map[string]any{
+				"status":          ListingLive,
+				"pause_reason":    "",
+				"resume_at":       nil,
+				"previous_status": "",
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return fmt.Errorf("%w: paused -> live", ErrInvalidTransition)
+		}
+		return nil
+	})
+}
+
+// validateChannelAPIKey applies a pool channel's deny prefixes and key_pattern
+// to a plaintext key. It never includes the key in an error.
+func validateChannelAPIKey(db *gorm.DB, channelSlug, apiKey string) error {
+	if db == nil {
+		return nil
+	}
+	ch, ok := ChannelPoolBySlug(db, channelSlug)
+	if !ok {
+		return nil
+	}
+	for _, prefix := range parseStringList(ch.DenyKeyPrefixes) {
+		if prefix != "" && strings.HasPrefix(apiKey, prefix) {
+			return fmt.Errorf("%w: %q refuses personal-plan keys", ErrVendorKeyDenied, ch.Slug)
+		}
+	}
+	pattern := strings.TrimSpace(ch.KeyPattern)
+	if pattern == "" {
+		return nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		// An invalid admin pattern must not block every listing; the channel
+		// save path already validates it, so treat a stale bad pattern as
+		// unset.
+		return nil
+	}
+	if !re.MatchString(apiKey) {
+		return ErrVendorKeyPattern
+	}
+	return nil
+}
+
+// RefreshListingChannelMapping rewrites the upstream name of one
+// (channel, standard model) pair in every listing channel that carries the
+// model. Called after an administrator edits the pool mapping so live listings
+// do not keep forwarding the old name until the next restart.
+func RefreshListingChannelMapping(db *gorm.DB, channelSlug, modelName, upstream string) error {
+	if db == nil {
+		return nil
+	}
+	channelSlug = strings.TrimSpace(channelSlug)
+	modelName = strings.TrimSpace(modelName)
+	upstream = strings.TrimSpace(upstream)
+	if channelSlug == "" || modelName == "" {
+		return nil
+	}
+	var rows []Listing
+	if err := db.Select("id", "channel_id", "models").Where("vendor = ?", channelSlug).Find(&rows).Error; err != nil {
+		return err
+	}
+	for _, l := range rows {
+		if !slices.Contains(l.Models, modelName) {
+			continue
+		}
+		var ch model.Channel
+		if err := db.Select("id", "model_mapping").Where("id = ?", l.ChannelID).Take(&ch).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			return err
+		}
+		mapping := map[string]string{}
+		if raw := strings.TrimSpace(ch.GetModelMapping()); raw != "" {
+			_ = common.Unmarshal([]byte(raw), &mapping)
+		}
+		if upstream == "" {
+			delete(mapping, modelName)
+		} else {
+			mapping[modelName] = upstream
+		}
+		encoded, err := common.Marshal(mapping)
+		if err != nil {
+			return err
+		}
+		text := string(encoded)
+		if err := db.Model(&model.Channel{}).Where("id = ?", ch.Id).
+			Update("model_mapping", text).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // BanListing moves live/paused/canary/verifying → banned. Banned is terminal.
@@ -425,6 +557,12 @@ func ReplaceKey(db *gorm.DB, id int64, newAPIKey string) error {
 		}
 		if row.Status == ListingBanned {
 			return fmt.Errorf("%w: banned -> verifying", ErrInvalidTransition)
+		}
+		// The key still has to belong to this channel: switching a listing
+		// from an official channel to a plan key (or vice versa) is refused
+		// before the row is touched.
+		if err := validateChannelAPIKey(tx, row.Vendor, newAPIKey); err != nil {
+			return err
 		}
 		var clash int64
 		if err := tx.Model(&Listing{}).

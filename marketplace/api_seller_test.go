@@ -720,3 +720,36 @@ func TestSellerStatsRetryChainRedaction(t *testing.T) {
 	assert.Equal(t, "[]", sellerRetryChain("not json"))
 	assert.Equal(t, "", sellerRetryChain(""))
 }
+
+// TestSellerCannotResumeSystemPause covers the P1 lifecycle rule: a pause the
+// platform created (patrol, migration, plan quota, fingerprint) cannot be
+// lifted from the seller console.
+func TestSellerCannotResumeSystemPause(t *testing.T) {
+	f := newSellerAPIFixture(t)
+	listing, err := CreateListing(f.db, CreateListingInput{
+		SellerID:        f.sellerID,
+		VendorID:        SeedVendorDeepSeek,
+		APIKey:          uniqueTestKey("sk-seller-sys-pause"),
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 300,
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.db.Model(&Listing{}).Where("id = ?", listing.ID).
+		Updates(map[string]any{"status": ListingPaused, "pause_reason": "migration"}).Error)
+
+	w := f.do(t, http.MethodPost, "/api/marketplace/seller/listings/"+strconv.FormatInt(listing.ID, 10)+"/resume", nil, int(f.sellerID))
+	assert.Equal(t, http.StatusConflict, w.Code)
+
+	row, err := GetListing(f.db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingPaused, row.Status)
+
+	// Clearing the system reason (an admin decision) allows the seller edge.
+	require.NoError(t, f.db.Model(&Listing{}).Where("id = ?", listing.ID).
+		Updates(map[string]any{"pause_reason": "", "resume_at": nil}).Error)
+	w = f.do(t, http.MethodPost, "/api/marketplace/seller/listings/"+strconv.FormatInt(listing.ID, 10)+"/resume", nil, int(f.sellerID))
+	require.Equal(t, http.StatusOK, w.Code)
+	row, err = GetListing(f.db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingLive, row.Status)
+}

@@ -11,6 +11,9 @@ package marketplace
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -208,10 +211,19 @@ func patrolLiveListings(db *gorm.DB, now time.Time) error {
 // patrolOneListing verifies one live listing's key and records a patrol probe;
 // a failed check auto-pauses the listing (§3.5 巡检失败 → AutoPauseListing).
 // When a platform key exists for the model's origin vendor, it also runs the
-// tokenizer fingerprint against the official endpoint: two consecutive
-// mismatches pause the listing, three ban the channel-model qualification
-// (MODEL-CHANNEL-POOL §4).
+// tokenizer fingerprint against the official endpoint: two consecutive *real*
+// mismatches pause the listing. Three strikes still only pause the listing and
+// raise a SysError alert — the channel-model qualification is never banned
+// automatically; a ban requires an operator decision in the admin console
+// (MODEL-CHANNEL-POOL §4, P0).
 func patrolOneListing(db *gorm.DB, limiter *VerifyLimiter, l *Listing) error {
+	return patrolOneListingWithClient(db, limiter, EgressHTTPClient(), l)
+}
+
+// patrolOneListingWithClient is patrolOneListing with the egress client
+// injected so tests can point every probe (verification and fingerprint) at a
+// mock upstream.
+func patrolOneListingWithClient(db *gorm.DB, limiter *VerifyLimiter, client *http.Client, l *Listing) error {
 	apiKey, err := DecryptListingKey(l.KeyCiphertext)
 	if err != nil {
 		return err
@@ -235,7 +247,7 @@ func patrolOneListing(db *gorm.DB, limiter *VerifyLimiter, l *Listing) error {
 			break
 		}
 	}
-	res := VerifyListingKeyWithModel(ctx, EgressHTTPClient(), vendor, apiKey, probeModel)
+	res := VerifyListingKeyWithModel(ctx, client, vendor, apiKey, probeModel)
 	// Fingerprint spot check (only when the platform holds a key for the
 	// origin vendor). A mismatch is not a key failure; it is counted below.
 	fingerprintChecked := false
@@ -254,10 +266,13 @@ func patrolOneListing(db *gorm.DB, limiter *VerifyLimiter, l *Listing) error {
 					if strings.TrimSpace(prompt) == "" {
 						prompt = defaultFingerprintPrompt
 					}
-					fp := CompareFingerprint(ctx, EgressHTTPClient(),
+					fp := CompareFingerprint(ctx, client,
 						officialVendor, officialKey, officialUpstream,
 						vendor, apiKey, probeModel, prompt)
-					fingerprintChecked = true
+					// Only a completed comparison is evidence. Failures
+					// (billing, 429, network, tiny prompt) leave Checked false
+					// so they neither write fingerprint_ok nor extend a streak.
+					fingerprintChecked = fp.Checked
 					fingerprintOK = fp.WithinTolerance
 					fingerprintRatio = fp.Ratio
 					fingerprintReason = fp.FailReason
@@ -268,15 +283,18 @@ func patrolOneListing(db *gorm.DB, limiter *VerifyLimiter, l *Listing) error {
 	limiter.Release()
 
 	detailMap := map[string]any{
-		"key_valid":    res.KeyValid,
-		"models":       len(res.Models),
-		"has_balance":  res.BalanceMicro != nil,
-		"prompt_cache": res.PromptCacheSupport,
-		"fail_reason":  res.FailReason,
+		"key_valid":           res.KeyValid,
+		"models":              len(res.Models),
+		"has_balance":         res.BalanceMicro != nil,
+		"prompt_cache":        res.PromptCacheSupport,
+		"fail_reason":         res.FailReason,
+		"fingerprint_checked": fingerprintChecked,
 	}
 	if fingerprintChecked {
 		detailMap["fingerprint_ok"] = fingerprintOK
 		detailMap["fingerprint_ratio"] = fingerprintRatio
+		detailMap["fingerprint_reason"] = fingerprintReason
+	} else if fingerprintReason != "" {
 		detailMap["fingerprint_reason"] = fingerprintReason
 	}
 	detail, err := common.Marshal(detailMap)
@@ -298,31 +316,71 @@ func patrolOneListing(db *gorm.DB, limiter *VerifyLimiter, l *Listing) error {
 		return AutoPauseListing(db, l.ID, "patrol failed: "+res.FailReason)
 	}
 	if fingerprintChecked && !fingerprintOK {
-		var recent []Probe
-		if err := db.Where("listing_id = ? AND type = ?", l.ID, ProbeTypePatrol).
-			Order("id DESC").Limit(3).Find(&recent).Error; err != nil {
+		consecutive, err := consecutiveFingerprintMismatches(db, l.ID)
+		if err != nil {
 			return err
-		}
-		consecutive := 0
-		for i := range recent {
-			if strings.Contains(recent[i].Detail, `"fingerprint_ok":false`) {
-				consecutive++
-				continue
-			}
-			break
 		}
 		switch {
 		case consecutive >= 3:
-			// Three strikes: the qualification itself is untrustworthy.
-			if err := db.Model(&ChannelModel{}).
-				Where("channel_slug = ? AND model = ?", l.Vendor, modelName).
-				Update("status", PoolStatusBanned).Error; err != nil {
+			// Third real mismatch: keep the listing paused (it usually was
+			// already paused by strike two, so ErrInvalidTransition is fine)
+			// and alert an operator. Never ban the ChannelModel here.
+			if err := AutoPauseListing(db, l.ID, "fingerprint mismatch (3 consecutive); manual review required"); err != nil &&
+				!errors.Is(err, ErrInvalidTransition) {
 				return err
 			}
-			return AutoPauseListing(db, l.ID, "fingerprint mismatch (3 consecutive): channel model banned")
+			common.SysError(common.LogText(
+				"marketplace: fingerprint mismatch (3 consecutive): listing %d channel %s model %s; listing kept paused, channel-model NOT banned (manual review required)",
+				l.ID, l.Vendor, modelName))
 		case consecutive >= 2:
-			return AutoPauseListing(db, l.ID, "fingerprint mismatch (2 consecutive)")
+			if err := AutoPauseListing(db, l.ID, "fingerprint mismatch (2 consecutive)"); err != nil &&
+				!errors.Is(err, ErrInvalidTransition) {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+// fingerprintProbeDetail is the subset of a patrol probe's JSON detail needed
+// to tell a real comparison from an unchecked/failed one.
+type fingerprintProbeDetail struct {
+	Checked *bool `json:"fingerprint_checked"`
+	OK      *bool `json:"fingerprint_ok"`
+}
+
+// consecutiveFingerprintMismatches counts, walking backwards from the newest
+// patrol probe, how many *checked* comparisons failed. Records with
+// fingerprint_checked=false (billing errors, 429, network problems, tiny
+// prompts, auto-pause annotations) are skipped without breaking the streak;
+// the first checked comparison that passed ends the streak. At most
+// fingerprintStreakLookback rows are examined.
+func consecutiveFingerprintMismatches(db *gorm.DB, listingID int64) (int, error) {
+	const fingerprintStreakLookback = 5
+	var recent []Probe
+	if err := db.Where("listing_id = ? AND type = ?", listingID, ProbeTypePatrol).
+		Order("id DESC").Limit(fingerprintStreakLookback).Find(&recent).Error; err != nil {
+		return 0, err
+	}
+	consecutive := 0
+	for i := range recent {
+		var d fingerprintProbeDetail
+		if err := json.Unmarshal([]byte(recent[i].Detail), &d); err != nil {
+			continue
+		}
+		if d.Checked == nil || !*d.Checked {
+			// Not a real comparison: neither count it nor break the streak.
+			continue
+		}
+		if d.OK == nil {
+			// A checked row without a verdict is malformed; it must not
+			// masquerade as either outcome.
+			continue
+		}
+		if *d.OK {
+			break
+		}
+		consecutive++
+	}
+	return consecutive, nil
 }

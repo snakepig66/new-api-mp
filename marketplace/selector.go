@@ -431,7 +431,8 @@ func (s *Selector) dailySpend(db *gorm.DB, listingID int64, now time.Time) (int6
 }
 
 // SelectInput is one buyer request's routing context (§4.3 step 2).
-type SelectInput struct {	Model string
+type SelectInput struct {
+	Model string
 	Now   time.Time // zero → time.Now()
 	// ExcludeListingIDs carries the listings this request's retry chain has
 	// already tried (§3.7 换家).
@@ -481,16 +482,54 @@ func loadVerifiedChannels(db *gorm.DB, model string) map[string]ChannelPool {
 const selectorListingColumns = "id, seller_id, channel_id, vendor, models, multiplier_milli, " +
 	"concurrency_limit, status, hours, daily_cap_micro, rpm_limit, key_fingerprint, version"
 
+// loadVerifiedCoefficients returns channel slug -> price coefficient (milli)
+// for the model's verified, active qualifications. A missing/zero coefficient
+// defaults to 1000 (official price). Coefficients above 1000 are kept as-is so
+// Select can reject them (the marketplace must never charge above official).
+func loadVerifiedCoefficients(db *gorm.DB, model string) map[string]int64 {
+	out := make(map[string]int64)
+	if db == nil {
+		return out
+	}
+	var rows []ChannelModel
+	if err := db.Select("channel_slug", "coefficient_milli").
+		Where("model = ? AND verified = ? AND status = ?", model, true, PoolStatusActive).
+		Find(&rows).Error; err != nil {
+		return out
+	}
+	for _, row := range rows {
+		coefficient := row.CoefficientMilli
+		if coefficient <= 0 {
+			coefficient = 1000
+		}
+		out[row.ChannelSlug] = coefficient
+	}
+	return out
+}
+
+// effectiveMultiplierMilli is the price the buyer actually pays relative to
+// the official price: ceil(multiplierMilli * coefficientMilli / 1000). The
+// clamp-free multiplication is safe here because both inputs are bounded by
+// listing/multiplier validation (1..1000) and the Select coefficient guard.
+func effectiveMultiplierMilli(multiplierMilli, coefficientMilli int64) int64 {
+	if coefficientMilli <= 0 {
+		coefficientMilli = 1000
+	}
+	return (multiplierMilli*coefficientMilli + 999) / 1000
+}
+
 // Select filters the live (+ gray-admitted canary) listings for in.Model and
 // returns the best-scored one, holding its concurrency slot — the caller
 // MUST release it via s.Slots.Release when the request ends (§3.5).
 //
 // Filters, in order: not excluded, serves the model, canary admitted by the
-// CanaryFraction dice, multiplier within MaxMultiplierMilli when set, inside
-// its 可接单时段, under its daily spend cap, and circuit not broken. Scoring
-// (§4.3 综合价格、可用率、延迟): multiplier ascending first; ties break on the
-// most recent verify/patrol mp_probes latency ascending, with never-probed
-// listings last; the final tie-break is listing id ascending.
+// CanaryFraction dice, channel coefficient valid and effective multiplier
+// (ceil(multiplier × coefficient / 1000)) within MaxMultiplierMilli when set,
+// inside its 可接单时段, under its daily spend cap, and circuit not broken.
+// Scoring (§4.3 综合价格、可用率、延迟): effective multiplier ascending first;
+// ties break on the most recent verify/patrol mp_probes latency ascending,
+// with never-probed listings last; the final tie-break is listing id
+// ascending.
 //
 // Side-effecting limits (RPM, half-open probe, concurrency slot) are applied
 // only to candidates in ranked order, and only the eventual winner keeps
@@ -520,6 +559,11 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 	// plan channels paused by a quota window never receive traffic
 	// (MODEL-CHANNEL-POOL §3.2/§4). Loaded once per selection.
 	verifiedChannels := loadVerifiedChannels(db, in.Model)
+	coefficients := loadVerifiedCoefficients(db, in.Model)
+	// effectiveByID is the buyer-facing price factor (multiplier × channel
+	// coefficient) used for the cap and for ranking. A coefficient above 1000
+	// would let a listing charge more than official, so it is rejected outright.
+	effectiveByID := make(map[int64]int64, len(rows))
 	var cands []Listing
 	for i := range rows {
 		l := rows[i]
@@ -539,7 +583,17 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 		if l.Status == ListingCanary && !s.canaryAdmit() {
 			continue
 		}
-		if in.MaxMultiplierMilli > 0 && l.MultiplierMilli > in.MaxMultiplierMilli {
+		coefficient, foundCoefficient := coefficients[l.Vendor]
+		if !foundCoefficient || coefficient <= 0 {
+			// Missing coefficients mean official price.
+			coefficient = 1000
+		}
+		if coefficient > 1000 {
+			// Defence in depth: no mark-up above the official price.
+			continue
+		}
+		effective := effectiveMultiplierMilli(l.MultiplierMilli, coefficient)
+		if in.MaxMultiplierMilli > 0 && effective > in.MaxMultiplierMilli {
 			continue
 		}
 		if !WithinHours(l.Hours, now) {
@@ -559,6 +613,7 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 		if !s.Breaker.available(l.ID, now) {
 			continue
 		}
+		effectiveByID[l.ID] = effective
 		cands = append(cands, l)
 	}
 	if len(cands) == 0 {
@@ -573,6 +628,9 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 		return Listing{}, false, err
 	}
 	slices.SortFunc(cands, func(a, b Listing) int {
+		if ea, eb := effectiveByID[a.ID], effectiveByID[b.ID]; ea != eb {
+			return cmp.Compare(ea, eb)
+		}
 		if a.MultiplierMilli != b.MultiplierMilli {
 			return cmp.Compare(a.MultiplierMilli, b.MultiplierMilli)
 		}

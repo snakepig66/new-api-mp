@@ -371,9 +371,19 @@ func VerifyListing(ctx context.Context, db *gorm.DB, client *http.Client, limite
 	if listing.Status != ListingDraft {
 		return VerifyResult{}, fmt.Errorf("%w: %s -> verifying", ErrInvalidTransition, listing.Status)
 	}
-	vendor, ok := VendorByID(listing.Vendor)
+	vendor, ok := lookupVendorForDB(db, listing.Vendor)
 	if !ok {
 		return VerifyResult{}, fmt.Errorf("%w: %q", ErrVendorNotWhitelisted, listing.Vendor)
+	}
+	// Resolve every selected model to its upstream name before touching the
+	// key: a listing whose mapping is incomplete must never pass verification.
+	upstreamByModel := make(map[string]string, len(listing.Models))
+	for _, m := range listing.Models {
+		cm, found := ChannelModelFor(db, listing.Vendor, m)
+		if !found || strings.TrimSpace(cm.UpstreamModel) == "" {
+			return VerifyResult{}, fmt.Errorf("%w: %q has no upstream mapping on channel %q", ErrVendorModelUnmapped, m, listing.Vendor)
+		}
+		upstreamByModel[m] = cm.UpstreamModel
 	}
 	if err := StartVerification(db, listingID); err != nil {
 		return VerifyResult{}, err
@@ -384,21 +394,94 @@ func VerifyListing(ctx context.Context, db *gorm.DB, client *http.Client, limite
 		// Nothing was probed; roll the status back before reporting.
 		return VerifyResult{}, errors.Join(err, revertVerificationToDraft(db, listingID))
 	}
+	probeModel := ""
+	for _, m := range listing.Models {
+		if upstreamByModel[m] != "" {
+			probeModel = upstreamByModel[m]
+			break
+		}
+	}
 	if err := limiter.Acquire(ctx); err != nil {
 		return VerifyResult{}, errors.Join(err, revertVerificationToDraft(db, listingID))
 	}
-	res := VerifyListingKey(ctx, client, vendor, apiKey)
+	res := VerifyListingKeyWithModel(ctx, client, vendor, apiKey, probeModel)
 	limiter.Release()
+
+	// The key must expose every selected model, not merely be valid. Cloud
+	// upstreams often append a date to the model id, so compare by prefix in
+	// both directions after normalizing separators.
+	var missing []string
+	for _, m := range listing.Models {
+		if !keyExposesModel(res.Models, upstreamByModel[m]) {
+			missing = append(missing, m)
+		}
+	}
+	if res.OK && len(missing) > 0 {
+		res.OK = false
+		res.FailReason = "key cannot call the selected model(s): " + strings.Join(missing, ", ")
+	}
+
+	// Fingerprint spot check when the platform holds the origin vendor's key.
+	// A mismatch keeps the listing in draft; it never bans the qualification.
+	fingerprintChecked := false
+	fingerprintOK := true
+	fingerprintRatio := 0.0
+	fingerprintReason := ""
+	if res.OK {
+		for _, m := range listing.Models {
+			model, found := ModelPoolByName(db, m)
+			if !found {
+				continue
+			}
+			officialKey, hasKey := PlatformKeyForVendor(model.OriginVendor)
+			if !hasKey {
+				continue
+			}
+			officialVendor, foundVendor := lookupVendorForDB(db, model.OriginVendor)
+			if !foundVendor {
+				continue
+			}
+			officialUpstream := model.Name
+			if cm, foundCM := ChannelModelFor(db, model.OriginVendor, model.Name); foundCM {
+				officialUpstream = cm.UpstreamModel
+			}
+			prompt := model.VerifyPrompt
+			if strings.TrimSpace(prompt) == "" {
+				prompt = defaultFingerprintPrompt
+			}
+			fp := CompareFingerprint(ctx, client, officialVendor, officialKey, officialUpstream,
+				vendor, apiKey, upstreamByModel[m], prompt)
+			if !fp.Checked {
+				continue
+			}
+			fingerprintChecked = true
+			fingerprintOK = fp.WithinTolerance
+			fingerprintRatio = fp.Ratio
+			fingerprintReason = fp.FailReason
+			if !fp.WithinTolerance {
+				res.OK = false
+				res.FailReason = "fingerprint mismatch: the channel is not serving the official model"
+			}
+			break
+		}
+	}
 
 	// Record the probe (§4.2): the JSON detail summarizes the check and
 	// never contains the key (§2.3).
-	detail, err := common.Marshal(map[string]any{
+	detailMap := map[string]any{
 		"key_valid":    res.KeyValid,
 		"models":       len(res.Models),
 		"has_balance":  res.BalanceMicro != nil,
 		"prompt_cache": res.PromptCacheSupport,
 		"fail_reason":  res.FailReason,
-	})
+	}
+	if fingerprintChecked {
+		detailMap["fingerprint_checked"] = true
+		detailMap["fingerprint_ok"] = fingerprintOK
+		detailMap["fingerprint_ratio"] = fingerprintRatio
+		detailMap["fingerprint_reason"] = fingerprintReason
+	}
+	detail, err := common.Marshal(detailMap)
 	if err != nil {
 		detail = []byte("{}")
 	}
@@ -423,6 +506,23 @@ func VerifyListing(ctx context.Context, db *gorm.DB, client *http.Client, limite
 		return res, err
 	}
 	return res, nil
+}
+
+// keyExposesModel reports whether the vendor's /models list contains the
+// upstream id, accepting the date/suffix variants vendors add to model ids.
+func keyExposesModel(available []string, upstream string) bool {
+	upstream = strings.ToLower(strings.TrimSpace(upstream))
+	if upstream == "" {
+		return false
+	}
+	for _, name := range available {
+		got := strings.ToLower(strings.TrimSpace(name))
+		if got == upstream || strings.HasPrefix(got, upstream+"-") || strings.HasPrefix(got, upstream+".") ||
+			strings.HasPrefix(got, upstream+"_") || strings.HasPrefix(got, upstream+"@") {
+			return true
+		}
+	}
+	return false
 }
 
 // revertVerificationToDraft is the verification-failure rollback edge of the

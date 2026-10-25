@@ -505,7 +505,7 @@ const emptyChannelForm: ChannelForm = {
   deny_key_prefixes: '',
   adaptor: '',
   strip_v1_prefix: false,
-  passthrough_body: true,
+  passthrough_body: false,
   quota_window: '',
   exhaustion_signature: '',
   terms_url: '',
