@@ -482,11 +482,12 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 		}
 		return nil, false, 0, nil
 	}
+	officialOnly := keyOfficialOnly(db, tokenID)
 	if !has {
 		// Listings exist but none is certified/sellable right now: reject
 		// instead of falling through to a regular upstream channel
 		// (MODEL-CHANNEL-POOL 验收: 未认证的渠道或模型后端直接拒绝).
-		return nil, true, http.StatusServiceUnavailable, errors.New("no supplier available for this model")
+		return nil, true, http.StatusServiceUnavailable, noSupplierError(officialOnly)
 	}
 	capMilli, qerr := keyModelCapMilli(db, tokenID, modelName)
 	if errors.Is(qerr, ErrModelNotAddedToKey) && requestedModel != modelName {
@@ -516,14 +517,14 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 	if rpm > 0 && !BuyerRPMAllow(buyerUserID, rpm, time.Now()) {
 		return nil, true, http.StatusBadRequest, errors.New("rate limited: this key exceeds its requests-per-minute limit, retry later")
 	}
-	officialOnly := keyOfficialOnly(db, tokenID)
 	listing, tookProbe, qerr := DefaultSelector().SelectWithProbe(db, SelectInput{
 		Model:              modelName,
+		BuyerID:            buyerUserID,
 		MaxMultiplierMilli: capMilli,
 		OfficialOnly:       officialOnly,
 	})
 	if errors.Is(qerr, ErrNoListingAvailable) {
-		return nil, true, http.StatusServiceUnavailable, errors.New("no supplier available for this model")
+		return nil, true, http.StatusServiceUnavailable, noSupplierError(officialOnly)
 	}
 	if qerr != nil {
 		common.SysError(common.LogText("marketplace: select listing: %s", qerr.Error()))
@@ -686,6 +687,15 @@ func buyerRPMLimit(db *gorm.DB, tokenID int) int {
 		return 0
 	}
 	return pref.RPM
+}
+
+// noSupplierError keeps the 503 contract but tells the buyer when the empty
+// supplier set is a consequence of the key's official-only routing.
+func noSupplierError(officialOnly bool) error {
+	if officialOnly {
+		return errors.New("no supplier available for this model: official-only routing is enabled and no official channel can serve it")
+	}
+	return errors.New("no supplier available for this model")
 }
 
 // keyOfficialOnly reports the buyer key's "只用官方渠道" switch
@@ -984,6 +994,7 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 	if hopCount < maxListingHops {
 		listing, probe, err := selector.SelectWithProbe(db, SelectInput{
 			Model:              modelName,
+			BuyerID:            int64(s.buyerUserID),
 			ExcludeListingIDs:  excluded,
 			MaxMultiplierMilli: multiplierMilli,
 			OfficialOnly:       s.officialOnly,

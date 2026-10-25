@@ -12,6 +12,7 @@
 
 import { queryOptions } from '@tanstack/react-query'
 
+import { copy } from '@/copy'
 import { ApiError, api } from '@/lib/api'
 
 import type {
@@ -28,6 +29,7 @@ import type {
   PageInfo,
   TokenRecord,
   TopupInfo,
+  TopUpRecord,
   UsageRecord,
   UsageRecordDetail,
   UsageStats,
@@ -38,6 +40,7 @@ import type {
 export type LedgerPage = PageInfo<WalletLedgerEntry>
 export type UsagePage = PageInfo<UsageRecord>
 export type TokenPage = PageInfo<TokenRecord>
+export type TopUpPage = PageInfo<TopUpRecord>
 
 async function listTokens(): Promise<TokenPage> {
   return api.get<TokenPage>('/token/', { query: { p: 1, page_size: 100 } })
@@ -122,6 +125,19 @@ export const walletQuery = () =>
     staleTime: 30_000,
   })
 
+/**
+ * GET /user/ip — the caller's source IP as resolved by the trusted-proxy
+ * configuration. The key forms offer it for one-click whitelisting; callers
+ * hide the hint when the request fails.
+ */
+export const currentIPQuery = () =>
+  queryOptions({
+    queryKey: ['console', 'ip'],
+    queryFn: () => api.get<{ ip: string }>('/user/ip'),
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+
 export const walletLedgerQuery = (page: number, pageSize = 20) =>
   queryOptions({
     queryKey: ['console', 'wallet-ledger', page, pageSize],
@@ -202,6 +218,28 @@ export const topupInfoQuery = () =>
   })
 
 /**
+ * POST /user/amount — the authoritative cash amount for a top-up. The UI must
+ * show this instead of multiplying locally: group ratios and discounts are
+ * server-owned.
+ */
+export async function quoteTopupAmount(amount: number): Promise<number> {
+  // paymentError answers HTTP 200 with {message:"error", data:"..."} instead
+  // of the success envelope, so a bad amount would otherwise read as NaN.
+  const quote = await api.post<string | { message?: string; data?: string }>(
+    '/user/amount',
+    { amount },
+  )
+  if (typeof quote === 'object' && quote?.message === 'error') {
+    throw new ApiError(200, undefined, quote.data)
+  }
+  const value = Number(quote)
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new ApiError(200, undefined, copy.pages.consoleWallet.recharge.quoteFailed)
+  }
+  return value
+}
+
+/**
  * POST /user/pay — the epay response is not an envelope: it carries the
  * gateway URL plus hidden form fields the browser must POST to it.
  */
@@ -213,4 +251,19 @@ export async function requestEpayTopup(
     amount,
     payment_method: paymentMethod,
   })
+}
+
+export const topUpRecordsQuery = (page = 1, pageSize = 10) =>
+  queryOptions({
+    queryKey: ['console', 'topup-records', page, pageSize],
+    queryFn: () => api.get<TopUpPage>('/user/topup/self', { query: { p: page, page_size: pageSize } }),
+    staleTime: 15_000,
+  })
+
+/** One order by trade number, used by the post-payment confirmation poll. */
+export async function fetchTopUpRecord(tradeNo: string): Promise<TopUpRecord | null> {
+  const page = await api.get<TopUpPage>('/user/topup/self', {
+    query: { p: 1, page_size: 20, keyword: tradeNo },
+  })
+  return page.items.find((item) => item.trade_no === tradeNo) ?? null
 }

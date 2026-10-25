@@ -297,6 +297,28 @@ func TestSelect(t *testing.T) {
 		assert.Equal(t, 0, s.Slots.InFlight(a.ID))
 	})
 
+	t.Run("a buyer never gets their own listing", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		own := addSelectorListing(t, db, "fp-a", func(l *Listing) {
+			l.SellerID = 42
+			l.MultiplierMilli = 100 // cheapest, so only the buyer check can skip it
+		})
+		other := addSelectorListing(t, db, "fp-b", func(l *Listing) {
+			l.SellerID = 43
+			l.MultiplierMilli = 400
+		})
+		s := newSelector()
+		got, err := s.Select(db, SelectInput{Model: "deepseek-flash", Now: now, BuyerID: 42})
+		require.NoError(t, err)
+		assert.Equal(t, other.ID, got.ID, "buying your own supply would launder gifted balance into withdrawals")
+		assert.Equal(t, 0, s.Slots.InFlight(own.ID))
+
+		_, err = s.Select(db, SelectInput{Model: "deepseek-flash", Now: now, BuyerID: 42,
+			ExcludeListingIDs: []int64{other.ID}})
+		assert.ErrorIs(t, err, ErrNoListingAvailable)
+	})
+
 	t.Run("excluding everything yields ErrNoListingAvailable", func(t *testing.T) {
 		db := newTestDB(t)
 		migrateAll(t, db)

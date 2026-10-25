@@ -82,6 +82,18 @@ describe('wizard submission gate', () => {
     expect(canSubmit(snapshot({ hoursValid: false }))).toBe(false)
   })
 
+  it('requires the plan-terms checkbox for a plan channel', () => {
+    expect(canSubmit(snapshot({ requiresPlanTerms: true }))).toBe(false)
+    expect(
+      canSubmit(snapshot({ requiresPlanTerms: true, planTermsAccepted: false })),
+    ).toBe(false)
+    expect(
+      canSubmit(snapshot({ requiresPlanTerms: true, planTermsAccepted: true })),
+    ).toBe(true)
+    // Official channels do not require it.
+    expect(canSubmit(snapshot({ requiresPlanTerms: false }))).toBe(true)
+  })
+
   it('clamps previousWizardStep at zero and nextWizardStep at the last step', () => {
     expect(previousWizardStep(0)).toBe(0)
     expect(previousWizardStep(2)).toBe(1)

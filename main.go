@@ -32,6 +32,7 @@ import (
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
@@ -307,6 +308,43 @@ func InjectGoogleAnalytics() {
 	indexPage = bytes.ReplaceAll(indexPage, placeholder, analyticsInject)
 }
 
+// enforceMarketplaceBillingInvariants pins the two settings that would
+// otherwise turn top-ups or gifts into free money. Price is the legacy
+// multiplier new-api applies to a top-up (default 7.3), so a ¥10 order would
+// charge ¥73; the marketplace bills 1:1. Gift quotas are equally dangerous:
+// they are withdrawable once a recipient buys a listing, so marketplace mode
+// keeps them at zero.
+func enforceMarketplaceBillingInvariants() {
+	if operation_setting.Price != 1 {
+		common.SysError(common.LogText(
+			"ALERT: top-up Price is %v, not 1; marketplace requires 1:1 billing. Overriding to 1.",
+			operation_setting.Price))
+		if err := model.UpdateOption("Price", "1"); err != nil {
+			// Keep the runtime value correct even if the option row cannot be
+			// written; an admin can retry from the console.
+			operation_setting.Price = 1
+			common.SysError(common.LogText("ALERT: persist Price=1 failed: %s", err.Error()))
+		}
+	}
+	gifts := map[string]*int{
+		"QuotaForNewUser": &common.QuotaForNewUser,
+		"QuotaForInviter": &common.QuotaForInviter,
+		"QuotaForInvitee": &common.QuotaForInvitee,
+	}
+	for key, value := range gifts {
+		if *value == 0 {
+			continue
+		}
+		common.SysError(common.LogText(
+			"ALERT: %s is %d; marketplace mode keeps gift quotas at 0 to prevent cash-out. Overriding to 0.",
+			key, *value))
+		if err := model.UpdateOption(key, "0"); err != nil {
+			*value = 0
+			common.SysError(common.LogText("ALERT: persist %s=0 failed: %s", key, err.Error()))
+		}
+	}
+}
+
 func InitResources() error {
 	// Initialize resources here if needed
 	// This is a placeholder function for future resource initialization
@@ -353,6 +391,7 @@ func InitResources() error {
 		}
 	}
 	model.InitOptionMap()
+	enforceMarketplaceBillingInvariants()
 
 	// 清理旧的磁盘缓存文件
 	common.CleanupOldCacheFiles()

@@ -28,6 +28,50 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 )
 
+// Stable error codes the seller console switches on. The message stays
+// human-readable English; the code is what drives the duplicate-key
+// distinction and the plan-terms prompt in the UI.
+const (
+	// CodeDuplicateKeyOwn: the key is already listed by the caller. The
+	// response also carries listing_id so the console can link to it.
+	CodeDuplicateKeyOwn = "DUPLICATE_KEY_OWN"
+	// CodeDuplicateKeyOther: the key is listed by another account. The
+	// response never carries that seller's identity (§3.5/§2.3).
+	CodeDuplicateKeyOther = "DUPLICATE_KEY_OTHER"
+	// CodePlanTermsRequired: a plan channel was submitted without
+	// plan_terms_accepted=true.
+	CodePlanTermsRequired = "PLAN_TERMS_REQUIRED"
+)
+
+// sellerVerifyTimeout bounds one background verification. The UI shows a
+// "verifying" state for at most this long, so it must stay <= 60s.
+const sellerVerifyTimeout = 60 * time.Second
+
+// handleSellerDuplicateKey writes the discriminated duplicate-key response
+// and reports whether err was one. The caller's own listing id is exposed so
+// the console can deep-link; another seller's id/name never is, but operators
+// get an alert line with the fingerprint prefix and both seller ids.
+func handleSellerDuplicateKey(c *gin.Context, err error) bool {
+	var dup *DuplicateKeyError
+	if !errors.As(err, &dup) {
+		return false
+	}
+	if dup.Own {
+		common.ApiErrorStatus(c, http.StatusConflict,
+			errors.New("this api key is already listed by you"),
+			gin.H{"code": CodeDuplicateKeyOwn, "listing_id": dup.ListingID})
+		return true
+	}
+	cur := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	common.SysError(common.LogText(
+		"marketplace: duplicate key attempt by seller %d on a key already listed by seller %d (listing %d, fp %s)",
+		cur, dup.SellerID, dup.ListingID, dup.FingerprintPrefix))
+	common.ApiErrorStatus(c, http.StatusConflict,
+		errors.New("this api key is already listed by another account"),
+		gin.H{"code": CodeDuplicateKeyOther})
+	return true
+}
+
 // RegisterSellerRoutes is the exported one-line wrapper the router seam calls;
 // the marketplace package cannot import middleware (import cycle), so the
 // UserAuth group is built by the caller and passed in.
@@ -41,6 +85,7 @@ func registerSellerRoutes(g *gin.RouterGroup) {
 	g.GET("/seller/listings", listSellerListings)
 	g.POST("/seller/listings/:id/multiplier", updateSellerMultiplier)
 	g.POST("/seller/listings/:id/key", replaceSellerKey)
+	g.POST("/seller/listings/:id/verify", verifySellerListing)
 	g.POST("/seller/listings/:id/pause", pauseSellerListing)
 	g.POST("/seller/listings/:id/resume", resumeSellerListing)
 	g.GET("/seller/balance", getSellerBalance)
@@ -135,6 +180,9 @@ type sellerListingRequest struct {
 	RPM             int      `json:"rpm"`
 	DailyCapMicro   int64    `json:"daily_cap_micro"`
 	Hours           string   `json:"hours"`
+	// PlanTermsAccepted is required (true) for plan channels; it is the
+	// seller's explicit confirmation that the plan terms allow sharing.
+	PlanTermsAccepted bool `json:"plan_terms_accepted"`
 }
 
 // sellerListingView is one row of the seller's own listing list. It carries
@@ -152,6 +200,79 @@ type sellerListingView struct {
 	Status           string    `json:"status"`
 	KeyFingerprint8  string    `json:"key_fingerprint8"`
 	CreatedAt        time.Time `json:"created_at"`
+	// PauseReason is the stored system pause reason (plan quota, patrol,
+	// migration). "manual" is the fallback for a seller-initiated pause.
+	PauseReason string `json:"pause_reason,omitempty"`
+	// ResumeAt is set for time-boxed pauses (plan quota windows).
+	ResumeAt *time.Time `json:"resume_at,omitempty"`
+	// Verification is the per-model outcome of the latest verify probe.
+	Verification *sellerVerificationView `json:"verification,omitempty"`
+}
+
+// sellerVerificationView surfaces the latest verify probe's per-model results
+// so both the list and the detail page can show which models failed and why
+// (§5). It carries no key material.
+type sellerVerificationView struct {
+	OK           bool                `json:"ok"`
+	FailReason   string              `json:"fail_reason"`
+	PromptCache  bool                `json:"prompt_cache_support"`
+	LatencyMs    int64               `json:"latency_ms"`
+	ModelResults []ModelVerifyResult `json:"model_results"`
+	CheckedAt    time.Time           `json:"checked_at"`
+}
+
+// probeVerificationView decodes a verify probe's detail. A malformed detail
+// still yields the probe's own ok/latency rather than dropping the result.
+func probeVerificationView(p Probe) *sellerVerificationView {
+	var detail struct {
+		FailReason   string              `json:"fail_reason"`
+		PromptCache  bool                `json:"prompt_cache"`
+		ModelResults []ModelVerifyResult `json:"model_results"`
+	}
+	_ = common.Unmarshal([]byte(p.Detail), &detail)
+	results := detail.ModelResults
+	if results == nil {
+		results = []ModelVerifyResult{}
+	}
+	return &sellerVerificationView{
+		OK:           p.OK,
+		FailReason:   detail.FailReason,
+		PromptCache:  detail.PromptCache,
+		LatencyMs:    p.LatencyMs,
+		ModelResults: results,
+		CheckedAt:    p.CreatedAt,
+	}
+}
+
+// latestVerifyProbe returns the newest verify probe of one listing, if any.
+func latestVerifyProbe(db *gorm.DB, listingID int64) *Probe {
+	var p Probe
+	err := db.Where("listing_id = ? AND type = ?", listingID, ProbeTypeVerify).
+		Order("id DESC").Take(&p).Error
+	if err != nil {
+		return nil
+	}
+	return &p
+}
+
+// latestVerifyProbes maps each listing id to its newest verify probe in one
+// query, so the list endpoint stays O(1) queries.
+func latestVerifyProbes(db *gorm.DB, listingIDs []int64) map[int64]Probe {
+	out := make(map[int64]Probe, len(listingIDs))
+	if len(listingIDs) == 0 {
+		return out
+	}
+	var rows []Probe
+	if err := db.Where("listing_id IN ? AND type = ?", listingIDs, ProbeTypeVerify).
+		Order("id DESC").Find(&rows).Error; err != nil {
+		return out
+	}
+	for _, p := range rows {
+		if _, seen := out[p.ListingID]; !seen {
+			out[p.ListingID] = p
+		}
+	}
+	return out
 }
 
 func toSellerListingView(l *Listing) sellerListingView {
@@ -171,6 +292,8 @@ func toSellerListingView(l *Listing) sellerListingView {
 		Status:           l.Status,
 		KeyFingerprint8:  fp8,
 		CreatedAt:        l.CreatedAt,
+		PauseReason:      l.PauseReason,
+		ResumeAt:         l.ResumeAt,
 	}
 }
 
@@ -200,20 +323,26 @@ func postSellerListing(c *gin.Context) {
 		return
 	}
 	in := CreateListingInput{
-		SellerID:        sellerID,
-		VendorID:        req.VendorID,
-		APIKey:          req.APIKey,
-		Models:          req.Models,
-		MultiplierMilli: req.MultiplierMilli,
-		Concurrency:     req.Concurrency,
-		RPM:             req.RPM,
-		DailyCapMicro:   req.DailyCapMicro,
-		Hours:           req.Hours,
+		SellerID:          sellerID,
+		VendorID:          req.VendorID,
+		APIKey:            req.APIKey,
+		Models:            req.Models,
+		MultiplierMilli:   req.MultiplierMilli,
+		Concurrency:       req.Concurrency,
+		RPM:               req.RPM,
+		DailyCapMicro:     req.DailyCapMicro,
+		Hours:             req.Hours,
+		PlanTermsAccepted: req.PlanTermsAccepted,
 	}
 	listing, err := CreateListing(db, in)
 	if err != nil {
-		if errors.Is(err, ErrDuplicateKey) {
-			common.ApiErrorStatus(c, http.StatusConflict, errors.New("this api key is already listed"))
+		if handleSellerDuplicateKey(c, err) {
+			return
+		}
+		if errors.Is(err, ErrPlanTermsRequired) {
+			common.ApiErrorStatus(c, http.StatusBadRequest,
+				errors.New("plan channel requires accepting the plan terms"),
+				gin.H{"code": CodePlanTermsRequired})
 			return
 		}
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
@@ -269,7 +398,7 @@ func verifyListingAsync(db *gorm.DB, listingID int64) {
 	// Small delay so the create request returns before the goroutine flips the
 	// status; the response already carries the draft id and status.
 	time.Sleep(interval)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sellerVerifyTimeout)
 	defer cancel()
 	res, err := VerifyListing(ctx, db, client, limiter, listingID)
 	if err != nil {
@@ -297,9 +426,19 @@ func listSellerListings(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query listings"))
 		return
 	}
+	ids := make([]int64, 0, len(rows))
+	for i := range rows {
+		ids = append(ids, rows[i].ID)
+	}
+	latest := latestVerifyProbes(db, ids)
 	out := make([]sellerListingView, 0, len(rows))
 	for i := range rows {
-		out = append(out, toSellerListingView(&rows[i]))
+		view := toSellerListingView(&rows[i])
+		if p, ok := latest[rows[i].ID]; ok {
+			view.Verification = probeVerificationView(p)
+		}
+		view.PauseReason = listingPauseReasonForList(db, rows[i])
+		out = append(out, view)
 	}
 	common.ApiSuccess(c, out)
 }
@@ -369,11 +508,48 @@ func replaceSellerKey(c *gin.Context) {
 		return
 	}
 	if err := ReplaceKey(db, id, req.APIKey); err != nil {
-		if errors.Is(err, ErrDuplicateKey) {
-			common.ApiErrorStatus(c, http.StatusConflict, errors.New("this api key is already listed"))
+		if handleSellerDuplicateKey(c, err) {
 			return
 		}
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
+		return
+	}
+	go verifyListingAsync(db, id)
+	common.ApiSuccess(c, gin.H{"id": id, "status": ListingVerifying})
+}
+
+// verifySellerListing serves POST /seller/listings/:id/verify — re-run the key
+// verification for a draft (verification failed) listing. It is the same
+// background verifier the create/replace paths use, so the UI can offer
+// 「重新检测」 without a state-changing key swap. Only draft listings qualify;
+// a listing already verifying returns 409 so a double click cannot queue two
+// probes.
+func verifySellerListing(c *gin.Context) {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	id, ok := sellerIDParam(c)
+	if !ok {
+		return
+	}
+	listing, ok := requireOwnListing(c, db, id, sellerID)
+	if !ok {
+		return
+	}
+	switch listing.Status {
+	case ListingDraft:
+		// allowed
+	case ListingVerifying:
+		common.ApiErrorStatus(c, http.StatusConflict, errors.New("verification is already running"))
+		return
+	default:
+		common.ApiErrorStatus(c, http.StatusBadRequest,
+			errors.New("only a draft listing can be re-verified"))
 		return
 	}
 	go verifyListingAsync(db, id)
@@ -658,6 +834,10 @@ func postSellerListingProbe(c *gin.Context) {
 	// ids, because the seller console only knows the platform catalogue.
 	certified := certifiedChannelModelsFor(db, vendor.ID)
 	available := make([]string, 0, len(certified))
+	// coefficients carries the channel's price coefficient per standard model
+	// (1000 = official price). The wizard multiplies it with the seller's
+	// multiplier for an accurate live buyer-price preview.
+	coefficients := make(map[string]int64, len(certified))
 	probeModel := ""
 	for _, cm := range certified {
 		if !slices.Contains(keyRes.Models, cm.UpstreamModel) {
@@ -665,6 +845,11 @@ func postSellerListingProbe(c *gin.Context) {
 		}
 		if !slices.Contains(available, cm.Model) {
 			available = append(available, cm.Model)
+			coefficient := cm.CoefficientMilli
+			if coefficient <= 0 {
+				coefficient = 1000
+			}
+			coefficients[cm.Model] = coefficient
 		}
 		if probeModel == "" {
 			probeModel = cm.UpstreamModel
@@ -700,6 +885,7 @@ func postSellerListingProbe(c *gin.Context) {
 		"ok":              probeOK,
 		"models":          available,
 		"verified_models": available, // explicit alias for the seller wizard
+		"coefficients":    coefficients,
 		"missing_models":  missing,
 		"latency_ms":      keyRes.LatencyMs,
 		"prompt_cache":    promptCache,
@@ -740,8 +926,7 @@ type sellerProbeView struct {
 
 type sellerListingDetail struct {
 	sellerListingView
-	PauseReason string            `json:"pause_reason"`
-	Probes      []sellerProbeView `json:"probes"`
+	Probes []sellerProbeView `json:"probes"`
 }
 
 // probeDetailValue renders a probe's JSON detail to the console; a malformed
@@ -757,29 +942,57 @@ func probeDetailValue(detail string) any {
 	return v
 }
 
-// probeFailReason extracts fail_reason from a probe detail JSON string.
+// probeFailReason extracts fail_reason (verify/patrol) or reason (auto-pause)
+// from a probe detail JSON string.
 func probeFailReason(detail string) string {
 	var m map[string]any
 	if err := common.Unmarshal([]byte(detail), &m); err != nil {
 		return ""
 	}
-	if s, ok := m["fail_reason"].(string); ok {
+	if s, ok := m["fail_reason"].(string); ok && strings.TrimSpace(s) != "" {
+		return s
+	}
+	if s, ok := m["reason"].(string); ok {
 		return s
 	}
 	return ""
 }
 
-// listingPauseReason derives the paused listing's reason from its most recent
-// failed probe (probe detail), falling back to "manual" (卖家手动暂停).
+// listingPauseReason derives the paused listing's reason from the stored pause
+// reason first (plan quota / patrol / migration), then its most recent failed
+// probe, falling back to "manual" (卖家手动暂停).
 func listingPauseReason(listing Listing, probes []Probe) string {
 	if listing.Status != ListingPaused {
 		return ""
+	}
+	if reason := strings.TrimSpace(listing.PauseReason); reason != "" {
+		return reason
 	}
 	for _, p := range probes {
 		if !p.OK {
 			if reason := probeFailReason(p.Detail); reason != "" {
 				return reason
 			}
+		}
+	}
+	return "manual"
+}
+
+// listingPauseReasonForList derives the paused reason for the list response.
+// Unlike the detail path it queries the latest failed probe itself, because
+// the list endpoint does not load probes.
+func listingPauseReasonForList(db *gorm.DB, listing Listing) string {
+	if listing.Status != ListingPaused {
+		return ""
+	}
+	if reason := strings.TrimSpace(listing.PauseReason); reason != "" {
+		return reason
+	}
+	var p Probe
+	if err := db.Where("listing_id = ? AND ok = ?", listing.ID, false).
+		Order("id DESC").Take(&p).Error; err == nil {
+		if reason := probeFailReason(p.Detail); reason != "" {
+			return reason
 		}
 	}
 	return "manual"
@@ -820,9 +1033,16 @@ func getSellerListingDetail(c *gin.Context) {
 			CreatedAt: p.CreatedAt,
 		})
 	}
+	view := toSellerListingView(&listing)
+	view.PauseReason = listingPauseReason(listing, probes)
+	// Look the newest verify probe up independently of the recent-probe
+	// window: a run of patrol probes must not hide the last per-model verify
+	// result the seller needs to fix a failed draft.
+	if latest := latestVerifyProbe(db, id); latest != nil {
+		view.Verification = probeVerificationView(*latest)
+	}
 	common.ApiSuccess(c, sellerListingDetail{
-		sellerListingView: toSellerListingView(&listing),
-		PauseReason:       listingPauseReason(listing, probes),
+		sellerListingView: view,
 		Probes:            views,
 	})
 }

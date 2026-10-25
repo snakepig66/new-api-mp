@@ -56,12 +56,22 @@ function localizedMessage(code: string | undefined, fallback: string | undefined
 export class ApiError extends Error {
   readonly status: number
   readonly code?: string
+  /** Raw error envelope, e.g. {listing_id} on a duplicate-key response. */
+  readonly details?: Record<string, unknown>
 
-  constructor(status: number, code?: string, fallbackMessage?: string) {
+  constructor(
+    status: number,
+    code?: string,
+    fallbackMessage?: string,
+    details?: unknown,
+  ) {
     super(localizedMessage(code, fallbackMessage))
     this.name = 'ApiError'
     this.status = status
     this.code = code
+    if (details && typeof details === 'object') {
+      this.details = details as Record<string, unknown>
+    }
   }
 }
 
@@ -216,17 +226,17 @@ async function request<T>(method: string, path: string, init: ApiRequestInit = {
       }
       const { code, message } = readErrorFields(payload)
       handleUnauthorized(path, Boolean(init.skipUnauthorizedHandler))
-      throw new ApiError(response.status, code, message)
+      throw new ApiError(response.status, code, message, payload)
     }
 
     if (!response.ok) {
       const { code, message } = readErrorFields(payload)
-      throw new ApiError(response.status, code, message)
+      throw new ApiError(response.status, code, message, payload)
     }
 
     if (isEnvelope(payload) && payload.success === false) {
       const { code, message } = readErrorFields(payload)
-      throw new ApiError(response.status, code, message)
+      throw new ApiError(response.status, code, message, payload)
     }
 
     return (isEnvelope(payload) ? payload.data : payload) as T

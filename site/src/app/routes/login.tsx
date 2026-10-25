@@ -116,12 +116,14 @@ function LoginPage() {
             <label htmlFor="login-password" className="block text-[13px] font-medium text-ink">
               {page.password}
             </label>
-            <Link
-              to="/forgot-password"
-              className="text-[13px] text-ink-3 transition-colors hover:text-brand hover:underline"
-            >
-              {page.forgot}
-            </Link>
+            {status.data?.smtp_configured ? (
+              <Link
+                to="/forgot-password"
+                className="text-[13px] text-ink-3 transition-colors hover:text-brand hover:underline"
+              >
+                {page.forgot}
+              </Link>
+            ) : null}
           </div>
           <PasswordInput
             id="login-password"

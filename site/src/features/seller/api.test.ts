@@ -2,7 +2,15 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { queryClient } from '@/lib/query-client'
 
-import { normalizePayout, sellerChannelKind, vendorName, vendorsQuery, type SellerVendor } from './api'
+import {
+  normalizePayout,
+  sellerChannelKind,
+  VERIFY_POLL_INTERVAL_MS,
+  verifyingRefetchInterval,
+  vendorName,
+  vendorsQuery,
+  type SellerVendor,
+} from './api'
 
 const deepseek: SellerVendor = {
   id: 'deepseek',
@@ -66,6 +74,20 @@ describe('sellerChannelKind', () => {
     expect(sellerChannelKind({ ...deepseek, kind: 'plan' })).toBe('plan')
     expect(sellerChannelKind(deepseek)).toBe('official')
     expect(sellerChannelKind({ ...deepseek, tier: 'third_party' })).toBe('third_party')
+  })
+})
+
+describe('verifyingRefetchInterval', () => {
+  it('polls while any row is verifying and stops otherwise', () => {
+    expect(verifyingRefetchInterval(undefined)).toBe(false)
+    expect(verifyingRefetchInterval([])).toBe(false)
+    expect(
+      verifyingRefetchInterval([{ status: 'live' }, { status: 'paused' }]),
+    ).toBe(false)
+    expect(verifyingRefetchInterval([{ status: 'live' }, { status: 'verifying' }])).toBe(
+      VERIFY_POLL_INTERVAL_MS,
+    )
+    expect(VERIFY_POLL_INTERVAL_MS).toBe(3000)
   })
 })
 

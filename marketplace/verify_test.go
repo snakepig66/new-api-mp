@@ -159,7 +159,8 @@ func TestVerifyListingKeyPromptCacheUnsupported(t *testing.T) {
 	t.Run("probe request fails", func(t *testing.T) {
 		res := run(t, http.StatusInternalServerError, `{"error":"boom"}`)
 		assert.False(t, res.PromptCacheSupport)
-		assert.True(t, res.OK)
+		assert.False(t, res.OK, "a model that cannot be called is not verified")
+		assert.Contains(t, res.FailReason, "上游服务异常")
 	})
 }
 
@@ -371,6 +372,81 @@ func TestVerifyListingFailureRollsBackToDraft(t *testing.T) {
 
 	// Back in draft, the seller can fix the key and verify again.
 	require.NoError(t, StartVerification(db, listing.ID), "draft accepts a fresh verification attempt")
+}
+
+func TestKeyExposesModelOnlyAcceptsDateSuffixes(t *testing.T) {
+	cases := []struct {
+		available []string
+		upstream  string
+		want      bool
+	}{
+		{[]string{"glm-5"}, "glm-5", true},
+		{[]string{"GLM-5"}, "glm-5", true},
+		{[]string{"glm-5-20251001"}, "glm-5", true},
+		{[]string{"glm-5-251001"}, "glm-5", true},
+		{[]string{"glm-5.3"}, "glm-5", false},
+		{[]string{"glm-5-flash"}, "glm-5", false},
+		{[]string{"glm-5@beta"}, "glm-5", false},
+		{[]string{"glm-5_latest"}, "glm-5", false},
+		{[]string{"glm-5-2025-10-01"}, "glm-5", false},
+		{[]string{"glm-5-2025101"}, "glm-5", false},
+		{[]string{"glm-5-preview"}, "glm-5", false},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, keyExposesModel(tc.available, tc.upstream),
+			"available=%v upstream=%q", tc.available, tc.upstream)
+	}
+}
+
+// rejectingModelHandler fails the paid probe for one upstream model while
+// leaving its /models listing intact.
+type rejectingModelHandler struct {
+	inner     http.Handler
+	badModel  string
+	badStatus int
+}
+
+func (h rejectingModelHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/chat/completions" {
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = common.DecodeJson(r.Body, &body)
+		if body.Model == h.badModel {
+			w.WriteHeader(h.badStatus)
+			_, _ = w.Write([]byte(`{"error":"model not activated"}`))
+			return
+		}
+	}
+	h.inner.ServeHTTP(w, r)
+}
+
+func TestVerifyListingOnlyListsCallableModels(t *testing.T) {
+	h := rejectingModelHandler{inner: allGreenHandler(), badModel: "deepseek-v4-pro", badStatus: http.StatusNotFound}
+	db, listing, client := newVerifyListingFixture(t, h)
+	limiter := NewVerifyLimiter(VerifyMaxConcurrent, VerifyPerMinute)
+
+	res, err := VerifyListing(context.Background(), db, client, limiter, listing.ID)
+	require.NoError(t, err)
+	assert.True(t, res.OK, "one callable model is enough to list")
+	require.Len(t, res.ModelResults, 2)
+	assert.True(t, res.ModelResults[0].OK)
+	assert.False(t, res.ModelResults[1].OK)
+	assert.Contains(t, res.ModelResults[1].FailReason, "模型不存在")
+
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingCanary, row.Status)
+	assert.Equal(t, []string{"deepseek-flash"}, row.Models,
+		"only models whose 1-token call succeeded stay on the listing")
+
+	probes := listVerifyProbes(t, db, listing.ID)
+	require.Len(t, probes, 1)
+	var detail map[string]any
+	require.NoError(t, common.Unmarshal([]byte(probes[0].Detail), &detail))
+	results, ok := detail["model_results"].([]any)
+	require.True(t, ok)
+	require.Len(t, results, 2)
 }
 
 func TestVerifyListingRejects(t *testing.T) {

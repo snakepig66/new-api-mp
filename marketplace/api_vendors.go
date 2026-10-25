@@ -35,6 +35,13 @@ type vendorView struct {
 	Protocols       VendorProtocols `json:"protocols"`
 	Models          []string        `json:"models"`
 	PassthroughBody bool            `json:"passthrough_body"`
+	// QuotaWindow is the parsed plan quota window (plan channels only):
+	// {"mode","period_seconds","reset_timezone","weekday","hour","minute"}.
+	// The seller wizard renders the 5-hour/weekly explanation from it.
+	QuotaWindow map[string]any `json:"quota_window,omitempty"`
+	// TermsURL is the channel's plan-terms link, when an operator configured
+	// one. The wizard uses it next to the plan-terms checkbox.
+	TermsURL string `json:"terms_url,omitempty"`
 }
 
 // vendorLogoURL is a static allow-list from channel slug to the copy shipped
@@ -93,9 +100,25 @@ func listVendors(c *gin.Context) {
 			Protocols:       vendor.Protocols,
 			Models:          listableModels(db, vendor),
 			PassthroughBody: vendor.PassthroughBody,
+			QuotaWindow:     quotaWindowView(ch.QuotaWindow),
+			TermsURL:        ch.TermsURL,
 		})
 	}
 	common.ApiSuccess(c, views)
+}
+
+// quotaWindowView decodes a channel's quota_window JSON for the seller UI. A
+// malformed value is omitted rather than failing the whole catalogue.
+func quotaWindowView(raw string) map[string]any {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var out map[string]any
+	if err := common.Unmarshal([]byte(raw), &out); err != nil || len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // listableModels returns the standard model ids a channel can list right now:

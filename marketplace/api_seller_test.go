@@ -98,6 +98,7 @@ func newSellerAPIFixture(t *testing.T) *sellerAPIFixture {
 	registerSellerRoutes(grp)
 	registerSellerOnboardingRoutes(grp)
 	registerMeRoutes(grp)
+	RegisterVendorsRoutes(grp)
 
 	return &sellerAPIFixture{
 		db:       db,
@@ -536,6 +537,11 @@ func TestProbeDoesNotPersist(t *testing.T) {
 	var listingsBefore, probesBefore int64
 	require.NoError(t, f.db.Model(&Listing{}).Count(&listingsBefore).Error)
 	require.NoError(t, f.db.Model(&Probe{}).Count(&probesBefore).Error)
+	// A non-default channel coefficient must reach the wizard so its buyer
+	// price preview matches Quote (official × coefficient × multiplier).
+	require.NoError(t, f.db.Model(&ChannelModel{}).
+		Where("channel_slug = ? AND model = ?", SeedVendorDeepSeek, "deepseek-flash").
+		Update("coefficient_milli", 1200).Error)
 
 	w := f.do(t, http.MethodPost, "/api/marketplace/seller/listings/probe", map[string]any{
 		"vendor_id": "deepseek",
@@ -553,6 +559,9 @@ func TestProbeDoesNotPersist(t *testing.T) {
 	models, ok := data["models"].([]any)
 	require.True(t, ok)
 	assert.Contains(t, models, "deepseek-flash")
+	coefficients, ok := data["coefficients"].(map[string]any)
+	require.True(t, ok)
+	assert.EqualValues(t, 1200, coefficients["deepseek-flash"])
 	assert.EqualValues(t, 0, len(data["missing_models"].([]any)))
 	assert.Equal(t, "", data["fail_reason"])
 	assert.NotContains(t, w.Body.String(), verifyTestKey, "§2.3: probe never echoes the key")
@@ -602,6 +611,54 @@ func TestProbeListingDetail(t *testing.T) {
 	// Ownership: a foreign user gets the uniform 404.
 	w = f.do(t, http.MethodGet, "/api/marketplace/seller/listings/"+strconv.FormatInt(listing.ID, 10), nil, int(f.stranger))
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestSellerListingDetailLatestVerifyOutsideRecentProbes locks the detail
+// response to the newest verify probe even when ten newer patrol probes fill
+// the recent-probe window. The seller needs the per-model verify results to
+// fix a failed draft, regardless of patrol chatter.
+func TestSellerListingDetailLatestVerifyOutsideRecentProbes(t *testing.T) {
+	f := newSellerAPIFixture(t)
+	listing, err := CreateListing(f.db, CreateListingInput{
+		SellerID:        f.sellerID,
+		VendorID:        SeedVendorDeepSeek,
+		APIKey:          uniqueTestKey("sk-detail-latest-verify"),
+		Models:          []string{"deepseek-flash", "deepseek-v4-pro"},
+		MultiplierMilli: 300,
+	})
+	require.NoError(t, err)
+	verifyDetail := `{"key_valid":true,"fail_reason":"one model failed",` +
+		`"model_results":[` +
+		`{"model":"deepseek-flash","upstream_model":"deepseek-flash","ok":true,"prompt_cache_support":true,"latency_ms":40},` +
+		`{"model":"deepseek-v4-pro","upstream_model":"deepseek-v4-pro","ok":false,"latency_ms":80,"fail_reason":"该模型不在这个 Key 的可用模型列表中"}]}`
+	require.NoError(t, f.db.Create(&Probe{
+		ListingID: listing.ID, Type: ProbeTypeVerify, OK: false, LatencyMs: 80,
+		Detail: verifyDetail,
+	}).Error)
+	for i := 0; i < 10; i++ {
+		require.NoError(t, f.db.Create(&Probe{
+			ListingID: listing.ID, Type: "patrol", OK: true, LatencyMs: 10,
+			Detail: `{"ok":true}`,
+		}).Error)
+	}
+
+	w := f.do(t, http.MethodGet, "/api/marketplace/seller/listings/"+strconv.FormatInt(listing.ID, 10), nil, int(f.sellerID))
+	require.Equal(t, http.StatusOK, w.Code)
+	data := decodeSellerBody(t, w)["data"].(map[string]any)
+	probes, ok := data["probes"].([]any)
+	require.True(t, ok)
+	require.Len(t, probes, 10, "the recent-probe window still shows the patrols")
+
+	verification, ok := data["verification"].(map[string]any)
+	require.True(t, ok, "the newest verify probe must survive the patrol window")
+	assert.Equal(t, false, verification["ok"])
+	results, ok := verification["model_results"].([]any)
+	require.True(t, ok)
+	require.Len(t, results, 2)
+	failed := results[1].(map[string]any)
+	assert.Equal(t, "deepseek-v4-pro", failed["model"])
+	assert.Equal(t, false, failed["ok"])
+	assert.Contains(t, failed["fail_reason"], "可用模型列表")
 }
 
 // ---------------------------------------------------------------------------

@@ -25,7 +25,10 @@ import {
 
 import {
   redeemCode,
+  fetchTopUpRecord,
+  quoteTopupAmount,
   requestEpayTopup,
+  topUpRecordsQuery,
   topupInfoQuery,
   walletLedgerQuery,
   walletQuery,
@@ -43,9 +46,12 @@ import { redeemCodeSchema } from '@/features/console/schemas'
 const PAGE_SIZE = 20
 
 export const Route = createFileRoute('/console/wallet')({
-  validateSearch: (search: Record<string, unknown>): { page: number } => {
+  validateSearch: (search: Record<string, unknown>): { page: number; topup?: string } => {
     const parsed = Number(search.page)
-    return { page: Number.isInteger(parsed) && parsed > 0 ? parsed : 1 }
+    return {
+      page: Number.isInteger(parsed) && parsed > 0 ? parsed : 1,
+      topup: typeof search.topup === 'string' && search.topup ? search.topup : undefined,
+    }
   },
   component: WalletPage,
 })
@@ -71,6 +77,8 @@ function WalletPage() {
   return (
     <>
       <PageHeader title={page.title} lead={page.lead} />
+
+      <TopupReturnWatcher />
 
       <Notice tone="warning" title={page.warningTitle} className="mt-5">
         {page.warning}
@@ -115,6 +123,8 @@ function WalletPage() {
         <RechargePanel />
         <RedeemPanel />
       </div>
+
+      <TopUpRecords />
 
       <Section className="mt-9" title={page.ledger.title} hint={page.ledger.hint}>
         {ledger.isPending ? (
@@ -208,6 +218,24 @@ function RechargePanel() {
 
   const methods = info.data?.pay_methods ?? []
   const amountOptions = info.data?.amount_options ?? []
+  const amountValue = Number(amount)
+  const amountValid = Number.isInteger(amountValue) && amountValue > 0
+  const selectedMethod = methods.find((item) => item.type === method)
+  const methodMin = Number(selectedMethod?.min_topup ?? 0)
+  const minAmount = Math.max(
+    info.data?.min_topup || 0,
+    Number.isFinite(methodMin) ? methodMin : 0,
+  )
+  // The backend owns group ratios and discounts; never display a locally
+  // computed "actual pay" next to the gateway amount.
+  const quote = useQuery({
+    queryKey: ['console', 'topup-quote', amountValue, method],
+    queryFn: () => quoteTopupAmount(amountValue),
+    enabled: Boolean(info.data?.enable_online_topup) && amountValid && amountValue >= minAmount,
+    retry: false,
+    staleTime: 0,
+  })
+  const payable = quote.data && quote.data > 0 ? quote.data : null
 
   useEffect(() => {
     const data = info.data
@@ -237,11 +265,12 @@ function RechargePanel() {
       setError(page.recharge.errors.amountInvalid)
       return
     }
-    const selected = methods.find((item) => item.type === method)
-    const methodMin = Number(selected?.min_topup ?? 0)
-    const min = Math.max(data.min_topup || 0, Number.isFinite(methodMin) ? methodMin : 0)
-    if (value < min) {
-      setError(page.recharge.errors.tooLow(String(min)))
+    if (value < minAmount) {
+      setError(page.recharge.errors.tooLow(String(minAmount)))
+      return
+    }
+    if (payable === null) {
+      setError(page.recharge.quoteFailed)
       return
     }
     setSubmitting(true)
@@ -249,6 +278,14 @@ function RechargePanel() {
       const payment = await requestEpayTopup(value, method)
       if (!payment?.url || !payment.data) {
         throw new ApiError(200, undefined, page.recharge.errors.failed)
+      }
+      if (payment.trade_no) {
+        // The gateway redirect carries no order number; remember it so the
+        // wallet can poll for the asynchronous callback after returning.
+        sessionStorage.setItem(
+          'mp:last-topup',
+          JSON.stringify({ trade_no: payment.trade_no, at: Date.now() }),
+        )
       }
       toast.show({ title: page.recharge.redirecting, tone: 'success' })
       submitPaymentForm(payment.url, payment.data)
@@ -353,6 +390,25 @@ function RechargePanel() {
               {page.recharge.min(String(info.data.min_topup))}
               {discount ? ` · ${page.recharge.discount(formatDiscount(discount))}` : ''}
             </p>
+            <div
+              data-testid="topup-payable"
+              className="mt-3 rounded-md border border-line bg-bg-subtle px-3.5 py-2.5"
+            >
+              <div className="text-[15px] font-semibold tabular-nums text-ink">
+                {amountValid && amountValue >= minAmount
+                  ? payable !== null
+                    ? page.recharge.actualPay(payable.toFixed(2))
+                    : quote.isError
+                      ? page.recharge.quoteFailed
+                      : '…'
+                  : page.recharge.actualPayHint}
+              </div>
+              {amountValid && amountValue >= minAmount && payable !== null ? (
+                <div className="mt-1 text-[12px] leading-5 text-ink-3">
+                  {page.recharge.actualPayHint}
+                </div>
+              ) : null}
+            </div>
           </div>
 
           {methods.length > 1 ? (
@@ -386,7 +442,12 @@ function RechargePanel() {
             </p>
           ) : null}
 
-          <Button className="mt-4" loading={submitting} onClick={() => void submit()}>
+          <Button
+            className="mt-4"
+            loading={submitting}
+            disabled={!amountValid || amountValue < minAmount || payable === null}
+            onClick={() => void submit()}
+          >
             {submitting ? page.recharge.paying : page.recharge.action}
           </Button>
           <p className="mt-3 text-[13px] leading-5 text-ink-3">{page.recharge.hint}</p>
@@ -394,6 +455,164 @@ function RechargePanel() {
       )}
     </section>
   )
+}
+
+type TopupReturnState = 'idle' | 'confirming' | 'success' | 'timeout'
+
+/**
+ * After the gateway redirects back, the payment callback may not have arrived
+ * yet. Poll the order for 30 seconds instead of telling the buyer the money
+ * vanished; on timeout hand them the order number for support.
+ */
+function TopupReturnWatcher() {
+  const { topup } = Route.useSearch()
+  const queryClient = useQueryClient()
+  const [state, setState] = useState<TopupReturnState>('idle')
+  const [orderNo, setOrderNo] = useState('')
+
+  useEffect(() => {
+    if (topup !== 'returning') return
+    let tradeNo = ''
+    try {
+      const raw = sessionStorage.getItem('mp:last-topup')
+      if (raw) {
+        const parsed = JSON.parse(raw) as { trade_no?: unknown }
+        if (typeof parsed.trade_no === 'string') tradeNo = parsed.trade_no
+      }
+    } catch {
+      // A corrupt entry is equivalent to a missing one.
+    }
+    if (!tradeNo) return
+
+    setOrderNo(tradeNo)
+    setState('confirming')
+    let cancelled = false
+    let timer = 0
+    const started = Date.now()
+
+    const tick = async () => {
+      try {
+        const record = await fetchTopUpRecord(tradeNo)
+        if (cancelled) return
+        if (record?.status === 'success') {
+          setState('success')
+          sessionStorage.removeItem('mp:last-topup')
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['console', 'wallet'] }),
+            queryClient.invalidateQueries({ queryKey: ['console', 'wallet-ledger'] }),
+            queryClient.invalidateQueries({ queryKey: ['console', 'topup-records'] }),
+          ])
+          return
+        }
+      } catch {
+        // Keep polling: a transient failure is not a payment verdict.
+      }
+      if (cancelled) return
+      if (Date.now() - started >= 30_000) {
+        setState('timeout')
+        return
+      }
+      timer = window.setTimeout(() => void tick(), 3000)
+    }
+    void tick()
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [topup, queryClient])
+
+  if (state === 'idle') return null
+  if (state === 'confirming') {
+    return (
+      <Notice tone="brand" className="mt-5">
+        {page.topupReturn.confirming}
+      </Notice>
+    )
+  }
+  if (state === 'success') {
+    return (
+      <Notice tone="brand" className="mt-5">
+        {page.topupReturn.success}
+      </Notice>
+    )
+  }
+  return (
+    <Notice tone="warning" title={page.topupReturn.timeoutTitle} className="mt-5">
+      <p>
+        {page.topupReturn.timeout}
+        <span className="ml-1 font-medium tabular-nums">{orderNo}</span>
+      </p>
+      <Button
+        variant="secondary"
+        size="sm"
+        className="mt-2"
+        onClick={() => setState('idle')}
+      >
+        {page.topupReturn.dismiss}
+      </Button>
+    </Notice>
+  )
+}
+
+function TopUpRecords() {
+  const records = useQuery(topUpRecordsQuery())
+
+  return (
+    <Section className="mt-9" title={page.topups.title} hint={page.topups.hint}>
+      {records.isPending ? (
+        <div className="space-y-2">
+          <Skeleton className="h-5 w-full" />
+          <Skeleton className="h-5 w-full" />
+        </div>
+      ) : records.isError ? (
+        <ErrorBlock error={records.error} onRetry={() => void records.refetch()} />
+      ) : records.data.items.length === 0 ? (
+        <Empty
+          title={page.topups.emptyTitle}
+          reason={page.topups.emptyReason}
+        />
+      ) : (
+        <Table minWidth={720}>
+          <TableHead>
+            <TableRow interactive={false}>
+              <TableHeaderCell>{page.topups.time}</TableHeaderCell>
+              <TableHeaderCell>{page.topups.order}</TableHeaderCell>
+              <TableHeaderCell numeric>{page.topups.amount}</TableHeaderCell>
+              <TableHeaderCell numeric>{page.topups.money}</TableHeaderCell>
+              <TableHeaderCell>{page.topups.status}</TableHeaderCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {records.data.items.map((record) => (
+              <TableRow key={record.id} interactive={false}>
+                <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
+                  {formatDateTime(record.create_time)}
+                </TableCell>
+                <TableCell className="max-w-[220px] truncate font-mono text-[12px] text-ink-2">
+                  {record.trade_no}
+                </TableCell>
+                <TableCell numeric>{record.amount} 元</TableCell>
+                <TableCell numeric>¥{Number(record.money).toFixed(2)}</TableCell>
+                <TableCell>
+                  <TopUpStatus status={record.status} />
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </Section>
+  )
+}
+
+function TopUpStatus({ status }: { status: string }) {
+  const label =
+    page.topups.statuses[status as keyof typeof page.topups.statuses] ??
+    page.topups.statuses.unknown
+  if (status === 'success') return <Tag tone="brand">{label}</Tag>
+  if (status === 'pending') return <Tag tone="neutral">{label}</Tag>
+  return <Tag tone="danger">{label}</Tag>
 }
 
 function formatDiscount(discount: number): string {

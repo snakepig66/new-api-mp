@@ -40,7 +40,99 @@ var (
 	// paused (patrol failure, migration, plan quota, report). Only a pause the
 	// seller initiated may be lifted by the seller.
 	ErrListingSystemPaused = errors.New("marketplace: listing was paused by the platform; contact support")
+	// ErrPlanTermsRequired refuses a plan-channel listing until the seller
+	// explicitly accepts that the plan terms allow sharing (§4). The check is
+	// on the request body, not on a stored flag.
+	ErrPlanTermsRequired = errors.New("marketplace: plan channel requires accepting the plan terms")
 )
+
+// DuplicateKeyError distinguishes the two ways a key fingerprint can already
+// be on the platform (§3.5). The API surfaces the distinction as a stable code
+// so the seller console can link to their own listing; the other seller's id,
+// name and listing id are never returned (only logged for operators).
+type DuplicateKeyError struct {
+	// Own reports whether the existing listing belongs to the caller.
+	Own bool
+	// ListingID is the existing listing's id. It is only exposed to the API
+	// when Own is true.
+	ListingID int64
+	// SellerID is the existing listing's owner. Internal only: it is used for
+	// the operator alert and never serialized into an API response.
+	SellerID int64
+	// FingerprintPrefix is the first 8 hex chars, the only key identifier the
+	// console may show (§2.3).
+	FingerprintPrefix string
+}
+
+func (e *DuplicateKeyError) Error() string {
+	if e.Own {
+		return fmt.Sprintf("marketplace: this api key is already listed by you (listing %d)", e.ListingID)
+	}
+	return "marketplace: this api key is already listed by another account"
+}
+
+// Unwrap keeps errors.Is(err, ErrDuplicateKey) true for every existing caller.
+func (e *DuplicateKeyError) Unwrap() error { return ErrDuplicateKey }
+
+// BeforeUpdate keeps Listing.Models a JSON array when a caller updates the
+// column directly, e.g. db.Model(&Listing{}).Update("models", []string{...}).
+//
+// GORM applies the `serializer:json` tag when it saves a struct, but a column
+// update passes Dest as map[string]any and binds the slice itself: a
+// single-element slice is stored as a bare value and a longer one expands to
+// an invalid row value. Verification narrows the listing's model list through
+// that form, so encode it once here. Struct saves are untouched (Dest is not
+// a map) and stay on the serializer path.
+func (l *Listing) BeforeUpdate(tx *gorm.DB) error {
+	if tx == nil || tx.Statement == nil {
+		return nil
+	}
+	set, ok := tx.Statement.Dest.(map[string]any)
+	if !ok {
+		return nil
+	}
+	models, ok := set["models"].([]string)
+	if !ok {
+		return nil
+	}
+	encoded, err := common.Marshal(models)
+	if err != nil {
+		return err
+	}
+	set["models"] = string(encoded)
+	return nil
+}
+
+// duplicateListingForKey returns a *DuplicateKeyError when fingerprint is
+// already listed (optionally excluding one listing id), or nil when it is
+// free. A database failure is returned as-is.
+func duplicateListingForKey(db *gorm.DB, fingerprint string, sellerID, excludeID int64) error {
+	if db == nil || strings.TrimSpace(fingerprint) == "" {
+		return nil
+	}
+	q := db.Select("id", "seller_id").Where("key_fingerprint = ?", fingerprint)
+	if excludeID > 0 {
+		q = q.Where("id <> ?", excludeID)
+	}
+	var existing Listing
+	err := q.Take(&existing).Error
+	if err == nil {
+		prefix := fingerprint
+		if len(prefix) > 8 {
+			prefix = prefix[:8]
+		}
+		return &DuplicateKeyError{
+			Own:               existing.SellerID == sellerID,
+			ListingID:         existing.ID,
+			SellerID:          existing.SellerID,
+			FingerprintPrefix: prefix,
+		}
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	return err
+}
 
 const (
 	// defaultListingConcurrency is the §3.5 default concurrent-slot count
@@ -64,6 +156,9 @@ type CreateListingInput struct {
 	RPM             int      // 0 = unlimited
 	DailyCapMicro   int64    // 0 = unlimited
 	Hours           string   // JSON windows; empty = all day
+	// PlanTermsAccepted is the seller's explicit acknowledgement that a plan
+	// channel's terms allow sharing (required for kind=plan, §4).
+	PlanTermsAccepted bool
 }
 
 // validate checks every field that does not need the database. The vendor is
@@ -88,6 +183,12 @@ func (in CreateListingInput) validate(vendor Vendor) (Vendor, error) {
 	// marketplace. The message names the plan, never the key.
 	if VendorKeyDenied(vendor, in.APIKey) {
 		return Vendor{}, fmt.Errorf("%w: %q refuses personal-plan keys", ErrVendorKeyDenied, vendor.ID)
+	}
+	// Plan channels are subscription quotas; sharing them is only allowed when
+	// the seller confirms the plan's own terms permit it (§4). The flag is
+	// explicit on every request, never inferred.
+	if vendor.Tier == ChannelKindPlan && !in.PlanTermsAccepted {
+		return Vendor{}, fmt.Errorf("%w: channel %q", ErrPlanTermsRequired, vendor.ID)
 	}
 	if len(in.Models) == 0 {
 		return Vendor{}, errors.New("marketplace: at least one model is required")
@@ -185,15 +286,9 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 
 	var listing Listing
 	err = db.Transaction(func(tx *gorm.DB) error {
-		var existing int64
-		if err := tx.Model(&Listing{}).
-			Where("key_fingerprint = ?", fingerprint).
-			Count(&existing).Error; err != nil {
-			return err
-		}
-		if existing > 0 {
-			// §2.3: identify the key by the fingerprint prefix only.
-			return fmt.Errorf("%w (fp %s)", ErrDuplicateKey, fingerprint[:8])
+		if dup := duplicateListingForKey(tx, fingerprint, in.SellerID, 0); dup != nil {
+			// §2.3: the errors identify the key by the fingerprint prefix only.
+			return dup
 		}
 
 		// One listing = one upstream channel pinned to the vendor's fixed base
@@ -277,15 +372,24 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 		}
 		if err := tx.Create(&listing).Error; err != nil {
 			// The unique index on key_fingerprint is the concurrency
-			// backstop for the count check above.
-			if isDuplicateKeyError(err) {
-				return fmt.Errorf("%w (fp %s)", ErrDuplicateKey, fingerprint[:8])
-			}
+			// backstop for the lookup above. Return the raw duplicate error;
+			// the caller re-resolves who owns the winning row after the
+			// transaction (a failed transaction cannot query on PostgreSQL).
 			return err
 		}
 		return nil
 	})
 	if err != nil {
+		var dup *DuplicateKeyError
+		if errors.As(err, &dup) {
+			return Listing{}, dup
+		}
+		if isDuplicateKeyError(err) {
+			if again := duplicateListingForKey(db, fingerprint, in.SellerID, 0); again != nil {
+				return Listing{}, again
+			}
+			return Listing{}, fmt.Errorf("%w (fp %s)", ErrDuplicateKey, fingerprint[:8])
+		}
 		return Listing{}, err
 	}
 	return listing, nil
@@ -547,7 +651,7 @@ func ReplaceKey(db *gorm.DB, id int64, newAPIKey string) error {
 	if err != nil {
 		return err
 	}
-	return db.Transaction(func(tx *gorm.DB) error {
+	err = db.Transaction(func(tx *gorm.DB) error {
 		var row Listing
 		if err := lockForUpdate(tx).Where("id = ?", id).First(&row).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -564,14 +668,8 @@ func ReplaceKey(db *gorm.DB, id int64, newAPIKey string) error {
 		if err := validateChannelAPIKey(tx, row.Vendor, newAPIKey); err != nil {
 			return err
 		}
-		var clash int64
-		if err := tx.Model(&Listing{}).
-			Where("key_fingerprint = ? AND id <> ?", fingerprint, id).
-			Count(&clash).Error; err != nil {
-			return err
-		}
-		if clash > 0 {
-			return fmt.Errorf("%w (fp %s)", ErrDuplicateKey, fingerprint[:8])
+		if dup := duplicateListingForKey(tx, fingerprint, row.SellerID, id); dup != nil {
+			return dup
 		}
 		res := tx.Model(&Listing{}).
 			Where("id = ? AND version = ?", id, row.Version).
@@ -582,9 +680,6 @@ func ReplaceKey(db *gorm.DB, id int64, newAPIKey string) error {
 				"version":         row.Version + 1,
 			})
 		if res.Error != nil {
-			if isDuplicateKeyError(res.Error) {
-				return fmt.Errorf("%w (fp %s)", ErrDuplicateKey, fingerprint[:8])
-			}
 			return res.Error
 		}
 		if res.RowsAffected != 1 {
@@ -592,6 +687,23 @@ func ReplaceKey(db *gorm.DB, id int64, newAPIKey string) error {
 		}
 		return nil
 	})
+	if err != nil {
+		var dup *DuplicateKeyError
+		if errors.As(err, &dup) {
+			return dup
+		}
+		if isDuplicateKeyError(err) {
+			ownerID := int64(0)
+			if row, gerr := GetListing(db, id); gerr == nil {
+				ownerID = row.SellerID
+			}
+			if again := duplicateListingForKey(db, fingerprint, ownerID, id); again != nil {
+				return again
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 // hourWindow is one 可接单时段 entry: {"start":"09:00","end":"18:00"}.

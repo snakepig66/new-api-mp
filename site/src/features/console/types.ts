@@ -232,4 +232,19 @@ export interface EpayPayment {
   message: string
   data: Record<string, string>
   url: string
+  trade_no?: string
+}
+
+/** GET /api/user/topup/self — one recharge order. */
+export interface TopUpRecord {
+  id: number
+  user_id: number
+  amount: number
+  money: number
+  trade_no: string
+  payment_method: string
+  payment_provider: string
+  create_time: number
+  complete_time: number
+  status: string
 }

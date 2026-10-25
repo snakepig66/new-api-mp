@@ -21,7 +21,12 @@ import {
   buttonClasses,
 } from '@/ui'
 
-import { usageRecordsQuery, usageStatsQuery, walletQuery } from '@/features/console/api'
+import {
+  consoleKeysQuery,
+  usageRecordsQuery,
+  usageStatsQuery,
+  walletQuery,
+} from '@/features/console/api'
 import {
   ErrorBlock,
   Section,
@@ -29,7 +34,9 @@ import {
   StatSkeleton,
   TableSkeleton,
 } from '@/features/console/components/DataState'
+import { Notice } from '@/features/console/components/form'
 import { formatCount } from '@/features/console/format'
+import { soonestExpiringKey } from '@/features/console/key-expiry'
 import { toUsageRow } from '@/features/console/records'
 import type { UsageTier } from '@/features/console/types'
 
@@ -48,7 +55,9 @@ function ConsoleOverviewPage() {
   const wallet = useQuery(walletQuery())
   const stats = useQuery(usageStatsQuery(7))
   const recent = useQuery(usageRecordsQuery(1, 10))
+  const keys = useQuery(consoleKeysQuery())
   const requestsTotal = stats.data?.items.reduce((sum, item) => sum + item.requests, 0) ?? 0
+  const expiring = keys.data ? soonestExpiringKey(keys.data) : null
 
   return (
     <>
@@ -61,6 +70,26 @@ function ConsoleOverviewPage() {
           </Link>
         }
       />
+
+      {expiring ? (
+        <Notice className="mt-6" tone="warning" title={copy.pages.consoleKeys.expirySoon.title}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              {copy.pages.consoleKeys.expirySoon.body(
+                expiring.token.name || copy.pages.consoleShared.none,
+                formatDateTime(expiring.token.expired_time),
+              )}
+            </span>
+            <Link
+              to="/console/keys/$id"
+              params={{ id: String(expiring.token.id) }}
+              className="shrink-0 font-medium underline underline-offset-2"
+            >
+              {copy.pages.consoleKeys.expirySoon.action}
+            </Link>
+          </div>
+        </Notice>
+      ) : null}
 
       {wallet.isError ? (
         <ErrorBlock

@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useFieldArray, useForm } from 'react-hook-form'
 import { z } from 'zod'
@@ -23,19 +23,27 @@ import {
 
 import {
   createListing,
+  marketplaceStatusQuery,
   probeListing,
   sellerChannelKind,
   sellerListingsQuery,
   squareModelForSeller,
   vendorsQuery,
   type ProbeResult,
+  type SellerQuotaWindow,
   type SellerVendor,
 } from '@/features/seller/api'
 import { Field, notify, Skeleton, selectClass } from '@/features/seller/components'
-import { probeFailReasonLabel, sellerErrorMessage } from '@/features/seller/errors'
+import {
+  duplicateKeyIssue,
+  probeFailReasonLabel,
+  sellerErrorMessage,
+  type DuplicateKeyIssue,
+} from '@/features/seller/errors'
 import { parseYuanToMicro } from '@/features/seller/money-input'
 import {
   compareMultiplier,
+  DEFAULT_FEE_PERCENT,
   previewMultiplier,
 } from '@/features/seller/preview'
 import {
@@ -85,6 +93,7 @@ const wizardSchema = z
     }, validation.dailyCap),
     use_hours: z.boolean(),
     hours: z.array(hourWindowSchema),
+    plan_terms_accepted: z.boolean(),
   })
   .superRefine((value, ctx) => {
     if (!value.use_hours) return
@@ -107,6 +116,27 @@ const wizardSchema = z
   })
 
 type WizardForm = z.infer<typeof wizardSchema>
+
+const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
+
+/** Human-readable plan quota window from the channel's quota_window JSON. */
+function planWindowText(window: SellerQuotaWindow | undefined): string | null {
+  if (!window) return null
+  if (window.mode === 'weekly' && typeof window.weekday === 'number') {
+    const weekday = WEEKDAYS[window.weekday] ?? String(window.weekday)
+    const hour = String(window.hour ?? 0).padStart(2, '0')
+    const minute = String(window.minute ?? 0).padStart(2, '0')
+    return page.plan.windowWeekly(weekday, `${hour}:${minute}`)
+  }
+  const seconds = window.period_seconds
+  if (typeof seconds !== 'number' || seconds <= 0) return null
+  if (window.mode === 'rolling') {
+    return page.plan.windowRolling(String(Math.max(1, Math.round(seconds / 60))))
+  }
+  const hours = seconds / 3600
+  const hoursText = Number.isInteger(hours) ? String(hours) : hours.toFixed(1)
+  return page.plan.windowFixed(hoursText, window.reset_timezone ?? 'UTC')
+}
 
 function windowsValid(windows: { start: string; end: string }[]): boolean {
   return windows.every(
@@ -311,6 +341,7 @@ export function NewListingPage() {
   const [step, setStep] = useState<WizardStep>(0)
   const [multiplierText, setMultiplierText] = useState('0.500')
   const [previewModel, setPreviewModel] = useState('')
+  const [duplicate, setDuplicate] = useState<DuplicateKeyIssue | null>(null)
 
   const form = useForm<WizardForm>({
     resolver: zodResolver(wizardSchema),
@@ -325,12 +356,17 @@ export function NewListingPage() {
       daily_cap_yuan: '0',
       use_hours: false,
       hours: [],
+      plan_terms_accepted: false,
     },
   })
   const values = form.watch()
   const { fields, append, remove } = useFieldArray({ control: form.control, name: 'hours' })
 
   const vendors = useQuery(vendorsQuery())
+  const marketplaceStatus = useQuery(marketplaceStatusQuery())
+  // The backend is the single source for the split; the fallback only covers
+  // the brief window before the status query resolves.
+  const feePercent = marketplaceStatus.data?.platform_fee_percent ?? DEFAULT_FEE_PERCENT
   // Official and plan channels are selectable; third-party relays are shown
   // in their own disabled group until the backend opens that tier.
   const allVendors = vendors.data ?? []
@@ -343,6 +379,12 @@ export function NewListingPage() {
   const selectedVendor = vendorList.find((vendor) => vendor.id === values.vendor_id)
   const vendorModels = selectedVendor?.models ?? []
   const vendorHasModels = Boolean(selectedVendor && vendorModels.length > 0)
+  const requiresPlanTerms = Boolean(
+    selectedVendor && sellerChannelKind(selectedVendor) === 'plan',
+  )
+  const quotaWindowText = requiresPlanTerms
+    ? planWindowText(selectedVendor?.quota_window)
+    : null
 
   const probe = useMutation({
     mutationFn: probeListing,
@@ -359,10 +401,12 @@ export function NewListingPage() {
   const create = useMutation({
     mutationFn: createListing,
     onSuccess: () => {
+      setDuplicate(null)
       notify(toast, { title: page.success, tone: 'success' })
       void queryClient.invalidateQueries({ queryKey: sellerListingsQuery().queryKey })
       void navigate({ to: '/seller/listings' })
     },
+    onError: (error) => setDuplicate(duplicateKeyIssue(error)),
   })
 
   const snapshot: WizardSnapshot = {
@@ -375,6 +419,8 @@ export function NewListingPage() {
     rpm: values.rpm,
     dailyCapYuan: values.daily_cap_yuan,
     hoursValid: !values.use_hours || values.hours.length === 0 || windowsValid(values.hours),
+    requiresPlanTerms,
+    planTermsAccepted: values.plan_terms_accepted,
   }
 
   const effectivePreviewModel =
@@ -386,9 +432,17 @@ export function NewListingPage() {
 
   const tier = market.data?.tier ?? 'flat'
   const officialPrice = market.data?.official_prices?.[tier]?.input_micro_per_mtok
+  // The backend Quote applies both the listing multiplier and the channel's
+  // price coefficient; use the probe's coefficient for the same buyer price.
+  const coefficientMilli = probe.data?.coefficients?.[effectivePreviewModel] ?? 1000
   const preview =
     officialPrice !== undefined && officialPrice !== null
-      ? previewMultiplier(officialPrice, values.multiplier_milli)
+      ? previewMultiplier(
+          officialPrice,
+          values.multiplier_milli,
+          feePercent,
+          coefficientMilli,
+        )
       : null
   const marketMin = market.data?.multiplier_min_milli
   const comparison = compareMultiplier(values.multiplier_milli, marketMin)
@@ -432,6 +486,7 @@ export function NewListingPage() {
   function onSubmit(data: WizardForm) {
     const dailyCap = parseYuanToMicro(data.daily_cap_yuan)
     if (dailyCap === null) return
+    setDuplicate(null)
     const hours =
       data.use_hours && data.hours.length > 0 ? JSON.stringify(data.hours) : ''
     create.mutate({
@@ -443,6 +498,7 @@ export function NewListingPage() {
       rpm: data.rpm,
       daily_cap_micro: Number(dailyCap),
       hours,
+      plan_terms_accepted: requiresPlanTerms ? data.plan_terms_accepted : false,
     })
   }
 
@@ -459,11 +515,16 @@ export function NewListingPage() {
   function selectVendor(id: string) {
     form.setValue('vendor_id', id, { shouldValidate: true, shouldDirty: true })
     form.setValue('models', [], { shouldValidate: true })
+    form.setValue('plan_terms_accepted', false)
+    setDuplicate(null)
     probe.reset()
   }
 
   const submitError = create.isError ? sellerErrorMessage(create.error) : null
   const probedModels = probe.data?.verified_models ?? probe.data?.models ?? []
+  // Certified models the key did not expose on GET /models. They are shown
+  // disabled above; this line names them and explains the missing-model case.
+  const uncallableModels = vendorModels.filter((model) => !probedModels.includes(model))
 
   return (
     <>
@@ -555,6 +616,26 @@ export function NewListingPage() {
                 <p className="text-[13px] leading-5 text-warn" role="status">
                   {page.vendor.modelsEmpty}
                 </p>
+              ) : null}
+
+              {requiresPlanTerms ? (
+                <div className="rounded-md border border-brand/25 bg-brand-soft/40 px-4 py-3">
+                  <h3 className="text-[13px] font-medium text-ink">{page.plan.title}</h3>
+                  <p className="mt-1 text-[13px] leading-5 text-ink-2">{page.plan.windows}</p>
+                  {quotaWindowText ? (
+                    <p className="mt-1 text-[13px] leading-5 text-ink-2">{quotaWindowText}</p>
+                  ) : null}
+                  {selectedVendor?.terms_url ? (
+                    <a
+                      href={selectedVendor.terms_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 inline-block text-[13px] text-brand-ink underline"
+                    >
+                      {page.plan.termsLink}
+                    </a>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           ) : null}
@@ -651,6 +732,11 @@ export function NewListingPage() {
                         })}
                       </div>
                     )}
+                    {probe.data && uncallableModels.length > 0 ? (
+                      <p className="mt-2 text-[13px] leading-5 text-warn" role="status">
+                        {page.verify.missing(uncallableModels.join('、'))}
+                      </p>
+                    ) : null}
                     {form.formState.errors.models?.message ? (
                       <p className="mt-2 text-[13px] text-danger" role="alert">
                         {form.formState.errors.models.message}
@@ -723,6 +809,27 @@ export function NewListingPage() {
                     <p className="mt-1 text-[13px] text-danger" role="alert">
                       {form.formState.errors.multiplier_milli.message}
                     </p>
+                  ) : null}
+
+                  {requiresPlanTerms ? (
+                    <div className="mt-4 rounded-md border border-brand/25 bg-brand-soft/40 px-4 py-3">
+                      <label className="flex items-start gap-2 text-[13px] text-ink">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 shrink-0 accent-brand"
+                          {...form.register('plan_terms_accepted')}
+                        />
+                        <span>{page.plan.terms}</span>
+                      </label>
+                      <p className="mt-1 pl-6 text-[13px] leading-5 text-ink-3">
+                        {page.plan.termsHint}
+                      </p>
+                      {!values.plan_terms_accepted ? (
+                        <p className="mt-1 pl-6 text-[13px] text-warn" role="status">
+                          {page.plan.required}
+                        </p>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
 
@@ -888,21 +995,34 @@ export function NewListingPage() {
                       </dd>
                     </div>
                     <div className="flex items-baseline justify-between gap-3">
+                      <dt className="text-[13px] text-ink-3">{page.pricing.coefficient}</dt>
+                      <dd className="tabular-nums text-[13px] text-ink-3">
+                        ×{formatMultiplier(coefficientMilli)}
+                      </dd>
+                    </div>
+                    <div className="flex items-baseline justify-between gap-3">
                       <dt className="text-[13px] text-ink-3">{page.pricing.buyer}</dt>
                       <dd>
                         <Price value={preview.buyerMicro} tier={tier} size="sm" unit={null} />
                       </dd>
                     </div>
+                    <p className="text-[13px] leading-5 text-ink-3">
+                      {page.pricing.buyerHint}
+                    </p>
                     <div className="flex items-baseline justify-between gap-3 border-t border-line pt-3">
                       <dt className="text-[13px] text-ink-3">{page.pricing.seller}</dt>
                       <dd className="text-[18px] font-semibold tabular-nums text-brand-ink">
                         {formatYuan(preview.sellerMicro)}
                       </dd>
                     </div>
+                    <p className="text-[13px] leading-5 text-ink-3">
+                      {page.pricing.sellerHint(preview.feePercent)}
+                    </p>
                     <div className="flex items-baseline justify-between gap-3">
                       <dt className="text-[13px] text-ink-3">{page.pricing.fee}</dt>
                       <dd className="text-[13px] tabular-nums text-ink-3">
-                        {formatYuan(preview.feeMicro)}
+                        {formatYuan(preview.feeMicro)} ·{' '}
+                        {page.pricing.feeRate(preview.feePercent)}
                       </dd>
                     </div>
                   </dl>
@@ -962,7 +1082,40 @@ export function NewListingPage() {
             </div>
           ) : null}
 
-          {submitError ? (
+          {duplicate ? (
+            duplicate.kind === 'own' ? (
+              <div
+                className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-warn/30 bg-warn/10 px-4 py-3"
+                role="alert"
+              >
+                <p className="text-[13px] leading-5 text-warn">
+                  {duplicate.listingId
+                    ? page.duplicate.own(duplicate.listingId)
+                    : copy.pages.sellerCommon.errors.duplicateKeyOwn}
+                </p>
+                {duplicate.listingId ? (
+                  <Link
+                    to="/seller/listings/$id"
+                    params={{ id: String(duplicate.listingId) }}
+                    className="text-[13px] font-medium text-brand-ink underline"
+                  >
+                    {page.duplicate.ownLink}
+                  </Link>
+                ) : (
+                  <Link
+                    to="/seller/listings"
+                    className="text-[13px] font-medium text-brand-ink underline"
+                  >
+                    {page.duplicate.ownLink}
+                  </Link>
+                )}
+              </div>
+            ) : (
+              <p className="mt-4 text-[13px] text-danger" role="alert">
+                {page.duplicate.other}
+              </p>
+            )
+          ) : submitError ? (
             <p className="mt-4 text-[13px] text-danger" role="alert">
               {submitError}
             </p>

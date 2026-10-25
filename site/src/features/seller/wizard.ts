@@ -23,6 +23,10 @@ export interface WizardSnapshot {
   rpm: number
   dailyCapYuan: string
   hoursValid: boolean
+  /** True when the selected channel kind is `plan`. */
+  requiresPlanTerms?: boolean
+  /** The seller ticked 「我确认该套餐条款允许共享」. */
+  planTermsAccepted?: boolean
 }
 
 export const EMPTY_WIZARD_SNAPSHOT: WizardSnapshot = {
@@ -75,7 +79,8 @@ export function canSubmit(snapshot: WizardSnapshot): boolean {
     snapshot.rpm <= 1_000_000 &&
     dailyCap !== null &&
     dailyCap <= 1_000_000_000_000n &&
-    snapshot.hoursValid
+    snapshot.hoursValid &&
+    (!snapshot.requiresPlanTerms || Boolean(snapshot.planTermsAccepted))
   )
 }
 

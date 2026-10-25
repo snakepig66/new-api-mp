@@ -7,6 +7,7 @@ import {
   TOKEN_STATUS_EXHAUSTED,
   TOKEN_STATUS_EXPIRED,
   type Strategy,
+  type TokenRecord,
 } from './types'
 
 export interface StatusMeta {
@@ -28,6 +29,21 @@ export function tokenStatusMeta(status: number): StatusMeta {
     default:
       return { label: labels.unknown, tone: 'neutral' }
   }
+}
+
+/**
+ * A token is expired when the upstream status says so (3) or when its
+ * expired_time has passed. The status flag is not refreshed on every read, so
+ * the timestamp is authoritative too.
+ */
+export function isTokenExpired(
+  token: Pick<TokenRecord, 'status' | 'expired_time'>,
+  nowSeconds: number = Math.floor(Date.now() / 1000),
+): boolean {
+  return (
+    token.status === TOKEN_STATUS_EXPIRED ||
+    (token.expired_time > 0 && token.expired_time <= nowSeconds)
+  )
 }
 
 export function strategyLabel(strategy: Strategy | null | undefined): string | null {

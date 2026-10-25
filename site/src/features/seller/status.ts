@@ -68,6 +68,10 @@ export function pauseReasonView(reason: string | undefined | null): string {
   if (!reason) return copy.pages.sellerListings.noPauseReason
   if (reason === 'manual') return common.pauseReason.manual
   const lower = reason.toLowerCase()
+  if (lower.includes('plan_quota_exhausted') || lower.includes('quota')) {
+    return common.pauseReason.planQuota
+  }
+  if (lower.includes('migration')) return common.pauseReason.migration
   if (lower.includes('balance') || lower.includes('insufficient')) return common.pauseReason.balance
   if (
     lower.includes('key') ||
@@ -86,6 +90,26 @@ export function isListingPausable(status: string): boolean {
 
 export function isListingResumable(status: string): boolean {
   return status === 'paused'
+}
+
+/**
+ * A seller may only lift their own pause. Platform pauses (plan quota window,
+ * patrol failure, migration) carry a reason/resume_at and are restored by the
+ * jobs, so showing 「恢复」 for them would only produce a 409.
+ */
+export function isListingSellerResumable(listing: {
+  status: string
+  pause_reason?: string
+  resume_at?: string
+}): boolean {
+  if (listing.status !== 'paused') return false
+  if (listing.pause_reason && listing.pause_reason !== 'manual') return false
+  return !listing.resume_at
+}
+
+/** A draft listing is one whose verification has not passed (or failed). */
+export function isListingReverifiable(listing: { status: string }): boolean {
+  return listing.status === 'draft'
 }
 
 export function isListingKeyReplaceable(status: string): boolean {

@@ -23,9 +23,45 @@ function match(raw: string, needles: string[]): boolean {
   return needles.some((needle) => lower.includes(needle))
 }
 
+/** The two duplicate-key outcomes the create/replace flows render differently. */
+export type DuplicateKeyIssue =
+  | { kind: 'own'; listingId?: number }
+  | { kind: 'other' }
+
+/**
+ * Distinguishes "you already listed this key" (link to the listing) from
+ * "another account listed it" (no identifiers). The backend's stable codes are
+ * authoritative; message matching is only a fallback for older payloads.
+ */
+export function duplicateKeyIssue(error: unknown): DuplicateKeyIssue | null {
+  if (!(error instanceof ApiError)) return null
+  if (error.code === 'DUPLICATE_KEY_OWN') {
+    return { kind: 'own', listingId: detailListingId(error.details) }
+  }
+  if (error.code === 'DUPLICATE_KEY_OTHER') return { kind: 'other' }
+
+  const raw = error.message.toLowerCase()
+  if (raw.includes('already listed by you')) {
+    return { kind: 'own', listingId: detailListingId(error.details) }
+  }
+  if (raw.includes('already listed by another')) return { kind: 'other' }
+  return null
+}
+
+function detailListingId(details: Record<string, unknown> | undefined): number | undefined {
+  const value = details?.listing_id
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value)
+  return undefined
+}
+
 export function sellerErrorMessage(error: unknown): string {
   const apiError = error instanceof ApiError ? error : null
   const raw = apiError?.message ?? (error instanceof Error ? error.message : '')
+
+  if (apiError?.code === 'DUPLICATE_KEY_OWN') return errors.duplicateKeyOwn
+  if (apiError?.code === 'DUPLICATE_KEY_OTHER') return errors.duplicateKeyOther
+  if (apiError?.code === 'PLAN_TERMS_REQUIRED') return errors.planTermsRequired
 
   if (raw && isChinese(raw)) return raw
 
@@ -52,6 +88,8 @@ export function sellerErrorMessage(error: unknown): string {
   if (match(raw, ['at least one model'])) return errors.modelsRequired
   if (match(raw, ['hours'])) return errors.hours
   if (match(raw, ['listing not found'])) return errors.listingNotFound
+  if (match(raw, ['verification is already running'])) return errors.verifyAlreadyRunning
+  if (match(raw, ['only a draft listing can be re-verified'])) return errors.verifyDraftOnly
 
   if (apiError) {
     if (apiError.status === 404) return errors.listingNotFound
@@ -84,4 +122,27 @@ export function probeFailReasonLabel(reason: string | undefined | null): string 
     return probeErrors.network
   }
   return probeErrors.generic
+}
+
+/**
+ * Per-model verification reason. The backend may already return Chinese
+ * (notably "该模型不在这个 Key 的可用模型列表中"), so those are mapped to the
+ * explicit /models explanation first; everything else falls back to the
+ * probe-error translation.
+ */
+export function modelVerifyReason(reason: string | undefined | null): string {
+  if (!reason) return probeErrors.generic
+  if (isChinese(reason)) {
+    if (reason.includes('可用模型列表') || reason.includes('/models')) {
+      return probeErrors.modelMissing
+    }
+    if (reason.includes('未能读取')) return probeErrors.modelsUnreadable
+    return reason
+  }
+  if (
+    match(reason, ['model list', 'models list', 'models returned', 'not in this key', 'not available'])
+  ) {
+    return probeErrors.modelMissing
+  }
+  return probeFailReasonLabel(reason)
 }

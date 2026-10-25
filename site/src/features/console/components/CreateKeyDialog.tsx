@@ -7,9 +7,10 @@ import { copy } from '@/copy'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { ModelPicker, type ModelSelection } from '@/features/market/ModelPicker'
+import { currentBaseUrl } from '@/features/market/url'
 import { Button, Dialog, Input, useToast } from '@/ui'
 
-import { consoleKeysQuery, createKey } from '../api'
+import { consoleKeysQuery, createKey, currentIPQuery, walletQuery } from '../api'
 import {
   dateTimeInputToUnix,
   microToYuanInput,
@@ -65,6 +66,7 @@ export function CreateKeyDialog({
   const toast = useToast()
   const queryClient = useQueryClient()
   const keysQuery = useQuery({ ...consoleKeysQuery(), enabled: open })
+  const currentIp = useQuery({ ...currentIPQuery(), enabled: open })
 
   const form = useForm<PrefFormValues>({
     resolver: zodResolver(prefFormSchema),
@@ -83,6 +85,7 @@ export function CreateKeyDialog({
   const [submitting, setSubmitting] = useState(false)
   const [created, setCreated] = useState<CreateKeyResult | null>(null)
   const [copied, setCopied] = useState(false)
+  const wallet = useQuery({ ...walletQuery(), enabled: open && created !== null })
 
   useEffect(() => {
     if (!open) return
@@ -211,6 +214,32 @@ export function CreateKeyDialog({
     })
   }
 
+  function insertCurrentIP() {
+    const ip = currentIp.data?.ip?.trim()
+    if (!ip) return
+    setAllowIps((previous) => {
+      const lines = previous
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+      if (lines.includes(ip)) return previous
+      return lines.length ? `${lines.join('\n')}\n${ip}` : ip
+    })
+  }
+
+  async function copyCurrentIP() {
+    const ip = currentIp.data?.ip?.trim()
+    if (!ip) return
+    const ok = await writeClipboard(ip)
+    toast.show({
+      title: ok ? shared.copied : shared.copyFailed,
+      tone: ok ? 'success' : 'error',
+    })
+  }
+
+  const walletZero =
+    wallet.data !== undefined && Number(wallet.data.balance_micro) <= 0
+
   return (
     <Dialog
       open={open}
@@ -259,7 +288,12 @@ export function CreateKeyDialog({
       }
     >
       {created ? (
-        <CreatedKey result={created} onCopy={() => void copyKey()} copied={copied} />
+        <CreatedKey
+          result={created}
+          onCopy={() => void copyKey()}
+          copied={copied}
+          walletZero={walletZero}
+        />
       ) : (
         <div className="space-y-5">
           {error ? (
@@ -385,6 +419,27 @@ export function CreateKeyDialog({
                   htmlFor="create-key-allow-ips"
                   hint={dialogCopy.allowIps.hint}
                 >
+                  {currentIp.data?.ip ? (
+                    <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[12px] text-ink-3">
+                      <span className="font-mono">
+                        {page.currentIp.label(currentIp.data.ip)}
+                      </span>
+                      <button
+                        type="button"
+                        className="text-brand-ink underline-offset-2 hover:underline"
+                        onClick={insertCurrentIP}
+                      >
+                        {page.currentIp.insert}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-brand-ink underline-offset-2 hover:underline"
+                        onClick={() => void copyCurrentIP()}
+                      >
+                        {page.currentIp.copy}
+                      </button>
+                    </div>
+                  ) : null}
                   <textarea
                     id="create-key-allow-ips"
                     rows={3}
@@ -442,11 +497,50 @@ function CreatedKey({
   result,
   onCopy,
   copied,
+  walletZero,
 }: {
   result: CreateKeyResult
   onCopy: () => void
   copied: boolean
+  walletZero: boolean
 }) {
+  const toast = useToast()
+  const [copiedConfig, setCopiedConfig] = useState<string | null>(null)
+  const baseUrl = `${currentBaseUrl()}/v1`
+  // The Anthropic SDK appends /v1/messages itself, so Claude Code's base URL
+  // must be the origin rather than the OpenAI-style /v1 base.
+  const claudeBaseUrl = currentBaseUrl()
+  const model =
+    result.model_scope === 'selected' && result.models.length > 0
+      ? result.models[0].model
+      : dialogCopy.allScopeModel
+  const configs = [
+    {
+      key: 'claudeCode',
+      label: dialogCopy.claudeCode,
+      text: claudeCodeConfig(claudeBaseUrl, result.key, model),
+    },
+    {
+      key: 'cursor',
+      label: dialogCopy.cursor,
+      text: openAIConfig(baseUrl, result.key, model),
+    },
+    {
+      key: 'cherryStudio',
+      label: dialogCopy.cherryStudio,
+      text: cherryStudioConfig(baseUrl, result.key, model),
+    },
+  ]
+
+  async function copyConfig(key: string, text: string) {
+    const ok = await writeClipboard(text)
+    setCopiedConfig(ok ? key : null)
+    toast.show({
+      title: ok ? shared.copied : shared.copyFailed,
+      tone: ok ? 'success' : 'error',
+    })
+  }
+
   return (
     <div className="space-y-4">
       <div className="rounded-md border border-brand/30 bg-brand-soft px-4 py-3">
@@ -462,7 +556,33 @@ function CreatedKey({
         <code className="mt-3 block break-all rounded-sm bg-bg px-3 py-2 font-mono text-[13px] text-ink">
           {result.key}
         </code>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-ink-3">
+          <span>{dialogCopy.baseUrlLabel}</span>
+          <code className="rounded-sm bg-bg px-2 py-0.5 font-mono text-[13px] text-ink">
+            {baseUrl}
+          </code>
+          <span>{dialogCopy.baseUrlHint}</span>
+        </div>
       </div>
+
+      {walletZero ? (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warn/25 bg-warn/10 px-4 py-3 text-[13px] text-warn"
+        >
+          <div>
+            <div className="font-medium">{dialogCopy.balanceWarning.title}</div>
+            <p className="mt-0.5">{dialogCopy.balanceWarning.body}</p>
+          </div>
+          <a
+            href="/console/wallet"
+            className="shrink-0 font-medium underline underline-offset-2"
+          >
+            {dialogCopy.balanceWarning.action}
+          </a>
+        </div>
+      ) : null}
+
       <div className="grid gap-2 text-[13px] text-ink-3 sm:grid-cols-2">
         <span>
           {copy.pages.consoleKeys.columns.models}：
@@ -475,8 +595,48 @@ function CreatedKey({
           {copy.pages.consoleKeys.strategy[result.strategy]}
         </span>
       </div>
+
+      <div>
+        <div className="text-[14px] font-medium text-ink">{dialogCopy.configsTitle}</div>
+        <p className="mt-0.5 text-[13px] text-ink-3">{dialogCopy.configsHint}</p>
+        <div className="mt-2 space-y-2">
+          {configs.map((config) => (
+            <div key={config.key} className="rounded-md border border-line">
+              <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
+                <span className="text-[13px] font-medium text-ink">{config.label}</span>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void copyConfig(config.key, config.text)}
+                >
+                  {copiedConfig === config.key ? shared.copied : dialogCopy.copyConfig}
+                </Button>
+              </div>
+              <pre className="overflow-x-auto px-3 py-2 font-mono text-[12px] leading-5 text-ink">
+                {config.text}
+              </pre>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   )
+}
+
+function claudeCodeConfig(baseUrl: string, key: string, model: string): string {
+  return [
+    `export ANTHROPIC_BASE_URL="${baseUrl}"`,
+    `export ANTHROPIC_AUTH_TOKEN="${key}"`,
+    `export ANTHROPIC_MODEL="${model}"`,
+  ].join('\n')
+}
+
+function openAIConfig(baseUrl: string, key: string, model: string): string {
+  return [`Base URL: ${baseUrl}`, `API Key: ${key}`, `Model: ${model}`].join('\n')
+}
+
+function cherryStudioConfig(baseUrl: string, key: string, model: string): string {
+  return [`API 地址: ${baseUrl}`, `API Key: ${key}`, `模型: ${model}`].join('\n')
 }
 
 async function writeClipboard(text: string): Promise<boolean> {

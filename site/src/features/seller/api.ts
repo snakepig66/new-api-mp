@@ -55,6 +55,26 @@ export interface OnboardingResponse {
 // 挂单
 // ---------------------------------------------------------------------------
 
+/** One selected model's real callability result from the latest verify probe. */
+export interface VerifyModelResult {
+  model: string
+  upstream_model: string
+  ok: boolean
+  prompt_cache_support: boolean
+  latency_ms: number
+  fail_reason?: string
+}
+
+/** Latest verify probe summary attached to a listing row. */
+export interface SellerVerification {
+  ok: boolean
+  fail_reason: string
+  prompt_cache_support: boolean
+  latency_ms: number
+  model_results: VerifyModelResult[]
+  checked_at: string
+}
+
 export interface SellerListing {
   id: number
   vendor: string
@@ -67,6 +87,12 @@ export interface SellerListing {
   status: string
   key_fingerprint8: string
   created_at: string
+  /** Stored system pause reason (plan quota, patrol, migration) or "manual". */
+  pause_reason?: string
+  /** Time-boxed pause end (plan quota windows). */
+  resume_at?: string
+  /** Per-model outcome of the latest verify probe. */
+  verification?: SellerVerification | null
 }
 
 export interface SellerProbe {
@@ -79,7 +105,6 @@ export interface SellerProbe {
 }
 
 export interface SellerListingDetail extends SellerListing {
-  pause_reason: string
   probes: SellerProbe[]
 }
 
@@ -92,6 +117,8 @@ export interface CreateListingInput {
   rpm: number
   daily_cap_micro: number
   hours: string
+  /** Required (true) for plan channels; the seller confirms the plan terms. */
+  plan_terms_accepted?: boolean
 }
 
 export interface CreateListingResponse {
@@ -110,6 +137,12 @@ export interface ProbeResult {
   models: string[]
   /** Channel-qualified standard models this key can call (pool contract). */
   verified_models?: string[]
+  /**
+   * Price coefficient per standard model (1000 = official price). The buyer
+   * price is official × coefficient × multiplier; the backend Quote applies
+   * the same two factors.
+   */
+  coefficients?: Record<string, number>
   missing_models: string[]
   latency_ms: number
   prompt_cache: boolean
@@ -231,6 +264,20 @@ export interface SellerVendor {
   protocols: { openai: string; anthropic: string }
   models: string[]
   passthrough_body: boolean
+  /** Plan quota window: {mode, period_seconds, reset_timezone, weekday, hour, minute}. */
+  quota_window?: SellerQuotaWindow
+  /** Operator-configured plan terms link. */
+  terms_url?: string
+}
+
+/** Plan quota-window shape exposed by GET /marketplace/vendors. */
+export interface SellerQuotaWindow {
+  mode?: 'rolling' | 'weekly' | string
+  period_seconds?: number
+  reset_timezone?: string
+  weekday?: number
+  hour?: number
+  minute?: number
 }
 
 /** Normalize the channel kind, falling back to the legacy `tier` field. */
@@ -268,6 +315,35 @@ export function vendorName(id: string, vendors?: readonly SellerVendor[]): strin
 
 const sellerBase = '/marketplace/seller'
 
+/** Auto-refresh cadence while any listing is verifying (verification <= 60s). */
+export const VERIFY_POLL_INTERVAL_MS = 3000
+
+/**
+ * Poll only while a verification is running. The backend caps verification at
+ * 60s, so this stops on its own once every row left `verifying`.
+ */
+export function verifyingRefetchInterval(
+  rows: readonly { status: string }[] | undefined,
+): number | false {
+  return rows?.some((row) => row.status === 'verifying')
+    ? VERIFY_POLL_INTERVAL_MS
+    : false
+}
+
+export interface MarketplaceStatus {
+  enabled: boolean
+  version: string
+  /** Backend PlatformFeePercent: the only source for the 7% split. */
+  platform_fee_percent: number
+}
+
+export const marketplaceStatusQuery = () =>
+  queryOptions({
+    queryKey: ['marketplace', 'status'],
+    queryFn: () => api.get<MarketplaceStatus>('/marketplace/status'),
+    staleTime: 5 * 60_000,
+  })
+
 export const meQuery = () =>
   queryOptions({
     queryKey: ['marketplace', 'me'],
@@ -280,6 +356,7 @@ export const sellerListingsQuery = () =>
     queryKey: ['marketplace', 'seller', 'listings'],
     queryFn: () => api.get<SellerListing[]>(`${sellerBase}/listings`),
     staleTime: 15_000,
+    refetchInterval: (query) => verifyingRefetchInterval(query.state.data),
   })
 
 export const sellerListingDetailQuery = (id: number) =>
@@ -287,6 +364,8 @@ export const sellerListingDetailQuery = (id: number) =>
     queryKey: ['marketplace', 'seller', 'listing', id],
     queryFn: () => api.get<SellerListingDetail>(`${sellerBase}/listings/${id}`),
     staleTime: 15_000,
+    refetchInterval: (query) =>
+      query.state.data?.status === 'verifying' ? VERIFY_POLL_INTERVAL_MS : false,
   })
 
 export const sellerStatsQuery = () =>
@@ -363,6 +442,11 @@ export function updateListingMultiplier(
 
 export function replaceListingKey(id: number, apiKey: string): Promise<{ id: number; status: string }> {
   return api.post(`${sellerBase}/listings/${id}/key`, { api_key: apiKey })
+}
+
+/** Re-run verification for a draft (failed) listing. */
+export function verifyListing(id: number): Promise<{ id: number; status: string }> {
+  return api.post(`${sellerBase}/listings/${id}/verify`)
 }
 
 export function pauseListing(id: number): Promise<{ id: number; status: string }> {

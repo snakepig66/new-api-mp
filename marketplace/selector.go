@@ -434,6 +434,10 @@ func (s *Selector) dailySpend(db *gorm.DB, listingID int64, now time.Time) (int6
 type SelectInput struct {
 	Model string
 	Now   time.Time // zero → time.Now()
+	// BuyerID excludes the buyer's own listings. Without it a user could buy
+	// their own supply with gifted or redemption-code balance and convert it
+	// into withdrawable seller income.
+	BuyerID int64
 	// ExcludeListingIDs carries the listings this request's retry chain has
 	// already tried (§3.7 换家).
 	ExcludeListingIDs []int64
@@ -568,6 +572,9 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 	for i := range rows {
 		l := rows[i]
 		if slices.Contains(in.ExcludeListingIDs, l.ID) {
+			continue
+		}
+		if in.BuyerID > 0 && l.SellerID == in.BuyerID {
 			continue
 		}
 		if !slices.Contains(l.Models, in.Model) {

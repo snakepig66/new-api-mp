@@ -97,6 +97,7 @@ function jsonResponse(body: unknown): Response {
 }
 
 let createdBody: Record<string, unknown> | null = null
+let walletBalance = 1_000_000
 
 const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input)
@@ -105,6 +106,19 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
   }
   if (url.startsWith('/api/marketplace/vendors')) {
     return jsonResponse({ success: true, data: vendors })
+  }
+  if (url.startsWith('/api/marketplace/wallet')) {
+    return jsonResponse({
+      success: true,
+      data: {
+        balance_micro: walletBalance,
+        month_spend_micro: 0,
+        month_saved_micro: 0,
+      },
+    })
+  }
+  if (url.startsWith('/api/user/ip')) {
+    return jsonResponse({ success: true, data: { ip: '203.0.113.9' } })
   }
   if (url.startsWith('/api/token/?') || url === '/api/token/') {
     return jsonResponse({
@@ -117,14 +131,15 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
   }
   if (url.startsWith('/api/marketplace/key') && init?.method === 'POST') {
     createdBody = JSON.parse(String(init.body)) as Record<string, unknown>
+    const models = (createdBody.models as { model: string; price_cap_milli: number }[]) ?? []
     return jsonResponse({
       success: true,
       data: {
         id: 99,
         name: 'Key 1',
         key: 'sk-new-key',
-        model_scope: 'all',
-        models: [],
+        model_scope: createdBody.model_scope,
+        models: models.map((model) => ({ ...model, added_at: 1 })),
         strategy: 'balanced',
       },
     })
@@ -134,6 +149,7 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
 
 beforeEach(() => {
   createdBody = null
+  walletBalance = 1_000_000
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
 })
@@ -159,6 +175,10 @@ function renderDialog(initialModel?: string) {
       </ToastProvider>
     </QueryClientProvider>,
   )
+}
+
+function preTexts(): string[] {
+  return Array.from(document.querySelectorAll('pre')).map((node) => node.textContent ?? '')
 }
 
 describe('CreateKeyDialog', () => {
@@ -210,6 +230,60 @@ describe('CreateKeyDialog', () => {
     await waitFor(() => expect(createdBody).not.toBeNull())
     expect(createdBody?.model_scope).toBe('selected')
     expect(createdBody?.models).toEqual([{ model: 'glm-5.3', price_cap_milli: 0 }])
+  })
+
+  it('shows the created key, base URL and copy configs for all-scope keys', async () => {
+    renderDialog()
+    fireEvent.click(screen.getByRole('button', { name: '创建 Key' }))
+
+    expect(await screen.findByText('sk-new-key')).toBeTruthy()
+    const baseUrl = `${window.location.origin}/v1`
+    expect(screen.getAllByText(baseUrl).length).toBeGreaterThan(0)
+    await waitFor(() => {
+      const texts = preTexts()
+      expect(texts).toHaveLength(3)
+      const claude = texts.find((text) => text.includes('ANTHROPIC_BASE_URL')) ?? ''
+      // The Anthropic SDK appends /v1/messages itself, so this base URL stays
+      // at the origin while OpenAI-compatible clients use /v1.
+      expect(claude).toContain(`ANTHROPIC_BASE_URL="${window.location.origin}"`)
+      expect(claude).toContain('ANTHROPIC_AUTH_TOKEN="sk-new-key"')
+      expect(claude).toContain('ANTHROPIC_MODEL="<模型名>"')
+      expect(texts.some((text) => text.includes('API Key: sk-new-key'))).toBe(true)
+    })
+    expect(screen.queryByText('先充值才能调用')).toBeNull()
+  })
+
+  it('uses the first selected model in the created configs', async () => {
+    renderDialog('glm-5.3')
+    fireEvent.click(screen.getByRole('button', { name: '创建 Key' }))
+
+    await waitFor(() => expect(createdBody).not.toBeNull())
+    await waitFor(() => {
+      const texts = preTexts()
+      expect(texts.some((text) => text.includes('ANTHROPIC_MODEL="glm-5.3"'))).toBe(true)
+      expect(texts.every((text) => !text.includes('<模型名>'))).toBe(true)
+    })
+  })
+
+  it('prompts for a top-up when the wallet balance is zero', async () => {
+    walletBalance = 0
+    renderDialog()
+    fireEvent.click(screen.getByRole('button', { name: '创建 Key' }))
+
+    expect(await screen.findByText('先充值才能调用')).toBeTruthy()
+    const link = screen.getByRole('link', { name: '去充值' })
+    expect(link.getAttribute('href')).toBe('/console/wallet')
+  })
+
+  it('inserts the current IP into the allow list', async () => {
+    renderDialog()
+    fireEvent.click(await screen.findByText('自定义设置'))
+
+    expect(await screen.findByText('你当前的 IP：203.0.113.9')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '插入' }))
+
+    const allowIps = screen.getByLabelText('IP 白名单') as HTMLTextAreaElement
+    expect(allowIps.value).toBe('203.0.113.9')
   })
 
   it('submits a custom expiry and IP whitelist from the custom settings', async () => {

@@ -19,6 +19,7 @@ import {
 
 import {
   addKeyModel,
+  currentIPQuery,
   deleteKey,
   keyDetailQuery,
   removeKeyModel,
@@ -39,7 +40,7 @@ import {
   milliToMultiplierInput,
   unixToDateTimeInput,
 } from '@/features/console/format'
-import { tokenStatusMeta } from '@/features/console/labels'
+import { isTokenExpired, tokenStatusMeta } from '@/features/console/labels'
 import {
   buildModelSelection,
   prefFormSchema,
@@ -50,9 +51,11 @@ import {
 import {
   TOKEN_STATUS_DISABLED,
   TOKEN_STATUS_ENABLED,
+  TOKEN_STATUS_EXPIRED,
   type KeyDetail,
   type TokenRecord,
 } from '@/features/console/types'
+import { squareModelsQuery } from '@/features/market/api'
 import { ModelPicker, type ModelSelection } from '@/features/market/ModelPicker'
 
 export const Route = createFileRoute('/console/keys/$id')({
@@ -62,7 +65,7 @@ export const Route = createFileRoute('/console/keys/$id')({
 const page = copy.pages.consoleKeyDetail
 const shared = copy.pages.consoleShared
 
-function KeyDetailPage() {
+export function KeyDetailPage() {
   const { id } = Route.useParams()
   const tokenId = Number(id)
   const valid = Number.isSafeInteger(tokenId) && tokenId > 0
@@ -140,7 +143,7 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const { token, pref, models } = detail
-  const status = tokenStatusMeta(token.status)
+  const status = tokenStatusMeta(isTokenExpired(token) ? TOKEN_STATUS_EXPIRED : token.status)
   const [copying, setCopying] = useState(false)
   const [statusBusy, setStatusBusy] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -304,6 +307,8 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
 
       <KeyLimitsSection tokenId={tokenId} token={token} />
 
+      <OfficialOnlyModels pref={pref} />
+
       <ModelsSection
         tokenId={tokenId}
         models={models}
@@ -350,9 +355,51 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
 }
 
 
+/**
+ * Warns when the key's official-only switch cannot reach some of its models.
+ * Data comes from the square list (official_available), which the backend
+ * computes in the same pooled queries as listing_count.
+ */
+function OfficialOnlyModels({ pref }: { pref: KeyDetail['pref'] }) {
+  const officialOnly = Boolean(pref?.official_only)
+  const square = useQuery({ ...squareModelsQuery(), enabled: officialOnly })
+  if (!pref || !officialOnly || !square.data) return null
+
+  const scope =
+    pref.model_scope === 'selected'
+      ? new Set(pref.models.map((model) => model.model))
+      : null
+  const blocked = square.data
+    .filter(
+      (model) =>
+        (scope === null || scope.has(model.model)) &&
+        // Supply exists, but none of it is on an official channel. Models
+        // with no supply at all fail for a different reason and would only
+        // make this notice noisy.
+        model.listing_count > 0 &&
+        model.official_available === false,
+    )
+    .map((model) => model.model)
+  if (blocked.length === 0) return null
+
+  return (
+    <Notice className="mt-9" tone="warning" title={page.officialOnly.title}>
+      <p>{page.officialOnly.body}</p>
+      <p className="mt-1 font-mono text-[13px]">{blocked.join('、')}</p>
+      <Link
+        to="/models"
+        className="mt-2 inline-block font-medium underline underline-offset-2"
+      >
+        {page.officialOnly.action}
+      </Link>
+    </Notice>
+  )
+}
+
 function KeyLimitsSection({ tokenId, token }: { tokenId: number; token: TokenRecord }) {
   const toast = useToast()
   const queryClient = useQueryClient()
+  const currentIp = useQuery({ ...currentIPQuery() })
   const [never, setNever] = useState(token.expired_time <= 0)
   const [expiresAt, setExpiresAt] = useState(unixToDateTimeInput(token.expired_time))
   const [allowIps, setAllowIps] = useState(token.allow_ips ?? '')
@@ -363,6 +410,29 @@ function KeyLimitsSection({ tokenId, token }: { tokenId: number; token: TokenRec
     setExpiresAt(unixToDateTimeInput(token.expired_time))
     setAllowIps(token.allow_ips ?? '')
   }, [token.expired_time, token.allow_ips])
+
+  function insertCurrentIP() {
+    const ip = currentIp.data?.ip?.trim()
+    if (!ip) return
+    setAllowIps((previous) => {
+      const lines = previous
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+      if (lines.includes(ip)) return previous
+      return lines.length ? `${lines.join('\n')}\n${ip}` : ip
+    })
+  }
+
+  async function copyCurrentIP() {
+    const ip = currentIp.data?.ip?.trim()
+    if (!ip) return
+    const ok = await writeClipboard(ip)
+    toast.show({
+      title: ok ? shared.copied : shared.copyFailed,
+      tone: ok ? 'success' : 'error',
+    })
+  }
 
   async function save() {
     let expiredTime = -1
@@ -428,6 +498,27 @@ function KeyLimitsSection({ tokenId, token }: { tokenId: number; token: TokenRec
           htmlFor="key-limits-allow-ips"
           hint={page.limits.allowIpsHint}
         >
+          {currentIp.data?.ip ? (
+            <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[12px] text-ink-3">
+              <span className="font-mono">
+                {copy.pages.consoleKeys.currentIp.label(currentIp.data.ip)}
+              </span>
+              <button
+                type="button"
+                className="text-brand-ink underline-offset-2 hover:underline"
+                onClick={insertCurrentIP}
+              >
+                {copy.pages.consoleKeys.currentIp.insert}
+              </button>
+              <button
+                type="button"
+                className="text-brand-ink underline-offset-2 hover:underline"
+                onClick={() => void copyCurrentIP()}
+              >
+                {copy.pages.consoleKeys.currentIp.copy}
+              </button>
+            </div>
+          ) : null}
           <textarea
             id="key-limits-allow-ips"
             rows={3}

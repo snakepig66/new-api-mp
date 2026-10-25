@@ -31,6 +31,32 @@ describe('previewMultiplier', () => {
     expect(preview?.sellerMicro).toBe(1_860_000n)
   })
 
+  it('uses the backend fee percentage when provided', () => {
+    const preview = previewMultiplier(2_000_000, 500, 10)
+    expect(preview?.buyerMicro).toBe(1_000_000n)
+    expect(preview?.feeMicro).toBe(100_000n)
+    expect(preview?.sellerMicro).toBe(900_000n)
+    expect(preview?.feePercent).toBe(10)
+  })
+
+  it('multiplies the official price by both the channel coefficient and the multiplier', () => {
+    const preview = previewMultiplier(2_000_000, 300, 7, 1200)
+    expect(preview?.buyerMicro).toBe(720_000n)
+    expect(preview?.feeMicro).toBe(50_400n)
+    expect(preview?.sellerMicro).toBe(669_600n)
+    expect(preview?.coefficientMilli).toBe(1200)
+
+    // Missing/invalid coefficients fall back to the official price, exactly
+    // like the backend Quote.
+    expect(previewMultiplier(2_000_000, 300, 7, 0)?.buyerMicro).toBe(600_000n)
+    expect(previewMultiplier(2_000_000, 300, 7, 0)?.coefficientMilli).toBe(1000)
+  })
+
+  it('defaults to the 7% fee and rejects an invalid fee', () => {
+    expect(previewMultiplier(2_000_000, 500)?.feePercent).toBe(7)
+    expect(previewMultiplier(2_000_000, 500, 101)).toBeNull()
+  })
+
   it('rejects out-of-range multipliers and malformed official prices', () => {
     expect(previewMultiplier(2_000_000, 0)).toBeNull()
     expect(previewMultiplier(2_000_000, 1001)).toBeNull()

@@ -6,6 +6,7 @@ import { formatYuan } from '@/lib/money'
 import { cn } from '@/lib/cn'
 import { Button, Empty, Input } from '@/ui'
 
+import { parseMultiplierToMilli } from '@/features/console/format'
 import { squareModelsQuery, type SquareModel, type SquareTierPrices } from './api'
 import { originVendorOf } from './model-table'
 import { VendorPills } from './VendorPills'
@@ -245,6 +246,14 @@ export function ModelPicker({
                     {group.models.map((model) => {
                       const checked = model.model in selection
                       const prices = currentPrices(model)
+                      const lowestMilli = model.multiplier_min_milli ?? 0
+                      const capMilli = parseMultiplierToMilli(selection[model.model] ?? '')
+                      const belowLowest =
+                        checked &&
+                        lowestMilli > 0 &&
+                        capMilli !== null &&
+                        capMilli > 0 &&
+                        capMilli < lowestMilli
                       return (
                         <li
                           key={model.model}
@@ -286,6 +295,16 @@ export function ModelPicker({
                               onChange={(event) => setCap(model.model, event.target.value)}
                               className="h-8 w-20 rounded-sm border border-transparent bg-bg-soft px-2 tabular-nums text-[13px] text-ink disabled:bg-bg-soft disabled:text-ink-3"
                             />
+                            {lowestMilli > 0 ? (
+                              <span className="tabular-nums">
+                                {pickerCopy.lowestCap((lowestMilli / 1000).toFixed(2))}
+                              </span>
+                            ) : null}
+                            {belowLowest ? (
+                              <span role="alert" className="text-danger">
+                                {pickerCopy.capBelowLowest}
+                              </span>
+                            ) : null}
                           </label>
                         </li>
                       )

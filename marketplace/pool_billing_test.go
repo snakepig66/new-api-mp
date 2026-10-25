@@ -87,6 +87,8 @@ func TestSelectorOfficialOnly(t *testing.T) {
 		APIKey:          uniqueTestKey("sk-selector-plan"),
 		Models:          []string{"deepseek-v4-pro"},
 		MultiplierMilli: 1, // cheapest, would win without the switch
+		// Plan channels require the shared-terms acknowledgement (§4).
+		PlanTermsAccepted: true,
 	})
 	require.NoError(t, err)
 	require.NoError(t, db.Model(&Listing{}).Where("id IN ?", []int64{official.ID, plan.ID}).

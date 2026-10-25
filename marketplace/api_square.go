@@ -73,18 +73,26 @@ type squareTierPrices struct {
 // Vendor is retained as an alias of OriginVendor so existing frontends keep
 // working; new clients should read origin_vendor.
 type squareModelEntry struct {
-	Model            string                      `json:"model"`
-	Aliases          []string                    `json:"aliases"`
-	OriginVendor     string                      `json:"origin_vendor"`
-	Vendor           string                      `json:"vendor"`
-	Tier             string                      `json:"tier"`
-	TierLabel        string                      `json:"tier_label"`
-	Prices           map[string]squareTierPrices `json:"prices"`
-	NextSwitch       *time.Time                  `json:"next_switch"`
-	ListingCount     int                         `json:"listing_count"`
-	ChannelCount     int                         `json:"channel_count"`
-	BuyerPriceSource string                      `json:"buyer_price_source"`
-	GeneratedAt      time.Time                   `json:"generated_at"`
+	Model        string                      `json:"model"`
+	Aliases      []string                    `json:"aliases"`
+	OriginVendor string                      `json:"origin_vendor"`
+	Vendor       string                      `json:"vendor"`
+	Tier         string                      `json:"tier"`
+	TierLabel    string                      `json:"tier_label"`
+	Prices       map[string]squareTierPrices `json:"prices"`
+	NextSwitch   *time.Time                  `json:"next_switch"`
+	ListingCount int                         `json:"listing_count"`
+	ChannelCount int                         `json:"channel_count"`
+	// MultiplierMinMilli is the lowest multiplier among live/canary supply;
+	// 0 when nothing is on sale right now.
+	MultiplierMinMilli int64 `json:"multiplier_min_milli"`
+	// OfficialAvailable reports whether at least one live/canary listing is
+	// served by an official-kind channel with a verified, active qualification
+	// for this model. It is what the key detail page uses to warn that
+	// official-only routing cannot reach a model.
+	OfficialAvailable bool      `json:"official_available"`
+	BuyerPriceSource  string    `json:"buyer_price_source"`
+	GeneratedAt       time.Time `json:"generated_at"`
 }
 
 // squareOfficialPrices is one tier's raw official price-book row (no flat
@@ -134,16 +142,17 @@ type squareChannelSupply struct {
 // canary listings into account because canary supply does serve buyer traffic
 // (§3.5 灰度 10%).
 type squareSupply struct {
-	count      int
-	channels   map[string]struct{}
-	minMult    int64
-	maxMult    int64
-	byChannel  map[string]*squareChannelSupply
-	haveBest   bool
-	bestSlug   string
-	bestMult   int64
-	bestCoeff  int64
-	bestFactor int64
+	count         int
+	officialCount int
+	channels      map[string]struct{}
+	minMult       int64
+	maxMult       int64
+	byChannel     map[string]*squareChannelSupply
+	haveBest      bool
+	bestSlug      string
+	bestMult      int64
+	bestCoeff     int64
+	bestFactor    int64
 }
 
 // modelPoolIndex resolves a listing's model spelling to a standard model
@@ -244,9 +253,12 @@ func coefficientFor(coeffs map[string]map[string]int64, model, channel string) i
 // add folds one live/canary listing into the aggregate. factor is the buyer
 // price factor in thousandths of the official price:
 // coefficient_milli × multiplier_milli (1000 × 1000 = official price).
-func (s *squareSupply) add(channel string, multiplierMilli, coefficientMilli int64) {
+func (s *squareSupply) add(channel string, multiplierMilli, coefficientMilli int64, official bool) {
 	if coefficientMilli <= 0 {
 		coefficientMilli = 1000
+	}
+	if official {
+		s.officialCount++
 	}
 	if s.channels == nil {
 		s.channels = make(map[string]struct{})
@@ -289,6 +301,51 @@ func (s *squareSupply) add(channel string, multiplierMilli, coefficientMilli int
 	}
 }
 
+// loadOfficialChannelModels returns model -> channel slugs that can serve the
+// model through an official-kind channel: an active channel whose
+// qualification for that model is verified and active. Two queries for the
+// whole pool keep the square free of per-model lookups (the same eligibility
+// rule as loadVerifiedChannels, batched).
+func loadOfficialChannelModels(db *gorm.DB) map[string]map[string]struct{} {
+	out := make(map[string]map[string]struct{})
+	var channels []ChannelPool
+	if err := db.Select("slug").
+		Where("kind = ? AND status = ?", ChannelKindOfficial, PoolStatusActive).
+		Find(&channels).Error; err != nil {
+		return out
+	}
+	if len(channels) == 0 {
+		return out
+	}
+	officialSlugs := make(map[string]struct{}, len(channels))
+	for i := range channels {
+		officialSlugs[strings.TrimSpace(channels[i].Slug)] = struct{}{}
+	}
+	var qualifications []ChannelModel
+	if err := db.Select("channel_slug", "model").
+		Where("verified = ? AND status = ?", true, PoolStatusActive).
+		Find(&qualifications).Error; err != nil {
+		return out
+	}
+	for i := range qualifications {
+		slug := strings.TrimSpace(qualifications[i].ChannelSlug)
+		model := strings.TrimSpace(qualifications[i].Model)
+		if slug == "" || model == "" {
+			continue
+		}
+		if _, ok := officialSlugs[slug]; !ok {
+			continue
+		}
+		byChannel := out[model]
+		if byChannel == nil {
+			byChannel = make(map[string]struct{})
+			out[model] = byChannel
+		}
+		byChannel[slug] = struct{}{}
+	}
+	return out
+}
+
 // loadSquarePoolSupply groups the current live/canary supply by standard
 // model name. The models column is JSON text, so the model filter runs in Go;
 // the live listing set is small in v1 (same trade-off as hasLiveListingForModel).
@@ -299,6 +356,7 @@ func loadSquarePoolSupply(db *gorm.DB, idx modelPoolIndex, coeffs map[string]map
 		Find(&rows).Error; err != nil {
 		return nil, err
 	}
+	official := loadOfficialChannelModels(db)
 	supply := make(map[string]*squareSupply)
 	for i := range rows {
 		l := &rows[i]
@@ -313,7 +371,8 @@ func loadSquarePoolSupply(db *gorm.DB, idx modelPoolIndex, coeffs map[string]map
 				s = &squareSupply{}
 				supply[model] = s
 			}
-			s.add(channel, l.MultiplierMilli, coefficientFor(coeffs, model, channel))
+			_, isOfficial := official[model][channel]
+			s.add(channel, l.MultiplierMilli, coefficientFor(coeffs, model, channel), isOfficial)
 		}
 	}
 	return supply, nil
@@ -401,6 +460,8 @@ func buildSquareEntry(db *gorm.DB, cal *Calendar, model ModelPool, s *squareSupp
 	if s != nil {
 		entry.ListingCount = s.count
 		entry.ChannelCount = len(s.channels)
+		entry.MultiplierMinMilli = s.minMult
+		entry.OfficialAvailable = s.officialCount > 0
 		if s.haveBest && s.count > 0 {
 			entry.BuyerPriceSource = BuyerPriceSourceMarket
 			mult, coeff, vendor = s.bestMult, s.bestCoeff, s.bestSlug

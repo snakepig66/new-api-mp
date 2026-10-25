@@ -36,6 +36,19 @@ const vendors = [
     passthrough_body: true,
   },
   {
+    id: 'volcengine-ark-coding-plan',
+    display_name: '火山方舟 Coding Plan',
+    tier: 'plan',
+    kind: 'plan',
+    protocols: {
+      openai: 'https://ark.cn-beijing.volces.com/api/coding/v3',
+      anthropic: '',
+    },
+    models: ['deepseek-v4-pro'],
+    passthrough_body: true,
+    quota_window: { period_seconds: 18000, reset_timezone: 'Asia/Shanghai' },
+  },
+  {
     id: 'tipig',
     display_name: 'tipig gateway',
     tier: 'third_party',
@@ -53,18 +66,38 @@ function jsonResponse(body: unknown): Response {
   })
 }
 
-const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input)
   if (url.startsWith('/api/marketplace/vendors')) {
     return jsonResponse({ success: true, data: vendors })
   }
+  if (url.startsWith('/api/marketplace/status')) {
+    return jsonResponse({
+      success: true,
+      data: { enabled: true, version: 'test', platform_fee_percent: 7 },
+    })
+  }
+  if (url === '/api/marketplace/seller/listings' && init?.method === 'POST') {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        message: 'this api key is already listed by you',
+        code: 'DUPLICATE_KEY_OWN',
+        listing_id: 77,
+      }),
+      { status: 409, headers: { 'content-type': 'application/json' } },
+    )
+  }
   if (url.startsWith('/api/marketplace/seller/listings/probe')) {
+    const body = init?.body ? (JSON.parse(String(init.body)) as { vendor_id?: string }) : {}
+    const plan = body.vendor_id === 'volcengine-ark-coding-plan'
+    const available = plan ? ['deepseek-v4-pro'] : ['deepseek-flash']
     return jsonResponse({
       success: true,
       data: {
         ok: true,
         models: ['deepseek-flash', 'deepseek-v4-pro'],
-        verified_models: ['deepseek-flash'],
+        verified_models: available,
         missing_models: [],
         latency_ms: 120,
         prompt_cache: true,
@@ -97,7 +130,7 @@ function renderPage() {
     path: '/seller/listings/new',
     component: NewListingPage,
   })
-  const dummy = ['/seller', '/seller/listings'].map((path) =>
+  const dummy = ['/seller', '/seller/listings', '/seller/listings/$id'].map((path) =>
     createRoute({ getParentRoute: () => rootRoute, path, component: () => null }),
   )
   const router = createRouter({
@@ -132,7 +165,10 @@ describe('new listing wizard', () => {
     renderPage()
     await screen.findByText('火山方舟')
 
-    fireEvent.click(screen.getByRole('radio', { name: /火山方舟/ }))
+    const volcengine = screen
+      .getAllByRole('radio')
+      .find((radio) => (radio as HTMLInputElement).value === 'volcengine') as HTMLInputElement
+    fireEvent.click(volcengine)
 
     expect(
       screen.getByText('该渠道还没有已认证且可卖的模型，请联系运营配置'),
@@ -147,6 +183,56 @@ describe('new listing wizard', () => {
     const thirdParty = screen.getByRole('radio', { name: /tipig/ }) as HTMLInputElement
     expect(thirdParty.disabled).toBe(true)
     expect(thirdParty.checked).toBe(false)
+  })
+
+  it('requires the plan-terms checkbox before submitting a plan channel', async () => {
+    renderPage()
+    await screen.findByText('火山方舟 Coding Plan')
+
+    fireEvent.click(screen.getByRole('radio', { name: /火山方舟 Coding Plan/ }))
+    expect(screen.getByText('套餐额度说明')).toBeTruthy()
+    expect(
+      screen.getByText(/每 5 小时重置一次（Asia\/Shanghai）/),
+    ).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
+    const key = await screen.findByLabelText('上游 API Key')
+    fireEvent.change(key, { target: { value: 'sk-plan-1234567890' } })
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
+
+    await screen.findByRole('checkbox', { name: 'deepseek-v4-pro' })
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
+
+    const terms = await screen.findByRole('checkbox', {
+      name: '我确认该套餐条款允许共享',
+    }) as HTMLInputElement
+    const submit = screen.getByRole('button', { name: '提交挂单' }) as HTMLButtonElement
+    expect(terms.checked).toBe(false)
+    expect(submit.disabled).toBe(true)
+
+    fireEvent.click(terms)
+    await waitFor(() => expect(submit.disabled).toBe(false))
+  })
+
+  it('links to the existing listing when the seller already listed the key', async () => {
+    renderPage()
+    await screen.findByText('DeepSeek')
+
+    fireEvent.click(screen.getByRole('radio', { name: /DeepSeek/ }))
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
+    const key = await screen.findByLabelText('上游 API Key')
+    fireEvent.change(key, { target: { value: 'sk-duplicate-1234567890' } })
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
+
+    await screen.findByRole('checkbox', { name: 'deepseek-flash' })
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
+    fireEvent.click(await screen.findByRole('button', { name: '提交挂单' }))
+
+    expect(
+      await screen.findByText('你自己已上架过这个 Key（挂单 #77）。'),
+    ).toBeTruthy()
+    const link = screen.getByRole('link', { name: '查看已有挂单' }) as HTMLAnchorElement
+    expect(link.getAttribute('href')).toBe('/seller/listings/77')
   })
 
   it('lists only the selected channel models after probing', async () => {

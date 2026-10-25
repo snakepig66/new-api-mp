@@ -41,6 +41,10 @@ export interface SquareModel {
   listing_count: number
   /** Number of distinct channels currently serving this model. */
   channel_count: number
+  /** Lowest live/canary multiplier in milli; 0 when there is no supply. */
+  multiplier_min_milli?: number
+  /** True when an official-kind, verified channel serves live/canary supply. */
+  official_available?: boolean
   /** `official` when prices are the official price book (no market supply). */
   buyer_price_source: BuyerPriceSource
   generated_at: string

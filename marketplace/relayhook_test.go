@@ -251,6 +251,77 @@ func TestBeginDistributePriceCapFilters(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, status)
 }
 
+func TestBeginDistributeOfficialOnlyNoSupplierMessage(t *testing.T) {
+	f := newRelayFixture(t, 10_000_000)
+	// The plan qualification is verified so the listing is sellable, but the
+	// plan channel itself is not an official channel.
+	require.NoError(t, f.db.Model(&ChannelModel{}).
+		Where("channel_slug = ? AND model = ?", "volcengine-ark-coding-plan", "deepseek-v4-pro").
+		Update("verified", true).Error)
+	listing, err := CreateListing(f.db, CreateListingInput{
+		SellerID:        f.sellerID,
+		VendorID:        "volcengine-ark-coding-plan",
+		APIKey:          uniqueTestKey("sk-official-only-plan"),
+		Models:          []string{"deepseek-v4-pro"},
+		MultiplierMilli: 100,
+		// Plan channels require the shared-terms acknowledgement (§4).
+		PlanTermsAccepted: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.db.Model(&Listing{}).Where("id = ?", listing.ID).Update("status", ListingLive).Error)
+	f.addKeyModel(t, 77, "deepseek-v4-pro", 0)
+	require.NoError(t, UpsertKeyPref(f.db, 77, KeyPrefInput{
+		Strategy:     StrategyBalanced,
+		ModelScope:   ModelScopeSelected,
+		OfficialOnly: true,
+	}))
+	c := f.newRelayContext(t, []byte(`{"model":"deepseek-v4-pro"}`))
+
+	_, handled, status, err := BeginDistribute(c, "deepseek-v4-pro")
+	require.Error(t, err)
+	assert.True(t, handled)
+	assert.Equal(t, http.StatusServiceUnavailable, status, "status codes are unchanged")
+	assert.Contains(t, err.Error(), "official-only", "the error names the official-only cause")
+}
+
+// A live listing on an unverified channel is not sellable, so the earlier
+// "no live supply" rejection must also explain official-only routing.
+func TestBeginDistributeOfficialOnlyUnsellableMessage(t *testing.T) {
+	f := newRelayFixture(t, 10_000_000)
+	// CreateListing only accepts a verified qualification; drop the flag
+	// afterwards to model a live listing whose channel lost certification.
+	require.NoError(t, f.db.Model(&ChannelModel{}).
+		Where("channel_slug = ? AND model = ?", "volcengine-ark-coding-plan", "deepseek-v4-pro").
+		Update("verified", true).Error)
+	listing, err := CreateListing(f.db, CreateListingInput{
+		SellerID:        f.sellerID,
+		VendorID:        "volcengine-ark-coding-plan",
+		APIKey:          uniqueTestKey("sk-official-only-unverified"),
+		Models:          []string{"deepseek-v4-pro"},
+		MultiplierMilli: 100,
+		// Plan channels require the shared-terms acknowledgement (§4).
+		PlanTermsAccepted: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.db.Model(&Listing{}).Where("id = ?", listing.ID).Update("status", ListingLive).Error)
+	require.NoError(t, f.db.Model(&ChannelModel{}).
+		Where("channel_slug = ? AND model = ?", "volcengine-ark-coding-plan", "deepseek-v4-pro").
+		Update("verified", false).Error)
+	f.addKeyModel(t, 77, "deepseek-v4-pro", 0)
+	require.NoError(t, UpsertKeyPref(f.db, 77, KeyPrefInput{
+		Strategy:     StrategyBalanced,
+		ModelScope:   ModelScopeSelected,
+		OfficialOnly: true,
+	}))
+	c := f.newRelayContext(t, []byte(`{"model":"deepseek-v4-pro"}`))
+
+	_, handled, status, err := BeginDistribute(c, "deepseek-v4-pro")
+	require.Error(t, err)
+	assert.True(t, handled)
+	assert.Equal(t, http.StatusServiceUnavailable, status, "status codes are unchanged")
+	assert.Contains(t, err.Error(), "official-only")
+}
+
 // --- PrepareBilling ----------------------------------------------------------
 
 func TestPrepareBillingPreFreezes(t *testing.T) {

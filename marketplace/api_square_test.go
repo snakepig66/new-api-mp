@@ -169,6 +169,8 @@ func TestApiSquareModels(t *testing.T) {
 	assert.Equal(t, "deepseek", flash["vendor"], "vendor stays as an origin_vendor alias for old frontends")
 	assert.Equal(t, int64(2), apiNum(t, flash, "listing_count"), "two live listings")
 	assert.Equal(t, int64(2), apiNum(t, flash, "channel_count"), "two channels carry supply")
+	assert.Equal(t, int64(300), apiNum(t, flash, "multiplier_min_milli"), "lowest live multiplier")
+	assert.Equal(t, true, flash["official_available"], "the DeepSeek official channel serves it")
 	assert.Equal(t, BuyerPriceSourceMarket, flash["buyer_price_source"])
 
 	// generated_at pins the instant the entry was computed at; every
@@ -227,6 +229,8 @@ func TestApiSquareModels(t *testing.T) {
 	// the paused listing at 0.9x is not supply.
 	pro := findSquareItem(t, items, "deepseek-v4-pro")
 	assert.Equal(t, int64(1), apiNum(t, pro, "listing_count"))
+	assert.Equal(t, int64(800), apiNum(t, pro, "multiplier_min_milli"), "canary supply counts")
+	assert.Equal(t, true, pro["official_available"], "canary on the official channel is reachable")
 	proPrices := pro["prices"].(map[string]any)
 	proOff := proPrices[TierOffpeak].(map[string]any)
 	assert.Equal(t, int64(3_600_000), apiNum(t, proOff, "input_micro_per_mtok"), "4.5e6 × 0.8 (canary)")
@@ -254,6 +258,8 @@ func TestApiSquareUnlistedModelsUseOfficialPrice(t *testing.T) {
 	flash := findSquareItem(t, items, "deepseek-flash")
 	assert.Equal(t, int64(0), apiNum(t, flash, "listing_count"))
 	assert.Equal(t, int64(0), apiNum(t, flash, "channel_count"))
+	assert.Equal(t, int64(0), apiNum(t, flash, "multiplier_min_milli"), "no supply means no floor")
+	assert.Equal(t, false, flash["official_available"])
 	assert.Equal(t, BuyerPriceSourceOfficial, flash["buyer_price_source"])
 	assert.Equal(t, "deepseek", flash["origin_vendor"])
 	assert.Equal(t, "deepseek", flash["vendor"])
@@ -351,6 +357,47 @@ func TestApiSquareUsesStandardModelNames(t *testing.T) {
 	}
 	flash := findSquareItem(t, items, "deepseek-flash")
 	assert.Equal(t, int64(1), apiNum(t, flash, "listing_count"), "alias listing rolls up to the standard model")
+}
+
+// official_available means a live/canary listing on an active official channel
+// with a verified qualification. Plan channels and unverified mappings do not
+// count, even though they are market supply.
+func TestApiSquareOfficialAvailable(t *testing.T) {
+	f := newSquareFixture(t)
+	// Hosted DeepSeek on volcengine-ark ships unverified (seed): its live
+	// listing is supply but not official-only reachable.
+	f.addListingOnChannel(t, 9001, "volcengine-ark", []string{"deepseek-flash"}, 500, ListingLive)
+	// A verified plan listing is cheaper than any official one but is still
+	// not official supply.
+	require.NoError(t, f.db.Model(&ChannelModel{}).
+		Where("channel_slug = ? AND model = ?", "volcengine-ark-coding-plan", "deepseek-v4-pro").
+		Update("verified", true).Error)
+	f.addListingOnChannel(t, 9002, "volcengine-ark-coding-plan", []string{"deepseek-v4-pro"}, 100, ListingLive)
+
+	w := f.get(t, "/api/marketplace/square/models")
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	items := decodeAPIBody(t, w)["data"].([]any)
+
+	flash := findSquareItem(t, items, "deepseek-flash")
+	assert.Equal(t, int64(1), apiNum(t, flash, "listing_count"))
+	assert.Equal(t, int64(500), apiNum(t, flash, "multiplier_min_milli"))
+	assert.Equal(t, false, flash["official_available"], "unverified channel is not official supply")
+
+	pro := findSquareItem(t, items, "deepseek-v4-pro")
+	assert.Equal(t, int64(1), apiNum(t, pro, "listing_count"))
+	assert.Equal(t, int64(100), apiNum(t, pro, "multiplier_min_milli"))
+	assert.Equal(t, false, pro["official_available"], "plan channels are not official supply")
+
+	// Once the hosted qualification is verified, that channel becomes official
+	// supply for the model.
+	require.NoError(t, f.db.Model(&ChannelModel{}).
+		Where("channel_slug = ? AND model = ?", "volcengine-ark", "deepseek-flash").
+		Updates(map[string]any{"verified": true, "fingerprint_ratio": 1.0}).Error)
+	w = f.get(t, "/api/marketplace/square/models")
+	require.Equal(t, http.StatusOK, w.Code)
+	items = decodeAPIBody(t, w)["data"].([]any)
+	flash = findSquareItem(t, items, "deepseek-flash")
+	assert.Equal(t, true, flash["official_available"])
 }
 
 // ---------------------------------------------------------------------------

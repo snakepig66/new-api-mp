@@ -569,3 +569,72 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 - Go：扩展 `/marketplace/vendors` 用例，覆盖六家 logo_url、Coding Plan 父品牌映射和未知厂家空值。
 - 前端新增/更新：厂家 Pill 筛选与 URL 同步、URL 恢复、别名搜索不匹配渠道名、模型标签价格与详情链接、行尾加入 Key；ModelPicker logo/数量/首字占位；AddToKeyMenu 未登录跳转、多 Key 加入、新建 Key 预选模型；CreateKeyDialog initialModel。
 - Playwright：390px 下厂家行/模型名行 `overflow-x: auto` 且文档不横向溢出；未登录加入 Key 跳登录并保留 redirect。
+
+## Key 引导与官方渠道可用性（2026-10-25）
+
+### 创建成功引导
+- 创建成功页展示完整 Key 与 `base_url`（当前站点 origin + `/v1`），并为 Claude Code、Cursor、Cherry Studio 各生成一段可一键复制的配置；指定模型范围时使用第一个已选模型，全部模型范围使用 `<模型名>` 占位。
+- 创建成功时查询钱包余额；余额为 0 时立即显示「先充值才能调用」并提供前往 `/console/wallet` 的链接。查询只在创建成功后启用。
+- 新增 `GET /api/user/ip`（登录态），返回按可信代理配置解析的 `c.ClientIP()`；新建 Key 与 Key 详情的 IP 白名单输入框上方显示「你当前的 IP」并提供插入/复制，接口失败时静默隐藏。
+
+### Key 过期体验
+- Key 列表在到期前 3 天内显示一条提醒（只针对最近到期的一把 Key），包含 Key 名称、到期时间与详情链接。
+- 判断过期同时看 `status === 3` 与 `expired_time > 0 && expired_time <= now`；过期的行降低不透明度并显示「延长」按钮。
+- 「延长」弹窗接受新的 datetime-local 或「永不过期」，复用 `PUT /api/marketplace/key/token`，成功后失效 `['console','keys']` 与 `['console','key',id]`。
+
+### 广场价格与官方可用性
+- 广场列表条目新增 `multiplier_min_milli`（无挂单时为 0，沿用现有摊平聚合，无 N+1）与 `official_available`（该模型是否存在 live/canary 挂单，且渠道为 official-kind、具备 verified+active 资格）。
+- ModelPicker 在价格上限旁显示「当前最低 0.xx」；输入上限低于最低倍率时提示没有可用供给。
+- Key 详情在开启「只用官方渠道」时，按当前模型范围（指定模型或全部模型）列出 `official_available=false` 的模型，标题「当前设置下调不了的模型」，并链接到模型广场。
+- 官方渠道无供给时，relay 的 503 错误文案补充「official-only routing is enabled」，状态码不变。
+
+### 测试与验收
+- Go：广场列表字段（最低倍率、官方可用性、未验真/套餐渠道不计入）、`GET /api/user/ip` 可信代理解析、official-only 下两种「no supplier」文案。
+- 前端：创建成功配置片段与零余额提示、ModelPicker 最低价提示、Key 列表到期提醒与延长、Key 详情官方渠道不可调用模型提示、当前 IP 插入。
+
+## 分享者端体验补齐（2026-10-25）
+
+### 异步验真进度
+- 后台验真仍由创建/换 Key 后的 goroutine 执行，`sellerVerifyTimeout` 固定为 60s；卖家列表与详情在任意挂单为 `verifying` 时以 3s 间隔自动刷新，全部离开该状态后自动停止。重新检测成功后先把本地缓存行标记为 `verifying`，避免请求先到、后台状态尚未翻转时停止轮询。
+- 列表与详情读取最近一次 `type=verify` 探针的 `detail.model_results`，逐个模型展示 `ok / upstream_model / latency_ms / fail_reason`；失败的模型单独列出，英文失败原因（401、余额、超时、网络、模型不在 /models 等）统一翻译为中文，并补充整体失败原因。
+- 验真收窄可调用模型后写回 `mp_listings.models` 时保持 JSON 数组（`Listing.BeforeUpdate` 兜底裸列更新，避免出现裸值或「row value misused」）。
+- 待验真（draft，含验真失败回退）的挂单提供「重新检测」，调用 `POST /seller/listings/:id/verify`；`verifying` 期间按钮禁用。
+
+### 重复 Key 区分
+- 指纹重复时后端返回稳定 code：自己的挂单返回 `DUPLICATE_KEY_OWN` + `listing_id`（前端给出「你自己已上架过」并链接到 `/seller/listings/$id`）；其他账号的挂单只返回 `DUPLICATE_KEY_OTHER`，响应不含对方 seller/listing 标识，同时通过 `common.SysError` 写运营告警。
+- 换 Key 路径复用同一套判定与文案。
+
+### 套餐渠道
+- `CreateListingInput` / `POST /seller/listings` 新增 `plan_terms_accepted`；`kind=plan` 且未显式传 true 时库层返回 `ErrPlanTermsRequired`、接口返回 `PLAN_TERMS_REQUIRED`。
+- 向导在选中套餐渠道时展示 5 小时 / 每周窗口说明（来自 `/marketplace/vendors` 的 `quota_window` 与 `terms_url` / `reset_timezone`），并要求勾选「我确认该套餐条款允许共享」后才能提交。
+- 因额度耗尽被平台暂停的挂单，列表与详情展示翻译后的暂停原因与 `resume_at` 预计恢复时间；平台暂停不允许卖家手动恢复。
+- 模型缺失说明：向导把该渠道已认证但 Key 的 `/models` 未暴露的模型列为不可勾选，并逐名提示「不在这个 Key 的 /models 列表中」。
+
+### 收益预估与提现门槛
+- `/marketplace/status` 暴露后端唯一费率常量 `platform_fee_percent`（当前 7%），向导按该值实时展示买家价（官方价 × 渠道系数 × 倍率，系数来自 probe 接口）、平台费与到手价（BigInt 整数微元，避免浮点误差）；市场最低倍率来自广场详情 `multiplier_min_milli`。
+- 分享者概览新增提现条件进度卡：实名认证、绑定支付宝、可提现满 ¥50、T+7 解冻。实名/支付宝/余额使用 `/me` 与 `/seller/stats` 的真实状态，T+7 在仍有待结算金额时按静态要求展示，不虚构逐笔解冻日期。
+
+### 测试
+- 前端：`src/features/seller/{errors,api,wizard,preview,payout-gate}.test.ts` 与 `src/app/routes/seller/listings/new.test.tsx`，覆盖重复 Key 两种 code、套餐勾选门槛、收益/最低倍率、提现进度与 3s 轮询开关。
+- Go：`marketplace/api_seller_duplicate_test.go` 覆盖 `DUPLICATE_KEY_OWN/OTHER`（外部账号不泄露 id）、`PLAN_TERMS_REQUIRED`、重新检测状态机，以及列表/详情返回 `verification.model_results`、`pause_reason`、`resume_at` 和套餐窗口字段。
+
+## 充值安全、验真与重复 Key（2026-10-25）
+
+### 充值金额与订单
+- 启动时 `enforceMarketplaceBillingInvariants` 强制 `operation_setting.Price = 1` 并写回 `Price` 选项；原值不是 1 时用 `SysError` 打告警。新用户/邀请人/被邀请人赠送额度同样强制为 0，避免赠送余额经自买自卖变成可提现收入。
+- 钱包充值改为先调用 `POST /api/user/amount` 取后端报价，页面显示「实付 ¥X」；支付按钮在报价返回前不可用，前端不再自行乘费率。
+- `POST /api/user/pay` 响应新增 `trade_no`，支付前写入 `sessionStorage`。epay 回跳地址改为 `/console/wallet?topup=returning`；回跳后以 3 秒间隔轮询 `GET /api/user/topup/self` 30 秒：成功提示已到账并刷新余额，超时提示「已付款但尚未到账」并给出订单号。
+- 钱包新增「充值记录」表：订单号、到账金额、实付金额、状态（待支付 / 已到账 / 已关闭）与下单时间，供客服对账。
+
+### 计费与选路
+- `SelectInput` 新增 `BuyerID`；`SelectWithProbe` 跳过 `seller_id == buyer_id` 的挂单，relay 首次选路和兜底换家都传入买家用户 id，防止用自己的赠送/兑换余额买自己的挂单。
+- 官方渠道 503 文案在 Key 开启「只用官方渠道」时明确说明是该开关导致没有可用渠道。
+
+### 卖家验真
+- `VerifyListing` 对每个已选模型各发一次真实的 `max_tokens=1` 请求；`/models` 里有但实际调用失败的模型单独记录在 `model_results`，只把通过的模型写回挂单并允许上架；全部失败则回退 draft。
+- `keyExposesModel` 只接受精确名称或 6/8 位纯数字日期后缀（如 `-20251001`），`glm-5` 不再匹配 `glm-5.3`、`-flash`、`@beta`、`_latest`。
+- 验真探针详情新增 `model_results` 与 `listed_models`；卖家列表/详情展示逐模型结果和中文失败原因，并支持「重新检测」。
+
+### 其他
+- `/api/status` 新增 `smtp_configured`，登录页仅在该值为真时显示「忘记密码？」。
+- 说明：当前未实现「充值/赠送余额拆分」，而是把三类可配置赠送额度强制为 0 并排除自买自卖；管理员发放的兑换码仍是显式运营行为。

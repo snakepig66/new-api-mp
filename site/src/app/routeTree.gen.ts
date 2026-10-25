@@ -44,6 +44,7 @@ import { Route as UserResetRouteImport } from './routes/user/reset'
 import { Route as ConsoleKeysIndexRouteImport } from './routes/console/keys/index'
 import { Route as ConsoleKeysIdRouteImport } from './routes/console/keys/$id'
 import { Route as SellerListingsIndexRouteImport } from './routes/seller/listings/index'
+import { Route as SellerListingsIdRouteImport } from './routes/seller/listings/$id'
 import { Route as SellerListingsNewRouteImport } from './routes/seller/listings/new'
 
 const IndexRoute = IndexRouteImport.update({
@@ -221,6 +222,11 @@ const SellerListingsIndexRoute = SellerListingsIndexRouteImport.update({
   path: '/listings/',
   getParentRoute: () => SellerRoute,
 } as any)
+const SellerListingsIdRoute = SellerListingsIdRouteImport.update({
+  id: '/listings/$id',
+  path: '/listings/$id',
+  getParentRoute: () => SellerRoute,
+} as any)
 const SellerListingsNewRoute = SellerListingsNewRouteImport.update({
   id: '/listings/new',
   path: '/listings/new',
@@ -261,6 +267,7 @@ export interface FileRoutesByFullPath {
   '/models/': typeof ModelsIndexRoute
   '/seller/': typeof SellerIndexRoute
   '/console/keys/$id': typeof ConsoleKeysIdRoute
+  '/seller/listings/$id': typeof SellerListingsIdRoute
   '/seller/listings/new': typeof SellerListingsNewRoute
   '/console/keys/': typeof ConsoleKeysIndexRoute
   '/seller/listings/': typeof SellerListingsIndexRoute
@@ -296,6 +303,7 @@ export interface FileRoutesByTo {
   '/models': typeof ModelsIndexRoute
   '/seller': typeof SellerIndexRoute
   '/console/keys/$id': typeof ConsoleKeysIdRoute
+  '/seller/listings/$id': typeof SellerListingsIdRoute
   '/seller/listings/new': typeof SellerListingsNewRoute
   '/console/keys': typeof ConsoleKeysIndexRoute
   '/seller/listings': typeof SellerListingsIndexRoute
@@ -335,6 +343,7 @@ export interface FileRoutesById {
   '/models/': typeof ModelsIndexRoute
   '/seller/': typeof SellerIndexRoute
   '/console/keys/$id': typeof ConsoleKeysIdRoute
+  '/seller/listings/$id': typeof SellerListingsIdRoute
   '/seller/listings/new': typeof SellerListingsNewRoute
   '/console/keys/': typeof ConsoleKeysIndexRoute
   '/seller/listings/': typeof SellerListingsIndexRoute
@@ -375,6 +384,7 @@ export interface FileRouteTypes {
     | '/models/'
     | '/seller/'
     | '/console/keys/$id'
+    | '/seller/listings/$id'
     | '/seller/listings/new'
     | '/console/keys/'
     | '/seller/listings/'
@@ -410,6 +420,7 @@ export interface FileRouteTypes {
     | '/models'
     | '/seller'
     | '/console/keys/$id'
+    | '/seller/listings/$id'
     | '/seller/listings/new'
     | '/console/keys'
     | '/seller/listings'
@@ -448,6 +459,7 @@ export interface FileRouteTypes {
     | '/models/'
     | '/seller/'
     | '/console/keys/$id'
+    | '/seller/listings/$id'
     | '/seller/listings/new'
     | '/console/keys/'
     | '/seller/listings/'
@@ -718,6 +730,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SellerListingsIndexRouteImport
       parentRoute: typeof SellerRoute
     }
+    '/seller/listings/$id': {
+      id: '/seller/listings/$id'
+      path: '/listings/$id'
+      fullPath: '/seller/listings/$id'
+      preLoaderRoute: typeof SellerListingsIdRouteImport
+      parentRoute: typeof SellerRoute
+    }
     '/seller/listings/new': {
       id: '/seller/listings/new'
       path: '/listings/new'
@@ -780,6 +799,7 @@ interface SellerRouteChildren {
   SellerPayoutsRoute: typeof SellerPayoutsRoute
   SellerRecordsRoute: typeof SellerRecordsRoute
   SellerIndexRoute: typeof SellerIndexRoute
+  SellerListingsIdRoute: typeof SellerListingsIdRoute
   SellerListingsNewRoute: typeof SellerListingsNewRoute
   SellerListingsIndexRoute: typeof SellerListingsIndexRoute
 }
@@ -789,6 +809,7 @@ const SellerRouteChildren: SellerRouteChildren = {
   SellerPayoutsRoute: SellerPayoutsRoute,
   SellerRecordsRoute: SellerRecordsRoute,
   SellerIndexRoute: SellerIndexRoute,
+  SellerListingsIdRoute: SellerListingsIdRoute,
   SellerListingsNewRoute: SellerListingsNewRoute,
   SellerListingsIndexRoute: SellerListingsIndexRoute,
 }

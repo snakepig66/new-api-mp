@@ -38,6 +38,20 @@ const (
 // a whitelisted vendor should answer in kilobytes, so a megabyte is generous.
 const maxVerifyBodyBytes = 1 << 20
 
+// ModelVerifyResult is one selected model's real callability check. A vendor
+// can list a model in /models while refusing to serve it (unactivated
+// Bailian/Volcengine models, missing inference endpoints), so listing
+// presence alone is not enough: verification sends one max_tokens=1 request
+// per selected model and records the outcome here.
+type ModelVerifyResult struct {
+	Model              string `json:"model"`
+	UpstreamModel      string `json:"upstream_model"`
+	OK                 bool   `json:"ok"`
+	PromptCacheSupport bool   `json:"prompt_cache_support"`
+	LatencyMs          int64  `json:"latency_ms"`
+	FailReason         string `json:"fail_reason,omitempty"`
+}
+
 // VerifyResult is the outcome of one full key verification (§3.5).
 type VerifyResult struct {
 	OK                 bool
@@ -46,7 +60,10 @@ type VerifyResult struct {
 	Models             []string // model ids the vendor returned for this key
 	LatencyMs          int64    // /models round-trip latency
 	PromptCacheSupport bool
-	FailReason         string // never carries the key or the upstream body (§3.11)
+	// ModelResults is the per-model call result for VerifyListing. The key
+	// verification helper fills at most one entry (its explicit probe model).
+	ModelResults []ModelVerifyResult
+	FailReason   string // never carries the key or the upstream body (§3.11)
 }
 
 // VerifyListingKey runs one complete verification of a seller's key against
@@ -120,15 +137,28 @@ func VerifyListingKeyWithModel(ctx context.Context, client *http.Client, vendor 
 	// all yield BalanceMicro=nil and never fail the verification.
 	res.BalanceMicro = fetchBalanceMicro(ctx, client, base, apiKey)
 
-	// 3. Prompt-cache probe. NOTE: this call costs real vendor credit (one
-	// chat completion with max_tokens=1); it runs only while the result can
-	// still flip OK to true. probeModel is the vendor's upstream name.
+	// 3. Callability probe. NOTE: this call costs real vendor credit (one chat
+	// completion with max_tokens=1); it runs only while the result can still
+	// flip OK to true. probeModel is the vendor's upstream name.
 	if len(res.Models) > 0 && probeModel != "" {
-		res.PromptCacheSupport = probePromptCacheSupport(ctx, client, base, probeModel, apiKey)
+		mr := ModelVerifyResult{Model: probeModel, UpstreamModel: probeModel}
+		mr.OK, mr.PromptCacheSupport, mr.LatencyMs, mr.FailReason = probeModelCall(ctx, client, base, probeModel, apiKey)
+		res.ModelResults = []ModelVerifyResult{mr}
+		res.PromptCacheSupport = mr.PromptCacheSupport
+		if !mr.OK {
+			// A key that cannot actually call its model is not verified: the
+			// model may be listed while unactivated or lacking an endpoint.
+			res.FailReason = mr.FailReason
+		}
 	}
 
 	// 4. Verdict.
 	res.OK = res.KeyValid && len(res.Models) > 0
+	for _, mr := range res.ModelResults {
+		if !mr.OK {
+			res.OK = false
+		}
+	}
 	res.FailReason = stripKey(res.FailReason, apiKey)
 	return res
 }
@@ -187,14 +217,21 @@ func yuanStringToMicro(s string) *int64 {
 	return &v
 }
 
-// probePromptCacheSupport sends a minimal chat completion (max_tokens=1, one
-// short user message) and reports whether the response usage carries the
-// vendor's prompt-cache fields (prompt_cache_hit_tokens or
-// prompt_cache_miss_tokens). NOTE: this call costs real vendor credit; it is
-// the §3.5 automatic probe shown to the seller in the listing wizard. Any
-// failure — network, non-200, missing usage — reports false and never fails
-// the verification.
+// probePromptCacheSupport is the prompt-cache-only view of probeModelCall,
+// kept for the admin channel verifier. Probe failures are deliberately
+// indistinguishable from "no cache support" there; listing verification uses
+// probeModelCall so it can report the real reason.
 func probePromptCacheSupport(ctx context.Context, client *http.Client, baseURL, model, apiKey string) bool {
+	ok, cache, _, _ := probeModelCall(ctx, client, baseURL, model, apiKey)
+	return ok && cache
+}
+
+// probeModelCall sends one minimal chat completion (max_tokens=1) and reports
+// whether the model is actually callable, whether prompt caching is
+// advertised (usage carries prompt_cache_hit_tokens or
+// prompt_cache_miss_tokens), its latency, and a seller-readable failure
+// reason. NOTE: this call costs real vendor credit.
+func probeModelCall(ctx context.Context, client *http.Client, baseURL, model, apiKey string) (ok, cache bool, latencyMs int64, reason string) {
 	reqBody, err := common.Marshal(map[string]any{
 		"model":      model,
 		"max_tokens": 1,
@@ -203,37 +240,58 @@ func probePromptCacheSupport(ctx context.Context, client *http.Client, baseURL, 
 		},
 	})
 	if err != nil {
-		return false
+		return false, false, 0, "无法构造模型探活请求"
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", strings.NewReader(string(reqBody)))
 	if err != nil {
-		return false
+		return false, false, 0, "上游地址格式不正确"
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
+	start := time.Now()
 	resp, err := client.Do(req)
+	latencyMs = time.Since(start).Milliseconds()
 	if err != nil {
-		return false
+		if ctx.Err() != nil {
+			return false, false, latencyMs, "模型探活超时"
+		}
+		return false, false, latencyMs, "模型探活失败：" + stripKey(err.Error(), apiKey)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return false
+		return false, false, latencyMs, modelCallFailureReason(resp.StatusCode)
 	}
-	// Field presence, not value, signals support: a vendor that knows prompt
-	// caching always reports hit/miss counters, even when both are zero.
+	// HTTP 200 means the model answered; the prompt-cache fields are
+	// informational and a malformed body never makes a served model fail.
 	var cr struct {
 		Usage map[string]any `json:"usage"`
 	}
 	if err := common.DecodeJson(io.LimitReader(resp.Body, maxVerifyBodyBytes), &cr); err != nil {
-		return false
-	}
-	if cr.Usage == nil {
-		return false
+		return true, false, latencyMs, ""
 	}
 	_, hit := cr.Usage["prompt_cache_hit_tokens"]
 	_, miss := cr.Usage["prompt_cache_miss_tokens"]
-	return hit || miss
+	return true, hit || miss, latencyMs, ""
+}
+
+// modelCallFailureReason translates an upstream status into a seller-facing
+// reason (the body itself is never surfaced, §3.11).
+func modelCallFailureReason(code int) string {
+	switch {
+	case code == http.StatusBadRequest:
+		return "上游拒绝请求（HTTP 400）：模型可能未开通或参数不受支持"
+	case code == http.StatusUnauthorized || code == http.StatusForbidden:
+		return fmt.Sprintf("这个 Key 无权调用该模型（HTTP %d）", code)
+	case code == http.StatusNotFound:
+		return "模型不存在（HTTP 404）：百炼/火山等平台可能还需要单独开通模型或推理接入点"
+	case code == http.StatusTooManyRequests:
+		return "上游限流（HTTP 429），请稍后重新检测"
+	case code >= 500:
+		return fmt.Sprintf("上游服务异常（HTTP %d），请稍后重新检测", code)
+	default:
+		return fmt.Sprintf("模型探活失败（HTTP %d）", code)
+	}
 }
 
 // httpStatusMeaning renders the semantics of an upstream failure without
@@ -394,31 +452,58 @@ func VerifyListing(ctx context.Context, db *gorm.DB, client *http.Client, limite
 		// Nothing was probed; roll the status back before reporting.
 		return VerifyResult{}, errors.Join(err, revertVerificationToDraft(db, listingID))
 	}
-	probeModel := ""
-	for _, m := range listing.Models {
-		if upstreamByModel[m] != "" {
-			probeModel = upstreamByModel[m]
-			break
-		}
-	}
 	if err := limiter.Acquire(ctx); err != nil {
 		return VerifyResult{}, errors.Join(err, revertVerificationToDraft(db, listingID))
 	}
-	res := VerifyListingKeyWithModel(ctx, client, vendor, apiKey, probeModel)
-	limiter.Release()
+	// The key check itself (models + balance) runs without its single paid
+	// probe; every selected model gets its own real max_tokens=1 call below.
+	res := VerifyListingKeyWithModel(ctx, client, vendor, apiKey, "")
+	base := VendorOpenAIBase(vendor)
 
-	// The key must expose every selected model, not merely be valid. Cloud
-	// upstreams often append a date to the model id, so compare by prefix in
-	// both directions after normalizing separators.
-	var missing []string
+	// Listing presence in /models is not callability: Bailian and Volcengine
+	// can list a model that the account has not activated (Volcengine also
+	// needs an inference endpoint). Probe each selected model individually so
+	// a seller cannot list models that always fail for buyers.
+	var passed []string
 	for _, m := range listing.Models {
-		if !keyExposesModel(res.Models, upstreamByModel[m]) {
-			missing = append(missing, m)
+		mr := ModelVerifyResult{Model: m, UpstreamModel: upstreamByModel[m]}
+		switch {
+		case !res.KeyValid || len(res.Models) == 0:
+			mr.FailReason = "Key 未能读取模型列表，未进行调用检测"
+		case !keyExposesModel(res.Models, upstreamByModel[m]):
+			mr.FailReason = "该模型不在这个 Key 的可用模型列表中"
+		default:
+			mr.OK, mr.PromptCacheSupport, mr.LatencyMs, mr.FailReason =
+				probeModelCall(ctx, client, base, upstreamByModel[m], apiKey)
 		}
+		if mr.OK {
+			passed = append(passed, m)
+			if mr.PromptCacheSupport {
+				res.PromptCacheSupport = true
+			}
+		}
+		res.ModelResults = append(res.ModelResults, mr)
 	}
-	if res.OK && len(missing) > 0 {
-		res.OK = false
-		res.FailReason = "key cannot call the selected model(s): " + strings.Join(missing, ", ")
+
+	if res.KeyValid && len(res.Models) > 0 && len(passed) > 0 {
+		// Only the callable models go live; the rest stay visible to the
+		// seller in ModelResults with their individual reason.
+		if err := setListingModelsForVerification(db, listingID, passed); err != nil {
+			return res, errors.Join(err, revertVerificationToDraft(db, listingID))
+		}
+		listing.Models = passed
+	}
+	res.OK = res.KeyValid && len(res.Models) > 0 && len(passed) > 0
+	if !res.OK && res.FailReason == "" {
+		var failures []string
+		for _, mr := range res.ModelResults {
+			if !mr.OK && mr.FailReason != "" {
+				failures = append(failures, mr.Model+"："+mr.FailReason)
+			}
+		}
+		if len(failures) > 0 {
+			res.FailReason = "选中的模型都无法调用：" + strings.Join(failures, "；")
+		}
 	}
 
 	// Fingerprint spot check when the platform holds the origin vendor's key.
@@ -469,11 +554,13 @@ func VerifyListing(ctx context.Context, db *gorm.DB, client *http.Client, limite
 	// Record the probe (§4.2): the JSON detail summarizes the check and
 	// never contains the key (§2.3).
 	detailMap := map[string]any{
-		"key_valid":    res.KeyValid,
-		"models":       len(res.Models),
-		"has_balance":  res.BalanceMicro != nil,
-		"prompt_cache": res.PromptCacheSupport,
-		"fail_reason":  res.FailReason,
+		"key_valid":     res.KeyValid,
+		"models":        len(res.Models),
+		"has_balance":   res.BalanceMicro != nil,
+		"prompt_cache":  res.PromptCacheSupport,
+		"fail_reason":   res.FailReason,
+		"model_results": res.ModelResults,
+		"listed_models": listing.Models,
 	}
 	if fingerprintChecked {
 		detailMap["fingerprint_checked"] = true
@@ -509,7 +596,10 @@ func VerifyListing(ctx context.Context, db *gorm.DB, client *http.Client, limite
 }
 
 // keyExposesModel reports whether the vendor's /models list contains the
-// upstream id, accepting the date/suffix variants vendors add to model ids.
+// upstream id. Only a snapshot date suffix is accepted: "glm-5" must not match
+// "glm-5.3" (a different model), nor "glm-5-flash"/"glm-5@beta" (different
+// variants). Vendors append -YYYYMMDD (e.g. -20251001), occasionally -YYMMDD,
+// when reintroducing a dated snapshot.
 func keyExposesModel(available []string, upstream string) bool {
 	upstream = strings.ToLower(strings.TrimSpace(upstream))
 	if upstream == "" {
@@ -517,12 +607,51 @@ func keyExposesModel(available []string, upstream string) bool {
 	}
 	for _, name := range available {
 		got := strings.ToLower(strings.TrimSpace(name))
-		if got == upstream || strings.HasPrefix(got, upstream+"-") || strings.HasPrefix(got, upstream+".") ||
-			strings.HasPrefix(got, upstream+"_") || strings.HasPrefix(got, upstream+"@") {
+		if got == upstream {
+			return true
+		}
+		suffix, found := strings.CutPrefix(got, upstream+"-")
+		if found && isDateSuffix(suffix) {
 			return true
 		}
 	}
 	return false
+}
+
+// isDateSuffix reports whether s is a bare 6- or 8-digit date snapshot suffix.
+func isDateSuffix(s string) bool {
+	if len(s) != 6 && len(s) != 8 {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// setListingModelsForVerification narrows a verifying listing to the models
+// that passed their real probe. The status guard keeps a concurrent transition
+// from being overwritten.
+func setListingModelsForVerification(db *gorm.DB, id int64, models []string) error {
+	// A raw column update bypasses the serializer:json tag, and binding the
+	// []string itself makes GORM expand a multi-element slice into an invalid
+	// row value. Encode the JSON array here and bind the string.
+	encoded, err := common.Marshal(models)
+	if err != nil {
+		return err
+	}
+	res := db.Model(&Listing{}).
+		Where("id = ? AND status = ?", id, ListingVerifying).
+		Update("models", string(encoded))
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected != 1 {
+		return fmt.Errorf("%w: verifying -> verifying (models)", ErrInvalidTransition)
+	}
+	return nil
 }
 
 // revertVerificationToDraft is the verification-failure rollback edge of the

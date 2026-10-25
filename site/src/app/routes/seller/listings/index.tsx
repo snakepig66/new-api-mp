@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { copy } from '@/copy'
 import { ApiError } from '@/lib/api'
 import { formatYuan } from '@/lib/money'
-import { formatCountdown } from '@/lib/time'
+import { formatCountdown, formatDateTime } from '@/lib/time'
 import {
   Button,
   Dialog,
@@ -29,13 +29,13 @@ import {
   pauseListing,
   replaceListingKey,
   resumeListing,
-  sellerListingDetailQuery,
   sellerListingsQuery,
   updateListingMultiplier,
+  verifyListing,
   vendorName,
   type SellerListing,
 } from '@/features/seller/api'
-import { AsyncError, Field, notify, PageSkeleton, Skeleton } from '@/features/seller/components'
+import { AsyncError, Field, notify, PageSkeleton } from '@/features/seller/components'
 import {
   markMultiplierChanged,
   readCooldownUntil,
@@ -45,10 +45,12 @@ import { sellerErrorMessage } from '@/features/seller/errors'
 import {
   isListingKeyReplaceable,
   isListingPausable,
-  isListingResumable,
+  isListingReverifiable,
+  isListingSellerResumable,
   listingStatusView,
   pauseReasonView,
 } from '@/features/seller/status'
+import { VerificationSummary } from '@/features/seller/verification'
 
 export const Route = createFileRoute('/seller/listings/')({
   component: SellerListingsPage,
@@ -69,11 +71,20 @@ function limitsText(listing: SellerListing): string {
   return `${listing.concurrency_limit} / ${rpm} / ${cap}`
 }
 
-function PauseReason({ id }: { id: number }) {
-  const { data, isPending, isError } = useQuery(sellerListingDetailQuery(id))
-  if (isPending) return <Skeleton className="h-3 w-20" />
-  if (isError) return <span className="text-ink-3">—</span>
-  return <span className="text-[13px] text-warn">{pauseReasonView(data.pause_reason)}</span>
+function PauseCell({ listing }: { listing: SellerListing }) {
+  if (listing.status !== 'paused') return <span className="text-ink-3">—</span>
+  return (
+    <div className="space-y-1">
+      <div className="text-[13px] text-warn">
+        {pauseReasonView(listing.pause_reason || 'manual')}
+      </div>
+      {listing.resume_at ? (
+        <div className="tabular-nums text-[13px] text-ink-3">
+          {page.resumeAt(formatDateTime(listing.resume_at))}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 function useCooldown(listingId: number) {
@@ -335,6 +346,23 @@ function SellerListingsPage() {
     },
     onError: (error) => notify(toast, { title: sellerErrorMessage(error), tone: 'error' }),
   })
+  const verify = useMutation({
+    mutationFn: (id: number) => verifyListing(id),
+    onSuccess: (_data, id) => {
+      // Flip the row to verifying in the cache right away: the background
+      // goroutine starts a few milliseconds later, and this keeps the 3s
+      // refetchInterval alive even if an immediate refetch still saw draft.
+      queryClient.setQueryData<SellerListing[]>(
+        sellerListingsQuery().queryKey,
+        (rows) => rows?.map((row) => (row.id === id ? { ...row, status: 'verifying' } : row)),
+      )
+      // No immediate invalidate: a refetch that lands before the background
+      // goroutine flips the row could stop the 3s polling. The interval does
+      // the first refresh.
+      notify(toast, { title: common.toast.verifyStarted, tone: 'success' })
+    },
+    onError: (error) => notify(toast, { title: sellerErrorMessage(error), tone: 'error' }),
+  })
 
   if (listings.isPending) return <PageSkeleton />
 
@@ -395,6 +423,7 @@ function SellerListingsPage() {
                 <TableRow>
                   <TableHeaderCell>{page.columns.listing}</TableHeaderCell>
                   <TableHeaderCell>{page.columns.models}</TableHeaderCell>
+                  <TableHeaderCell>{page.columns.verification}</TableHeaderCell>
                   <TableHeaderCell>{page.columns.status}</TableHeaderCell>
                   <TableHeaderCell numeric>{page.columns.multiplier}</TableHeaderCell>
                   <TableHeaderCell numeric>{page.columns.limits}</TableHeaderCell>
@@ -409,13 +438,21 @@ function SellerListingsPage() {
                   const view = listingStatusView(listing.status)
                   const pausingThis = pause.isPending && pause.variables === listing.id
                   const resumingThis = resume.isPending && resume.variables === listing.id
+                  const verifyingThis = verify.isPending && verify.variables === listing.id
+                  const verifying = listing.status === 'verifying'
                   return (
                     <TableRow key={listing.id}>
                       <TableCell>
                         <div className="font-medium text-ink">{vendorName(listing.vendor)}</div>
                         <div className="tabular-nums text-[13px] text-ink-3">
-                          #{listing.id} · {common.keyFingerprint}{' '}
-                          {listing.key_fingerprint8 || '—'}
+                          <Link
+                            to="/seller/listings/$id"
+                            params={{ id: String(listing.id) }}
+                            className="hover:text-brand-ink hover:underline"
+                          >
+                            #{listing.id}
+                          </Link>{' '}
+                          · {common.keyFingerprint} {listing.key_fingerprint8 || '—'}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -424,6 +461,17 @@ function SellerListingsPage() {
                             <Tag key={model}>{model}</Tag>
                           ))}
                         </div>
+                      </TableCell>
+                      <TableCell>
+                        {verifying ? (
+                          <span className="text-[13px] text-ink-3">
+                            {copy.pages.sellerVerification.pending}
+                          </span>
+                        ) : (
+                          <div className="max-w-[260px]">
+                            <VerificationSummary verification={listing.verification} compact />
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Tag tone={view.tone} dot>
@@ -437,11 +485,7 @@ function SellerListingsPage() {
                         {limitsText(listing)}
                       </TableCell>
                       <TableCell>
-                        {listing.status === 'paused' ? (
-                          <PauseReason id={listing.id} />
-                        ) : (
-                          <span className="text-ink-3">—</span>
-                        )}
+                        <PauseCell listing={listing} />
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap justify-end gap-1.5">
@@ -455,7 +499,7 @@ function SellerListingsPage() {
                               {page.actions.pause}
                             </Button>
                           ) : null}
-                          {isListingResumable(listing.status) ? (
+                          {isListingSellerResumable(listing) ? (
                             <Button
                               variant="primary"
                               size="sm"
@@ -463,6 +507,20 @@ function SellerListingsPage() {
                               onClick={() => resume.mutate(listing.id)}
                             >
                               {page.actions.resume}
+                            </Button>
+                          ) : null}
+                          {isListingReverifiable(listing) || verifying ? (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              loading={verifyingThis}
+                              disabled={verifying}
+                              title={verifying ? page.actions.rechecking : page.recheckHint}
+                              onClick={() => verify.mutate(listing.id)}
+                            >
+                              {verifyingThis
+                                ? page.actions.rechecking
+                                : page.actions.recheck}
                             </Button>
                           ) : null}
                           <Button

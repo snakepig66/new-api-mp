@@ -6,8 +6,8 @@ import { ModelPicker } from './ModelPicker'
 import type { SquareModel } from './api'
 
 const models: SquareModel[] = [
-  model('deepseek-flash', 'deepseek', ['DeepSeek-Flash', 'ds-flash'], 1_000_000),
-  model('deepseek-v4-pro', 'deepseek', ['DeepSeek-V4-Pro'], 4_500_000),
+  model('deepseek-flash', 'deepseek', ['DeepSeek-Flash', 'ds-flash'], 1_000_000, 450),
+  model('deepseek-v4-pro', 'deepseek', ['DeepSeek-V4-Pro'], 4_500_000, 800),
   model('glm-5.3', 'zhipu', ['GLM-5.3', 'zhipu/glm-5.3'], 8_000_000),
   model('kimi-k3', 'moonshot', ['Kimi-K3'], 20_000_000),
 ]
@@ -17,6 +17,7 @@ function model(
   vendor: string,
   aliases: string[],
   input: number,
+  lowestMilli = 0,
 ): SquareModel {
   return {
     model: name,
@@ -36,6 +37,8 @@ function model(
     next_switch: null,
     listing_count: 1,
     channel_count: 1,
+    multiplier_min_milli: lowestMilli,
+    official_available: true,
     buyer_price_source: 'market',
     generated_at: '2030-01-01T00:00:00Z',
   }
@@ -153,6 +156,17 @@ describe('ModelPicker', () => {
     const kimi = screen.getByRole('button', { name: /Kimi 1 个模型/ })
     expect(kimi.querySelector('img')).toBeNull()
     expect(within(kimi).getByText('K')).toBeTruthy()
+  })
+
+  it('shows the lowest market multiplier and warns when the cap is below it', async () => {
+    renderPicker({ 'deepseek-flash': '0.3' })
+    expect(await screen.findByText('当前最低 0.45')).toBeTruthy()
+    expect(screen.getByText('低于当前最低，暂无可用供给')).toBeTruthy()
+
+    cleanup()
+    renderPicker({ 'deepseek-flash': '0.5' })
+    expect(await screen.findByText('当前最低 0.45')).toBeTruthy()
+    expect(screen.queryByText('低于当前最低，暂无可用供给')).toBeNull()
   })
 
   it('shows the two different empty states', async () => {

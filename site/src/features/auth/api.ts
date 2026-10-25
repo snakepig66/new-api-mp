@@ -22,6 +22,7 @@ export interface SystemStatus {
   github_oauth?: boolean
   github_client_id?: string
   email_verification?: boolean
+  smtp_configured?: boolean
   turnstile_check?: boolean
   turnstile_site_key?: string
 }

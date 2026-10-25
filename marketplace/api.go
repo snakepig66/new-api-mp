@@ -31,5 +31,8 @@ func getMarketplaceStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"enabled": Enabled(),
 		"version": common.Version,
+		// The single source of truth for the buyer-price split. The seller
+		// wizard reads it instead of hardcoding a second percentage.
+		"platform_fee_percent": PlatformFeePercent,
 	})
 }
