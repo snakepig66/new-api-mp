@@ -480,10 +480,15 @@ func updateOptionMap(key string, value string) (err error) {
 			common.LogConsumeEnabled = boolValue
 		case "DisplayInCurrencyEnabled":
 			// 兼容旧字段：同步到新配置 general_setting.quota_display_type（运行时生效）
-			// true -> USD, false -> TOKENS
+			// 旧布尔开关只区分「货币 / tokens」；开启货币显示时沿用已选的
+			// 币种（本站统一为 CNY），不能把人民币改回美元。
 			newVal := "USD"
 			if !boolValue {
 				newVal = "TOKENS"
+			} else if cfg := config.GlobalConfig.Get("general_setting"); cfg != nil {
+				if current := operation_setting.GetQuotaDisplayType(); current == operation_setting.QuotaDisplayTypeCNY {
+					newVal = operation_setting.QuotaDisplayTypeCNY
+				}
 			}
 			if cfg := config.GlobalConfig.Get("general_setting"); cfg != nil {
 				_ = config.UpdateConfigFromMap(cfg, map[string]string{"quota_display_type": newVal})

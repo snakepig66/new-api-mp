@@ -318,3 +318,15 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 - 隔离实例实测（/tmp 新库 + 3901 端口 + 假凭据）：`/api/status` 正确返回 `github_oauth=true` 与 client id；生产实例无凭据时保持 `false`，登录页按钮维持禁用说明。
 - 回调地址必须注册为 `https://<本站域名>/oauth/github`（SPA 路由，已验证 200）。
 - 配置步骤见 `docs/marketplace/GITHUB-LOGIN.md`；真正上线还差一次人工动作：在 GitHub 创建 OAuth App 并写入 `/etc/new-api.env` 后重启（凭据不在仓库、本机或日志中保存）。
+
+---
+
+## 全站统一货币：人民币（2026-10-25）
+
+- SPA 本就全部经 `formatYuan` 输出 `¥`（market 金额均为微元整数），本次统一的是原生/旧控制台与底层额度换算：
+  - 数据库选项 `general_setting.quota_display_type = CNY`（旧控制台显示 ¥ 而非 $）；
+  - `USDExchangeRate = 1`，使「1,000,000 额度 = ¥1.00」与市场微元记账、SPA 展示完全一致；
+  - 修复 `QUOTA_PER_UNIT` 环境变量从未被读取的问题：实际一直是默认 500000，旧控制台金额会是新站的两倍。现在启动时读取，运行时确认 `quota_per_unit=1000000`；
+  - `DisplayInCurrencyEnabled` 旧布尔开关只区分「货币 / tokens」，不再把已选的人民币改回美元（单测覆盖）。
+- 线上 `/api/status` 实测：`quota_display_type=CNY`、`display_in_currency=true`、`usd_exchange_rate=1`、`quota_per_unit=1000000`。
+- 注意：汇率改为 1 后，旧控制台里按 USD 计价的渠道余额会按面值显示；本站上游（DeepSeek/tipig）均为人民币计价，符合预期。
