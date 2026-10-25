@@ -93,6 +93,7 @@ export interface PrefFormValues {
   block: string
   only: string
   allowFallback: boolean
+  officialOnly: boolean
 }
 
 const strategySchema = z.enum(['cheapest', 'balanced', 'stable'])
@@ -111,6 +112,7 @@ export const prefFormSchema = z
     block: z.string(),
     only: z.string(),
     allowFallback: z.boolean(),
+    officialOnly: z.boolean(),
   })
   .superRefine((value, ctx) => {
     if (value.priceCap.trim() && parseMultiplierToMilli(value.priceCap) === null) {
@@ -172,6 +174,7 @@ export function prefFormToInput(tokenId: number, values: PrefFormValues): KeyPre
     only_seller_id: only.ids[0] ?? 0,
     allow_fallback: values.allowFallback,
     rpm: values.rpm.trim() ? Number(values.rpm.trim()) : 0,
+    official_only: values.officialOnly,
   }
 }
 
@@ -186,6 +189,7 @@ export function prefToFormValues(
         only_seller_id: number
         allow_fallback: boolean
         rpm: number
+        official_only?: boolean
       }
     | null
     | undefined,
@@ -198,6 +202,7 @@ export function prefToFormValues(
     block: pref ? pref.block_seller_ids.join(', ') : '',
     only: pref && pref.only_seller_id > 0 ? String(pref.only_seller_id) : '',
     allowFallback: pref?.allow_fallback ?? false,
+    officialOnly: pref?.official_only ?? false,
   }
 }
 

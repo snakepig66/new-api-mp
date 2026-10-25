@@ -34,6 +34,9 @@ type KeyPrefInput struct {
 	OnlySellerID    int64   // >0 = 只用某一家
 	AllowFallback   bool    // 只用某一家不可用时是否允许回落 (§3.6)
 	RPM             int     // 买家 RPM 限制, 0 = 不限
+	// OfficialOnly restricts this key to official channels
+	// (MODEL-CHANNEL-POOL §3.2).
+	OfficialOnly bool
 }
 
 // validate checks the fields that need no database; the strategy default
@@ -85,6 +88,7 @@ func UpsertKeyPref(db *gorm.DB, tokenID int64, in KeyPrefInput) error {
 	pref.OnlySellerID = in.OnlySellerID
 	pref.AllowFallback = in.AllowFallback
 	pref.RPM = in.RPM
+	pref.OfficialOnly = in.OfficialOnly
 	return db.Save(&pref).Error
 }
 

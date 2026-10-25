@@ -431,8 +431,7 @@ func (s *Selector) dailySpend(db *gorm.DB, listingID int64, now time.Time) (int6
 }
 
 // SelectInput is one buyer request's routing context (§4.3 step 2).
-type SelectInput struct {
-	Model string
+type SelectInput struct {	Model string
 	Now   time.Time // zero → time.Now()
 	// ExcludeListingIDs carries the listings this request's retry chain has
 	// already tried (§3.7 换家).
@@ -440,6 +439,40 @@ type SelectInput struct {
 	// MaxMultiplierMilli is the buyer key's price cap expressed as a
 	// multiplier (§3.6: 兜底换家同样受价格上限约束); 0 means no cap.
 	MaxMultiplierMilli int64
+	// OfficialOnly restricts selection to official channels
+	// (MODEL-CHANNEL-POOL §3.2: the buyer's "只用官方渠道" switch).
+	OfficialOnly bool
+}
+
+// loadVerifiedChannels returns the active channels that have a verified,
+// active sellable qualification for the model. A missing or paused entry means
+// the channel cannot serve this model right now.
+func loadVerifiedChannels(db *gorm.DB, model string) map[string]ChannelPool {
+	out := make(map[string]ChannelPool)
+	var cms []ChannelModel
+	if err := db.Select("channel_slug").
+		Where("model = ? AND verified = ? AND status = ?", model, true, PoolStatusActive).
+		Find(&cms).Error; err != nil {
+		return out
+	}
+	slugs := make([]string, 0, len(cms))
+	for i := range cms {
+		if !slices.Contains(slugs, cms[i].ChannelSlug) {
+			slugs = append(slugs, cms[i].ChannelSlug)
+		}
+	}
+	if len(slugs) == 0 {
+		return out
+	}
+	var channels []ChannelPool
+	if err := db.Where("slug IN ? AND status = ?", slugs, PoolStatusActive).
+		Find(&channels).Error; err != nil {
+		return out
+	}
+	for _, ch := range channels {
+		out[ch.Slug] = ch
+	}
+	return out
 }
 
 // selectorListingColumns deliberately omits key_ciphertext: Select runs over
@@ -483,6 +516,10 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 		Select(selectorListingColumns).Find(&rows).Error; err != nil {
 		return Listing{}, false, err
 	}
+	// Only certified, sellable channel-model pairs are selectable, and the
+	// plan channels paused by a quota window never receive traffic
+	// (MODEL-CHANNEL-POOL §3.2/§4). Loaded once per selection.
+	verifiedChannels := loadVerifiedChannels(db, in.Model)
 	var cands []Listing
 	for i := range rows {
 		l := rows[i]
@@ -490,6 +527,13 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 			continue
 		}
 		if !slices.Contains(l.Models, in.Model) {
+			continue
+		}
+		ch, ok := verifiedChannels[l.Vendor]
+		if !ok {
+			continue
+		}
+		if in.OfficialOnly && ch.Kind != ChannelKindOfficial {
 			continue
 		}
 		if l.Status == ListingCanary && !s.canaryAdmit() {

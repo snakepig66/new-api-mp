@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute } from '@tanstack/react-router'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { copy } from '@/copy'
@@ -202,6 +202,23 @@ function DocsPage() {
               <p>{docs.quickstart.body}</p>
               <CodeBlock code={docs.quickstart.codeWithBase(baseUrl, model)} label="curl" />
               <p className="text-[13px] leading-6 text-ink-3">{docs.quickstart.note}</p>
+              {models.data && models.data.length > 0 ? (
+                <div className="mt-4">
+                  <p className="text-[13px] text-ink-3">{docs.quickstart.modelsLabel}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {models.data.map((m) => (
+                      <Link
+                        key={m.model}
+                        to="/models/$id"
+                        params={{ id: m.model }}
+                        className="rounded-md border border-line bg-surface px-2.5 py-1 font-mono text-[13px] text-ink-2 transition-colors hover:border-brand-ink/40 hover:text-brand-ink"
+                      >
+                        {m.model}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </Section>
 
             <Section id="streaming" title={docs.sections.streaming}>

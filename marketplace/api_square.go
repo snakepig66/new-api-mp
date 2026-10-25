@@ -1,25 +1,34 @@
 package marketplace
 
-// api_square.go — 模型广场 API (§5 阶段 5): a public read-only catalog of
-// every model that currently has live/canary supply, with the buyer-facing
-// price of both 高峰/空闲 tiers and the next tier-switch instant.
+// api_square.go — 模型广场 API (§5 阶段 5 / MODEL-CHANNEL-POOL P5).
+//
+// The square aggregates by STANDARD MODEL (mp_models.name), not by
+// (model, vendor): one public row per active standard model whose origin
+// vendor has an official price book. A standard model with no listing at all
+// is still advertised at the official price (buyer_price_source="official");
+// as soon as at least one live/canary listing serves it, the row carries the
+// cheapest buyer price across the listed channels and
+// buyer_price_source="market".
 //
 // Pricing contract (§3.2/§3.7): the displayed price IS the charged price, so
 // every number here comes out of the single Quote function — a 1e6-token
-// usage benchmark per price dimension, at the lowest currently available
-// multiplier. There is no second pricing algorithm.
+// usage benchmark per price dimension, at the cheapest effective factor
+// (channel coefficient × listing multiplier). There is no second pricing
+// algorithm. The official price book is keyed by the standard model's origin
+// vendor (MODEL-CHANNEL-POOL §3.5), so Quote receives OriginVendor and the
+// channel's CoefficientMilli.
 //
 // Privacy contract (§3.1/§3.5): the square exposes only aggregates (listing
-// count, multiplier range); no seller id, no listing id, no key material.
+// count, channel count, multiplier range); no seller id, no listing id, no
+// key material.
 //
 // These are public web-console APIs (no login required): they answer in the
 // upstream console envelope (common.ApiSuccess / common.ApiErrorStatus).
 
 import (
-	"cmp"
 	"errors"
 	"net/http"
-	"slices"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -40,9 +49,15 @@ func registerSquareRoutes(g *gin.RouterGroup) {
 	g.GET("/square/models/:model", getSquareModel)
 }
 
+// Buyer price sources of a square row.
+const (
+	BuyerPriceSourceMarket   = "market"
+	BuyerPriceSourceOfficial = "official"
+)
+
 // squareTierPrices is the buyer price of one tier in 微元/百万 tokens
-// (§3.2: 官方价目 × 最低可用倍率, each dimension rounded up exactly once by
-// Quote — the same rounding the debit path applies).
+// (§3.2: 官方价目 × 渠道系数 × 最低倍率, each dimension rounded up exactly once
+// by Quote — the same rounding the debit path applies).
 type squareTierPrices struct {
 	InputMicroPerMTok      int64 `json:"input_micro_per_mtok"`
 	OutputMicroPerMTok     int64 `json:"output_micro_per_mtok"`
@@ -50,19 +65,25 @@ type squareTierPrices struct {
 	CacheWriteMicroPerMTok int64 `json:"cache_write_micro_per_mtok"`
 }
 
-// squareModelEntry is one model of the square listing (§5 阶段 5). Prices is
+// squareModelEntry is one standard model of the square listing. Prices is
 // keyed by tier ("peak" / "offpeak"): the entry at Tier was priced at
 // GeneratedAt, the other at NextSwitch. NextSwitch is null when the calendar
 // shows no flip within the NextSwitch horizon.
+//
+// Vendor is retained as an alias of OriginVendor so existing frontends keep
+// working; new clients should read origin_vendor.
 type squareModelEntry struct {
-	Model        string                      `json:"model"`
-	Vendor       string                      `json:"vendor"`
-	Tier         string                      `json:"tier"`
-	TierLabel    string                      `json:"tier_label"`
-	Prices       map[string]squareTierPrices `json:"prices"`
-	NextSwitch   *time.Time                  `json:"next_switch"`
-	ListingCount int                         `json:"listing_count"`
-	GeneratedAt  time.Time                   `json:"generated_at"`
+	Model            string                      `json:"model"`
+	OriginVendor     string                      `json:"origin_vendor"`
+	Vendor           string                      `json:"vendor"`
+	Tier             string                      `json:"tier"`
+	TierLabel        string                      `json:"tier_label"`
+	Prices           map[string]squareTierPrices `json:"prices"`
+	NextSwitch       *time.Time                  `json:"next_switch"`
+	ListingCount     int                         `json:"listing_count"`
+	ChannelCount     int                         `json:"channel_count"`
+	BuyerPriceSource string                      `json:"buyer_price_source"`
+	GeneratedAt      time.Time                   `json:"generated_at"`
 }
 
 // squareOfficialPrices is one tier's raw official price-book row (no flat
@@ -72,49 +93,226 @@ type squareOfficialPrices struct {
 	Version int64 `json:"version"`
 }
 
+// squareChannelView is one sellable channel of a standard model on the detail
+// page (§5: 详情页按渠道列挂单, badges 官方/套餐/已验真). A channel with a
+// verified qualification is listed even when it has no live supply.
+type squareChannelView struct {
+	ChannelSlug        string         `json:"channel_slug"`
+	Name               string         `json:"name"`
+	Kind               string         `json:"kind"`
+	Verified           bool           `json:"verified"`
+	CoefficientMilli   int64          `json:"coefficient_milli"`
+	Differences        map[string]any `json:"differences"`
+	ListingCount       int            `json:"listing_count"`
+	MinMultiplierMilli int64          `json:"min_multiplier_milli"`
+	MaxMultiplierMilli int64          `json:"max_multiplier_milli"`
+}
+
 // squareModelDetail is the single-model square view: the list entry plus the
-// official per-tier price books and the multiplier range of the available
-// supply (§5 阶段 5 各时段官方价与倍率区间).
+// official per-tier price books, the multiplier range of the available supply
+// and the per-channel sellable qualifications (§5 阶段 5).
 type squareModelDetail struct {
 	squareModelEntry
 	MultiplierMinMilli int64                           `json:"multiplier_min_milli"`
 	MultiplierMaxMilli int64                           `json:"multiplier_max_milli"`
 	OfficialPrices     map[string]squareOfficialPrices `json:"official_prices"`
+	Channels           []squareChannelView             `json:"channels"`
 }
 
-// squareSupply is the aggregate of the live/canary listings serving one
-// (model, vendor): how many listings and the multiplier band. 可用倍率下限
-// takes canary listings into account because canary supply does serve buyer
-// traffic (§3.5 灰度 10%).
-type squareSupply struct {
+// squareChannelSupply is the live/canary listing aggregate of one channel
+// serving a standard model.
+type squareChannelSupply struct {
 	count   int
 	minMult int64
 	maxMult int64
 }
 
-// loadSquareSupply groups the current live/canary supply by (model, vendor).
-// The models column is JSON text, so the model filter runs in Go; the live
-// listing set is small in v1 (same trade-off as hasLiveListingForModel).
-func loadSquareSupply(db *gorm.DB) (map[[2]string]*squareSupply, error) {
+// squareSupply is the aggregate of the live/canary listings serving one
+// standard model: how many listings, how many channels, the multiplier band
+// and the listing that yields the cheapest buyer price. 可用倍率下限 takes
+// canary listings into account because canary supply does serve buyer traffic
+// (§3.5 灰度 10%).
+type squareSupply struct {
+	count      int
+	channels   map[string]struct{}
+	minMult    int64
+	maxMult    int64
+	byChannel  map[string]*squareChannelSupply
+	haveBest   bool
+	bestSlug   string
+	bestMult   int64
+	bestCoeff  int64
+	bestFactor int64
+}
+
+// modelPoolIndex resolves a listing's model spelling to a standard model
+// name. Name matching is exact (case-insensitive); aliases are accepted so a
+// legacy listing written with an operator spelling still rolls up under the
+// standard row — the square itself always emits the standard name.
+type modelPoolIndex struct {
+	byName  map[string]string
+	byAlias map[string]string
+}
+
+// newModelPoolIndex builds the lookup from the active pool rows.
+func newModelPoolIndex(pool []ModelPool) modelPoolIndex {
+	idx := modelPoolIndex{
+		byName:  make(map[string]string, len(pool)),
+		byAlias: make(map[string]string),
+	}
+	for _, m := range pool {
+		if name := strings.TrimSpace(m.Name); name != "" {
+			idx.byName[strings.ToLower(name)] = m.Name
+		}
+	}
+	for _, m := range pool {
+		for _, alias := range parseStringList(m.Aliases) {
+			key := strings.ToLower(strings.TrimSpace(alias))
+			if key == "" {
+				continue
+			}
+			if _, exists := idx.byAlias[key]; !exists {
+				idx.byAlias[key] = m.Name
+			}
+		}
+	}
+	return idx
+}
+
+// resolve maps a model spelling to the standard model name.
+func (idx modelPoolIndex) resolve(model string) (string, bool) {
+	key := strings.ToLower(strings.TrimSpace(model))
+	if key == "" {
+		return "", false
+	}
+	if name, ok := idx.byName[key]; ok {
+		return name, true
+	}
+	if name, ok := idx.byAlias[key]; ok {
+		return name, true
+	}
+	return "", false
+}
+
+// loadActiveModelPool returns the active standard models ordered by name.
+func loadActiveModelPool(db *gorm.DB) ([]ModelPool, error) {
+	var rows []ModelPool
+	if err := db.Where("status = ?", PoolStatusActive).Order("name ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// loadChannelModelCoefficients returns model -> channel_slug -> coefficient.
+// Missing or malformed rows are simply absent; callers default to 1000.
+func loadChannelModelCoefficients(db *gorm.DB) map[string]map[string]int64 {
+	out := make(map[string]map[string]int64)
+	var rows []ChannelModel
+	if err := db.Select("channel_slug", "model", "coefficient_milli").Find(&rows).Error; err != nil {
+		return out
+	}
+	for i := range rows {
+		row := &rows[i]
+		model := strings.TrimSpace(row.Model)
+		slug := strings.TrimSpace(row.ChannelSlug)
+		if model == "" || slug == "" {
+			continue
+		}
+		byChannel := out[model]
+		if byChannel == nil {
+			byChannel = make(map[string]int64)
+			out[model] = byChannel
+		}
+		byChannel[slug] = row.CoefficientMilli
+	}
+	return out
+}
+
+// coefficientFor returns the channel's price coefficient for a standard
+// model, defaulting to 1000 (= official price ×1.0) when no usable
+// qualification row exists.
+func coefficientFor(coeffs map[string]map[string]int64, model, channel string) int64 {
+	if byChannel := coeffs[model]; byChannel != nil {
+		if milli := byChannel[channel]; milli > 0 {
+			return milli
+		}
+	}
+	return 1000
+}
+
+// add folds one live/canary listing into the aggregate. factor is the buyer
+// price factor in thousandths of the official price:
+// coefficient_milli × multiplier_milli (1000 × 1000 = official price).
+func (s *squareSupply) add(channel string, multiplierMilli, coefficientMilli int64) {
+	if coefficientMilli <= 0 {
+		coefficientMilli = 1000
+	}
+	if s.channels == nil {
+		s.channels = make(map[string]struct{})
+	}
+	if s.byChannel == nil {
+		s.byChannel = make(map[string]*squareChannelSupply)
+	}
+	if s.count == 0 {
+		s.minMult, s.maxMult = multiplierMilli, multiplierMilli
+	} else {
+		s.minMult = min(s.minMult, multiplierMilli)
+		s.maxMult = max(s.maxMult, multiplierMilli)
+	}
+	s.count++
+	s.channels[channel] = struct{}{}
+	cs := s.byChannel[channel]
+	if cs == nil {
+		cs = &squareChannelSupply{count: 0, minMult: multiplierMilli, maxMult: multiplierMilli}
+		s.byChannel[channel] = cs
+	}
+	if cs.count == 0 {
+		cs.minMult, cs.maxMult = multiplierMilli, multiplierMilli
+	} else {
+		cs.minMult = min(cs.minMult, multiplierMilli)
+		cs.maxMult = max(cs.maxMult, multiplierMilli)
+	}
+	cs.count++
+
+	// 最低到手价 = official × coefficient × multiplier: pick the listing with
+	// the smallest product. Deterministic tie-break keeps the page stable.
+	factor := multiplierMilli * coefficientMilli
+	if !s.haveBest || factor < s.bestFactor ||
+		(factor == s.bestFactor && (coefficientMilli < s.bestCoeff ||
+			(coefficientMilli == s.bestCoeff && channel < s.bestSlug))) {
+		s.haveBest = true
+		s.bestSlug = channel
+		s.bestMult = multiplierMilli
+		s.bestCoeff = coefficientMilli
+		s.bestFactor = factor
+	}
+}
+
+// loadSquarePoolSupply groups the current live/canary supply by standard
+// model name. The models column is JSON text, so the model filter runs in Go;
+// the live listing set is small in v1 (same trade-off as hasLiveListingForModel).
+func loadSquarePoolSupply(db *gorm.DB, idx modelPoolIndex, coeffs map[string]map[string]int64) (map[string]*squareSupply, error) {
 	var rows []Listing
 	if err := db.Where("status IN ?", []string{ListingLive, ListingCanary}).
 		Select("id", "vendor", "models", "multiplier_milli").
 		Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	supply := make(map[[2]string]*squareSupply)
+	supply := make(map[string]*squareSupply)
 	for i := range rows {
 		l := &rows[i]
-		for _, m := range l.Models {
-			k := [2]string{m, l.Vendor}
-			s := supply[k]
-			if s == nil {
-				s = &squareSupply{minMult: l.MultiplierMilli, maxMult: l.MultiplierMilli}
-				supply[k] = s
+		channel := strings.TrimSpace(l.Vendor)
+		for _, raw := range l.Models {
+			model, ok := idx.resolve(raw)
+			if !ok {
+				continue
 			}
-			s.count++
-			s.minMult = min(s.minMult, l.MultiplierMilli)
-			s.maxMult = max(s.maxMult, l.MultiplierMilli)
+			s := supply[model]
+			if s == nil {
+				s = &squareSupply{}
+				supply[model] = s
+			}
+			s.add(channel, l.MultiplierMilli, coefficientFor(coeffs, model, channel))
 		}
 	}
 	return supply, nil
@@ -123,12 +321,21 @@ func loadSquareSupply(db *gorm.DB) (map[[2]string]*squareSupply, error) {
 // quoteTierPrices prices one tier through the single Quote function (§3.7):
 // each of the four price dimensions is quoted separately with exactly one
 // million tokens, so the result is the per-million-token buyer price with the
-// same ceil rounding the debit path applies. Tool prices are not part of the
-// square display (counts are per-request), so Search/Fetch stay zero.
-func quoteTierPrices(db *gorm.DB, cal *Calendar, model, vendor string, multMilli int64, at time.Time) (squareTierPrices, error) {
+// same ceil rounding the debit path applies. The official price book is keyed
+// by originVendor; coefficientMilli is the channel's price coefficient
+// (1000 = official). Tool prices are not part of the square display (counts
+// are per-request), so Search/Fetch stay zero.
+func quoteTierPrices(db *gorm.DB, cal *Calendar, model, vendor, originVendor string, multMilli, coefficientMilli int64, at time.Time) (squareTierPrices, error) {
 	var out squareTierPrices
 	quoteDim := func(setTokens func(*QuoteInput)) (int64, error) {
-		in := QuoteInput{Model: model, Vendor: vendor, MultiplierMilli: multMilli, At: at}
+		in := QuoteInput{
+			Model:            model,
+			Vendor:           vendor,
+			OriginVendor:     originVendor,
+			CoefficientMilli: coefficientMilli,
+			MultiplierMilli:  multMilli,
+			At:               at,
+		}
 		setTokens(&in)
 		q, err := Quote(db, cal, in)
 		if err != nil {
@@ -152,24 +359,50 @@ func quoteTierPrices(db *gorm.DB, cal *Calendar, model, vendor string, multMilli
 	return out, nil
 }
 
-// buildSquareEntry assembles one model's square entry at instant now: the
-// current tier, both tiers' buyer prices at the lowest available multiplier
+// originVendorOf returns the standard model's official price owner. An empty
+// origin vendor falls back to the model name so legacy rows still resolve.
+func originVendorOf(model ModelPool) string {
+	if origin := strings.TrimSpace(model.OriginVendor); origin != "" {
+		return origin
+	}
+	return strings.TrimSpace(model.Name)
+}
+
+// buildSquareEntry assembles one standard model's square entry at instant now:
+// the current tier, both tiers' buyer prices at the cheapest available factor
 // (the current tier priced at now, the other at NextSwitch(now) — by
 // construction the first instant of the other tier), and the switch instant.
-// A model whose CURRENT tier cannot be priced is reported ok=false: a listing
-// the buyer could not be charged for must not be advertised (§3.2 买家看到
-// 的就是最终价). The other tier is simply omitted when it has no covering
-// price book.
-func buildSquareEntry(db *gorm.DB, cal *Calendar, model, vendor string, s *squareSupply, now time.Time) (squareModelEntry, bool) {
+//
+// With live/canary supply the factor is the listing with the smallest
+// coefficient × multiplier and buyer_price_source is "market". Without any
+// listing the factor is 1000 × 1000 (official price ×1.0) and the source is
+// "official" — an unlisted standard model is still shown.
+//
+// A model whose CURRENT tier cannot be priced is reported ok=false: a model
+// the buyer could not be charged for must not be advertised (§3.2 买家看到的
+// 就是最终价). The other tier is simply omitted when it has no covering price
+// book.
+func buildSquareEntry(db *gorm.DB, cal *Calendar, model ModelPool, s *squareSupply, now time.Time) (squareModelEntry, bool) {
+	origin := originVendorOf(model)
 	tier := cal.TierAt(now)
 	entry := squareModelEntry{
-		Model:        model,
-		Vendor:       vendor,
-		Tier:         tier,
-		TierLabel:    tierLabel(tier),
-		Prices:       make(map[string]squareTierPrices, 2),
-		ListingCount: s.count,
-		GeneratedAt:  now,
+		Model:            model.Name,
+		OriginVendor:     origin,
+		Vendor:           origin,
+		Tier:             tier,
+		TierLabel:        tierLabel(tier),
+		Prices:           make(map[string]squareTierPrices, 2),
+		BuyerPriceSource: BuyerPriceSourceOfficial,
+		GeneratedAt:      now,
+	}
+	mult, coeff, vendor := int64(1000), int64(1000), origin
+	if s != nil {
+		entry.ListingCount = s.count
+		entry.ChannelCount = len(s.channels)
+		if s.haveBest && s.count > 0 {
+			entry.BuyerPriceSource = BuyerPriceSourceMarket
+			mult, coeff, vendor = s.bestMult, s.bestCoeff, s.bestSlug
+		}
 	}
 	next := cal.NextSwitch(now)
 	otherAt := now
@@ -177,12 +410,12 @@ func buildSquareEntry(db *gorm.DB, cal *Calendar, model, vendor string, s *squar
 		entry.NextSwitch = &next
 		otherAt = next
 	}
-	current, err := quoteTierPrices(db, cal, model, vendor, s.minMult, now)
+	current, err := quoteTierPrices(db, cal, model.Name, vendor, origin, mult, coeff, now)
 	if err != nil {
 		return squareModelEntry{}, false
 	}
 	entry.Prices[tier] = current
-	if other, err := quoteTierPrices(db, cal, model, vendor, s.minMult, otherAt); err == nil {
+	if other, err := quoteTierPrices(db, cal, model.Name, vendor, origin, mult, coeff, otherAt); err == nil {
 		entry.Prices[cal.TierAt(otherAt)] = other
 	}
 	return entry, true
@@ -198,34 +431,34 @@ func squareState(c *gin.Context) (*gorm.DB, *Calendar) {
 	return db, cal
 }
 
-// listSquareModels serves GET /square/models — every model with live/canary
-// supply, sorted by (model, vendor) for a stable page.
+// listSquareModels serves GET /square/models — one row per active standard
+// model (ordered by standard name) that has an official price. Models with no
+// listing still appear at the official price.
 func listSquareModels(c *gin.Context) {
 	db, cal := squareState(c)
 	if db == nil {
 		return
 	}
-	supply, err := loadSquareSupply(db)
+	pool, err := loadActiveModelPool(db)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query models"))
+		return
+	}
+	idx := newModelPoolIndex(pool)
+	coeffs := loadChannelModelCoefficients(db)
+	supply, err := loadSquarePoolSupply(db, idx, coeffs)
 	if err != nil {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query listings"))
 		return
 	}
-	keys := make([][2]string, 0, len(supply))
-	for k := range supply {
-		keys = append(keys, k)
-	}
-	slices.SortFunc(keys, func(a, b [2]string) int {
-		if c := cmp.Compare(a[0], b[0]); c != 0 {
-			return c
-		}
-		return cmp.Compare(a[1], b[1])
-	})
 	now := time.Now()
-	items := make([]squareModelEntry, 0, len(keys))
-	for _, k := range keys {
-		entry, ok := buildSquareEntry(db, cal, k[0], k[1], supply[k], now)
+	items := make([]squareModelEntry, 0, len(pool))
+	for _, model := range pool {
+		entry, ok := buildSquareEntry(db, cal, model, supply[model.Name], now)
 		if !ok {
-			common.SysError(common.LogText("marketplace: square: no covering price for %s/%s, hidden from square", k[0], k[1]))
+			// Missing/unpriceable origin book: skip this model instead of failing
+			// the whole page (§3.2).
+			common.SysError(common.LogText("marketplace: square: no covering price for %s, hidden from square", model.Name))
 			continue
 		}
 		items = append(items, entry)
@@ -234,54 +467,50 @@ func listSquareModels(c *gin.Context) {
 }
 
 // getSquareModel serves GET /square/models/:model — the list entry plus the
-// official per-tier price books and the supply's multiplier range. A model
-// with no live/canary listing answers 404.
+// official per-tier price books, the supply's multiplier range and every
+// channel that may sell the model (even without a listing). The model must be
+// an active standard model with an official price; otherwise 404.
 func getSquareModel(c *gin.Context) {
 	db, cal := squareState(c)
 	if db == nil {
 		return
 	}
-	modelName := c.Param("model")
-	supply, err := loadSquareSupply(db)
+	modelName := strings.TrimSpace(c.Param("model"))
+	model, ok := ModelPoolByName(db, modelName)
+	if !ok || model.Status != PoolStatusActive {
+		common.ApiErrorStatus(c, http.StatusNotFound, errors.New("model not found"))
+		return
+	}
+	pool := []ModelPool{model}
+	idx := newModelPoolIndex(pool)
+	coeffs := loadChannelModelCoefficients(db)
+	supply, err := loadSquarePoolSupply(db, idx, coeffs)
 	if err != nil {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query listings"))
 		return
 	}
-	// v1 has exactly one vendor per model. Should several (model, vendor)
-	// supply groups ever exist for the same model, the detail view presents
-	// the group whose minimum multiplier is lowest — the price the square
-	// list advertises for this model — with the vendor id as the deterministic
-	// tie-break.
-	var pickedKey [2]string
-	var picked *squareSupply
-	for k, s := range supply {
-		if k[0] != modelName {
-			continue
-		}
-		if picked == nil || s.minMult < picked.minMult ||
-			(s.minMult == picked.minMult && (k[1] < pickedKey[1])) {
-			pickedKey, picked = k, s
-		}
-	}
-	if picked == nil {
-		common.ApiErrorStatus(c, http.StatusNotFound, errors.New("model not found"))
-		return
-	}
-	entry, ok := buildSquareEntry(db, cal, pickedKey[0], pickedKey[1], picked, time.Now())
+	s := supply[model.Name]
+	entry, ok := buildSquareEntry(db, cal, model, s, time.Now())
 	if !ok {
 		common.ApiErrorStatus(c, http.StatusNotFound, errors.New("model not found"))
 		return
 	}
 	detail := squareModelDetail{
 		squareModelEntry:   entry,
-		MultiplierMinMilli: picked.minMult,
-		MultiplierMaxMilli: picked.maxMult,
+		MultiplierMinMilli: 1000,
+		MultiplierMaxMilli: 1000,
 		OfficialPrices:     make(map[string]squareOfficialPrices, 3),
+		Channels:           loadSquareChannels(db, model.Name, s),
+	}
+	if s != nil && s.count > 0 {
+		detail.MultiplierMinMilli = s.minMult
+		detail.MultiplierMaxMilli = s.maxMult
 	}
 	// 各时段官方价: raw price-book rows per tier, no flat fallback — a
 	// flat-only vendor shows its single flat row, not three copies of it.
+	origin := originVendorOf(model)
 	for _, tier := range []string{TierPeak, TierOffpeak, TierFlat} {
-		pb, err := priceAt(db, pickedKey[0], pickedKey[1], tier, entry.GeneratedAt)
+		pb, err := priceAt(db, model.Name, origin, tier, entry.GeneratedAt)
 		if err != nil {
 			continue
 		}
@@ -296,4 +525,53 @@ func getSquareModel(c *gin.Context) {
 		}
 	}
 	common.ApiSuccess(c, detail)
+}
+
+// loadSquareChannels lists every channel with a verified, active
+// qualification for the standard model and an active channel definition.
+// Channels are returned in stable slug order; listing aggregates come from
+// live/canary supply (zero when the channel has no listing right now).
+func loadSquareChannels(db *gorm.DB, model string, s *squareSupply) []squareChannelView {
+	var rows []ChannelModel
+	if err := db.Where("model = ? AND verified = ? AND status = ?", model, true, PoolStatusActive).
+		Order("channel_slug ASC").
+		Find(&rows).Error; err != nil {
+		return []squareChannelView{}
+	}
+	active := make(map[string]ChannelPool)
+	for _, ch := range ChannelPoolAll(db) {
+		if ch.Status == PoolStatusActive {
+			active[ch.Slug] = ch
+		}
+	}
+	out := make([]squareChannelView, 0, len(rows))
+	for i := range rows {
+		row := &rows[i]
+		ch, ok := active[strings.TrimSpace(row.ChannelSlug)]
+		if !ok {
+			// Channel disabled/deleted: degrade by skipping the row, never 500.
+			continue
+		}
+		coefficient := row.CoefficientMilli
+		if coefficient <= 0 {
+			coefficient = 1000
+		}
+		view := squareChannelView{
+			ChannelSlug:      ch.Slug,
+			Name:             ch.Name,
+			Kind:             ch.Kind,
+			Verified:         row.Verified,
+			CoefficientMilli: coefficient,
+			Differences:      parseJSONObject(row.Differences),
+		}
+		if s != nil && s.byChannel != nil {
+			if cs := s.byChannel[ch.Slug]; cs != nil {
+				view.ListingCount = cs.count
+				view.MinMultiplierMilli = cs.minMult
+				view.MaxMultiplierMilli = cs.maxMult
+			}
+		}
+		out = append(out, view)
+	}
+	return out
 }

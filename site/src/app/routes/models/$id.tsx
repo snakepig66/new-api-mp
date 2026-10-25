@@ -8,6 +8,7 @@ import {
   buyerTokensQuery,
   squareModelQuery,
   type MarketTier,
+  type SquareChannel,
   type SquareModelDetail,
   type SquareTierPrices,
 } from '@/features/market/api'
@@ -59,6 +60,63 @@ function otherTierOf(tier: MarketTier): 'peak' | 'offpeak' | null {
 
 function currentPrices(detail: SquareModelDetail): SquareTierPrices | undefined {
   return detail.prices[detail.tier] ?? detail.prices.peak ?? detail.prices.offpeak
+}
+
+/** 128000 -> "128K"; smaller values keep their digits. */
+function formatContextLength(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return copy.common.none
+  if (value >= 1_000_000) return `${Number((value / 1_000_000).toFixed(1))}M`
+  if (value >= 1_000) return `${Number((value / 1_000).toFixed(1))}K`
+  return String(value)
+}
+
+const VISION_KEYS = new Set(['vision', 'images', 'image', 'supports_vision', 'multimodal'])
+const NO_IMAGE_KEYS = new Set(['no_images', 'no_vision', 'images_disabled'])
+
+function differenceValue(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) return value.map((item) => differenceValue(item)).join('、')
+  return JSON.stringify(value)
+}
+
+/**
+ * Turn the backend's differences object into short human labels. Known keys
+ * get dedicated copy; anything else is shown as `key: value` so a new
+ * backend field is never silently hidden.
+ */
+function differenceNotes(differences: Record<string, unknown>): string[] {
+  const labels = copy.pages.modelDetail.channels.differences
+  const notes: string[] = []
+  const context = differences.context_length
+  if (typeof context === 'number') {
+    notes.push(`${labels.contextLength} ${formatContextLength(context)}`)
+  } else if (typeof context === 'string' && context.trim()) {
+    notes.push(`${labels.contextLength} ${context.trim()}`)
+  }
+
+  let noVision = false
+  for (const key of VISION_KEYS) {
+    if (differences[key] === false) noVision = true
+  }
+  for (const key of NO_IMAGE_KEYS) {
+    if (differences[key] === true) noVision = true
+  }
+  if (noVision) notes.push(labels.noVision)
+
+  for (const [key, value] of Object.entries(differences)) {
+    if (key === 'context_length' || VISION_KEYS.has(key) || NO_IMAGE_KEYS.has(key)) continue
+    if (value === null || value === undefined || value === '') continue
+    notes.push(`${key}: ${differenceValue(value)}`)
+  }
+  return notes
+}
+
+function ChannelKindTag({ channel }: { channel: SquareChannel }) {
+  const kinds = copy.pages.modelDetail.channels.kind
+  if (channel.kind === 'official') return <Tag tone="brand">{kinds.official}</Tag>
+  if (channel.kind === 'plan') return <Tag>{kinds.plan}</Tag>
+  return <Tag>{kinds.thirdParty}</Tag>
 }
 
 function addErrorCopy(error: unknown): string {
@@ -245,7 +303,7 @@ function InfoRow({
   )
 }
 
-function ModelDetailPage() {
+export function ModelDetailPage() {
   const { id } = Route.useParams()
   const page = copy.pages.modelDetail
   const detail = useQuery(squareModelQuery(id))
@@ -295,11 +353,15 @@ function ModelDetailPage() {
   }
 
   const data = detail.data
+  const originVendor = data.origin_vendor || data.vendor
   const price = currentPrices(data)
   const otherTier = otherTierOf(data.tier)
   const otherPrice = otherTier ? data.prices[otherTier] : undefined
   const tiers = PRICE_TIERS.filter((tier) => data.official_prices[tier])
   const capabilities = capabilitiesOf(data.model)
+  const officialOnly =
+    data.buyer_price_source === 'official' || data.listing_count === 0
+  const channels = data.channels ?? []
   const dimensions = [
     { key: 'input_micro_per_mtok', label: page.dimensions.input },
     { key: 'output_micro_per_mtok', label: page.dimensions.output },
@@ -320,8 +382,8 @@ function ModelDetailPage() {
           <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-ink">
             {data.model}
           </h1>
-          <Tag>{vendorLabel(data.vendor, vendorMeta)}</Tag>
-          {isOfficialVendor(data.vendor, vendorMeta) ? (
+          <Tag>{vendorLabel(originVendor, vendorMeta)}</Tag>
+          {isOfficialVendor(originVendor, vendorMeta) ? (
             <Tag tone="brand">{copy.pages.models.officialChannel}</Tag>
           ) : null}
         </div>
@@ -341,7 +403,9 @@ function ModelDetailPage() {
           <section className="rounded-lg border border-line p-6 sm:p-8">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <div className="text-[13px] text-ink-3">{page.lowestPrice}</div>
+                <div className="text-[13px] text-ink-3">
+                  {officialOnly ? page.officialPrice : page.lowestPrice}
+                </div>
                 {price ? (
                   <div className="mt-2 flex flex-wrap items-center gap-3">
                     <Price
@@ -355,7 +419,11 @@ function ModelDetailPage() {
                       size="lg"
                       className="[&_span.tabular-nums]:text-[32px] [&_span.tabular-nums]:font-semibold"
                     />
-                    <Multiplier milli={data.multiplier_min_milli} />
+                    {officialOnly ? (
+                      <Tag tone="brand">{page.officialPrice}</Tag>
+                    ) : data.multiplier_min_milli > 0 ? (
+                      <Multiplier milli={data.multiplier_min_milli} />
+                    ) : null}
                   </div>
                 ) : (
                   <p className="mt-2 text-[15px] text-ink-3">{copy.common.none}</p>
@@ -454,50 +522,92 @@ function ModelDetailPage() {
           </section>
 
           <section>
-            <h2 className="text-[24px] font-semibold tracking-tight text-ink">
-              {page.sections.listings}
-            </h2>
-            <div className="mt-4">
-              <Table minWidth={480} size="compact">
-                <TableHead>
-                  <TableRow interactive={false}>
-                    <TableHeaderCell>指标</TableHeaderCell>
-                    <TableHeaderCell numeric>数值</TableHeaderCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  <TableRow>
-                    <TableCell className="text-ink-2">{page.listingAggregate.range}</TableCell>
-                    <TableCell numeric>
-                      {formatMultiplier(data.multiplier_min_milli)}x –{' '}
-                      {formatMultiplier(data.multiplier_max_milli)}x
-                    </TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell className="text-ink-2">{page.listingAggregate.min}</TableCell>
-                    <TableCell numeric>
-                      <Multiplier milli={data.multiplier_min_milli} />
-                    </TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell className="text-ink-2">{page.listingAggregate.max}</TableCell>
-                    <TableCell numeric>
-                      {formatMultiplier(data.multiplier_max_milli)}x
-                    </TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell className="text-ink-2">{page.meta.listings}</TableCell>
-                    <TableCell numeric>
-                      {data.listing_count}
-                      <span className="ml-0.5 text-[13px] text-ink-3">
-                        {copy.pages.models.sellerUnit}
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-[24px] font-semibold tracking-tight text-ink">
+                {page.sections.channels}
+              </h2>
+              <span className="text-[13px] text-ink-3">
+                {page.channels.count(channels.length, data.listing_count)}
+              </span>
             </div>
-            <p className="mt-3 text-[13px] leading-6 text-ink-3">{page.listingAggregate.note}</p>
+            <div className="mt-4">
+              {channels.length === 0 ? (
+                <Empty
+                  title={page.channels.empty.title}
+                  reason={page.channels.empty.reason}
+                  next={page.channels.empty.next}
+                />
+              ) : (
+                <Table minWidth={760} size="compact">
+                  <TableHead>
+                    <TableRow interactive={false}>
+                      <TableHeaderCell>{page.channels.columns.channel}</TableHeaderCell>
+                      <TableHeaderCell>{page.channels.columns.kind}</TableHeaderCell>
+                      <TableHeaderCell>{page.channels.columns.verified}</TableHeaderCell>
+                      <TableHeaderCell numeric>{page.channels.columns.coefficient}</TableHeaderCell>
+                      <TableHeaderCell numeric>{page.channels.columns.listings}</TableHeaderCell>
+                      <TableHeaderCell numeric>{page.channels.columns.multiplier}</TableHeaderCell>
+                      <TableHeaderCell>{page.channels.columns.differences}</TableHeaderCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {channels.map((channel) => {
+                      const notes = differenceNotes(channel.differences ?? {})
+                      return (
+                        <TableRow key={channel.channel_slug}>
+                          <TableCell>
+                            <div className="font-medium text-ink">{channel.name}</div>
+                            <div className="tabular-nums text-[13px] text-ink-3">
+                              {channel.channel_slug}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <ChannelKindTag channel={channel} />
+                          </TableCell>
+                          <TableCell>
+                            {channel.verified ? (
+                              <Tag tone="brand" dot>
+                                {page.channels.verified}
+                              </Tag>
+                            ) : (
+                              <span className="text-[13px] text-ink-3">
+                                {page.channels.unverified}
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell numeric>{formatMultiplier(channel.coefficient_milli)}x</TableCell>
+                          <TableCell numeric>{channel.listing_count}</TableCell>
+                          <TableCell numeric>
+                            {channel.listing_count > 0 ? (
+                              <>
+                                {formatMultiplier(channel.min_multiplier_milli)}x –{' '}
+                                {formatMultiplier(channel.max_multiplier_milli)}x
+                              </>
+                            ) : (
+                              <span className="text-ink-3">{copy.common.none}</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {notes.length === 0 ? (
+                              <span className="text-[13px] text-ink-3">
+                                {page.channels.differences.none}
+                              </span>
+                            ) : (
+                              <div className="flex flex-wrap gap-1.5">
+                                {notes.map((note) => (
+                                  <Tag key={note}>{note}</Tag>
+                                ))}
+                              </div>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
+            <p className="mt-3 text-[13px] leading-6 text-ink-3">{page.channels.note}</p>
           </section>
         </div>
 

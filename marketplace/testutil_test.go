@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +21,16 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+// testKeySeq keeps every generated test API key unique. Windows clocks can
+// return the same UnixNano value for two calls microseconds apart, which used
+// to trip the one-key-per-platform rule inside a single test.
+var testKeySeq atomic.Int64
+
+func uniqueTestKey(prefix string) string {
+	return prefix + "-" + strconv.FormatInt(testKeySeq.Add(1), 10) + "-" +
+		strconv.FormatInt(time.Now().UnixNano(), 36)
+}
 
 // testDriver is the dialect the current test binary runs against. It is
 // decided once per process from MP_TEST_MYSQL_DSN / MP_TEST_POSTGRES_DSN and
@@ -225,4 +236,8 @@ func migrateAll(t *testing.T, db *gorm.DB) {
 	require.NoError(t, MigrateChannelModelMap(db))
 	require.NoError(t, SeedChannelModelMap(db))
 	require.NoError(t, SeedPrices(db))
+	// The model/channel pool is the authority for listable qualifications and
+	// official price ownership; fixtures seed it the same way Init does.
+	require.NoError(t, MigrateModelChannelPool(db))
+	require.NoError(t, SeedModelChannelPool(db))
 }

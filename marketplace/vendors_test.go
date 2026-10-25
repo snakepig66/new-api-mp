@@ -26,13 +26,21 @@ const tipigExtraVendors = `[{
 func withExtraVendors(t *testing.T, raw string) {
 	t.Helper()
 	orig, had := os.LookupEnv(ExtraVendorsEnv)
+	origEnv, hadEnv := os.LookupEnv("MP_ENV")
 	require.NoError(t, os.Setenv(ExtraVendorsEnv, raw))
+	// MP_EXTRA_VENDORS is a test-only escape hatch (MODEL-CHANNEL-POOL §2).
+	require.NoError(t, os.Setenv("MP_ENV", "test"))
 	require.NoError(t, LoadExtraVendorsFromEnv())
 	t.Cleanup(func() {
 		if had {
 			_ = os.Setenv(ExtraVendorsEnv, orig)
 		} else {
 			_ = os.Unsetenv(ExtraVendorsEnv)
+		}
+		if hadEnv {
+			_ = os.Setenv("MP_ENV", origEnv)
+		} else {
+			_ = os.Unsetenv("MP_ENV")
 		}
 		require.NoError(t, LoadExtraVendorsFromEnv(), "restore injected vendors")
 	})
@@ -58,6 +66,8 @@ func TestVendorWhitelistMiss(t *testing.T) {
 }
 
 func TestVendorIDs(t *testing.T) {
+	resetVendorRegistryForTest()
+	t.Cleanup(resetVendorRegistryForTest)
 	ids := VendorIDs()
 	require.Equal(t, []string{
 		"deepseek", "volcengine-ark", "aliyun-bailian", "moonshot", "zhipu", "minimax",
@@ -75,6 +85,8 @@ func TestVendorModelsAreCopied(t *testing.T) {
 
 // H8: MP_EXTRA_VENDORS injects non-production vendors at Init time.
 func TestVendorExtraFromEnv(t *testing.T) {
+	resetVendorRegistryForTest()
+	t.Cleanup(resetVendorRegistryForTest)
 	withExtraVendors(t, tipigExtraVendors)
 
 	v, ok := VendorByID("tipig")
@@ -117,12 +129,19 @@ func TestVendorExtraInvalidEnv(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			orig, had := os.LookupEnv(ExtraVendorsEnv)
+			origEnv, hadEnv := os.LookupEnv("MP_ENV")
 			require.NoError(t, os.Setenv(ExtraVendorsEnv, raw))
+			require.NoError(t, os.Setenv("MP_ENV", "test"))
 			t.Cleanup(func() {
 				if had {
 					_ = os.Setenv(ExtraVendorsEnv, orig)
 				} else {
 					_ = os.Unsetenv(ExtraVendorsEnv)
+				}
+				if hadEnv {
+					_ = os.Setenv("MP_ENV", origEnv)
+				} else {
+					_ = os.Unsetenv("MP_ENV")
 				}
 				require.NoError(t, LoadExtraVendorsFromEnv())
 			})

@@ -24,6 +24,7 @@ import { Route as AdminHolidaysRouteImport } from './routes/admin/holidays'
 import { Route as AdminListingsRouteImport } from './routes/admin/listings'
 import { Route as AdminPayoutsRouteImport } from './routes/admin/payouts'
 import { Route as AdminPerCallPricesRouteImport } from './routes/admin/per-call-prices'
+import { Route as AdminPoolRouteImport } from './routes/admin/pool'
 import { Route as AdminPricesRouteImport } from './routes/admin/prices'
 import { Route as AdminToolsRouteImport } from './routes/admin/tools'
 import { Route as ConsoleIndexRouteImport } from './routes/console/index'
@@ -114,6 +115,11 @@ const AdminPayoutsRoute = AdminPayoutsRouteImport.update({
 const AdminPerCallPricesRoute = AdminPerCallPricesRouteImport.update({
   id: '/per-call-prices',
   path: '/per-call-prices',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminPoolRoute = AdminPoolRouteImport.update({
+  id: '/pool',
+  path: '/pool',
   getParentRoute: () => AdminRoute,
 } as any)
 const AdminPricesRoute = AdminPricesRouteImport.update({
@@ -212,6 +218,7 @@ export interface FileRoutesByFullPath {
   '/admin/listings': typeof AdminListingsRoute
   '/admin/payouts': typeof AdminPayoutsRoute
   '/admin/per-call-prices': typeof AdminPerCallPricesRoute
+  '/admin/pool': typeof AdminPoolRoute
   '/admin/prices': typeof AdminPricesRoute
   '/admin/tools': typeof AdminToolsRoute
   '/console/records': typeof ConsoleRecordsRoute
@@ -242,6 +249,7 @@ export interface FileRoutesByTo {
   '/admin/listings': typeof AdminListingsRoute
   '/admin/payouts': typeof AdminPayoutsRoute
   '/admin/per-call-prices': typeof AdminPerCallPricesRoute
+  '/admin/pool': typeof AdminPoolRoute
   '/admin/prices': typeof AdminPricesRoute
   '/admin/tools': typeof AdminToolsRoute
   '/console/records': typeof ConsoleRecordsRoute
@@ -276,6 +284,7 @@ export interface FileRoutesById {
   '/admin/listings': typeof AdminListingsRoute
   '/admin/payouts': typeof AdminPayoutsRoute
   '/admin/per-call-prices': typeof AdminPerCallPricesRoute
+  '/admin/pool': typeof AdminPoolRoute
   '/admin/prices': typeof AdminPricesRoute
   '/admin/tools': typeof AdminToolsRoute
   '/console/records': typeof ConsoleRecordsRoute
@@ -311,6 +320,7 @@ export interface FileRouteTypes {
     | '/admin/listings'
     | '/admin/payouts'
     | '/admin/per-call-prices'
+    | '/admin/pool'
     | '/admin/prices'
     | '/admin/tools'
     | '/console/records'
@@ -341,6 +351,7 @@ export interface FileRouteTypes {
     | '/admin/listings'
     | '/admin/payouts'
     | '/admin/per-call-prices'
+    | '/admin/pool'
     | '/admin/prices'
     | '/admin/tools'
     | '/console/records'
@@ -374,6 +385,7 @@ export interface FileRouteTypes {
     | '/admin/listings'
     | '/admin/payouts'
     | '/admin/per-call-prices'
+    | '/admin/pool'
     | '/admin/prices'
     | '/admin/tools'
     | '/console/records'
@@ -515,6 +527,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminPerCallPricesRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/pool': {
+      id: '/admin/pool'
+      path: '/pool'
+      fullPath: '/admin/pool'
+      preLoaderRoute: typeof AdminPoolRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/prices': {
       id: '/admin/prices'
       path: '/prices'
@@ -636,6 +655,7 @@ interface AdminRouteChildren {
   AdminListingsRoute: typeof AdminListingsRoute
   AdminPayoutsRoute: typeof AdminPayoutsRoute
   AdminPerCallPricesRoute: typeof AdminPerCallPricesRoute
+  AdminPoolRoute: typeof AdminPoolRoute
   AdminPricesRoute: typeof AdminPricesRoute
   AdminToolsRoute: typeof AdminToolsRoute
   AdminIndexRoute: typeof AdminIndexRoute
@@ -647,6 +667,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminListingsRoute: AdminListingsRoute,
   AdminPayoutsRoute: AdminPayoutsRoute,
   AdminPerCallPricesRoute: AdminPerCallPricesRoute,
+  AdminPoolRoute: AdminPoolRoute,
   AdminPricesRoute: AdminPricesRoute,
   AdminToolsRoute: AdminToolsRoute,
   AdminIndexRoute: AdminIndexRoute,

@@ -108,6 +108,8 @@ export interface ProbeInput {
 export interface ProbeResult {
   ok: boolean
   models: string[]
+  /** Channel-qualified standard models this key can call (pool contract). */
+  verified_models?: string[]
   missing_models: string[]
   latency_ms: number
   prompt_cache: boolean
@@ -216,13 +218,28 @@ export interface PayoutInput {
 // 官方渠道白名单
 // ---------------------------------------------------------------------------
 
+export type SellerChannelKind = 'official' | 'plan' | 'third_party'
+
 export interface SellerVendor {
   id: string
   display_name: string
   tier: string
+  /** Pool kind; defaults to tier for older payloads. */
+  kind?: SellerChannelKind
   protocols: { openai: string; anthropic: string }
   models: string[]
   passthrough_body: boolean
+}
+
+/** Normalize the channel kind, falling back to the legacy `tier` field. */
+export function sellerChannelKind(vendor: SellerVendor): SellerChannelKind {
+  if (vendor.kind === 'official' || vendor.kind === 'plan' || vendor.kind === 'third_party') {
+    return vendor.kind
+  }
+  if (vendor.tier === 'official' || vendor.tier === 'plan' || vendor.tier === 'third_party') {
+    return vendor.tier
+  }
+  return 'third_party'
 }
 
 export const vendorsQuery = () =>

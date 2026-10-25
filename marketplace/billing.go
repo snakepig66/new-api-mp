@@ -370,14 +370,36 @@ func PreFreezeQuote(db *gorm.DB, cal *Calendar, vendor, modelName string, multip
 	if fetchCap < 0 {
 		fetchCap = 0
 	}
+	origin, coefficient := pricingContext(db, vendor, modelName)
 	return Quote(db, cal, QuoteInput{
-		Model:           modelName,
-		Vendor:          vendor,
-		MultiplierMilli: multiplierMilli,
-		At:              at,
-		InputTokens:     estInputTokens,
-		OutputTokens:    maxOutputTokens,
-		SearchCount:     searchCap,
-		FetchCount:      fetchCap,
+		Model:            modelName,
+		Vendor:           vendor,
+		OriginVendor:     origin,
+		CoefficientMilli: coefficient,
+		MultiplierMilli:  multiplierMilli,
+		At:               at,
+		InputTokens:      estInputTokens,
+		OutputTokens:     maxOutputTokens,
+		SearchCount:      searchCap,
+		FetchCount:       fetchCap,
 	})
+}
+
+// pricingContext resolves the official price owner and the channel price
+// coefficient for one (channel slug, standard model) pair
+// (MODEL-CHANNEL-POOL §3.5). Missing pool rows fall back to the channel slug as
+// the price vendor and 1.0, which keeps legacy callers and tests working.
+func pricingContext(db *gorm.DB, channelSlug, modelName string) (originVendor string, coefficientMilli int64) {
+	originVendor = channelSlug
+	coefficientMilli = 1000
+	if db == nil {
+		return originVendor, coefficientMilli
+	}
+	if model, ok := ModelPoolByName(db, modelName); ok && strings.TrimSpace(model.OriginVendor) != "" {
+		originVendor = model.OriginVendor
+	}
+	if cm, ok := ChannelModelFor(db, channelSlug, modelName); ok && cm.CoefficientMilli > 0 {
+		coefficientMilli = cm.CoefficientMilli
+	}
+	return originVendor, coefficientMilli
 }

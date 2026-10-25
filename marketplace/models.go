@@ -99,7 +99,14 @@ type Listing struct {
 	DailyCapMicro    int64    `gorm:"not null"`  // 0 = unlimited
 	Hours            string   `gorm:"type:text"` // JSON windows, empty = all day
 	Status           string   `gorm:"size:16;not null;index"`
-	KeyFingerprint   string   `gorm:"size:128;not null;uniqueIndex"`
+	// PauseReason / ResumeAt / PreviousStatus carry a time-boxed suspension
+	// (MODEL-CHANNEL-POOL §4): a plan channel's quota window ran out, so every
+	// listing of that channel is paused until ResumeAt and then restored to
+	// PreviousStatus. They are empty for ordinary pauses and bans.
+	PauseReason    string     `gorm:"size:64;not null;default:''" json:"pause_reason,omitempty"`
+	ResumeAt       *time.Time `json:"resume_at,omitempty"`
+	PreviousStatus string     `gorm:"size:32;not null;default:''" json:"previous_status,omitempty"`
+	KeyFingerprint string     `gorm:"size:128;not null;uniqueIndex"`
 	// KeyCiphertext is the AES-256-GCM blob (nonce||ciphertext) of the
 	// seller's API key (§3.5); the plaintext never touches the database.
 	// No explicit type: GORM maps []byte to the dialect's binary type
@@ -146,9 +153,12 @@ type KeyPref struct {
 	AllowFallback   bool
 	// RPM is the buyer-side requests-per-minute limit of this key (§3.6:
 	// 每个买家有自己的 RPM 限制); 0 = unlimited.
-	RPM       int `gorm:"not null"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	RPM int `gorm:"not null"`
+	// OfficialOnly restricts this key to official channels
+	// (MODEL-CHANNEL-POOL §3.2).
+	OfficialOnly bool `gorm:"not null;default:false"`
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 func (KeyPref) TableName() string { return "mp_key_prefs" }

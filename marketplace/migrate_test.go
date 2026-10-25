@@ -13,6 +13,9 @@ import (
 func TestMigrateCreatesTables(t *testing.T) {
 	db := newTestDB(t)
 	migrateAll(t, db)
+	// The model/channel pool is migrated by its own Init step; the table
+	// assertion below covers all three pool tables.
+	require.NoError(t, MigrateModelChannelPool(db))
 
 	want := []string{
 		"mp_sellers",
@@ -27,6 +30,9 @@ func TestMigrateCreatesTables(t *testing.T) {
 		"mp_ledger",
 		"mp_payouts",
 		"mp_channel_model_map",
+		"mp_models",
+		"mp_channels",
+		"mp_channel_models",
 	}
 	var tables []string
 	switch db.Dialector.Name() {

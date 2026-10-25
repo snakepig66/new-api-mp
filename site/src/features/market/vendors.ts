@@ -11,6 +11,8 @@ export interface VendorMeta {
   display_name: string
   /** Channel tier from the vendors catalogue, e.g. `official`. */
   tier: string
+  /** Channel pool kind: official / plan / third_party. */
+  kind?: string
 }
 
 /** A metadata lookup keyed by vendor slug (Map or plain object). */
@@ -48,16 +50,23 @@ export function vendorLabel(vendor: string, lookup?: VendorLookup): string {
 
 /** True when the catalogue classifies this vendor as an official channel. */
 export function isOfficialVendor(vendor: string, lookup?: VendorLookup): boolean {
-  return metaOf(vendor, lookup)?.tier === 'official'
+  const meta = metaOf(vendor, lookup)
+  if (!meta) return false
+  // Pooled vendors carry `kind`; the old catalogue only had `tier`.
+  return meta.kind ? meta.kind === 'official' : meta.tier === 'official'
 }
 
-/** Build the id→{display_name,tier} map used by the square and detail tags. */
+/** Build the id→{display_name,tier,kind} map used by the square and detail tags. */
 export function toVendorLookup(
-  vendors: Iterable<{ id: string; display_name: string; tier: string }>,
+  vendors: Iterable<{ id: string; display_name: string; tier: string; kind?: string }>,
 ): Map<string, VendorMeta> {
   const lookup = new Map<string, VendorMeta>()
   for (const vendor of vendors) {
-    lookup.set(vendor.id, { display_name: vendor.display_name, tier: vendor.tier })
+    lookup.set(vendor.id, {
+      display_name: vendor.display_name,
+      tier: vendor.tier,
+      kind: vendor.kind,
+    })
   }
   return lookup
 }

@@ -151,7 +151,7 @@ func TestSellerCreateListingTriggersVerify(t *testing.T) {
 	restore := setSellerVerifyClientForTest(client)
 	defer restore()
 
-	key := "sk-seller-create-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	key := uniqueTestKey("sk-seller-create")
 	// The mock must accept this listing's actual key.
 	h.wantAuth = "Bearer " + key
 	w := f.do(t, http.MethodPost, "/api/marketplace/seller/listings", map[string]any{
@@ -176,7 +176,7 @@ func TestSellerCreateListingTriggersVerify(t *testing.T) {
 // fingerprint's first 8 chars and never the ciphertext or full fingerprint.
 func TestSellerListListingsNoKey(t *testing.T) {
 	f := newSellerAPIFixture(t)
-	key := "sk-seller-list-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	key := uniqueTestKey("sk-seller-list")
 	listing, err := CreateListing(f.db, CreateListingInput{
 		SellerID:        f.sellerID,
 		VendorID:        SeedVendorDeepSeek,
@@ -209,7 +209,7 @@ func TestSellerOwnershipAndMultiplier(t *testing.T) {
 	listing, err := CreateListing(f.db, CreateListingInput{
 		SellerID:        f.sellerID,
 		VendorID:        SeedVendorDeepSeek,
-		APIKey:          "sk-seller-own-" + strconv.FormatInt(time.Now().UnixNano(), 36),
+		APIKey:          uniqueTestKey("sk-seller-own"),
 		Models:          []string{"deepseek-flash"},
 		MultiplierMilli: 300,
 	})
@@ -218,7 +218,7 @@ func TestSellerOwnershipAndMultiplier(t *testing.T) {
 	foreign, err := CreateListing(f.db, CreateListingInput{
 		SellerID:        f.stranger,
 		VendorID:        SeedVendorDeepSeek,
-		APIKey:          "sk-seller-foreign-" + strconv.FormatInt(time.Now().UnixNano(), 36),
+		APIKey:          uniqueTestKey("sk-seller-foreign"),
 		Models:          []string{"deepseek-flash"},
 		MultiplierMilli: 300,
 	})
@@ -255,7 +255,7 @@ func TestSellerPauseResume(t *testing.T) {
 	listing, err := CreateListing(f.db, CreateListingInput{
 		SellerID:        f.sellerID,
 		VendorID:        SeedVendorDeepSeek,
-		APIKey:          "sk-seller-pause-" + strconv.FormatInt(time.Now().UnixNano(), 36),
+		APIKey:          uniqueTestKey("sk-seller-pause"),
 		Models:          []string{"deepseek-flash"},
 		MultiplierMilli: 300,
 	})
@@ -462,7 +462,7 @@ func TestSellerOnboardingInactiveWriteRejected(t *testing.T) {
 		Update("status", SellerStatusPending).Error)
 
 	body := map[string]any{
-		"vendor_id": "deepseek", "api_key": "sk-inactive-" + strconv.FormatInt(time.Now().UnixNano(), 36),
+		"vendor_id": "deepseek", "api_key": uniqueTestKey("sk-inactive"),
 		"models": []string{"deepseek-flash"}, "multiplier_milli": 500,
 	}
 	w := f.do(t, http.MethodPost, "/api/marketplace/seller/listings", body, int(f.sellerID))
@@ -571,7 +571,7 @@ func TestProbeListingDetail(t *testing.T) {
 	listing, err := CreateListing(f.db, CreateListingInput{
 		SellerID:        f.sellerID,
 		VendorID:        SeedVendorDeepSeek,
-		APIKey:          "sk-detail-" + strconv.FormatInt(time.Now().UnixNano(), 36),
+		APIKey:          uniqueTestKey("sk-detail"),
 		Models:          []string{"deepseek-flash"},
 		MultiplierMilli: 300,
 	})

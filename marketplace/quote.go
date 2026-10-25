@@ -15,9 +15,16 @@ import (
 // including every retry hop (§3.3). Reasoning tokens are folded into
 // OutputTokens by the caller (§3.2); Quote does not distinguish them.
 type QuoteInput struct {
-	Model, Vendor                                                string
-	MultiplierMilli                                              int64     // 倍率千分值, must be 1..1000 (§3.2)
-	At                                                           time.Time // pricing instant = pre-freeze moment (§3.3)
+	Model, Vendor string
+	// OriginVendor is the standard model's original vendor; the official
+	// price book is keyed by it (MODEL-CHANNEL-POOL §3.5). Empty falls back to
+	// Vendor for pre-pool callers.
+	OriginVendor string
+	// CoefficientMilli is the channel-model price coefficient (1000 = official
+	// price). <= 0 is treated as 1000.
+	CoefficientMilli int64
+	MultiplierMilli  int64     // 倍率千分值, must be 1..1000 (§3.2)
+	At               time.Time // pricing instant = pre-freeze moment (§3.3)
 	InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens int64
 	SearchCount, FetchCount                                      int64
 }
@@ -30,6 +37,7 @@ type QuoteResult struct {
 	PriceVersion                      int64            // token price-book version
 	ToolPriceVersions                 map[string]int64 // item -> version, only for items with count > 0
 	MultiplierMilli                   int64
+	CoefficientMilli                  int64
 	TokenDebit, ToolDebit, TotalDebit Micro
 	OfficialCost                      Micro // same usage at multiplier 1000, for 省了多少 (§3.8)
 }
@@ -54,7 +62,15 @@ func Quote(db *gorm.DB, cal *Calendar, in QuoteInput) (QuoteResult, error) {
 		in.SearchCount < 0 || in.FetchCount < 0 {
 		return QuoteResult{}, fmt.Errorf("%w: quote input counts must be non-negative", ErrMoneyNegative)
 	}
-	pb, err := PriceAt(db, in.Model, in.Vendor, cal.TierAt(in.At), in.At)
+	origin := in.OriginVendor
+	if origin == "" {
+		origin = in.Vendor
+	}
+	coefficient := in.CoefficientMilli
+	if coefficient <= 0 {
+		coefficient = 1000
+	}
+	pb, err := PriceAt(db, in.Model, origin, cal.TierAt(in.At), in.At)
 	if err != nil {
 		return QuoteResult{}, err
 	}
@@ -62,7 +78,7 @@ func Quote(db *gorm.DB, cal *Calendar, in QuoteInput) (QuoteResult, error) {
 	toolVersions := make(map[string]int64, 2)
 	var searchUnit, fetchUnit int64
 	if in.SearchCount > 0 {
-		unit, version, err := PerCallPriceAt(db, in.Vendor, ToolItemSearch, in.At)
+		unit, version, err := PerCallPriceAt(db, origin, ToolItemSearch, in.At)
 		if err != nil {
 			return QuoteResult{}, err
 		}
@@ -70,7 +86,7 @@ func Quote(db *gorm.DB, cal *Calendar, in QuoteInput) (QuoteResult, error) {
 		toolVersions[ToolItemSearch] = version
 	}
 	if in.FetchCount > 0 {
-		unit, version, err := PerCallPriceAt(db, in.Vendor, ToolItemFetch, in.At)
+		unit, version, err := PerCallPriceAt(db, origin, ToolItemFetch, in.At)
 		if err != nil {
 			return QuoteResult{}, err
 		}
@@ -88,11 +104,11 @@ func Quote(db *gorm.DB, cal *Calendar, in QuoteInput) (QuoteResult, error) {
 		{in.SearchCount, searchUnit},
 		{in.FetchCount, fetchUnit},
 	}
-	tokenDebit, err := ceilScaledSum(tokenParts, in.MultiplierMilli, MicroPerMillionTokens*1000)
+	tokenDebit, err := ceilScaledSum(tokenParts, in.MultiplierMilli*coefficient, MicroPerMillionTokens*1000*1000)
 	if err != nil {
 		return QuoteResult{}, err
 	}
-	toolDebit, err := ceilScaledSum(toolParts, in.MultiplierMilli, 1000)
+	toolDebit, err := ceilScaledSum(toolParts, in.MultiplierMilli*coefficient, 1000*1000)
 	if err != nil {
 		return QuoteResult{}, err
 	}

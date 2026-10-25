@@ -55,6 +55,7 @@ describe('key detail preference form', () => {
     block: '',
     only: '',
     allowFallback: true,
+    officialOnly: false,
   }
 
   it('accepts a valid preference form and builds the API body', () => {
@@ -70,6 +71,7 @@ describe('key detail preference form', () => {
       only_seller_id: 0,
       allow_fallback: true,
       rpm: 60,
+      official_only: false,
     })
   })
 
@@ -104,6 +106,7 @@ describe('key detail preference form', () => {
       block: '',
       only: '',
       allowFallback: false,
+      officialOnly: false,
     })
   })
 })

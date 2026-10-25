@@ -24,10 +24,12 @@ import {
 import {
   createListing,
   probeListing,
+  sellerChannelKind,
   sellerListingsQuery,
   squareModelForSeller,
   vendorsQuery,
   type ProbeResult,
+  type SellerVendor,
 } from '@/features/seller/api'
 import { Field, notify, Skeleton, selectClass } from '@/features/seller/components'
 import { probeFailReasonLabel, sellerErrorMessage } from '@/features/seller/errors'
@@ -233,6 +235,75 @@ function ProbeSummary({ probe }: { probe: ProbeResult }) {
   )
 }
 
+function VendorGroup({
+  title,
+  vendors,
+  disabled = false,
+  selectedId,
+  badge,
+  emptyLabel,
+  onSelect,
+}: {
+  title: string
+  vendors: SellerVendor[]
+  disabled?: boolean
+  selectedId: string
+  badge?: string
+  emptyLabel?: string
+  onSelect: (id: string) => void
+}) {
+  return (
+    <div>
+      <h4 className="text-[13px] font-medium text-ink-3">{title}</h4>
+      {vendors.length === 0 ? (
+        <p className="mt-2 text-[13px] leading-5 text-ink-3">{emptyLabel}</p>
+      ) : (
+        <div className="mt-2 grid gap-2 sm:grid-cols-3">
+          {vendors.map((vendor) => {
+            const checked = !disabled && selectedId === vendor.id
+            return (
+              <label
+                key={vendor.id}
+                aria-disabled={disabled || undefined}
+                className={cn(
+                  'flex items-center justify-between gap-3 rounded-md border px-4 py-3.5 transition-colors',
+                  disabled
+                    ? 'cursor-not-allowed border-line bg-bg-soft opacity-70'
+                    : 'cursor-pointer',
+                  checked
+                    ? 'border-brand bg-brand-soft/60'
+                    : !disabled && 'border-line bg-bg hover:border-brand/40',
+                )}
+              >
+                <span className="min-w-0">
+                  <span className="flex items-center gap-1.5">
+                    <span className="block truncate text-[13px] font-medium text-ink">
+                      {vendor.display_name}
+                    </span>
+                    {badge ? <Tag>{badge}</Tag> : null}
+                  </span>
+                  <span className="block truncate tabular-nums text-[13px] text-ink-3">
+                    {vendor.id}
+                  </span>
+                </span>
+                <input
+                  type="radio"
+                  name="vendor_id"
+                  value={vendor.id}
+                  checked={checked}
+                  disabled={disabled}
+                  onChange={() => onSelect(vendor.id)}
+                  className="h-4 w-4 shrink-0 accent-brand"
+                />
+              </label>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function NewListingPage() {
   const toast = useToast()
   const navigate = useNavigate()
@@ -260,10 +331,15 @@ export function NewListingPage() {
   const { fields, append, remove } = useFieldArray({ control: form.control, name: 'hours' })
 
   const vendors = useQuery(vendorsQuery())
-  // The official grid only holds official channels; injected or future
-  // third-party sources arrive through the custom-URL tier, which is not open
-  // yet, so they must never appear as selectable here.
-  const vendorList = (vendors.data ?? []).filter((vendor) => vendor.tier === 'official')
+  // Official and plan channels are selectable; third-party relays are shown
+  // in their own disabled group until the backend opens that tier.
+  const allVendors = vendors.data ?? []
+  const officialVendors = allVendors.filter((vendor) => sellerChannelKind(vendor) === 'official')
+  const planVendors = allVendors.filter((vendor) => sellerChannelKind(vendor) === 'plan')
+  const thirdPartyVendors = allVendors.filter(
+    (vendor) => sellerChannelKind(vendor) === 'third_party',
+  )
+  const vendorList = [...officialVendors, ...planVendors]
   const selectedVendor = vendorList.find((vendor) => vendor.id === values.vendor_id)
   const vendorModels = selectedVendor?.models ?? []
   const vendorHasModels = Boolean(selectedVendor && vendorModels.length > 0)
@@ -271,9 +347,11 @@ export function NewListingPage() {
   const probe = useMutation({
     mutationFn: probeListing,
     onSuccess: (result) => {
-      // The writable catalog is the channel's priced model list; keep only the
-      // models the probe says this key can actually call.
-      const available = result.models.filter((model) => vendorModels.includes(model))
+      // The writable catalog is the channel's certified model list; keep only
+      // the models the probe says this key can actually call. `verified_models`
+      // is the pool contract, `models` the legacy alias.
+      const certified = result.verified_models ?? result.models
+      const available = certified.filter((model) => vendorModels.includes(model))
       form.setValue('models', available, { shouldValidate: true })
     },
   })
@@ -385,7 +463,7 @@ export function NewListingPage() {
   }
 
   const submitError = create.isError ? sellerErrorMessage(create.error) : null
-  const probedModels = probe.data?.models ?? []
+  const probedModels = probe.data?.verified_models ?? probe.data?.models ?? []
 
   return (
     <>
@@ -409,52 +487,6 @@ export function NewListingPage() {
         <div className="pt-5">
           {step === 0 ? (
             <div className="space-y-6">
-              <div>
-                <h3 className="text-[13px] font-medium text-ink">{page.channel.label}</h3>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  <label className="flex cursor-default items-start justify-between gap-3 rounded-md border border-brand bg-brand-soft/60 px-4 py-3.5">
-                    <span className="min-w-0">
-                      <span className="flex items-center gap-2 text-[14px] font-medium text-ink">
-                        {page.channel.official.title}
-                        <Tag tone="brand">{page.channel.official.badge}</Tag>
-                      </span>
-                      <span className="mt-1 block text-[13px] leading-5 text-ink-3">
-                        {page.channel.official.description}
-                      </span>
-                    </span>
-                    <input
-                      type="radio"
-                      name="channel-tier"
-                      checked
-                      readOnly
-                      aria-label={page.channel.official.title}
-                      className="mt-0.5 h-4 w-4 accent-brand"
-                    />
-                  </label>
-                  <div
-                    aria-disabled="true"
-                    className="flex items-start justify-between gap-3 rounded-md border border-line bg-bg-soft px-4 py-3.5 opacity-70"
-                  >
-                    <span className="min-w-0">
-                      <span className="flex items-center gap-2 text-[14px] font-medium text-ink-3">
-                        {page.channel.thirdParty.title}
-                        <Tag>{page.channel.thirdParty.badge}</Tag>
-                      </span>
-                      <span className="mt-1 block text-[13px] leading-5 text-ink-3">
-                        {page.channel.thirdParty.description}
-                      </span>
-                    </span>
-                    <input
-                      type="radio"
-                      name="channel-tier"
-                      disabled
-                      aria-label={page.channel.thirdParty.title}
-                      className="mt-0.5 h-4 w-4 shrink-0 accent-brand"
-                    />
-                  </div>
-                </div>
-              </div>
-
               <Field
                 label={page.vendor.label}
                 hint={page.vendor.hint}
@@ -482,45 +514,39 @@ export function NewListingPage() {
                       </Button>
                     </div>
                   </div>
-                ) : vendorList.length === 0 ? (
+                ) : vendorList.length === 0 && thirdPartyVendors.length === 0 ? (
                   <p className="text-[13px] leading-5 text-ink-3">{page.vendor.empty}</p>
                 ) : (
                   <div
                     role="radiogroup"
                     aria-label={page.vendor.label}
-                    className="grid gap-2 sm:grid-cols-3"
+                    className="space-y-5"
                   >
-                    {vendorList.map((vendor) => {
-                      const checked = values.vendor_id === vendor.id
-                      return (
-                        <label
-                          key={vendor.id}
-                          className={cn(
-                            'flex cursor-pointer items-center justify-between gap-3 rounded-md border px-4 py-3.5 transition-colors',
-                            checked
-                              ? 'border-brand bg-brand-soft/60'
-                              : 'border-line bg-bg hover:border-brand/40',
-                          )}
-                        >
-                          <span className="min-w-0">
-                            <span className="block truncate text-[13px] font-medium text-ink">
-                              {vendor.display_name}
-                            </span>
-                            <span className="block truncate tabular-nums text-[13px] text-ink-3">
-                              {vendor.id}
-                            </span>
-                          </span>
-                          <input
-                            type="radio"
-                            name="vendor_id"
-                            value={vendor.id}
-                            checked={checked}
-                            onChange={() => selectVendor(vendor.id)}
-                            className="h-4 w-4 shrink-0 accent-brand"
-                          />
-                        </label>
-                      )
-                    })}
+                    <VendorGroup
+                      title={page.channel.groups.official}
+                      vendors={officialVendors}
+                      selectedId={values.vendor_id}
+                      badge={page.channel.official.badge}
+                      emptyLabel={page.vendor.groupEmpty}
+                      onSelect={selectVendor}
+                    />
+                    <VendorGroup
+                      title={page.channel.groups.plan}
+                      vendors={planVendors}
+                      selectedId={values.vendor_id}
+                      badge={page.channel.plan.badge}
+                      emptyLabel={page.vendor.groupEmpty}
+                      onSelect={selectVendor}
+                    />
+                    <VendorGroup
+                      title={page.channel.groups.thirdParty}
+                      vendors={thirdPartyVendors}
+                      disabled
+                      selectedId={values.vendor_id}
+                      badge={page.channel.thirdParty.badge}
+                      emptyLabel={page.channel.thirdParty.description}
+                      onSelect={selectVendor}
+                    />
                   </div>
                 )}
               </Field>

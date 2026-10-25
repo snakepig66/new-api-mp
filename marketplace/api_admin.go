@@ -15,6 +15,8 @@ package marketplace
 // (common.ApiSuccess / common.ApiErrorStatus), like api_records.go.
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -65,6 +67,16 @@ func registerAdminRootRoutes(g *gin.RouterGroup) {
 	g.GET("/admin/channel-models", adminListChannelModels)
 	g.PUT("/admin/channel-models", adminPutChannelModel)
 	g.DELETE("/admin/channel-models", adminDeleteChannelModel)
+	// 模型池 / 渠道池 (P1): mp_models / mp_channels / mp_channel_models.
+	g.GET("/admin/pool/models", adminPoolListModels)
+	g.PUT("/admin/pool/models", adminPoolPutModel)
+	g.DELETE("/admin/pool/models", adminPoolDeleteModel)
+	g.GET("/admin/pool/channels", adminPoolListChannels)
+	g.PUT("/admin/pool/channels", adminPoolPutChannel)
+	g.DELETE("/admin/pool/channels", adminPoolDeleteChannel)
+	g.GET("/admin/pool/channel-models", adminPoolListChannelModels)
+	g.PUT("/admin/pool/channel-models", adminPoolPutChannelModel)
+	g.DELETE("/admin/pool/channel-models", adminPoolDeleteChannelModel)
 }
 
 // adminRequireRoot is the L5 defense-in-depth gate for 提现审批 / 冲正 /
@@ -877,4 +889,598 @@ func adminDeleteChannelModel(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, gin.H{"vendor": vendor, "model": model})
+}
+
+// ---------------------------------------------------------------------------
+// 模型池 / 渠道池 (P1) admin API.
+//
+// The DB stores JSON columns as text; these views parse them into real JSON
+// arrays/objects so the console never has to double-decode. No field here ever
+// carries key material.
+// ---------------------------------------------------------------------------
+
+// flexJSON accepts either a JSON value or a string containing that JSON value
+// (the console may send arrays/objects either way). Set records presence so a
+// PUT can distinguish "omitted" from "empty".
+type flexJSON struct {
+	Set bool
+	Raw []byte
+}
+
+func (f *flexJSON) UnmarshalJSON(b []byte) error {
+	f.Set = true
+	trimmed := bytes.TrimSpace(b)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		f.Raw = nil
+		return nil
+	}
+	if trimmed[0] == '"' {
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err != nil {
+			return err
+		}
+		s = strings.TrimSpace(s)
+		if s == "" || s == "null" {
+			f.Raw = nil
+			return nil
+		}
+		f.Raw = []byte(s)
+		return nil
+	}
+	f.Raw = append([]byte(nil), trimmed...)
+	return nil
+}
+
+// flexObjectString validates a flexJSON value as an object (or empty) and
+// returns the text stored in the database.
+func flexObjectString(f flexJSON) (string, error) {
+	if !f.Set || len(f.Raw) == 0 {
+		return "", nil
+	}
+	if !isJSONObject(string(f.Raw)) {
+		return "", errors.New("must be a JSON object")
+	}
+	return string(f.Raw), nil
+}
+
+// flexArrayString validates a flexJSON value as an array (or empty) and
+// returns the text stored in the database.
+func flexArrayString(f flexJSON) (string, error) {
+	if !f.Set || len(f.Raw) == 0 {
+		return "", nil
+	}
+	trimmed := bytes.TrimSpace(f.Raw)
+	if len(trimmed) == 0 || trimmed[0] != '[' || !json.Valid(trimmed) {
+		return "", errors.New("must be a JSON array")
+	}
+	return string(trimmed), nil
+}
+
+// --- views -----------------------------------------------------------------
+
+type adminPoolModelView struct {
+	ID            int64     `json:"id"`
+	Name          string    `json:"name"`
+	OriginVendor  string    `json:"origin_vendor"`
+	ContextLength int       `json:"context_length"`
+	Capabilities  []string  `json:"capabilities"`
+	Aliases       []string  `json:"aliases"`
+	VerifyPrompt  string    `json:"verify_prompt"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+func toAdminPoolModelView(row ModelPool) adminPoolModelView {
+	return adminPoolModelView{
+		ID:            row.ID,
+		Name:          row.Name,
+		OriginVendor:  row.OriginVendor,
+		ContextLength: row.ContextLength,
+		Capabilities:  parseStringList(row.Capabilities),
+		Aliases:       parseStringList(row.Aliases),
+		VerifyPrompt:  row.VerifyPrompt,
+		Status:        row.Status,
+		CreatedAt:     row.CreatedAt,
+		UpdatedAt:     row.UpdatedAt,
+	}
+}
+
+type adminPoolChannelView struct {
+	ID                  int64           `json:"id"`
+	Slug                string          `json:"slug"`
+	Name                string          `json:"name"`
+	Kind                string          `json:"kind"`
+	Protocols           VendorProtocols `json:"protocols"`
+	AllowHostPattern    string          `json:"allow_host_pattern"`
+	KeyPattern          string          `json:"key_pattern"`
+	DenyPaths           []string        `json:"deny_paths"`
+	DenyKeyPrefixes     []string        `json:"deny_key_prefixes"`
+	Adaptor             string          `json:"adaptor"`
+	StripV1Prefix       bool            `json:"strip_v1_prefix"`
+	PassthroughBody     bool            `json:"passthrough_body"`
+	QuotaWindow         map[string]any  `json:"quota_window"`
+	ExhaustionSignature string          `json:"exhaustion_signature"`
+	TermsURL            string          `json:"terms_url"`
+	TermsCheckedAt      *time.Time      `json:"terms_checked_at"`
+	Status              string          `json:"status"`
+	CreatedAt           time.Time       `json:"created_at"`
+	UpdatedAt           time.Time       `json:"updated_at"`
+}
+
+func toAdminPoolChannelView(row ChannelPool) adminPoolChannelView {
+	protocols := VendorProtocols{}
+	if strings.TrimSpace(row.Protocols) != "" {
+		_ = json.Unmarshal([]byte(row.Protocols), &protocols)
+	}
+	return adminPoolChannelView{
+		ID:                  row.ID,
+		Slug:                row.Slug,
+		Name:                row.Name,
+		Kind:                row.Kind,
+		Protocols:           protocols,
+		AllowHostPattern:    row.AllowHostPattern,
+		KeyPattern:          row.KeyPattern,
+		DenyPaths:           parseStringList(row.DenyPaths),
+		DenyKeyPrefixes:     parseStringList(row.DenyKeyPrefixes),
+		Adaptor:             row.Adaptor,
+		StripV1Prefix:       row.StripV1Prefix,
+		PassthroughBody:     row.PassthroughBody,
+		QuotaWindow:         parseJSONObject(row.QuotaWindow),
+		ExhaustionSignature: row.ExhaustionSignature,
+		TermsURL:            row.TermsURL,
+		TermsCheckedAt:      row.TermsCheckedAt,
+		Status:              row.Status,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
+	}
+}
+
+type adminPoolChannelModelView struct {
+	ID               int64          `json:"id"`
+	ChannelSlug      string         `json:"channel_slug"`
+	UpstreamModel    string         `json:"upstream_model"`
+	Model            string         `json:"model"`
+	CoefficientMilli int64          `json:"coefficient_milli"`
+	Differences      map[string]any `json:"differences"`
+	Verified         bool           `json:"verified"`
+	VerifiedAt       *time.Time     `json:"verified_at"`
+	FingerprintRatio float64        `json:"fingerprint_ratio"`
+	Status           string         `json:"status"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
+}
+
+func toAdminPoolChannelModelView(row ChannelModel) adminPoolChannelModelView {
+	return adminPoolChannelModelView{
+		ID:               row.ID,
+		ChannelSlug:      row.ChannelSlug,
+		UpstreamModel:    row.UpstreamModel,
+		Model:            row.Model,
+		CoefficientMilli: row.CoefficientMilli,
+		Differences:      parseJSONObject(row.Differences),
+		Verified:         row.Verified,
+		VerifiedAt:       row.VerifiedAt,
+		FingerprintRatio: row.FingerprintRatio,
+		Status:           row.Status,
+		CreatedAt:        row.CreatedAt,
+		UpdatedAt:        row.UpdatedAt,
+	}
+}
+
+// --- model pool ------------------------------------------------------------
+
+// adminPoolModelRequest is the PUT /admin/pool/models body. Name is required;
+// the other fields are optional, and omitted optional fields are preserved on
+// update.
+type adminPoolModelRequest struct {
+	Name          string   `json:"name"`
+	OriginVendor  string   `json:"origin_vendor"`
+	ContextLength *int     `json:"context_length"`
+	Capabilities  flexJSON `json:"capabilities"`
+	Aliases       flexJSON `json:"aliases"`
+	VerifyPrompt  *string  `json:"verify_prompt"`
+	Status        string   `json:"status"`
+}
+
+// adminPoolListModels serves GET /admin/pool/models.
+func adminPoolListModels(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	rows := ModelPoolAll(db)
+	items := make([]adminPoolModelView, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, toAdminPoolModelView(row))
+	}
+	common.ApiSuccess(c, gin.H{"items": items})
+}
+
+// adminPoolPutModel serves PUT /admin/pool/models — upsert one standard model.
+func adminPoolPutModel(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	var req adminPoolModelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		common.ApiErrorStatus(c, http.StatusBadRequest, ErrModelPoolNameRequired)
+		return
+	}
+	status := strings.TrimSpace(req.Status)
+	if status != "" && status != PoolStatusActive && status != PoolStatusRetired {
+		common.ApiErrorStatus(c, http.StatusBadRequest, ErrModelPoolStatusInvalid)
+		return
+	}
+	capabilities := ""
+	if req.Capabilities.Set {
+		parsed, err := flexArrayString(req.Capabilities)
+		if err != nil {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("capabilities must be a JSON array"))
+			return
+		}
+		capabilities = parsed
+	}
+	aliases := ""
+	if req.Aliases.Set {
+		parsed, err := flexArrayString(req.Aliases)
+		if err != nil {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("aliases must be a JSON array"))
+			return
+		}
+		aliases = parsed
+	}
+
+	row, found := ModelPoolByName(db, name)
+	if !found {
+		row = ModelPool{Name: name, Status: PoolStatusActive}
+	}
+	if req.OriginVendor != "" || !found {
+		row.OriginVendor = strings.TrimSpace(req.OriginVendor)
+	}
+	if req.ContextLength != nil {
+		row.ContextLength = *req.ContextLength
+	}
+	if req.Capabilities.Set {
+		row.Capabilities = capabilities
+	}
+	if req.Aliases.Set {
+		row.Aliases = aliases
+	}
+	if req.VerifyPrompt != nil {
+		row.VerifyPrompt = *req.VerifyPrompt
+	}
+	if status != "" {
+		row.Status = status
+	}
+	if row.Status == "" {
+		row.Status = PoolStatusActive
+	}
+
+	if found {
+		updates := map[string]any{
+			"origin_vendor":  row.OriginVendor,
+			"context_length": row.ContextLength,
+			"capabilities":   row.Capabilities,
+			"aliases":        row.Aliases,
+			"verify_prompt":  row.VerifyPrompt,
+			"status":         row.Status,
+			"updated_at":     time.Now(),
+		}
+		if err := db.Model(&ModelPool{}).Where("id = ?", row.ID).Updates(updates).Error; err != nil {
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to save model"))
+			return
+		}
+		row, _ = ModelPoolByName(db, name)
+	} else if err := db.Create(&row).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to save model"))
+		return
+	}
+	common.ApiSuccess(c, toAdminPoolModelView(row))
+}
+
+// adminPoolDeleteModel serves DELETE /admin/pool/models?name=.
+func adminPoolDeleteModel(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	name := strings.TrimSpace(c.Query("name"))
+	if name == "" {
+		common.ApiErrorStatus(c, http.StatusBadRequest, ErrModelPoolNameRequired)
+		return
+	}
+	if db.Migrator().HasTable(&ChannelModel{}) {
+		var used int64
+		if err := db.Model(&ChannelModel{}).Where("model = ?", name).Count(&used).Error; err != nil {
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query channel models"))
+			return
+		}
+		if used > 0 {
+			common.ApiErrorStatus(c, http.StatusConflict, ErrModelPoolInUse)
+			return
+		}
+	}
+	if err := db.Where("name = ?", name).Delete(&ModelPool{}).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to delete model"))
+		return
+	}
+	common.ApiSuccess(c, gin.H{"name": name})
+}
+
+// --- channel pool ----------------------------------------------------------
+
+// adminPoolChannelRequest is the PUT /admin/pool/channels body (full replace).
+type adminPoolChannelRequest struct {
+	Slug                string     `json:"slug"`
+	Name                string     `json:"name"`
+	Kind                string     `json:"kind"`
+	Protocols           flexJSON   `json:"protocols"`
+	AllowHostPattern    string     `json:"allow_host_pattern"`
+	KeyPattern          string     `json:"key_pattern"`
+	DenyPaths           flexJSON   `json:"deny_paths"`
+	DenyKeyPrefixes     flexJSON   `json:"deny_key_prefixes"`
+	Adaptor             string     `json:"adaptor"`
+	StripV1Prefix       bool       `json:"strip_v1_prefix"`
+	PassthroughBody     bool       `json:"passthrough_body"`
+	QuotaWindow         flexJSON   `json:"quota_window"`
+	ExhaustionSignature string     `json:"exhaustion_signature"`
+	TermsURL            string     `json:"terms_url"`
+	TermsCheckedAt      *time.Time `json:"terms_checked_at"`
+	Status              string     `json:"status"`
+}
+
+// adminPoolListChannels serves GET /admin/pool/channels.
+func adminPoolListChannels(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	rows := ChannelPoolAll(db)
+	items := make([]adminPoolChannelView, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, toAdminPoolChannelView(row))
+	}
+	common.ApiSuccess(c, gin.H{"items": items})
+}
+
+// adminPoolPutChannel serves PUT /admin/pool/channels.
+func adminPoolPutChannel(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	var req adminPoolChannelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	protocols, err := flexObjectString(req.Protocols)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("protocols must be a JSON object"))
+		return
+	}
+	denyPaths, err := flexArrayString(req.DenyPaths)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("deny_paths must be a JSON array"))
+		return
+	}
+	denyKeyPrefixes, err := flexArrayString(req.DenyKeyPrefixes)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("deny_key_prefixes must be a JSON array"))
+		return
+	}
+	quotaWindow, err := flexObjectString(req.QuotaWindow)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("quota_window must be a JSON object"))
+		return
+	}
+	row, err := ChannelPoolCreateOrUpdate(db, ChannelPool{
+		Slug:                req.Slug,
+		Name:                req.Name,
+		Kind:                req.Kind,
+		Protocols:           protocols,
+		AllowHostPattern:    req.AllowHostPattern,
+		KeyPattern:          req.KeyPattern,
+		DenyPaths:           denyPaths,
+		DenyKeyPrefixes:     denyKeyPrefixes,
+		Adaptor:             req.Adaptor,
+		StripV1Prefix:       req.StripV1Prefix,
+		PassthroughBody:     req.PassthroughBody,
+		QuotaWindow:         quotaWindow,
+		ExhaustionSignature: req.ExhaustionSignature,
+		TermsURL:            req.TermsURL,
+		TermsCheckedAt:      req.TermsCheckedAt,
+		Status:              req.Status,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrChannelPoolSlugRequired),
+			errors.Is(err, ErrChannelPoolKindInvalid),
+			errors.Is(err, ErrChannelPoolKeyPatternInvalid),
+			errors.Is(err, ErrChannelPoolStatusInvalid):
+			common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		default:
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to save channel"))
+		}
+		return
+	}
+	common.ApiSuccess(c, toAdminPoolChannelView(row))
+}
+
+// adminPoolDeleteChannel serves DELETE /admin/pool/channels?slug=.
+func adminPoolDeleteChannel(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	slug := strings.TrimSpace(c.Query("slug"))
+	if slug == "" {
+		common.ApiErrorStatus(c, http.StatusBadRequest, ErrChannelPoolSlugRequired)
+		return
+	}
+	if err := ChannelPoolDelete(db, slug); err != nil {
+		switch {
+		case errors.Is(err, ErrChannelPoolInUse):
+			common.ApiErrorStatus(c, http.StatusConflict, ErrChannelPoolInUse)
+		case errors.Is(err, ErrChannelPoolSlugRequired):
+			common.ApiErrorStatus(c, http.StatusBadRequest, ErrChannelPoolSlugRequired)
+		default:
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to delete channel"))
+		}
+		return
+	}
+	common.ApiSuccess(c, gin.H{"slug": slug})
+}
+
+// --- channel models --------------------------------------------------------
+
+// adminPoolChannelModelRequest is the PUT /admin/pool/channel-models body.
+type adminPoolChannelModelRequest struct {
+	ChannelSlug      string   `json:"channel_slug"`
+	UpstreamModel    string   `json:"upstream_model"`
+	Model            string   `json:"model"`
+	CoefficientMilli int64    `json:"coefficient_milli"`
+	Differences      flexJSON `json:"differences"`
+	Verified         *bool    `json:"verified"`
+	Status           string   `json:"status"`
+}
+
+// adminPoolListChannelModels serves GET /admin/pool/channel-models.
+func adminPoolListChannelModels(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	rows := make([]ChannelModel, 0)
+	if err := db.Order("channel_slug ASC").Order("upstream_model ASC").Find(&rows).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query channel models"))
+		return
+	}
+	items := make([]adminPoolChannelModelView, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, toAdminPoolChannelModelView(row))
+	}
+	common.ApiSuccess(c, gin.H{"items": items})
+}
+
+// adminPoolPutChannelModel serves PUT /admin/pool/channel-models.
+func adminPoolPutChannelModel(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	var req adminPoolChannelModelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	differences := ""
+	if req.Differences.Set {
+		parsed, err := flexObjectString(req.Differences)
+		if err != nil {
+			common.ApiErrorStatus(c, http.StatusBadRequest, ErrChannelModelDifferences)
+			return
+		}
+		differences = parsed
+	}
+	slug := strings.TrimSpace(req.ChannelSlug)
+	upstream := strings.TrimSpace(req.UpstreamModel)
+	model := strings.TrimSpace(req.Model)
+
+	// Preserve omitted optional fields from the current row.
+	existing, found := channelModelByUpstream(db, slug, upstream)
+	if !found {
+		existing, found = ChannelModelFor(db, slug, model)
+	}
+	cm := ChannelModel{
+		ChannelSlug:      slug,
+		UpstreamModel:    upstream,
+		Model:            model,
+		CoefficientMilli: req.CoefficientMilli,
+		Differences:      differences,
+		Status:           req.Status,
+	}
+	if req.Verified != nil {
+		cm.Verified = *req.Verified
+	} else if found {
+		cm.Verified = existing.Verified
+	}
+	if !req.Differences.Set && found {
+		cm.Differences = existing.Differences
+	}
+	row, err := UpsertChannelModelPool(db, cm)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrChannelModelConflict):
+			common.ApiErrorStatus(c, http.StatusConflict, ErrChannelModelConflict)
+		case errors.Is(err, ErrChannelModelFieldsRequired),
+			errors.Is(err, ErrChannelModelCoefficient),
+			errors.Is(err, ErrChannelModelStatusInvalid),
+			errors.Is(err, ErrChannelModelDifferences),
+			errors.Is(err, ErrChannelPoolNotFound),
+			errors.Is(err, ErrModelPoolNotFound):
+			common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		default:
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to save channel model"))
+		}
+		return
+	}
+	common.ApiSuccess(c, toAdminPoolChannelModelView(row))
+}
+
+// adminPoolDeleteChannelModel serves DELETE /admin/pool/channel-models.
+func adminPoolDeleteChannelModel(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	slug := strings.TrimSpace(c.Query("channel_slug"))
+	upstream := strings.TrimSpace(c.Query("upstream_model"))
+	if slug == "" || upstream == "" {
+		common.ApiErrorStatus(c, http.StatusBadRequest, ErrChannelModelFieldsRequired)
+		return
+	}
+	if err := DeleteChannelModelPool(db, slug, upstream); err != nil {
+		if errors.Is(err, ErrChannelModelFieldsRequired) {
+			common.ApiErrorStatus(c, http.StatusBadRequest, ErrChannelModelFieldsRequired)
+			return
+		}
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to delete channel model"))
+		return
+	}
+	common.ApiSuccess(c, gin.H{"channel_slug": slug, "upstream_model": upstream})
 }

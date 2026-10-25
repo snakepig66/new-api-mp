@@ -369,3 +369,52 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 - Kimi、智谱、MiniMax 的模型目前没有平台价目，`/vendors` 会返回空 models，向导中不可选；补价目（管理价目表）后即可上架。
 - 火山/百炼的上游模型名种子取自规范示意值（如 `deepseek-v3-2-*`、`deepseek-v3.2*`），上线前需用真实 key 探测并用管理页校正。
 - 第二批量（百炼新加坡、混元、千帆）未启用。
+
+---
+
+## 模型池 / 渠道池（MODEL-CHANNEL-POOL，进行中）
+
+### P1 完成（三张表 + 种子 + 迁移 + 管理 API）
+- `mp_models`（6 个标准模型：deepseek-flash / deepseek-v4-pro / kimi-k2 / glm-5.3 / glm-4.6 / minimax-m2，含别名、能力、验真题）
+- `mp_channels`（8 条：6 官方 + 火山/百炼 Coding Plan，含 key_pattern、quota_window、exhaustion_signature、条款字段）
+- `mp_channel_models`（12 条可卖资格：上游名、价格系数、差异、verified/ratio/status）
+- 迁移幂等：旧 `mp_channel_model_map` → 新表；价目按原厂去重；无映射旧挂单暂停并写 migration probe。
+- 管理 API：`/admin/pool/models|channels|channel-models`（root，CRUD）。
+
+### P2（别名/选路/响应/计费）
+- `ModelPoolResolveAlias` 接入请求入口：glm5.3 / GLM-5.3 / zhipu/glm-5.3 → glm-5.3。
+- 选路只接受 verified+active 的渠道模型与 active 渠道；套餐暂停与「只用官方渠道」开关接入（mp_key_prefs.official_only）。
+- 挂单创建按渠道模型校验（有映射+原厂价目+key_pattern），channel.ModelMapping 写上游名。
+- 计费：Quote 支持 OriginVendor + CoefficientMilli（官方价 × 系数 × 倍率，单次取整），PreFreezeQuote 自动解析。
+- 响应改写器：市场请求的 JSON/SSE 中 `"model"` 从上游名改回标准名（只替换本次登记的上游名，换家时扩充集合）。
+- 运行时渠道来源切到 DB 注册表（30s TTL，随 admin 修改生效）；`MP_EXTRA_VENDORS` 仅 `MP_ENV=test` 生效。
+- 测试：别名、系数减半、未认证不可选、only-official 过滤、响应改写（JSON/SSE/换家）。
+
+### P3 完成（探针 + 指纹抽检）
+- `marketplace/fingerprint.go`：同一 verify prompt 分别打到官方渠道（平台 key，`MP_PLATFORM_KEYS`）与候选渠道，比较 `usage.prompt_tokens`，|ratio-1| ≤ 2% 视为一致；平台 key 缺失时跳过指纹、只做可用性探针。
+- 巡检（每分钟）把 `fingerprint_ok` / `fingerprint_ratio` 写进 probe detail；卖家挂单探针同样回传 `verified_models`（渠道模型认证交集）。
+- 连续 2 次指纹不符 → 暂停挂单（`AutoPauseListing`）；连续 3 次 → 该渠道模型资格置 `banned` 并暂停相关挂单。促销/套餐 key 即使通话成功也会因 tokenizer 差异被抓出。
+
+### P4 完成（key 规则 + 套餐额度 + 只用官方渠道）
+- 挂单只接受 `key_pattern` 命中的 key（如官方 `sk-...`），套餐 key 前缀/路径在存储前拒绝；错误信息只给规则名，不回显 key。
+- 上报错误命中渠道 `exhaustion_signature` → 该渠道全部 live/canary 挂单暂停到下一个 `quota_window` 边界，记录 `pause_reason=plan_quota_exhausted` 与 `previous_status`；窗口到期由每分钟任务自动恢复，不计故障、不扣信用分。
+- 买家 Key 支持 `official_only`：选路只保留 `kind=official` 的渠道模型；控制台 Key 详情可切换，API 校验并持久化。
+
+### P5 完成（前端 + 文档）
+- 广场按标准模型一模型一行：渠道数、最低价、官方价标签；详情页列出各渠道（kind/verified/系数/差异/挂单数/倍率区间）与挂单表。
+- 挂单向导按渠道类型分组：官方渠道可多选（仅 `verified_models`）、套餐渠道标注额度窗口、第三方渠道禁用；渠道切换时模型集合与校验同步。
+- 管理后台新增「模型池」：模型 / 渠道 / 可卖资格三个标签页的增删改查；旧 `/admin/channel-models` 跳转到新页面。
+- `/docs` 快速开始自动列出当前可售模型并链接到详情页；接口描述由模型池数据驱动，不再硬编码渠道清单。
+- `bun run typecheck` + 20 个测试文件 112 项 vitest 全绿。
+
+### 部署与线上验收（2026-10-25 17:56）
+- `site/deploy.sh` 重新构建并部署；重启后 `index.html` 与本地 sha256 一致（`8b0f2fb…`）。
+- `/api/marketplace/vendors`：8 条渠道（6 official + 2 plan），plan 渠道 models 为空（未认证）。
+- `/api/marketplace/square/models`：2 个有官方价模型（`listing_count=0`，`buyer_price_source=official`）；`deepseek-flash` 详情列出 3 个官方渠道（verified、系数 1000）。
+- `/admin/pool`：6 模型 / 8 渠道 / 14 资格；`/models` 列表、`/models/deepseek-flash` 详情、`/seller/listings/new` 渠道分组均正常渲染。
+- 全量后端测试在服务器 Linux 环境通过；本机 Windows 偶发 mock 端口/进程资源问题已确认为环境差异。
+
+### 仍待 P6
+- 需要平台测试 key（`MP_PLATFORM_KEYS` JSON）与卖家 key，实测六家官方渠道 + 火山/百炼 Coding Plan 入池：真实渠道探针、模型指纹、卖家挂单、官方+套餐渠道 E2E。
+- Kimi / 智谱 / MiniMax 尚无官方价目，广场暂不展示；补价目后自动进入。
+- 火山/百炼上游模型名为种子示意值，上线前需用真实 key 校正。

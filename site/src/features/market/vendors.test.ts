@@ -34,6 +34,15 @@ describe('vendor labels', () => {
     expect(vendorLabel('deepseek', lookup)).toBe('深度求索')
   })
 
+  it('prefers the pool kind over the legacy tier', () => {
+    const lookup = toVendorLookup([
+      { id: 'plan-vendor', display_name: '套餐', tier: 'official', kind: 'plan' },
+      { id: 'official-vendor', display_name: '官方', tier: 'third_party', kind: 'official' },
+    ])
+    expect(isOfficialVendor('plan-vendor', lookup)).toBe(false)
+    expect(isOfficialVendor('official-vendor', lookup)).toBe(true)
+  })
+
   it('dedupes and sorts options for the pill row', () => {
     expect(vendorOptions(['zhipu', 'deepseek', 'zhipu', ''])).toEqual([
       { value: 'zhipu', label: '智谱' },

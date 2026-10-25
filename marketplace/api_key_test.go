@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -107,7 +106,7 @@ func newKeyAPIFixture(t *testing.T) *keyAPIFixture {
 // supplier to accept the model (§3.6).
 func (f *keyAPIFixture) addListing(t *testing.T) {
 	t.Helper()
-	key := "sk-api-key-test-listing-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	key := uniqueTestKey("sk-api-key-test-listing")
 	listing, err := CreateListing(f.db, CreateListingInput{
 		SellerID:        f.sellerID,
 		VendorID:        SeedVendorDeepSeek,

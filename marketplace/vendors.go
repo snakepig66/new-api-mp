@@ -7,8 +7,10 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"gorm.io/gorm"
 )
 
 // Vendor describes one whitelisted API supplier (§3.5, OFFICIAL-CHANNELS §1).
@@ -113,6 +115,12 @@ type extraVendorConfig struct {
 // coding plans and reselling them violates the vendor's terms. Sellers cannot
 // submit URLs, so these lists also serve as an invariant guard for future
 // custom-URL listings.
+// vendors is the seed-time whitelist snapshot. The runtime source is the
+// mp_channels pool (MODEL-CHANNEL-POOL): Init reloads it into vendorRegistry,
+// and VendorByID refreshes it at most every registryTTL so admin edits take
+// effect without a restart. This slice remains only as a fallback for code
+// paths that run without a database (unit tests, early startup), so the seed
+// data lives in exactly one place for tests.
 var vendors = []Vendor{
 	{
 		ID:          SeedVendorDeepSeek,
@@ -208,10 +216,98 @@ var vendors = []Vendor{
 
 // extraVendors holds the vendors injected through MP_EXTRA_VENDORS. It is
 // replaced atomically by LoadExtraVendorsFromEnv; readers hold vendorsMu.
+// Extras are a test-only escape hatch (MP_ENV=test, MODEL-CHANNEL-POOL §2).
 var (
 	vendorsMu    sync.RWMutex
 	extraVendors []Vendor
+
+	vendorRegistryMu sync.RWMutex
+	vendorRegistry   map[string]Vendor
+	vendorRegistryDB *gorm.DB
+	vendorRegistryAt time.Time
 )
+
+// vendorRegistryTTL bounds how stale an admin channel edit can be before the
+// next lookup reloads the pool.
+const vendorRegistryTTL = 30 * time.Second
+
+// extraVendorsEnabled reports whether this process may load test vendors.
+func extraVendorsEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("MP_ENV")), "test")
+}
+
+// refreshVendorRegistry reloads the pool channels into the lookup registry.
+// It is a no-op when the database is not initialized (early startup, tests
+// without relayState); callers then fall back to the seed snapshot.
+func refreshVendorRegistry(force bool) {
+	db, _ := relayState()
+	if db == nil {
+		return
+	}
+	vendorRegistryMu.RLock()
+	fresh := !force && vendorRegistryDB == db && len(vendorRegistry) > 0 && time.Since(vendorRegistryAt) < vendorRegistryTTL
+	vendorRegistryMu.RUnlock()
+	if fresh {
+		return
+	}
+	channels := ChannelPoolAll(db)
+	reg := make(map[string]Vendor, len(channels))
+	hosts := make([]string, 0, len(channels))
+	patterns := make([]string, 0, len(channels))
+	for _, ch := range channels {
+		vendor, ok := ChannelPoolAsVendor(db, ch.Slug)
+		if !ok {
+			continue
+		}
+		reg[vendor.ID] = vendor
+		for _, raw := range []string{vendor.BaseURL, vendor.Protocols.OpenAI, vendor.Protocols.Anthropic} {
+			if u, err := url.Parse(raw); err == nil && u.Host != "" && !slices.Contains(hosts, u.Hostname()) {
+				hosts = append(hosts, u.Hostname())
+			}
+		}
+		if vendor.AllowHostPattern != "" && !slices.Contains(patterns, vendor.AllowHostPattern) {
+			patterns = append(patterns, vendor.AllowHostPattern)
+		}
+	}
+	vendorRegistryMu.Lock()
+	vendorRegistry = reg
+	vendorRegistryDB = db
+	vendorRegistryAt = time.Now()
+	vendorRegistryMu.Unlock()
+	// Keep egress in step with admin channel edits. MP_EGRESS_DOMAINS remains
+	// the deployment override; patterns always come from the pool.
+	if os.Getenv("MP_EGRESS_DOMAINS") == "" {
+		SetEgressDomains(hosts)
+	}
+	if err := SetEgressPatterns(patterns); err != nil {
+		common.SysError(common.LogText("marketplace: vendor registry egress patterns: %s", err.Error()))
+	}
+}
+
+// registryVendors returns the DB-backed channels, or nil when the registry has
+// never loaded.
+func registryVendors() []Vendor {
+	vendorRegistryMu.RLock()
+	defer vendorRegistryMu.RUnlock()
+	if len(vendorRegistry) == 0 {
+		return nil
+	}
+	out := make([]Vendor, 0, len(vendorRegistry))
+	// Stable order: registry map iteration would make VendorIDs random.
+	for _, id := range sortedVendorIDs(vendorRegistry) {
+		out = append(out, vendorRegistry[id])
+	}
+	return out
+}
+
+func sortedVendorIDs(reg map[string]Vendor) []string {
+	ids := make([]string, 0, len(reg))
+	for id := range reg {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
+}
 
 // LoadExtraVendorsFromEnv parses MP_EXTRA_VENDORS and replaces the injected
 // vendor list. It is idempotent: calling it repeatedly with the same
@@ -225,6 +321,15 @@ var (
 // base URLs, so the injected hosts pass the §3.11 guard.
 func LoadExtraVendorsFromEnv() error {
 	raw := strings.TrimSpace(os.Getenv(ExtraVendorsEnv))
+	if !extraVendorsEnabled() {
+		vendorsMu.Lock()
+		extraVendors = nil
+		vendorsMu.Unlock()
+		if raw != "" {
+			common.SysLog("marketplace: MP_EXTRA_VENDORS is ignored unless MP_ENV=test (MODEL-CHANNEL-POOL §2)")
+		}
+		return nil
+	}
 	if raw == "" {
 		vendorsMu.Lock()
 		extraVendors = nil
@@ -242,8 +347,8 @@ func LoadExtraVendorsFromEnv() error {
 		if id == "" {
 			return fmt.Errorf("marketplace: %s[%d]: id is required", ExtraVendorsEnv, i)
 		}
-		if builtinVendorByID(id) {
-			return fmt.Errorf("marketplace: %s[%d]: id %q collides with a built-in vendor", ExtraVendorsEnv, i, id)
+		if collidesWithNonExtraChannel(id) {
+			return fmt.Errorf("marketplace: %s[%d]: id %q collides with an existing channel", ExtraVendorsEnv, i, id)
 		}
 		if seen[id] {
 			return fmt.Errorf("marketplace: %s[%d]: duplicate id %q", ExtraVendorsEnv, i, id)
@@ -300,6 +405,39 @@ func LoadExtraVendorsFromEnv() error {
 	return nil
 }
 
+// extraVendorList returns a copy of the test-only extras.
+func extraVendorList() []Vendor {
+	vendorsMu.RLock()
+	defer vendorsMu.RUnlock()
+	return slices.Clone(extraVendors)
+}
+
+// collidesWithNonExtraChannel reports whether id already belongs to the seed
+// snapshot or the DB pool. Extras themselves are excluded, so reloading the
+// same MP_EXTRA_VENDORS payload stays idempotent.
+func collidesWithNonExtraChannel(id string) bool {
+	if builtinVendorByID(id) {
+		return true
+	}
+	refreshVendorRegistry(false)
+	for _, v := range registryVendors() {
+		if v.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// resetVendorRegistryForTest clears the registry so tests that swap databases
+// start from the seed snapshot; it is not used by production code.
+func resetVendorRegistryForTest() {
+	vendorRegistryMu.Lock()
+	vendorRegistry = nil
+	vendorRegistryDB = nil
+	vendorRegistryAt = time.Time{}
+	vendorRegistryMu.Unlock()
+}
+
 // builtinVendorByID reports whether id belongs to the immutable production
 // whitelist. Injected vendors may not shadow it.
 func builtinVendorByID(id string) bool {
@@ -311,35 +449,40 @@ func builtinVendorByID(id string) bool {
 	return false
 }
 
-// VendorByID returns the whitelisted vendor with the given id, first from the
-// production whitelist and then from the MP_EXTRA_VENDORS injection.
-func VendorByID(id string) (Vendor, bool) {
+// vendorSnapshot returns the runtime channel list: the DB pool when it has
+// loaded, plus test-only extras; the seed snapshot only when no database is
+// available (unit tests or very early startup).
+func vendorSnapshot() []Vendor {
+	refreshVendorRegistry(false)
 	vendorsMu.RLock()
-	defer vendorsMu.RUnlock()
-	for _, list := range [][]Vendor{vendors, extraVendors} {
-		for _, v := range list {
-			if v.ID == id {
-				// Copy the slices so callers cannot mutate the whitelist.
-				v.Models = slices.Clone(v.Models)
-				v.DenyPaths = slices.Clone(v.DenyPaths)
-				v.DenyKeyPrefixes = slices.Clone(v.DenyKeyPrefixes)
-				return v, true
-			}
+	extras := slices.Clone(extraVendors)
+	vendorsMu.RUnlock()
+	if list := registryVendors(); len(list) > 0 {
+		return append(list, extras...)
+	}
+	return append(slices.Clone(vendors), extras...)
+}
+
+// VendorByID returns the whitelisted channel with the given id from the DB
+// pool (or the seed snapshot before Init), then the test-only extras.
+func VendorByID(id string) (Vendor, bool) {
+	for _, v := range vendorSnapshot() {
+		if v.ID == id {
+			// Copy the slices so callers cannot mutate the registry.
+			v.Models = slices.Clone(v.Models)
+			v.DenyPaths = slices.Clone(v.DenyPaths)
+			v.DenyKeyPrefixes = slices.Clone(v.DenyKeyPrefixes)
+			return v, true
 		}
 	}
 	return Vendor{}, false
 }
 
-// VendorIDs returns the ids of all whitelisted vendors: built-ins first (in
-// whitelist order), then the injected extras.
+// VendorIDs returns the ids of all channels: pool order, then the extras.
 func VendorIDs() []string {
-	vendorsMu.RLock()
-	defer vendorsMu.RUnlock()
-	ids := make([]string, 0, len(vendors)+len(extraVendors))
-	for _, v := range vendors {
-		ids = append(ids, v.ID)
-	}
-	for _, v := range extraVendors {
+	list := vendorSnapshot()
+	ids := make([]string, 0, len(list))
+	for _, v := range list {
 		ids = append(ids, v.ID)
 	}
 	return ids
@@ -398,35 +541,29 @@ func VendorPathDenied(v Vendor, path string) bool {
 // not set. Extras injected through MP_EXTRA_VENDORS are included, which is why
 // Init loads them first.
 func VendorHosts() []string {
-	vendorsMu.RLock()
-	defer vendorsMu.RUnlock()
-	hosts := make([]string, 0, (len(vendors)+len(extraVendors))*2)
+	list := vendorSnapshot()
+	hosts := make([]string, 0, len(list)*2)
 	appendHost := func(raw string) {
 		if u, err := url.Parse(raw); err == nil && u.Host != "" && !slices.Contains(hosts, u.Hostname()) {
 			hosts = append(hosts, u.Hostname())
 		}
 	}
-	for _, list := range [][]Vendor{vendors, extraVendors} {
-		for _, v := range list {
-			appendHost(v.BaseURL)
-			appendHost(v.Protocols.OpenAI)
-			appendHost(v.Protocols.Anthropic)
-		}
+	for _, v := range list {
+		appendHost(v.BaseURL)
+		appendHost(v.Protocols.OpenAI)
+		appendHost(v.Protocols.Anthropic)
 	}
 	return hosts
 }
 
-// VendorHostPatterns returns the strict subdomain patterns vendors declare
+// VendorHostPatterns returns the strict subdomain patterns channels declare
 // (Bailian workspace domains). Egress consults them after the exact host list.
 func VendorHostPatterns() []string {
-	vendorsMu.RLock()
-	defer vendorsMu.RUnlock()
-	patterns := make([]string, 0, len(vendors)+len(extraVendors))
-	for _, list := range [][]Vendor{vendors, extraVendors} {
-		for _, v := range list {
-			if v.AllowHostPattern != "" && !slices.Contains(patterns, v.AllowHostPattern) {
-				patterns = append(patterns, v.AllowHostPattern)
-			}
+	list := vendorSnapshot()
+	patterns := make([]string, 0, len(list))
+	for _, v := range list {
+		if v.AllowHostPattern != "" && !slices.Contains(patterns, v.AllowHostPattern) {
+			patterns = append(patterns, v.AllowHostPattern)
 		}
 	}
 	return patterns

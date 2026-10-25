@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { queryClient } from '@/lib/query-client'
 
-import { normalizePayout, vendorName, vendorsQuery, type SellerVendor } from './api'
+import { normalizePayout, sellerChannelKind, vendorName, vendorsQuery, type SellerVendor } from './api'
 
 const deepseek: SellerVendor = {
   id: 'deepseek',
@@ -58,6 +58,14 @@ describe('normalizePayout', () => {
     expect(payout.amount_micro).toBe('50000000')
     expect(payout.status).toBe('paid')
     expect(payout.created_at).toBe('1700000000')
+  })
+})
+
+describe('sellerChannelKind', () => {
+  it('prefers kind and falls back to the legacy tier field', () => {
+    expect(sellerChannelKind({ ...deepseek, kind: 'plan' })).toBe('plan')
+    expect(sellerChannelKind(deepseek)).toBe('official')
+    expect(sellerChannelKind({ ...deepseek, tier: 'third_party' })).toBe('third_party')
   })
 })
 

@@ -12,6 +12,12 @@ import { api } from '@/lib/api'
 
 export type MarketTier = 'peak' | 'offpeak' | 'flat'
 
+/** Channel pool kind: official vendor, subscription plan, or third-party relay. */
+export type ChannelKind = 'official' | 'plan' | 'third_party'
+
+/** Where the buyer-facing price came from when no market supply exists. */
+export type BuyerPriceSource = 'market' | 'official'
+
 export interface SquareTierPrices {
   input_micro_per_mtok: number | string
   output_micro_per_mtok: number | string
@@ -20,7 +26,10 @@ export interface SquareTierPrices {
 }
 
 export interface SquareModel {
+  /** One row per standard model; upstream channels are aggregated behind it. */
   model: string
+  /** Original vendor (原厂) used for the vendor pills and price books. */
+  origin_vendor: string
   vendor: string
   tier: MarketTier
   tier_label: string
@@ -28,7 +37,26 @@ export interface SquareModel {
   /** RFC 3339 timestamp, or null when the calendar has no switch ahead. */
   next_switch: string | null
   listing_count: number
+  /** Number of distinct channels currently serving this model. */
+  channel_count: number
+  /** `official` when prices are the official price book (no market supply). */
+  buyer_price_source: BuyerPriceSource
   generated_at: string
+}
+
+/** One grouped channel listing on the model detail page. */
+export interface SquareChannel {
+  channel_slug: string
+  name: string
+  kind: ChannelKind
+  verified: boolean
+  /** 1000 = ×1.0, applied to the standard model price. */
+  coefficient_milli: number
+  /** Capability deltas versus the official version, e.g. context length, vision. */
+  differences: Record<string, unknown>
+  listing_count: number
+  min_multiplier_milli: number
+  max_multiplier_milli: number
 }
 
 export interface SquareModelDetail extends SquareModel {
@@ -37,6 +65,7 @@ export interface SquareModelDetail extends SquareModel {
   official_prices: Partial<
     Record<MarketTier, SquareTierPrices & { version: number }>
   >
+  channels: SquareChannel[]
 }
 
 export const squareModelsQuery = () =>

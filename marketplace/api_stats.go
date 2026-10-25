@@ -24,6 +24,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -184,7 +185,9 @@ type publicStats struct {
 	// TodayRequests is the number of mp_requests rows dated today
 	// (Asia/Shanghai), including failed requests.
 	TodayRequests int64 `json:"today_requests"`
-	// PlatformModels is the number of distinct models in the price book.
+	// PlatformModels is the number of active standard models (mp_models)
+	// whose origin vendor has an official price book — the same set the
+	// square can advertise (MODEL-CHANNEL-POOL P5).
 	PlatformModels int64     `json:"platform_models"`
 	GeneratedAt    time.Time `json:"generated_at"`
 }
@@ -280,9 +283,30 @@ func computePublicStats(db *gorm.DB, now time.Time) (publicStats, error) {
 		return publicStats{}, err
 	}
 
-	if err := db.Model(&PriceBook{}).Distinct("model").Count(&stats.PlatformModels).Error; err != nil {
+	// 平台模型数: active standard models with an official price book under
+	// their origin vendor. Counting raw price-book models would include
+	// legacy vendor-side duplicates that have no standard-model row.
+	pool, err := loadActiveModelPool(db)
+	if err != nil {
 		return publicStats{}, err
 	}
+	var platformModels int64
+	for _, model := range pool {
+		origin := strings.TrimSpace(model.OriginVendor)
+		if origin == "" {
+			origin = model.Name
+		}
+		var priced int64
+		if err := db.Model(&PriceBook{}).
+			Where("model = ? AND vendor = ?", model.Name, origin).
+			Count(&priced).Error; err != nil {
+			return publicStats{}, err
+		}
+		if priced > 0 {
+			platformModels++
+		}
+	}
+	stats.PlatformModels = platformModels
 	return stats, nil
 }
 

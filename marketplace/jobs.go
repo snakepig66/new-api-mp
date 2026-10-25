@@ -13,6 +13,7 @@ import (
 	"context"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -31,6 +32,9 @@ const (
 	jobPatrolIntervalDefault = 30 * time.Minute
 	// jobCalendarInterval is the holiday-calendar reload cadence (§3.3 后台可改).
 	jobCalendarInterval = time.Hour
+	// jobPlanWindowInterval is the plan quota-window resume scan cadence
+	// (MODEL-CHANNEL-POOL §4: 窗口重置后自动恢复).
+	jobPlanWindowInterval = time.Minute
 
 	// canaryMaturity is how long a listing must have been in canary before it
 	// is eligible for promotion (§3.5 建单满 24h).
@@ -79,6 +83,19 @@ func StartJobs(db *gorm.DB, stop <-chan struct{}) {
 			if err := cal.Reload(db); err != nil {
 				common.SysError(common.LogText("marketplace: reload-calendar job: %s", err.Error()))
 			}
+		}
+	})
+	// MODEL-CHANNEL-POOL §4: restore plan-channel listings whose quota window
+	// has reset. The job only touches plan_quota_exhausted pauses; other pause
+	// reasons and bans are left alone.
+	go runJobLoop("plan-window-resume", jobPlanWindowInterval, stop, func() {
+		n, err := ResumePlanListings(db, time.Now())
+		if err != nil {
+			common.SysError(common.LogText("marketplace: plan-window-resume job: %s", err.Error()))
+			return
+		}
+		if n > 0 {
+			common.SysLog(common.LogText("marketplace: plan-window-resume job: resumed %d listings", n))
 		}
 	})
 }
@@ -190,6 +207,10 @@ func patrolLiveListings(db *gorm.DB, now time.Time) error {
 
 // patrolOneListing verifies one live listing's key and records a patrol probe;
 // a failed check auto-pauses the listing (§3.5 巡检失败 → AutoPauseListing).
+// When a platform key exists for the model's origin vendor, it also runs the
+// tokenizer fingerprint against the official endpoint: two consecutive
+// mismatches pause the listing, three ban the channel-model qualification
+// (MODEL-CHANNEL-POOL §4).
 func patrolOneListing(db *gorm.DB, limiter *VerifyLimiter, l *Listing) error {
 	apiKey, err := DecryptListingKey(l.KeyCiphertext)
 	if err != nil {
@@ -200,28 +221,65 @@ func patrolOneListing(db *gorm.DB, limiter *VerifyLimiter, l *Listing) error {
 	if err := limiter.Acquire(ctx); err != nil {
 		return err
 	}
-	vendor, ok := VendorByID(l.Vendor)
+	vendor, ok := lookupVendorForDB(db, l.Vendor)
 	if !ok {
 		limiter.Release()
 		return ErrVendorNotWhitelisted
 	}
+	modelName := ""
 	probeModel := ""
 	for _, m := range l.Models {
-		if upstream, mapped := ChannelModelResolve(db, l.Vendor, m); mapped {
-			probeModel = upstream
+		if cm, mapped := ChannelModelFor(db, l.Vendor, m); mapped {
+			modelName = m
+			probeModel = cm.UpstreamModel
 			break
 		}
 	}
 	res := VerifyListingKeyWithModel(ctx, EgressHTTPClient(), vendor, apiKey, probeModel)
+	// Fingerprint spot check (only when the platform holds a key for the
+	// origin vendor). A mismatch is not a key failure; it is counted below.
+	fingerprintChecked := false
+	fingerprintOK := true
+	fingerprintRatio := 0.0
+	fingerprintReason := ""
+	if res.OK && modelName != "" {
+		if model, found := ModelPoolByName(db, modelName); found {
+			if officialKey, hasKey := PlatformKeyForVendor(model.OriginVendor); hasKey {
+				if officialVendor, foundVendor := lookupVendorForDB(db, model.OriginVendor); foundVendor {
+					officialUpstream := model.Name
+					if cm, foundCM := ChannelModelFor(db, model.OriginVendor, model.Name); foundCM {
+						officialUpstream = cm.UpstreamModel
+					}
+					prompt := model.VerifyPrompt
+					if strings.TrimSpace(prompt) == "" {
+						prompt = defaultFingerprintPrompt
+					}
+					fp := CompareFingerprint(ctx, EgressHTTPClient(),
+						officialVendor, officialKey, officialUpstream,
+						vendor, apiKey, probeModel, prompt)
+					fingerprintChecked = true
+					fingerprintOK = fp.WithinTolerance
+					fingerprintRatio = fp.Ratio
+					fingerprintReason = fp.FailReason
+				}
+			}
+		}
+	}
 	limiter.Release()
 
-	detail, err := common.Marshal(map[string]any{
+	detailMap := map[string]any{
 		"key_valid":    res.KeyValid,
 		"models":       len(res.Models),
 		"has_balance":  res.BalanceMicro != nil,
 		"prompt_cache": res.PromptCacheSupport,
 		"fail_reason":  res.FailReason,
-	})
+	}
+	if fingerprintChecked {
+		detailMap["fingerprint_ok"] = fingerprintOK
+		detailMap["fingerprint_ratio"] = fingerprintRatio
+		detailMap["fingerprint_reason"] = fingerprintReason
+	}
+	detail, err := common.Marshal(detailMap)
 	if err != nil {
 		detail = []byte("{}")
 	}
@@ -238,6 +296,33 @@ func patrolOneListing(db *gorm.DB, limiter *VerifyLimiter, l *Listing) error {
 	if !res.OK {
 		// §3.5 巡检失败 → 自动暂停. reason carries semantics only (§2.3).
 		return AutoPauseListing(db, l.ID, "patrol failed: "+res.FailReason)
+	}
+	if fingerprintChecked && !fingerprintOK {
+		var recent []Probe
+		if err := db.Where("listing_id = ? AND type = ?", l.ID, ProbeTypePatrol).
+			Order("id DESC").Limit(3).Find(&recent).Error; err != nil {
+			return err
+		}
+		consecutive := 0
+		for i := range recent {
+			if strings.Contains(recent[i].Detail, `"fingerprint_ok":false`) {
+				consecutive++
+				continue
+			}
+			break
+		}
+		switch {
+		case consecutive >= 3:
+			// Three strikes: the qualification itself is untrustworthy.
+			if err := db.Model(&ChannelModel{}).
+				Where("channel_slug = ? AND model = ?", l.Vendor, modelName).
+				Update("status", PoolStatusBanned).Error; err != nil {
+				return err
+			}
+			return AutoPauseListing(db, l.ID, "fingerprint mismatch (3 consecutive): channel model banned")
+		case consecutive >= 2:
+			return AutoPauseListing(db, l.ID, "fingerprint mismatch (2 consecutive)")
+		}
 	}
 	return nil
 }

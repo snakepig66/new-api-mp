@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -32,6 +33,9 @@ var (
 	// ErrVendorModelUnpriced refuses a model without an official price book
 	// for this vendor (cloud-hosted models are priced at the original price).
 	ErrVendorModelUnpriced = errors.New("marketplace: model has no price book for this vendor")
+	// ErrVendorKeyPattern refuses a key that does not match the channel's
+	// key_pattern (plan keys pasted into the wrong channel).
+	ErrVendorKeyPattern = errors.New("marketplace: key does not match this channel's key pattern")
 )
 
 const (
@@ -58,13 +62,13 @@ type CreateListingInput struct {
 	Hours           string   // JSON windows; empty = all day
 }
 
-// validate checks every field that does not need the database and returns
-// the whitelisted vendor. Errors name the offending field but never echo the
-// API key.
-func (in CreateListingInput) validate() (Vendor, error) {
-	vendor, ok := VendorByID(in.VendorID)
-	if !ok {
-		return Vendor{}, fmt.Errorf("%w: %q", ErrVendorNotWhitelisted, in.VendorID)
+// validate checks every field that does not need the database. The vendor is
+// resolved by the caller from the pool (or the test-only registry fallback) so
+// this method never depends on global state. Errors name the offending field
+// but never echo the API key.
+func (in CreateListingInput) validate(vendor Vendor) (Vendor, error) {
+	if strings.TrimSpace(in.VendorID) == "" {
+		return Vendor{}, fmt.Errorf("%w: empty id", ErrVendorNotWhitelisted)
 	}
 	if in.SellerID <= 0 {
 		return Vendor{}, errors.New("marketplace: seller id is required")
@@ -126,7 +130,11 @@ func dedupModels(models []string) []string {
 // column holds only the "mp-managed:<fp8>" placeholder — the real key lives
 // solely in Listing.KeyCiphertext.
 func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
-	vendor, err := in.validate()
+	vendor, ok := lookupVendorForDB(db, in.VendorID)
+	if !ok {
+		return Listing{}, fmt.Errorf("%w: %q", ErrVendorNotWhitelisted, in.VendorID)
+	}
+	vendor, err := in.validate(vendor)
 	if err != nil {
 		return Listing{}, err
 	}
@@ -140,26 +148,38 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 	}
 	models := dedupModels(in.Models)
 
-	// OFFICIAL-CHANNELS §3: a cloud-hosted model may only be listed when the
-	// vendor has a channel_model_map row for it (the platform standard id maps
-	// to the vendor's upstream name) and the official price book covers that
-	// (model, vendor). Both are admin-editable; nothing here guesses a name.
+	// MODEL-CHANNEL-POOL §3.2: a listing may only include certified,
+	// sellable channel-model pairs, and the official price book must cover the
+	// standard model under its original vendor. Admin-editable; nothing here
+	// guesses a name.
 	channelMapping := make(map[string]string, len(models))
 	for _, m := range models {
-		upstream, ok := ChannelModelResolve(db, vendor.ID, m)
+		cm, ok := VerifiedChannelModelFor(db, vendor.ID, m)
 		if !ok {
-			return Listing{}, fmt.Errorf("%w: %q has no upstream mapping for vendor %q", ErrVendorModelUnmapped, m, vendor.ID)
+			return Listing{}, fmt.Errorf("%w: %q has no certified upstream on channel %q", ErrVendorModelUnmapped, m, vendor.ID)
+		}
+		origin := vendor.ID
+		if model, found := ModelPoolByName(db, m); found && strings.TrimSpace(model.OriginVendor) != "" {
+			origin = model.OriginVendor
 		}
 		var priced int64
 		if err := db.Model(&PriceBook{}).
-			Where("model = ? AND vendor = ? AND effective_at <= ?", m, vendor.ID, time.Now()).
+			Where("model = ? AND vendor = ? AND effective_at <= ?", m, origin, time.Now()).
 			Count(&priced).Error; err != nil {
 			return Listing{}, err
 		}
 		if priced == 0 {
-			return Listing{}, fmt.Errorf("%w: %q has no official price for vendor %q", ErrVendorModelUnpriced, m, vendor.ID)
+			return Listing{}, fmt.Errorf("%w: %q has no official price", ErrVendorModelUnpriced, m)
 		}
-		channelMapping[m] = upstream
+		channelMapping[m] = cm.UpstreamModel
+	}
+	// Plan channels carry a key pattern; an official-plan key pasted into the
+	// wrong channel is rejected before it is encrypted (MODEL-CHANNEL-POOL §4).
+	if channel, ok := ChannelPoolBySlug(db, vendor.ID); ok && strings.TrimSpace(channel.KeyPattern) != "" {
+		re, err := regexp.Compile(channel.KeyPattern)
+		if err == nil && !re.MatchString(in.APIKey) {
+			return Listing{}, ErrVendorKeyPattern
+		}
 	}
 
 	var listing Listing

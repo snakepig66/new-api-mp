@@ -190,6 +190,7 @@ export async function createKey(input: CreateKeyInput): Promise<CreateKeyResult>
       only_seller_id: 0,
       allow_fallback: false,
       rpm: 0,
+      official_only: false,
     })
   } catch {
     prefSaved = false

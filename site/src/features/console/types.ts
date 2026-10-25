@@ -55,6 +55,8 @@ export interface KeyPref {
   only_seller_id: number
   allow_fallback: boolean
   rpm: number
+  /** Route only through official-kind channels. */
+  official_only: boolean
   models: KeyModel[]
 }
 
@@ -151,6 +153,7 @@ export interface KeyPrefInput {
   only_seller_id: number
   allow_fallback: boolean
   rpm: number
+  official_only: boolean
 }
 
 export interface CreateKeyInput {

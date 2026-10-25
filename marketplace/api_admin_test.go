@@ -723,3 +723,270 @@ func TestAdminChannelModelsAPI(t *testing.T) {
 	w = f.do(t, http.MethodDelete, path+"?vendor=test-vendor", nil, f.adminID)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+// ---------------------------------------------------------------------------
+// 模型池 / 渠道池 admin API (P1)
+// ---------------------------------------------------------------------------
+
+// requirePoolSeed migrates and seeds the pool tables on an admin fixture. The
+// shared fixture intentionally does not own this step (it is an Init concern),
+// so each pool test asks for it explicitly.
+func requirePoolSeed(t *testing.T, f *adminAPIFixture) {
+	t.Helper()
+	require.NoError(t, MigrateModelChannelPool(f.db))
+	require.NoError(t, SeedModelChannelPool(f.db))
+}
+
+// TestAdminPoolModelsAPI covers GET/PUT/DELETE of /admin/pool/models.
+func TestAdminPoolModelsAPI(t *testing.T) {
+	f := newAdminAPIFixture(t)
+	requirePoolSeed(t, f)
+	const path = "/api/marketplace/admin/pool/models"
+
+	w := f.do(t, http.MethodGet, path, nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	items, ok := decodeAdminBody(t, w)["data"].(map[string]any)["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, len(modelPoolSeeds))
+	first := items[0].(map[string]any)
+	assert.Contains(t, first, "capabilities")
+	assert.Contains(t, first, "aliases")
+	assert.IsType(t, []any{}, first["capabilities"], "arrays are parsed for the console")
+
+	// Create a new model.
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"name": "pool-test-model", "origin_vendor": "custom",
+		"context_length": 4096, "capabilities": []string{"text"},
+		"aliases": []string{"pool-test-alias"},
+	}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	row := decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.Equal(t, "pool-test-model", row["name"])
+	assert.Equal(t, "custom", row["origin_vendor"])
+	assert.EqualValues(t, 4096, row["context_length"])
+	assert.Equal(t, []any{"text"}, row["capabilities"])
+	assert.Equal(t, []any{"pool-test-alias"}, row["aliases"])
+
+	// Update: omitted fields (capabilities) are preserved, aliases may be
+	// provided as a JSON string.
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"name": "pool-test-model", "context_length": 8192,
+		"aliases": `["renamed-alias"]`, "status": "retired",
+	}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	row = decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.EqualValues(t, 8192, row["context_length"])
+	assert.Equal(t, "custom", row["origin_vendor"], "omitted origin_vendor is preserved")
+	assert.Equal(t, []any{"text"}, row["capabilities"], "omitted capabilities are preserved")
+	assert.Equal(t, []any{"renamed-alias"}, row["aliases"], "JSON-string arrays are accepted")
+	assert.Equal(t, "retired", row["status"])
+
+	// Validation failures.
+	w = f.do(t, http.MethodPut, path, map[string]any{"origin_vendor": "x"}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	w = f.do(t, http.MethodPut, path, map[string]any{"name": "pool-test-model", "status": "bogus"}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"name": "pool-test-model", "capabilities": map[string]any{"x": 1},
+	}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// A referenced model cannot be deleted.
+	w = f.do(t, http.MethodDelete, path+"?name=glm-5.3", nil, f.adminID)
+	assert.Equal(t, http.StatusConflict, w.Code)
+	_, ok = ModelPoolByName(f.db, "glm-5.3")
+	assert.True(t, ok)
+
+	// Unreferenced model deletion succeeds; a missing name is a 400.
+	w = f.do(t, http.MethodDelete, path+"?name=pool-test-model", nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	_, ok = ModelPoolByName(f.db, "pool-test-model")
+	assert.False(t, ok)
+	w = f.do(t, http.MethodDelete, path, nil, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// Root-only + auth.
+	nonRoot := common.RoleAdminUser
+	w = f.doRole(t, http.MethodGet, path, nil, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	w = f.doRole(t, http.MethodPut, path, map[string]any{"name": "x"}, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	w = f.do(t, http.MethodGet, path, nil, 0)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// TestAdminPoolChannelsAPI covers GET/PUT/DELETE of /admin/pool/channels.
+func TestAdminPoolChannelsAPI(t *testing.T) {
+	f := newAdminAPIFixture(t)
+	requirePoolSeed(t, f)
+	const path = "/api/marketplace/admin/pool/channels"
+
+	w := f.do(t, http.MethodGet, path, nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	items, ok := decodeAdminBody(t, w)["data"].(map[string]any)["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, len(channelPoolSeeds))
+
+	// Create with an object protocols/quota_window and JSON-string deny lists.
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"slug": "pool-test-channel", "name": "Pool Test", "kind": "third_party",
+		"protocols":        map[string]any{"openai": "https://example.com/v1", "anthropic": "https://example.com/anthropic"},
+		"deny_paths":       `["/a","/b"]`,
+		"key_pattern":      "^sk-",
+		"strip_v1_prefix":  true,
+		"passthrough_body": true,
+		"quota_window":     map[string]any{"period_seconds": 3600},
+		"status":           "active",
+	}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	row := decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.Equal(t, "pool-test-channel", row["slug"])
+	protocols := row["protocols"].(map[string]any)
+	assert.Equal(t, "https://example.com/v1", protocols["openai"])
+	assert.Equal(t, []any{"/a", "/b"}, row["deny_paths"])
+	assert.Equal(t, true, row["strip_v1_prefix"])
+	assert.EqualValues(t, 3600, row["quota_window"].(map[string]any)["period_seconds"])
+
+	// Update in place; protocols may be a JSON string.
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"slug": "pool-test-channel", "name": "Pool Test 2", "kind": "official",
+		"protocols": `{"openai":"https://example.org/v1"}`,
+	}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	row = decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.Equal(t, "official", row["kind"])
+	assert.Equal(t, "https://example.org/v1", row["protocols"].(map[string]any)["openai"])
+	var cnt int64
+	require.NoError(t, f.db.Model(&ChannelPool{}).Where("slug = ?", "pool-test-channel").Count(&cnt).Error)
+	assert.EqualValues(t, 1, cnt)
+
+	// Validation failures.
+	w = f.do(t, http.MethodPut, path, map[string]any{"slug": "x", "kind": "bogus"}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	w = f.do(t, http.MethodPut, path, map[string]any{"slug": "x", "kind": "official", "key_pattern": "["}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"slug": "x", "kind": "official", "deny_paths": map[string]any{"a": 1},
+	}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	w = f.do(t, http.MethodPut, path, map[string]any{"name": "no slug", "kind": "official"}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// A channel referenced by a listing cannot be deleted.
+	_ = f.addAdminListing(t, ListingLive) // vendor deepseek
+	w = f.do(t, http.MethodDelete, path+"?slug=deepseek", nil, f.adminID)
+	assert.Equal(t, http.StatusConflict, w.Code)
+	_, ok = ChannelPoolBySlug(f.db, "deepseek")
+	assert.True(t, ok)
+
+	// Unreferenced channel deletion succeeds.
+	w = f.do(t, http.MethodDelete, path+"?slug=pool-test-channel", nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	_, ok = ChannelPoolBySlug(f.db, "pool-test-channel")
+	assert.False(t, ok)
+
+	w = f.do(t, http.MethodDelete, path, nil, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// Root-only + auth.
+	nonRoot := common.RoleAdminUser
+	w = f.doRole(t, http.MethodPut, path, map[string]any{"slug": "x", "kind": "official"}, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	w = f.doRole(t, http.MethodGet, path, nil, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	w = f.do(t, http.MethodGet, path, nil, 0)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// TestAdminPoolChannelModelsAPI covers GET/PUT/DELETE of
+// /admin/pool/channel-models.
+func TestAdminPoolChannelModelsAPI(t *testing.T) {
+	f := newAdminAPIFixture(t)
+	requirePoolSeed(t, f)
+	const path = "/api/marketplace/admin/pool/channel-models"
+
+	w := f.do(t, http.MethodGet, path, nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	items, ok := decodeAdminBody(t, w)["data"].(map[string]any)["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, len(poolChannelModelSeeds))
+
+	// Update an existing qualification; omitted verified/differences survive.
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"channel_slug": "deepseek", "upstream_model": "deepseek-flash",
+		"model": "deepseek-flash", "coefficient_milli": 900,
+	}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	row := decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.EqualValues(t, 900, row["coefficient_milli"])
+	assert.Equal(t, true, row["verified"], "omitted verified is preserved")
+
+	// Both conflict directions.
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"channel_slug": "deepseek", "upstream_model": "deepseek-flash",
+		"model": "glm-5.3", "coefficient_milli": 1000,
+	}, f.adminID)
+	assert.Equal(t, http.StatusConflict, w.Code)
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"channel_slug": "deepseek", "upstream_model": "deepseek-flash-v2",
+		"model": "deepseek-flash", "coefficient_milli": 1000,
+	}, f.adminID)
+	assert.Equal(t, http.StatusConflict, w.Code)
+
+	// Validation failures.
+	for _, coefficient := range []int64{0, 10001} {
+		w = f.do(t, http.MethodPut, path, map[string]any{
+			"channel_slug": "deepseek", "upstream_model": "glm-5.3-preview",
+			"model": "glm-5.3", "coefficient_milli": coefficient,
+		}, f.adminID)
+		assert.Equal(t, http.StatusBadRequest, w.Code, "coefficient %d", coefficient)
+	}
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"channel_slug": "no-such", "upstream_model": "up", "model": "glm-5.3",
+		"coefficient_milli": 1000,
+	}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"channel_slug": "deepseek", "upstream_model": "glm-5.3-preview", "model": "no-such-model",
+		"coefficient_milli": 1000,
+	}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"channel_slug": "deepseek", "upstream_model": "glm-5.3-preview", "model": "glm-5.3",
+		"coefficient_milli": 1000, "differences": []string{"not", "an", "object"},
+	}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// Valid create, then delete.
+	w = f.do(t, http.MethodPut, path, map[string]any{
+		"channel_slug": "deepseek", "upstream_model": "glm-5.3-preview", "model": "glm-5.3",
+		"coefficient_milli": 1000, "verified": true, "differences": map[string]any{"context_length": 64000},
+	}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	row = decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.Equal(t, true, row["verified"])
+	assert.EqualValues(t, 64000, row["differences"].(map[string]any)["context_length"])
+	require.EqualValues(t, len(poolChannelModelSeeds)+1, countRows(t, f.db, &ChannelModel{}))
+
+	w = f.do(t, http.MethodDelete, path+"?channel_slug=deepseek&upstream_model=glm-5.3-preview", nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	_, ok = channelModelByUpstream(f.db, "deepseek", "glm-5.3-preview")
+	assert.False(t, ok)
+	// Repeating the delete is fine (idempotent).
+	w = f.do(t, http.MethodDelete, path+"?channel_slug=deepseek&upstream_model=glm-5.3-preview", nil, f.adminID)
+	assert.Equal(t, http.StatusOK, w.Code)
+	w = f.do(t, http.MethodDelete, path+"?channel_slug=deepseek", nil, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// Root-only + auth.
+	nonRoot := common.RoleAdminUser
+	w = f.doRole(t, http.MethodPut, path, map[string]any{
+		"channel_slug": "deepseek", "upstream_model": "deepseek-flash",
+		"model": "deepseek-flash", "coefficient_milli": 1000,
+	}, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	w = f.doRole(t, http.MethodDelete, path+"?channel_slug=deepseek&upstream_model=deepseek-flash", nil, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	w = f.do(t, http.MethodGet, path, nil, 0)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}

@@ -113,14 +113,7 @@ func SeedChannelModelMap(db *gorm.DB) error {
 	// gateway) are env-configured test sources: their model ids are already
 	// the upstream names, so seed an identity mapping. This keeps the listing
 	// validation uniform without hard-coding an unofficial vendor here.
-	for _, vendorID := range VendorIDs() {
-		if builtinVendorByID(vendorID) {
-			continue
-		}
-		vendor, ok := VendorByID(vendorID)
-		if !ok {
-			continue
-		}
+	for _, vendor := range extraVendorList() {
 		for _, model := range vendor.Models {
 			var cnt int64
 			if err := db.Model(&ChannelModelMap{}).

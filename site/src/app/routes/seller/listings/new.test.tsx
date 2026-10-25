@@ -18,6 +18,7 @@ const vendors = [
     id: 'deepseek',
     display_name: 'DeepSeek',
     tier: 'official',
+    kind: 'official',
     protocols: {
       openai: 'https://api.deepseek.com',
       anthropic: 'https://api.deepseek.com/anthropic',
@@ -29,6 +30,7 @@ const vendors = [
     id: 'volcengine',
     display_name: '火山方舟',
     tier: 'official',
+    kind: 'official',
     protocols: { openai: 'https://ark.cn-beijing.volces.com/api/v3', anthropic: '' },
     models: [],
     passthrough_body: true,
@@ -37,6 +39,7 @@ const vendors = [
     id: 'tipig',
     display_name: 'tipig gateway',
     tier: 'third_party',
+    kind: 'third_party',
     protocols: { openai: 'https://api.tipig.cloud', anthropic: 'https://api.tipig.cloud' },
     models: ['deepseek-v4.1-flash-1017'],
     passthrough_body: true,
@@ -61,6 +64,7 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       data: {
         ok: true,
         models: ['deepseek-flash', 'deepseek-v4-pro'],
+        verified_models: ['deepseek-flash'],
         missing_models: [],
         latency_ms: 120,
         prompt_cache: true,
@@ -111,13 +115,17 @@ function renderPage() {
 }
 
 describe('new listing wizard', () => {
-  it('shows the two channel tiers and disables third-party', async () => {
+  it('groups channels by kind and keeps third-party disabled', async () => {
     renderPage()
     await screen.findByText('DeepSeek')
 
-    expect(screen.getByText('第三方渠道')).toBeTruthy()
-    expect(screen.getByText('即将开放')).toBeTruthy()
-    expect(screen.getByText('厂商开放平台直连，base_url 由平台固定。')).toBeTruthy()
+    expect(screen.getByText('官方渠道')).toBeTruthy()
+    expect(screen.getByText('套餐渠道')).toBeTruthy()
+    expect(screen.getByText('第三方（即将开放）')).toBeTruthy()
+    expect(screen.getByText('tipig gateway')).toBeTruthy()
+
+    const thirdParty = screen.getByRole('radio', { name: /tipig/ }) as HTMLInputElement
+    expect(thirdParty.disabled).toBe(true)
   })
 
   it('blocks next when the selected channel has no priced models', async () => {
@@ -127,17 +135,18 @@ describe('new listing wizard', () => {
     fireEvent.click(screen.getByRole('radio', { name: /火山方舟/ }))
 
     expect(
-      screen.getByText('该渠道还没有可用价目的模型映射，请联系运营配置'),
+      screen.getByText('该渠道还没有已认证且可卖的模型，请联系运营配置'),
     ).toBeTruthy()
     expect(screen.getByRole('button', { name: '下一步' })).toHaveProperty('disabled', true)
   })
 
-  it('never offers third-party vendors in the official grid', async () => {
+  it('never lets a third-party vendor be selected', async () => {
     renderPage()
     await screen.findByText('DeepSeek')
 
-    expect(screen.queryByText('tipig gateway')).toBeNull()
-    expect(screen.queryByRole('radio', { name: /tipig/ })).toBeNull()
+    const thirdParty = screen.getByRole('radio', { name: /tipig/ }) as HTMLInputElement
+    expect(thirdParty.disabled).toBe(true)
+    expect(thirdParty.checked).toBe(false)
   })
 
   it('lists only the selected channel models after probing', async () => {
@@ -152,8 +161,13 @@ describe('new listing wizard', () => {
     fireEvent.click(screen.getByRole('button', { name: '下一步' }))
 
     const flash = await screen.findByRole('checkbox', { name: 'deepseek-flash' })
-    expect(screen.getByRole('checkbox', { name: 'deepseek-v4-pro' })).toBeTruthy()
+    const pro = screen.getByRole('checkbox', {
+      name: 'deepseek-v4-pro',
+    }) as HTMLInputElement
     expect((flash as HTMLInputElement).checked).toBe(true)
+    // verified_models narrows the selectable set.
+    expect(pro.disabled).toBe(true)
+    expect(pro.checked).toBe(false)
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '下一步' })).toHaveProperty('disabled', false)

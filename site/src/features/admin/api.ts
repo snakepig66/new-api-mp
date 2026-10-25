@@ -361,3 +361,251 @@ export function deanonBuyer(
     query: { seller_id: sellerId, code },
   })
 }
+
+// ---------------------------------------------------------------------------
+// 模型池 / 渠道池 / 渠道模型（MODEL-CHANNEL-POOL）
+// ---------------------------------------------------------------------------
+
+export type PoolChannelKind = 'official' | 'plan' | 'third_party'
+
+export interface AdminPoolModel {
+  id: number
+  name: string
+  origin_vendor: string
+  context_length: number
+  capabilities: string[]
+  aliases: string[]
+  verify_prompt: string
+  status: string
+}
+
+export interface AdminPoolChannel {
+  id: number
+  slug: string
+  name: string
+  kind: string
+  protocols: { openai: string; anthropic: string }
+  allow_host_pattern: string
+  key_pattern: string
+  deny_paths: string[]
+  deny_key_prefixes: string[]
+  adaptor: string
+  strip_v1_prefix: boolean
+  passthrough_body: boolean
+  quota_window: Record<string, unknown>
+  exhaustion_signature: string
+  terms_url: string
+  terms_checked_at: string | null
+  status: string
+}
+
+export interface AdminPoolChannelModel {
+  id: number
+  channel_slug: string
+  upstream_model: string
+  model: string
+  coefficient_milli: number
+  differences: Record<string, unknown>
+  verified: boolean
+  verified_at: string | null
+  fingerprint_ratio: number
+  status: string
+}
+
+export interface AdminPoolModelInput {
+  name: string
+  origin_vendor?: string
+  context_length?: number
+  capabilities?: string[]
+  aliases?: string[]
+  verify_prompt?: string
+  status?: string
+}
+
+export interface AdminPoolChannelInput {
+  slug: string
+  name?: string
+  kind?: PoolChannelKind
+  protocols?: { openai: string; anthropic: string }
+  allow_host_pattern?: string
+  key_pattern?: string
+  deny_paths?: string[]
+  deny_key_prefixes?: string[]
+  adaptor?: string
+  strip_v1_prefix?: boolean
+  passthrough_body?: boolean
+  quota_window?: Record<string, unknown>
+  exhaustion_signature?: string
+  terms_url?: string
+  terms_checked_at?: string | null
+  status?: string
+}
+
+export interface AdminPoolChannelModelInput {
+  channel_slug: string
+  upstream_model: string
+  model: string
+  coefficient_milli?: number
+  differences?: Record<string, unknown>
+  verified?: boolean
+  status?: string
+}
+
+function stringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((item) => text(item)).filter(Boolean)
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed: unknown = JSON.parse(value)
+      if (Array.isArray(parsed)) return parsed.map((item) => text(item)).filter(Boolean)
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed: unknown = JSON.parse(value)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      return {}
+    }
+  }
+  return {}
+}
+
+function bool(value: unknown): boolean {
+  return value === true || value === 'true' || value === 1
+}
+
+export function normalizeAdminPoolModel(raw: unknown): AdminPoolModel {
+  const row = record(raw)
+  return {
+    id: int(pick(row, 'id', 'ID')),
+    name: text(pick(row, 'name', 'Name')),
+    origin_vendor: text(pick(row, 'origin_vendor', 'OriginVendor')),
+    context_length: int(pick(row, 'context_length', 'ContextLength')),
+    capabilities: stringList(pick(row, 'capabilities', 'Capabilities')),
+    aliases: stringList(pick(row, 'aliases', 'Aliases')),
+    verify_prompt: text(pick(row, 'verify_prompt', 'VerifyPrompt')),
+    status: text(pick(row, 'status', 'Status')),
+  }
+}
+
+export function normalizeAdminPoolChannel(raw: unknown): AdminPoolChannel {
+  const row = record(raw)
+  const protocols = record(pick(row, 'protocols', 'Protocols'))
+  const checked = pick(row, 'terms_checked_at', 'TermsCheckedAt')
+  return {
+    id: int(pick(row, 'id', 'ID')),
+    slug: text(pick(row, 'slug', 'Slug')),
+    name: text(pick(row, 'name', 'Name')),
+    kind: text(pick(row, 'kind', 'Kind')),
+    protocols: {
+      openai: text(pick(protocols, 'openai', 'OpenAI')),
+      anthropic: text(pick(protocols, 'anthropic', 'Anthropic')),
+    },
+    allow_host_pattern: text(pick(row, 'allow_host_pattern', 'AllowHostPattern')),
+    key_pattern: text(pick(row, 'key_pattern', 'KeyPattern')),
+    deny_paths: stringList(pick(row, 'deny_paths', 'DenyPaths')),
+    deny_key_prefixes: stringList(pick(row, 'deny_key_prefixes', 'DenyKeyPrefixes')),
+    adaptor: text(pick(row, 'adaptor', 'Adaptor')),
+    strip_v1_prefix: bool(pick(row, 'strip_v1_prefix', 'StripV1Prefix')),
+    passthrough_body: bool(pick(row, 'passthrough_body', 'PassthroughBody')),
+    quota_window: objectValue(pick(row, 'quota_window', 'QuotaWindow')),
+    exhaustion_signature: text(pick(row, 'exhaustion_signature', 'ExhaustionSignature')),
+    terms_url: text(pick(row, 'terms_url', 'TermsURL')),
+    terms_checked_at: checked === undefined ? null : text(checked),
+    status: text(pick(row, 'status', 'Status')),
+  }
+}
+
+export function normalizeAdminPoolChannelModel(raw: unknown): AdminPoolChannelModel {
+  const row = record(raw)
+  const verifiedAt = pick(row, 'verified_at', 'VerifiedAt')
+  return {
+    id: int(pick(row, 'id', 'ID')),
+    channel_slug: text(pick(row, 'channel_slug', 'ChannelSlug')),
+    upstream_model: text(pick(row, 'upstream_model', 'UpstreamModel')),
+    model: text(pick(row, 'model', 'Model')),
+    coefficient_milli: int(pick(row, 'coefficient_milli', 'CoefficientMilli')),
+    differences: objectValue(pick(row, 'differences', 'Differences')),
+    verified: bool(pick(row, 'verified', 'Verified')),
+    verified_at: verifiedAt === undefined ? null : text(verifiedAt),
+    fingerprint_ratio: Number(pick(row, 'fingerprint_ratio', 'FingerprintRatio') ?? 0) || 0,
+    status: text(pick(row, 'status', 'Status')),
+  }
+}
+
+async function listPoolItems<T>(
+  path: string,
+  normalize: (raw: unknown) => T,
+): Promise<T[]> {
+  const raw = await api.get<unknown>(path)
+  const items = Array.isArray(raw) ? raw : record(raw).items
+  return (Array.isArray(items) ? items : []).map(normalize)
+}
+
+export const adminPoolModelsQuery = () =>
+  queryOptions({
+    queryKey: ['marketplace', 'admin', 'pool', 'models'],
+    queryFn: () =>
+      listPoolItems(`${adminBase}/pool/models`, normalizeAdminPoolModel),
+    staleTime: 15_000,
+  })
+
+export const adminPoolChannelsQuery = () =>
+  queryOptions({
+    queryKey: ['marketplace', 'admin', 'pool', 'channels'],
+    queryFn: () =>
+      listPoolItems(`${adminBase}/pool/channels`, normalizeAdminPoolChannel),
+    staleTime: 15_000,
+  })
+
+export const adminPoolChannelModelsQuery = () =>
+  queryOptions({
+    queryKey: ['marketplace', 'admin', 'pool', 'channel-models'],
+    queryFn: () =>
+      listPoolItems(`${adminBase}/pool/channel-models`, normalizeAdminPoolChannelModel),
+    staleTime: 15_000,
+  })
+
+export function putAdminPoolModel(input: AdminPoolModelInput): Promise<AdminPoolModel> {
+  return api.put<unknown>(`${adminBase}/pool/models`, input).then(normalizeAdminPoolModel)
+}
+
+export function deleteAdminPoolModel(name: string): Promise<unknown> {
+  return api.delete<unknown>(`${adminBase}/pool/models`, { query: { name } })
+}
+
+export function putAdminPoolChannel(input: AdminPoolChannelInput): Promise<AdminPoolChannel> {
+  return api.put<unknown>(`${adminBase}/pool/channels`, input).then(normalizeAdminPoolChannel)
+}
+
+export function deleteAdminPoolChannel(slug: string): Promise<unknown> {
+  return api.delete<unknown>(`${adminBase}/pool/channels`, { query: { slug } })
+}
+
+export function putAdminPoolChannelModel(
+  input: AdminPoolChannelModelInput,
+): Promise<AdminPoolChannelModel> {
+  return api
+    .put<unknown>(`${adminBase}/pool/channel-models`, input)
+    .then(normalizeAdminPoolChannelModel)
+}
+
+export function deleteAdminPoolChannelModel(
+  channelSlug: string,
+  upstreamModel: string,
+): Promise<unknown> {
+  return api.delete<unknown>(`${adminBase}/pool/channel-models`, {
+    query: { channel_slug: channelSlug, upstream_model: upstreamModel },
+  })
+}

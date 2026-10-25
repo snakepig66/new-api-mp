@@ -14,6 +14,7 @@ import { HomePage } from './index'
 const squareItems = [
   {
     model: 'deepseek-chat',
+    origin_vendor: 'deepseek',
     vendor: 'deepseek',
     tier: 'offpeak',
     tier_label: '空闲',
@@ -27,6 +28,8 @@ const squareItems = [
     },
     next_switch: '2030-01-01T10:00:00+08:00',
     listing_count: 2,
+    channel_count: 1,
+    buyer_price_source: 'market',
     generated_at: '2030-01-01T00:00:00+08:00',
   },
 ]
@@ -55,6 +58,7 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         multiplier_min_milli: 300,
         multiplier_max_milli: 480,
         official_prices: { offpeak: { ...item.prices.offpeak, version: 1 } },
+        channels: [],
       },
     })
   }

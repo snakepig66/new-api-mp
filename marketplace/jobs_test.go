@@ -66,7 +66,7 @@ func TestJobsCanaryPromote(t *testing.T) {
 		listing, err := CreateListing(db, CreateListingInput{
 			SellerID:        10023,
 			VendorID:        SeedVendorDeepSeek,
-			APIKey:          "sk-canary-" + strconv.FormatInt(time.Now().UnixNano(), 36),
+			APIKey:          uniqueTestKey("sk-canary"),
 			Models:          []string{"deepseek-flash"},
 			MultiplierMilli: 500,
 		})
@@ -134,7 +134,7 @@ func TestJobsPatrol(t *testing.T) {
 	healthy, err := CreateListing(db, CreateListingInput{
 		SellerID:        10023,
 		VendorID:        SeedVendorDeepSeek,
-		APIKey:          "sk-patrol-healthy-" + strconv.FormatInt(time.Now().UnixNano(), 36),
+		APIKey:          uniqueTestKey("sk-patrol-healthy"),
 		Models:          []string{"deepseek-flash"},
 		MultiplierMilli: 500,
 	})
@@ -142,7 +142,7 @@ func TestJobsPatrol(t *testing.T) {
 	failing, err := CreateListing(db, CreateListingInput{
 		SellerID:        10023,
 		VendorID:        SeedVendorDeepSeek,
-		APIKey:          "sk-patrol-failing-" + strconv.FormatInt(time.Now().UnixNano(), 36),
+		APIKey:          uniqueTestKey("sk-patrol-failing"),
 		Models:          []string{"deepseek-flash"},
 		MultiplierMilli: 500,
 	})

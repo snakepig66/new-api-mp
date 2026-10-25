@@ -397,7 +397,7 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
             ) : null}
           </Field>
 
-          <div className="sm:col-span-2">
+          <div className="space-y-3 sm:col-span-2">
             <label className="inline-flex items-start gap-2 text-[13px] text-ink">
               <input
                 type="checkbox"
@@ -408,6 +408,19 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
                 {page.config.allowFallback}
                 <span className="mt-0.5 block text-[13px] leading-5 text-ink-3">
                   {page.config.allowFallbackHint}
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-[13px] text-ink">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-3.5 w-3.5 accent-brand"
+                {...form.register('officialOnly')}
+              />
+              <span>
+                {page.config.officialOnly}
+                <span className="mt-0.5 block text-[13px] leading-5 text-ink-3">
+                  {page.config.officialOnlyHint}
                 </span>
               </span>
             </label>

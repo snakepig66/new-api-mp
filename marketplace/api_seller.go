@@ -600,9 +600,19 @@ func sellerVerifyResources() (*http.Client, *VerifyLimiter) {
 }
 
 // postSellerListingProbe serves POST /seller/listings/probe — one dry-run
-// verification identical to the async listing check (§3.5): key validity,
-// balance, available models, /models latency and prompt-cache support. It
-// writes no mp_listings / mp_probes row and never echoes the key.
+// verification identical to the async listing check (§3.5) plus the §4
+// certified-model discovery: key validity, balance, /models latency,
+// prompt-cache support, and the standard model ids this key may actually
+// sell.
+//
+// The authority is the certification intersection, never the request body:
+// GET the channel's /models with this key, keep the upstream names it
+// exposes, and return the standard model id of every mp_channel_models row
+// with verified=true and status=active for the channel. Request models stay
+// an optional compatibility filter — a requested model outside that set is
+// reported in missing_models instead of being accepted. The paid prompt-cache
+// probe names the first certified qualification's upstream model. No
+// mp_listings / mp_probes row is written and the key is never echoed.
 func postSellerListingProbe(c *gin.Context) {
 	if _, ok := sellerUserID(c); !ok {
 		return
@@ -621,31 +631,10 @@ func postSellerListingProbe(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("api_key is required"))
 		return
 	}
-	vendor, ok := VendorByID(req.VendorID)
+	vendor, ok := lookupVendorForDB(db, req.VendorID)
 	if !ok {
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("vendor is not whitelisted"))
 		return
-	}
-	// The probe verifies the vendor's upstream names: resolve each platform
-	// model through the admin-editable channel map (OFFICIAL-CHANNELS §3).
-	upstreamModels := make([]string, 0, len(req.Models))
-	probeModel := ""
-	for _, m := range req.Models {
-		if !slices.Contains(vendor.Models, m) {
-			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("model is not served by this vendor"))
-			return
-		}
-		upstream, mapped := ChannelModelResolve(db, vendor.ID, m)
-		if !mapped {
-			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("model has no upstream mapping for this vendor"))
-			return
-		}
-		if !slices.Contains(upstreamModels, upstream) {
-			upstreamModels = append(upstreamModels, upstream)
-		}
-		if probeModel == "" {
-			probeModel = upstream
-		}
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
@@ -656,36 +645,80 @@ func postSellerListingProbe(c *gin.Context) {
 		return
 	}
 	defer limiter.Release()
-	res := VerifyListingKeyWithModel(ctx, client, vendor, apiKey, probeModel)
 
-	// Return platform model ids, not upstream names: the seller console only
-	// knows the standard catalogue. A requested model missing from the key's
-	// upstream list flips ok to false.
-	available := make([]string, 0, len(req.Models))
-	for _, m := range req.Models {
-		upstream, _ := ChannelModelResolve(db, vendor.ID, m)
-		if slices.Contains(res.Models, upstream) && !slices.Contains(available, m) {
-			available = append(available, m)
+	// §4 channel path: which upstream names can this key see on the channel?
+	keyRes := VerifyChannelKey(ctx, client, vendor, apiKey)
+
+	// §4 model path: intersect the channel's verified+active qualifications
+	// with the upstream names the key exposes. The result is standard model
+	// ids, because the seller console only knows the platform catalogue.
+	certified := certifiedChannelModelsFor(db, vendor.ID)
+	available := make([]string, 0, len(certified))
+	probeModel := ""
+	for _, cm := range certified {
+		if !slices.Contains(keyRes.Models, cm.UpstreamModel) {
+			continue
+		}
+		if !slices.Contains(available, cm.Model) {
+			available = append(available, cm.Model)
+		}
+		if probeModel == "" {
+			probeModel = cm.UpstreamModel
 		}
 	}
+
+	// Balance and prompt-cache support stay informational. They are only
+	// requested once the key listed at least one model: an invalid/empty key
+	// cannot turn OK, so spending its paid probe would be waste.
+	var balance *int64
+	promptCache := false
+	if keyRes.OK {
+		base := VendorOpenAIBase(vendor)
+		balance = fetchBalanceMicro(ctx, client, base, apiKey)
+		if probeModel != "" {
+			promptCache = probePromptCacheSupport(ctx, client, base, probeModel, apiKey)
+		}
+	}
+
 	missing := make([]string, 0)
 	for _, m := range req.Models {
-		if !slices.Contains(available, m) {
+		if !slices.Contains(available, m) && !slices.Contains(missing, m) {
 			missing = append(missing, m)
 		}
 	}
-	probeOK := res.OK && len(missing) == 0
+	probeOK := keyRes.OK && len(available) > 0 && len(missing) == 0
+	failReason := stripKey(keyRes.FailReason, apiKey)
+	if keyRes.KeyValid && len(available) == 0 {
+		failReason = "no certified models available for this key"
+	}
 
 	common.ApiSuccess(c, gin.H{
-		"ok":             probeOK,
-		"models":         available,
-		"missing_models": missing,
-		"latency_ms":     res.LatencyMs,
-		"prompt_cache":   res.PromptCacheSupport,
-		"balance_micro":  res.BalanceMicro, // null when the vendor has no balance endpoint
-		"key_valid":      res.KeyValid,
-		"fail_reason":    stripKey(res.FailReason, apiKey),
+		"ok":              probeOK,
+		"models":          available,
+		"verified_models": available, // explicit alias for the seller wizard
+		"missing_models":  missing,
+		"latency_ms":      keyRes.LatencyMs,
+		"prompt_cache":    promptCache,
+		"balance_micro":   balance, // null when the vendor has no balance endpoint
+		"key_valid":       keyRes.KeyValid,
+		"fail_reason":     failReason,
 	})
+}
+
+// certifiedChannelModelsFor lists a channel's verified+active qualifications
+// ordered by upstream name. It is the authority for what a seller's key may
+// list; the request body never grants a model by itself.
+func certifiedChannelModelsFor(db *gorm.DB, channelSlug string) []ChannelModel {
+	out := make([]ChannelModel, 0)
+	if db == nil {
+		return out
+	}
+	if err := db.Where("channel_slug = ? AND verified = ? AND status = ?",
+		strings.TrimSpace(channelSlug), true, PoolStatusActive).
+		Order("upstream_model ASC, id ASC").Find(&out).Error; err != nil {
+		return []ChannelModel{}
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------

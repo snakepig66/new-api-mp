@@ -33,6 +33,11 @@ function currentPrices(model: SquareModel): SquareTierPrices | undefined {
   return model.prices[model.tier] ?? model.prices.peak ?? model.prices.offpeak
 }
 
+/** The standard model's 原厂 slug, with a fallback for older payloads. */
+export function originVendorOf(model: SquareModel): string {
+  return model.origin_vendor || model.vendor
+}
+
 function skeletonCell(width = 'w-16') {
   return <div className={`h-3.5 animate-pulse rounded-sm bg-line ${width}`} />
 }
@@ -57,9 +62,9 @@ function BuyerPair({ prices }: { prices?: SquareTierPrices }) {
 /**
  * The model board shared by the homepage (top 6) and the full square.
  *
- * Columns follow VISUAL-SPEC §4: model / input / output / lowest multiplier /
- * buyer price / sellers / tier. 可用率 and 延迟 P50 stay absent because the
- * square API exposes neither field.
+ * One row is one standard model: upstream channels are aggregated into the
+ * channel count. When no listing is live the row advertises the official
+ * price and says so with a 官方价 tag.
  */
 export function ModelTable({
   models,
@@ -68,7 +73,7 @@ export function ModelTable({
   vendorMeta,
   loading = false,
   skeletonRows = 6,
-  minWidth = 960,
+  minWidth = 1040,
 }: ModelTableProps) {
   const columns = copy.pages.models.columns
 
@@ -81,6 +86,7 @@ export function ModelTable({
           <TableHeaderCell numeric>{columns.output}</TableHeaderCell>
           <TableHeaderCell>{columns.multiplier}</TableHeaderCell>
           <TableHeaderCell numeric>{columns.buyerPrice}</TableHeaderCell>
+          <TableHeaderCell numeric>{columns.channels}</TableHeaderCell>
           <TableHeaderCell numeric>{columns.sellers}</TableHeaderCell>
           <TableHeaderCell>{columns.tier}</TableHeaderCell>
         </TableRow>
@@ -112,17 +118,24 @@ export function ModelTable({
                 <TableCell numeric>
                   <div className="flex justify-end">{skeletonCell('w-8')}</div>
                 </TableCell>
+                <TableCell numeric>
+                  <div className="flex justify-end">{skeletonCell('w-8')}</div>
+                </TableCell>
                 <TableCell>{skeletonCell('w-20')}</TableCell>
               </TableRow>
             ))
           : models.map((model) => {
+              const origin = originVendorOf(model)
               const row = currentPrices(model)
               const detail = details?.get(model.model)
               const official = detail?.official_prices[model.tier]
+              const officialPrice =
+                model.buyer_price_source === 'official' || model.listing_count === 0
+              const hasMarketSupply = model.listing_count > 0
 
               return (
                 <TableRow
-                  key={`${model.model}:${model.vendor}`}
+                  key={model.model}
                   interactive
                   className="relative [&>td]:h-14 [&>td]:py-0"
                 >
@@ -137,9 +150,9 @@ export function ModelTable({
                       </span>
                       <span className="flex min-w-0 items-center gap-1.5">
                         <span className="truncate text-[13px] text-ink-3">
-                          {vendorLabel(model.vendor, vendorMeta)}
+                          {vendorLabel(origin, vendorMeta)}
                         </span>
-                        {isOfficialVendor(model.vendor, vendorMeta) ? (
+                        {isOfficialVendor(origin, vendorMeta) ? (
                           <Tag tone="brand">{copy.pages.models.officialChannel}</Tag>
                         ) : null}
                       </span>
@@ -168,18 +181,32 @@ export function ModelTable({
                     )}
                   </TableCell>
                   <TableCell>
-                    {detail ? (
+                    {hasMarketSupply && detail ? (
                       <span className="font-medium tabular-nums text-brand-ink">
                         {formatMultiplier(detail.multiplier_min_milli)}x
                       </span>
-                    ) : detailsLoading ? (
+                    ) : hasMarketSupply && detailsLoading ? (
                       skeletonCell('w-12')
                     ) : (
                       <Missing />
                     )}
                   </TableCell>
                   <TableCell numeric>
-                    <BuyerPair prices={row} />
+                    {row ? (
+                      <div className="leading-tight">
+                        <BuyerPair prices={row} />
+                        {officialPrice ? (
+                          <Tag tone="brand" className="mt-1">
+                            {copy.pages.models.officialPrice}
+                          </Tag>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <Missing />
+                    )}
+                  </TableCell>
+                  <TableCell numeric>
+                    <span className="tabular-nums">{model.channel_count}</span>
                   </TableCell>
                   <TableCell numeric>
                     <span className="tabular-nums">{model.listing_count}</span>

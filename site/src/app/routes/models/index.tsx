@@ -4,17 +4,32 @@ import { useMemo, useState } from 'react'
 
 import { copy } from '@/copy'
 import { squareModelsQuery, useSquareModelDetails } from '@/features/market/api'
-import { ModelTable } from '@/features/market/model-table'
+import { ModelTable, originVendorOf } from '@/features/market/model-table'
 import { QueryError } from '@/features/market/query-error'
 import { toVendorLookup, vendorOptions } from '@/features/market/vendors'
 import { vendorsQuery } from '@/features/seller/api'
 import { cn } from '@/lib/cn'
 import { formatMultiplier } from '@/lib/multiplier'
 import { Button, Empty, Input, PageHeader, buttonClasses } from '@/ui'
+import type { SquareModel } from '@/features/market/api'
 
 export const Route = createFileRoute('/models/')({
   component: ModelsPage,
 })
+
+/**
+ * The square is contractually one row per standard model. Older payloads may
+ * still repeat a model per channel, so collapse defensively and keep the row
+ * with the most live supply.
+ */
+function uniqueByModel(rows: SquareModel[]): SquareModel[] {
+  const byModel = new Map<string, SquareModel>()
+  for (const row of rows) {
+    const current = byModel.get(row.model)
+    if (!current || row.listing_count > current.listing_count) byModel.set(row.model, row)
+  }
+  return Array.from(byModel.values())
+}
 
 function Pill({
   active,
@@ -49,17 +64,17 @@ export function ModelsPage() {
   const [vendor, setVendor] = useState<string | null>(null)
   const [search, setSearch] = useState('')
 
-  const rows = models.data ?? []
+  const rows = useMemo(() => uniqueByModel(models.data ?? []), [models.data])
   const vendorMeta = useMemo(() => toVendorLookup(vendors.data ?? []), [vendors.data])
   const pills = useMemo(
-    () => vendorOptions(rows.map((row) => row.vendor), vendorMeta),
+    () => vendorOptions(rows.map((row) => originVendorOf(row)), vendorMeta),
     [rows, vendorMeta],
   )
   const query = search.trim().toLowerCase()
 
   const filtered = useMemo(() => {
     return rows.filter((row) => {
-      if (vendor && row.vendor !== vendor) return false
+      if (vendor && originVendorOf(row) !== vendor) return false
       if (query && !row.model.toLowerCase().includes(query)) return false
       return true
     })
@@ -73,6 +88,9 @@ export function ModelsPage() {
   const lowestMilli = useMemo(() => {
     let lowest: number | null = null
     for (const detail of details.values()) {
+      // Official-only models have no multiplier; they must not drag the
+      // headline "最低倍率" down to zero.
+      if (detail.multiplier_min_milli <= 0 || detail.listing_count === 0) continue
       if (lowest === null || detail.multiplier_min_milli < lowest) {
         lowest = detail.multiplier_min_milli
       }

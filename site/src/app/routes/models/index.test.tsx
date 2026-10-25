@@ -14,6 +14,7 @@ import { ModelsPage } from './index'
 const squareItems = [
   {
     model: 'deepseek-chat',
+    origin_vendor: 'deepseek',
     vendor: 'deepseek',
     tier: 'offpeak',
     tier_label: '空闲',
@@ -33,10 +34,13 @@ const squareItems = [
     },
     next_switch: '2030-01-01T10:00:00+08:00',
     listing_count: 2,
+    channel_count: 2,
+    buyer_price_source: 'market',
     generated_at: '2030-01-01T00:00:00+08:00',
   },
   {
     model: 'deepseek-r1',
+    origin_vendor: 'deepseek',
     vendor: 'deepseek',
     tier: 'peak',
     tier_label: '高峰',
@@ -50,10 +54,13 @@ const squareItems = [
     },
     next_switch: '2030-01-01T18:00:00+08:00',
     listing_count: 1,
+    channel_count: 1,
+    buyer_price_source: 'market',
     generated_at: '2030-01-01T00:00:00+08:00',
   },
   {
     model: 'glm-4-plus',
+    origin_vendor: 'zhipu',
     vendor: 'zhipu',
     tier: 'flat',
     tier_label: '平价',
@@ -66,7 +73,9 @@ const squareItems = [
       },
     },
     next_switch: null,
-    listing_count: 1,
+    listing_count: 0,
+    channel_count: 0,
+    buyer_price_source: 'official',
     generated_at: '2030-01-01T00:00:00+08:00',
   },
 ]
@@ -81,6 +90,7 @@ function detailFor(model: string) {
     multiplier_min_milli: model === 'deepseek-r1' ? 520 : model === 'glm-4-plus' ? 680 : 300,
     multiplier_max_milli: model === 'deepseek-r1' ? 650 : 480,
     official_prices: officialPrices,
+    channels: [],
   }
 }
 
@@ -172,6 +182,14 @@ describe('models page', () => {
     })
     expect(screen.getByText('deepseek-r1')).toBeTruthy()
     expect(screen.queryByText('glm-4-plus')).toBeNull()
+  })
+
+  it('marks a model with no supply as official price', async () => {
+    renderPage()
+    await screen.findByText('glm-4-plus')
+
+    const row = screen.getByText('glm-4-plus').closest('tr')
+    expect(row?.textContent).toContain('官方价')
   })
 
   it('filters by a vendor pill generated from the data', async () => {

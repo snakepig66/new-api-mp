@@ -130,6 +130,7 @@ type keyPrefUpdateRequest struct {
 	OnlySellerID    int64   `json:"only_seller_id"`
 	AllowFallback   bool    `json:"allow_fallback"`
 	RPM             int     `json:"rpm"`
+	OfficialOnly    bool    `json:"official_only"`
 }
 
 type keyModelRequest struct {
@@ -153,6 +154,7 @@ type keyPrefJSON struct {
 	OnlySellerID    int64          `json:"only_seller_id"`
 	AllowFallback   bool           `json:"allow_fallback"`
 	RPM             int            `json:"rpm"`
+	OfficialOnly    bool           `json:"official_only"`
 	Models          []keyModelJSON `json:"models"`
 }
 
@@ -178,6 +180,7 @@ func toKeyPrefJSON(pref KeyPref, models []KeyModel) keyPrefJSON {
 		OnlySellerID:    pref.OnlySellerID,
 		AllowFallback:   pref.AllowFallback,
 		RPM:             pref.RPM,
+		OfficialOnly:    pref.OfficialOnly,
 		Models:          toKeyModelJSON(models),
 	}
 }
@@ -248,6 +251,7 @@ func putKeyPref(c *gin.Context) {
 		OnlySellerID:    req.OnlySellerID,
 		AllowFallback:   req.AllowFallback,
 		RPM:             req.RPM,
+		OfficialOnly:    req.OfficialOnly,
 	}
 	if err := UpsertKeyPref(db, req.TokenID, in); err != nil {
 		writeKeyAPIBadRequest(c, "invalid_preference", err.Error())

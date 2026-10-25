@@ -54,9 +54,13 @@ const (
 	HopEventStripTools   = "strip_tools"
 	HopEventBreaker429   = "breaker_429"
 	HopEventAutoPause    = "auto_pause"
-	HopEventZeroOutput   = "zero_output"
-	HopEventStreamCut    = "stream_cut"
-	HopEventEarlyExit    = "early_exit"
+	// HopEventPlanQuotaExhausted records a plan channel whose quota window ran
+	// out: every listing of the channel was suspended until the next reset
+	// (MODEL-CHANNEL-POOL §4).
+	HopEventPlanQuotaExhausted = "plan_quota_exhausted"
+	HopEventZeroOutput         = "zero_output"
+	HopEventStreamCut          = "stream_cut"
+	HopEventEarlyExit          = "early_exit"
 	// HopEventSettleShortfall records that the buyer's balance could not cover
 	// the actual usage: the ledger charges the amount actually collected and
 	// the difference is this event's detail (H3).
@@ -87,6 +91,7 @@ type RelaySession struct {
 	tokenID            int
 	model              string
 	maxMultiplierMilli int64
+	officialOnly       bool
 	freezeAt           time.Time
 	listing            Listing
 	// realKey is the current listing's decrypted seller key. It is only ever
@@ -114,12 +119,17 @@ type RelaySession struct {
 	probeListingID int64
 	// billing is the request's current pre-freeze session, kept here so the
 	// deferred EndRelay can refund it even when GenRelayInfo never ran (H1).
-	billing       *BillingSession
-	settled       bool
-	settledMicro  Micro
-	failed        bool
-	recordWritten bool
-	finished      bool
+	billing      *BillingSession
+	settled      bool
+	settledMicro Micro
+	failed       bool
+	// planQuotaExhausted records that this attempt hit a plan channel's quota
+	// signature and suspended the whole channel. Re-selection may still switch
+	// to a different channel, but it must never retry the exhausted plan
+	// in place (MODEL-CHANNEL-POOL §4).
+	planQuotaExhausted bool
+	recordWritten      bool
+	finished           bool
 }
 
 // ---------------------------------------------------------------------------
@@ -444,17 +454,40 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 	if db == nil {
 		return nil, false, 0, nil
 	}
+	// MODEL-CHANNEL-POOL §3.1: normalize an alias (glm5.3 / GLM-5.3 /
+	// zhipu/glm-5.3) to the standard model id once, before any lookup. Every
+	// later step — key check, selection, pricing, records — uses the standard
+	// id, so bills only ever name it.
+	requestedModel := modelName
+	if standard, ok := ModelPoolResolveAlias(db, modelName); ok {
+		modelName = standard
+	}
+	anyListing, qerr := hasAnyListingForModel(db, modelName)
+	if qerr != nil {
+		common.SysError(common.LogText("marketplace: query listings for model %s: %s", modelName, qerr.Error()))
+		return nil, true, http.StatusServiceUnavailable, errors.New("marketplace: failed to query listings")
+	}
 	has, qerr := hasLiveListingForModel(db, modelName)
 	if qerr != nil {
 		common.SysError(common.LogText("marketplace: query listings for model %s: %s", modelName, qerr.Error()))
 		return nil, true, http.StatusServiceUnavailable, errors.New("marketplace: failed to query listings")
 	}
-	if !has {
+	if !anyListing {
 		return nil, false, 0, nil
 	}
+	if !has {
+		// Listings exist but none is certified/sellable right now: reject
+		// instead of falling through to a regular upstream channel
+		// (MODEL-CHANNEL-POOL 验收: 未认证的渠道或模型后端直接拒绝).
+		return nil, true, http.StatusServiceUnavailable, errors.New("no supplier available for this model")
+	}
 	capMilli, qerr := keyModelCapMilli(db, tokenID, modelName)
+	if errors.Is(qerr, ErrModelNotAddedToKey) && requestedModel != modelName {
+		// Keys created before alias normalization may hold the alias spelling.
+		capMilli, qerr = keyModelCapMilli(db, tokenID, requestedModel)
+	}
 	if errors.Is(qerr, ErrModelNotAddedToKey) {
-		return nil, true, http.StatusBadRequest, fmt.Errorf("model %q %s", modelName, ErrModelNotAddedToKey.Error())
+		return nil, true, http.StatusBadRequest, fmt.Errorf("model %q %s", requestedModel, ErrModelNotAddedToKey.Error())
 	}
 	if qerr != nil {
 		common.SysError(common.LogText("marketplace: query key models: %s", qerr.Error()))
@@ -476,7 +509,12 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 	if rpm > 0 && !BuyerRPMAllow(buyerUserID, rpm, time.Now()) {
 		return nil, true, http.StatusBadRequest, errors.New("rate limited: this key exceeds its requests-per-minute limit, retry later")
 	}
-	listing, tookProbe, qerr := DefaultSelector().SelectWithProbe(db, SelectInput{Model: modelName, MaxMultiplierMilli: capMilli})
+	officialOnly := keyOfficialOnly(db, tokenID)
+	listing, tookProbe, qerr := DefaultSelector().SelectWithProbe(db, SelectInput{
+		Model:              modelName,
+		MaxMultiplierMilli: capMilli,
+		OfficialOnly:       officialOnly,
+	})
 	if errors.Is(qerr, ErrNoListingAvailable) {
 		return nil, true, http.StatusServiceUnavailable, errors.New("no supplier available for this model")
 	}
@@ -517,12 +555,20 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 		tokenID:            tokenID,
 		model:              modelName,
 		maxMultiplierMilli: capMilli,
+		officialOnly:       officialOnly,
 		listing:            listing,
 		realKey:            realKey,
 		triedListingIDs:    []int64{listing.ID},
 		slotListingID:      listing.ID,
 		slotHeld:           true,
 		tookProbe:          tookProbe,
+	}
+	// MODEL-CHANNEL-POOL §3.4: rewrite the response's upstream model name back
+	// to the standard id. The set is refreshed on every channel switch.
+	if cm, ok := ChannelModelFor(db, listing.Vendor, modelName); ok {
+		installModelRewrite(c, modelName, cm.UpstreamModel)
+	} else {
+		installModelRewrite(c, modelName)
 	}
 	if tookProbe {
 		s.probeListingID = listing.ID
@@ -547,10 +593,11 @@ func ApplyRelayChannelKey(c *gin.Context) {
 	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
 }
 
-// hasLiveListingForModel reports whether any live/canary listing serves
-// modelName (§4.4 A 判定). The models column is JSON text, so the filter runs
-// in Go; the live listing set is small in v1.
-func hasLiveListingForModel(db *gorm.DB, modelName string) (bool, error) {
+// hasAnyListingForModel reports whether any live/canary listing mentions the
+// model, certified or not. It decides whether the marketplace owns the model
+// at all: if it does, an uncertified supply must be rejected rather than
+// silently served by a regular upstream channel.
+func hasAnyListingForModel(db *gorm.DB, modelName string) (bool, error) {
 	var rows []Listing
 	if err := db.Where("status IN ?", []string{ListingLive, ListingCanary}).
 		Select("id", "models").Find(&rows).Error; err != nil {
@@ -558,6 +605,28 @@ func hasLiveListingForModel(db *gorm.DB, modelName string) (bool, error) {
 	}
 	for i := range rows {
 		if slices.Contains(rows[i].Models, modelName) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// hasLiveListingForModel reports whether any live/canary listing serves
+// modelName with a verified, active sellable qualification on an active
+// channel (MODEL-CHANNEL-POOL §3.2). The models column is JSON text, so the
+// filter runs in Go; the live listing set is small in v1.
+func hasLiveListingForModel(db *gorm.DB, modelName string) (bool, error) {
+	var rows []Listing
+	if err := db.Where("status IN ?", []string{ListingLive, ListingCanary}).
+		Select("id", "vendor", "models").Find(&rows).Error; err != nil {
+		return false, err
+	}
+	eligible := loadVerifiedChannels(db, modelName)
+	for i := range rows {
+		if !slices.Contains(rows[i].Models, modelName) {
+			continue
+		}
+		if _, ok := eligible[rows[i].Vendor]; ok {
 			return true, nil
 		}
 	}
@@ -604,6 +673,19 @@ func buyerRPMLimit(db *gorm.DB, tokenID int) int {
 		return 0
 	}
 	return pref.RPM
+}
+
+// keyOfficialOnly reports the buyer key's "只用官方渠道" switch
+// (MODEL-CHANNEL-POOL §3.2). A missing row means the switch is off.
+func keyOfficialOnly(db *gorm.DB, tokenID int) bool {
+	var pref KeyPref
+	if err := db.Select("official_only").Where("token_id = ?", tokenID).Take(&pref).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			common.SysError(common.LogText("marketplace: read key pref for official-only: %s", err.Error()))
+		}
+		return false
+	}
+	return pref.OfficialOnly
 }
 
 // hydrateListingKey loads the winner's encrypted key column, which the
@@ -876,6 +958,7 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 	s.mu.Lock()
 	hopCount := s.hopCount
 	inPlaceRetried := s.inPlaceRetried
+	planQuotaExhausted := s.planQuotaExhausted
 	excluded := slices.Clone(s.triedListingIDs)
 	modelName := s.model
 	multiplierMilli := s.maxMultiplierMilli
@@ -890,6 +973,7 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 			Model:              modelName,
 			ExcludeListingIDs:  excluded,
 			MaxMultiplierMilli: multiplierMilli,
+			OfficialOnly:       s.officialOnly,
 		})
 		switch {
 		case err == nil:
@@ -905,7 +989,9 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 	}
 	if !switched {
 		// §3.7: 只剩一家且是瞬时失败（超时、5xx）→ 原地重试 1 次.
-		if !inPlaceRetried && isTransientUpstreamError(lastErr) {
+		// A plan-quota exhaustion is never retried in place: the whole plan
+		// channel is suspended, so retrying the same upstream cannot succeed.
+		if !inPlaceRetried && !planQuotaExhausted && isTransientUpstreamError(lastErr) {
 			current := s.CurrentListing()
 			if selector.Slots.Acquire(current.ID, current.ConcurrencyLimit, time.Now()) {
 				next = current
@@ -1022,6 +1108,11 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 	s.realKey = realKey
 	s.preFreeze = quote
 	s.mu.Unlock()
+	// MODEL-CHANNEL-POOL §3.4: the new upstream may answer with another model
+	// id; extend the rewrite set so the client still sees the standard name.
+	if cm, ok := ChannelModelFor(db, next.Vendor, s.model); ok {
+		updateModelRewrite(c, cm.UpstreamModel)
+	}
 	if tookProbe {
 		s.takeProbe(next.ID)
 	}
@@ -1104,8 +1195,27 @@ func ProcessRelayChannelError(c *gin.Context, apiErr *types.NewAPIError) {
 	if s == nil || apiErr == nil {
 		return
 	}
-	listingID := s.CurrentListing().ID
+	listing := s.CurrentListing()
+	listingID := listing.ID
 	if listingID == 0 {
+		return
+	}
+	db, _ := relayState()
+	// MODEL-CHANNEL-POOL §4: a plan channel reporting its quota-window
+	// signature is not a failure. Suspend every listing of that channel until
+	// the next boundary and treat this attempt as a retryable 503. The upstream
+	// text is used for the signature match only and is never echoed to the
+	// buyer: the replacement error carries a fixed message.
+	if planQuotaExhaustedForListing(db, listing, apiErr) {
+		s.mu.Lock()
+		s.planQuotaExhausted = true
+		s.mu.Unlock()
+		s.addHop(HopEventPlanQuotaExhausted, "")
+		*apiErr = *types.WithOpenAIError(types.OpenAIError{
+			Message: "marketplace: supplier quota window exhausted; retry later",
+			Type:    "upstream_error",
+			Code:    PauseReasonPlanQuotaExhausted,
+		}, http.StatusServiceUnavailable)
 		return
 	}
 	if apiErr.StatusCode == http.StatusTooManyRequests {
@@ -1115,7 +1225,6 @@ func ProcessRelayChannelError(c *gin.Context, apiErr *types.NewAPIError) {
 	}
 	if shouldAutoPauseOnError(apiErr) {
 		s.addHop(HopEventAutoPause, "")
-		db, _ := relayState()
 		if db == nil {
 			return
 		}
@@ -1123,6 +1232,30 @@ func ProcessRelayChannelError(c *gin.Context, apiErr *types.NewAPIError) {
 			common.SysError(common.LogText("marketplace: auto-pause listing %d: %s", listingID, err.Error()))
 		}
 	}
+}
+
+// planQuotaExhaustedForListing reports whether apiErr carries the exhaustion
+// signature of a kind=plan channel behind listing, and suspends that channel's
+// listings until the next quota-window boundary. It is the classification hook
+// used by ProcessRelayChannelError and returns false for non-plan channels,
+// empty signatures, missing listings and invalid quota windows. The upstream
+// message is never logged or returned.
+func planQuotaExhaustedForListing(db *gorm.DB, listing Listing, apiErr *types.NewAPIError) bool {
+	if db == nil || apiErr == nil || listing.ID == 0 {
+		return false
+	}
+	ch, ok := ChannelPoolBySlug(db, listing.Vendor)
+	if !ok || ch.Kind != ChannelKindPlan {
+		return false
+	}
+	if !PlanQuotaExhausted(ch, apiErr.Error()) {
+		return false
+	}
+	if _, err := SuspendPlanListings(db, ch.Slug, time.Now()); err != nil {
+		common.SysError(common.LogText("marketplace: suspend plan channel %s: %s", ch.Slug, err.Error()))
+		return false
+	}
+	return true
 }
 
 // shouldAutoPauseOnError mirrors the semantics of the upstream

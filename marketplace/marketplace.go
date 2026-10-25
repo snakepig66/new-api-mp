@@ -70,6 +70,14 @@ func Init(db *gorm.DB) error {
 	if err := SeedChannelModelMap(db); err != nil {
 		return fmt.Errorf("marketplace seed: %w", err)
 	}
+	// 模型池 / 渠道池 (P1): mp_models / mp_channels / mp_channel_models, their
+	// seed rows, and the legacy channel-map / price / listing migration.
+	if err := MigrateModelChannelPool(db); err != nil {
+		return fmt.Errorf("marketplace init: %w", err)
+	}
+	if err := SeedModelChannelPool(db); err != nil {
+		return fmt.Errorf("marketplace seed: %w", err)
+	}
 	// §4.5: the §3.7 retry semantics (最多换 2 家) need at least two upstream
 	// retries; only ever raise the global value (只升不降).
 	if common.RetryTimes < 2 {
