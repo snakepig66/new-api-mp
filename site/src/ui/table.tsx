@@ -1,29 +1,51 @@
-import type { ReactNode, ThHTMLAttributes, TdHTMLAttributes } from 'react'
+import {
+  createContext,
+  useContext,
+  type ReactNode,
+  type ThHTMLAttributes,
+  type TdHTMLAttributes,
+} from 'react'
 
 import { cn } from '@/lib/cn'
+
+export type TableSize = 'default' | 'compact'
+
+const TableSizeContext = createContext<TableSize>('default')
 
 export interface TableProps {
   children: ReactNode
   className?: string
   minWidth?: number
+  /** `compact` tightens body rows to 40px; default rows are ~52px. */
+  size?: TableSize
 }
 
-/** Dense data table with hairline rules. Scrolls horizontally on narrow screens. */
-export function Table({ children, className, minWidth = 720 }: TableProps) {
+/**
+ * Borderless data table. The header is a soft grey band; body rows are
+ * separated by one hairline. Scrolls horizontally on narrow screens.
+ */
+export function Table({ children, className, minWidth = 720, size = 'default' }: TableProps) {
   return (
-    <div className="w-full overflow-x-auto border-t border-line">
-      <table
-        className={cn('w-full border-collapse text-[13px]', className)}
-        style={{ minWidth }}
-      >
-        {children}
-      </table>
-    </div>
+    <TableSizeContext.Provider value={size}>
+      <div className="w-full overflow-x-auto">
+        <table
+          className={cn('w-full border-collapse text-[14px]', className)}
+          style={{ minWidth }}
+        >
+          {children}
+        </table>
+      </div>
+    </TableSizeContext.Provider>
   )
 }
 
 export function TableHead({ children, className }: { children: ReactNode; className?: string }) {
-  return <thead className={className}>{children}</thead>
+  /* Header cells carry their own soft band; the row must not add a hairline. */
+  return (
+    <thead className={cn('[&_tr]:border-0 [&_tr:hover]:bg-transparent', className)}>
+      {children}
+    </thead>
+  )
 }
 
 export function TableBody({ children, className }: { children: ReactNode; className?: string }) {
@@ -42,8 +64,8 @@ export function TableRow({
   return (
     <tr
       className={cn(
-        'border-b border-line/70 last:border-b-0',
-        interactive && 'transition-colors hover:bg-wash/70',
+        'border-b border-line transition-colors last:border-b-0 hover:bg-bg-soft',
+        interactive && 'cursor-pointer',
         className,
       )}
     >
@@ -61,7 +83,7 @@ export function TableHeaderCell({ numeric = false, className, children, ...props
     <th
       scope="col"
       className={cn(
-        'whitespace-nowrap border-b border-line bg-wash px-3 py-2 text-left text-[11.5px] font-medium text-muted',
+        'whitespace-nowrap bg-bg-soft px-4 py-3 text-left text-[13px] font-medium text-ink-3 first:rounded-l-md last:rounded-r-md',
         numeric && 'text-right',
         className,
       )}
@@ -77,11 +99,14 @@ export interface TableCellProps extends TdHTMLAttributes<HTMLTableCellElement> {
 }
 
 export function TableCell({ numeric = false, className, children, ...props }: TableCellProps) {
+  const size = useContext(TableSizeContext)
+
   return (
     <td
       className={cn(
-        'px-3 py-2.5 align-middle text-[13px] text-ink',
-        numeric && 'text-right font-numeric tabular-nums',
+        'px-4 align-middle text-[14px] leading-5 text-ink',
+        size === 'compact' ? 'py-2.5' : 'py-4',
+        numeric && 'text-right tabular-nums',
         className,
       )}
       {...props}

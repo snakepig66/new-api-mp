@@ -10,7 +10,7 @@ export function Skeleton({ className }: { className?: string }) {
   return (
     <div
       aria-hidden="true"
-      className={cn('animate-pulse rounded-[3px] bg-wash motion-reduce:animate-none', className)}
+      className={cn('animate-pulse rounded-sm bg-bg-soft motion-reduce:animate-none', className)}
     />
   )
 }
@@ -46,7 +46,8 @@ export function PageSkeleton() {
         <Skeleton className="h-6 w-40" />
         <Skeleton className="mt-3 h-3.5 w-72 max-w-full" />
       </div>
-      <div className="grid gap-5 border-y border-line py-5 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatSkeleton />
         <StatSkeleton />
         <StatSkeleton />
         <StatSkeleton />
@@ -72,16 +73,16 @@ export function ErrorBlock({ error, onRetry, className }: ErrorBlockProps) {
   return (
     <div
       role="alert"
-      className={cn('border border-danger/25 bg-danger-soft px-4 py-3.5', className)}
+      className={cn('border border-danger/25 bg-danger/10 px-4 py-3.5', className)}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <p className="text-[13px] font-medium text-danger">
             {copy.pages.consoleShared.errorTitle}
           </p>
-          <p className="mt-1 text-[12.5px] leading-5 text-danger/90">{message}</p>
+          <p className="mt-1 text-[13px] leading-5 text-danger/90">{message}</p>
           {code ? (
-            <p className="mt-1 font-numeric text-[11px] text-danger/70">
+            <p className="mt-1 tabular-nums text-[13px] text-danger/70">
               {copy.pages.consoleShared.errorCode}
               {code}
             </p>
@@ -105,18 +106,18 @@ export interface SectionProps {
   className?: string
 }
 
-/** A titled console panel: heading rule, optional action on the right. */
+/** A white console card: 12px radius, one hairline, no shadow. */
 export function Section({ title, hint, action, children, className }: SectionProps) {
   return (
-    <section className={cn('min-w-0', className)}>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-line pb-2.5">
-        <div className="flex min-w-0 items-baseline gap-2.5">
-          <h2 className="text-[14px] font-semibold tracking-tight text-ink">{title}</h2>
-          {hint ? <span className="text-[11.5px] text-muted">{hint}</span> : null}
+    <section className={cn('min-w-0 rounded-md border border-line bg-bg p-6', className)}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-line pb-4">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-2.5">
+          <h2 className="text-[16px] font-semibold tracking-tight text-ink">{title}</h2>
+          {hint ? <span className="text-[13px] text-ink-3">{hint}</span> : null}
         </div>
         {action ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}
       </div>
-      <div className="pt-3.5">{children}</div>
+      <div className="pt-4">{children}</div>
     </section>
   )
 }

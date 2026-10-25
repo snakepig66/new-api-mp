@@ -19,13 +19,13 @@ export function listingStatusView(status: string): StatusView {
     case 'draft':
       return { label: common.status.draft, tone: 'neutral' }
     case 'verifying':
-      return { label: common.status.verifying, tone: 'warning' }
+      return { label: common.status.verifying, tone: 'neutral' }
     case 'canary':
       return { label: common.status.canary, tone: 'brand' }
     case 'live':
-      return { label: common.status.live, tone: 'success' }
+      return { label: common.status.live, tone: 'brand' }
     case 'paused':
-      return { label: common.status.paused, tone: 'warning' }
+      return { label: common.status.paused, tone: 'neutral' }
     case 'banned':
       return { label: common.status.banned, tone: 'danger' }
     default:
@@ -36,13 +36,13 @@ export function listingStatusView(status: string): StatusView {
 export function shareStatusView(status: string): StatusView {
   switch (status) {
     case 'available':
-      return { label: common.status.available, tone: 'success' }
+      return { label: common.status.available, tone: 'brand' }
     case 'reversed':
     case 'failed':
       return { label: common.status.reversed, tone: 'danger' }
     case 'pending':
     case 'success':
-      return { label: common.status.pending, tone: 'warning' }
+      return { label: common.status.pending, tone: 'neutral' }
     default:
       return { label: common.status.unknown, tone: 'neutral' }
   }
@@ -51,11 +51,11 @@ export function shareStatusView(status: string): StatusView {
 export function payoutStatusView(status: string): StatusView {
   switch (status) {
     case 'pending':
-      return { label: common.status.payoutPending, tone: 'warning' }
+      return { label: common.status.payoutPending, tone: 'neutral' }
     case 'approved':
       return { label: common.status.approved, tone: 'brand' }
     case 'paid':
-      return { label: common.status.paid, tone: 'success' }
+      return { label: common.status.paid, tone: 'brand' }
     case 'rejected':
       return { label: common.status.rejected, tone: 'danger' }
     default:

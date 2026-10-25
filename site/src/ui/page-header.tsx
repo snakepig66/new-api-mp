@@ -18,8 +18,8 @@ export function PageHeader({ title, lead, actions, className }: PageHeaderProps)
       )}
     >
       <div className="min-w-0">
-        <h1 className="text-[24px] font-semibold leading-tight tracking-tight text-ink">{title}</h1>
-        {lead ? <p className="mt-2 max-w-2xl text-[13.5px] leading-6 text-muted">{lead}</p> : null}
+        <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-ink">{title}</h1>
+        {lead ? <p className="mt-2 max-w-2xl text-[15px] leading-6 text-ink-2">{lead}</p> : null}
       </div>
       {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
     </div>

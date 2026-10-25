@@ -42,33 +42,35 @@ export function IncomeChart({ daily }: { daily: SellerDailyIncome[] }) {
         grid: { left: 6, right: 10, top: 14, bottom: 6, containLabel: true },
         tooltip: {
           trigger: 'axis',
-          backgroundColor: '#10201d',
-          borderWidth: 0,
-          padding: [7, 10],
-          textStyle: { color: '#f4f7f6', fontSize: 12 },
-          axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(14,159,142,0.06)' } },
+          backgroundColor: '#ffffff',
+          borderColor: '#eceef2',
+          borderWidth: 1,
+          padding: [10, 12],
+          extraCssText: 'border-radius:12px;box-shadow:none;',
+          textStyle: { color: '#4b5160', fontSize: 12 },
+          axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(77,107,254,0.06)' } },
           formatter: (params: unknown) => {
             const list = Array.isArray(params) ? params : [params]
             const first = list[0] as { axisValue?: string; value?: number | string } | undefined
             const value = Number(first?.value ?? 0)
-            return `${first?.axisValue ?? ''}<br/><span style="font-family:JetBrains Mono,monospace">${formatYuan(
-              Number.isSafeInteger(value) ? value : 0,
-            )}</span>`
+            return `${first?.axisValue ?? ''}<br/>${
+              formatYuan(Number.isSafeInteger(value) ? value : 0)
+            }`
           },
         },
         xAxis: {
           type: 'category',
           data: labels,
-          axisLine: { lineStyle: { color: '#e1e7e5' } },
+          axisLine: { lineStyle: { color: '#eceef2' } },
           axisTick: { show: false },
-          axisLabel: { color: '#61716d', fontSize: 10.5, interval: 4 },
+          axisLabel: { color: '#8a909c', fontSize: 12, interval: 4 },
         },
         yAxis: {
           type: 'value',
-          splitLine: { lineStyle: { color: '#edf2f0' } },
+          splitLine: { lineStyle: { color: '#eceef2' } },
           axisLabel: {
-            color: '#61716d',
-            fontSize: 10.5,
+            color: '#8a909c',
+            fontSize: 12,
             formatter: (value: number) => formatYuan(Math.round(value)),
           },
         },
@@ -78,8 +80,8 @@ export function IncomeChart({ daily }: { daily: SellerDailyIncome[] }) {
             type: 'bar',
             data: values,
             barMaxWidth: 16,
-            itemStyle: { color: '#0e9f8e', borderRadius: [1, 1, 0, 0] },
-            emphasis: { itemStyle: { color: '#087266' } },
+            itemStyle: { color: '#4d6bfe', borderRadius: [4, 4, 0, 0] },
+            emphasis: { itemStyle: { color: '#3b58f0' } },
           },
         ],
       })

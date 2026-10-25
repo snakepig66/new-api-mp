@@ -7,6 +7,7 @@ import {
   useRouterState,
 } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
+import type { ReactNode } from 'react'
 
 import { copy } from '@/copy'
 import { ensureAuth } from '@/lib/auth'
@@ -33,6 +34,7 @@ export const Route = createFileRoute('/seller')({
 })
 
 const nav = copy.pages.sellerCommon.nav
+const shell = copy.consoleShell
 
 const tabs = [
   { to: '/seller', label: nav.overview, exact: true },
@@ -42,35 +44,104 @@ const tabs = [
   { to: '/seller/onboarding', label: nav.onboarding },
 ] as const
 
-function SellerTab({
-  to,
-  label,
-  exact,
-}: {
-  to: (typeof tabs)[number]['to']
-  label: string
-  exact?: boolean
-}) {
+function NavPills() {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const active = exact ? pathname === to : pathname === to || pathname.startsWith(`${to}/`)
-
   return (
-    <Link
-      to={to}
-      className={cn(
-        'relative whitespace-nowrap px-3 py-2.5 text-[12.5px] transition-colors',
-        active ? 'font-medium text-ink' : 'text-muted hover:text-ink',
-      )}
+    <nav
+      aria-label={copy.pages.seller.title}
+      className="flex items-center gap-1.5 overflow-x-auto lg:flex-col lg:items-stretch lg:gap-1 lg:overflow-visible"
     >
-      {label}
-      <span
-        aria-hidden="true"
-        className={cn(
-          'absolute inset-x-2 bottom-0 h-[2px] rounded-full',
-          active ? 'bg-brand-dark' : 'bg-transparent',
-        )}
-      />
-    </Link>
+      {tabs.map((tab) => {
+        const active =
+          'exact' in tab && tab.exact
+            ? pathname === tab.to || pathname === `${tab.to}/`
+            : pathname === tab.to || pathname.startsWith(`${tab.to}/`)
+        return (
+          <Link
+            key={tab.to}
+            to={tab.to}
+            aria-current={active ? 'page' : undefined}
+            className={cn(
+              'inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-full px-3.5 text-[14px] transition-colors',
+              active
+                ? 'bg-brand-soft font-medium text-brand-ink'
+                : 'text-ink-2 hover:bg-bg-soft hover:text-ink',
+            )}
+          >
+            {tab.label}
+          </Link>
+        )
+      })}
+    </nav>
+  )
+}
+
+function IdentitySwitch() {
+  const items = [
+    { key: 'buyer' as const, to: '/console' as const, label: shell.buyer },
+    { key: 'seller' as const, to: '/seller' as const, label: shell.seller },
+  ]
+  return (
+    <div className="mt-3 border-t border-line pt-3 lg:mt-auto lg:pt-4">
+      <p className="hidden px-2 text-[12px] font-medium uppercase tracking-[0.12em] text-ink-3 lg:block">
+        {shell.identityTitle}
+      </p>
+      <div className="flex gap-1.5 lg:mt-2 lg:flex-col">
+        {items.map((item) => (
+          <Link
+            key={item.key}
+            to={item.to}
+            aria-current={item.key === 'seller' ? 'page' : undefined}
+            className={cn(
+              'inline-flex h-9 flex-1 items-center justify-center whitespace-nowrap rounded-full px-3 text-[14px] transition-colors lg:justify-start',
+              item.key === 'seller'
+                ? 'bg-brand-soft font-medium text-brand-ink'
+                : 'text-ink-2 hover:bg-bg-soft hover:text-ink',
+            )}
+          >
+            {item.label}
+          </Link>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SellerShell({
+  children,
+  active,
+  status,
+}: {
+  children: ReactNode
+  active?: boolean
+  status?: ReactNode
+}) {
+  return (
+    <div className="min-h-screen bg-bg-soft">
+      <div className="mx-auto flex w-full max-w-[1440px] flex-col lg:flex-row">
+        <aside className="flex shrink-0 flex-col gap-3 border-b border-line bg-bg px-4 py-4 sm:px-6 lg:sticky lg:top-0 lg:h-screen lg:w-[220px] lg:gap-6 lg:border-b-0 lg:border-r lg:px-5 lg:py-6">
+          <div className="hidden lg:flex lg:items-center lg:justify-between lg:gap-2">
+            <p className="px-3 text-[12px] font-medium uppercase tracking-[0.12em] text-ink-3">
+              {shell.sellerGroup}
+            </p>
+            {active !== undefined ? (
+              <Tag tone={active ? 'brand' : 'neutral'} dot>
+                {active
+                  ? copy.pages.sellerOnboarding.activeBadge
+                  : copy.pages.sellerOnboarding.pendingBadge}
+              </Tag>
+            ) : null}
+          </div>
+          <NavPills />
+          {status}
+          <IdentitySwitch />
+        </aside>
+
+        <main className="min-w-0 flex-1 px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
+          <div className="mx-auto w-full max-w-[1040px]">{children}</div>
+        </main>
+      </div>
+    </div>
   )
 }
 
@@ -80,22 +151,22 @@ function SellerLayout() {
 
   if (isPending) {
     return (
-      <div className="mx-auto max-w-[1180px] px-5 py-8">
+      <SellerShell>
         <PageSkeleton />
-      </div>
+      </SellerShell>
     )
   }
 
   if (isError || !data) {
     return (
-      <div className="mx-auto max-w-[1180px] px-5 py-8">
+      <SellerShell>
         <AsyncError
           title={copy.pages.sellerCommon.loadError}
           reason={sellerErrorMessage(error)}
           onRetry={() => void refetch()}
           retryLabel={copy.actions.retry}
         />
-      </div>
+      </SellerShell>
     )
   }
 
@@ -108,36 +179,8 @@ function SellerLayout() {
   }
 
   return (
-    <div className="mx-auto max-w-[1180px] px-5 py-8">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-[12px] text-muted">
-          <span>{copy.pages.seller.title}</span>
-          <span className="h-3 w-px bg-line-strong" aria-hidden="true" />
-          <span>{copy.pages.seller.lead}</span>
-        </div>
-        {active ? (
-          <Tag tone="success" dot>
-            {copy.pages.sellerOnboarding.activeBadge}
-          </Tag>
-        ) : (
-          <Tag tone="warning" dot>
-            {copy.pages.sellerOnboarding.pendingBadge}
-          </Tag>
-        )}
-      </div>
-
-      <nav
-        aria-label={copy.pages.seller.title}
-        className="mt-3 -mb-px flex items-center gap-0.5 overflow-x-auto border-b border-line"
-      >
-        {tabs.map((tab) => (
-          <SellerTab key={tab.to} {...tab} />
-        ))}
-      </nav>
-
-      <div className="pt-7">
-        <Outlet />
-      </div>
-    </div>
+    <SellerShell active={active}>
+      <Outlet />
+    </SellerShell>
   )
 }

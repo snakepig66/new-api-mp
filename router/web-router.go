@@ -71,6 +71,7 @@ func SetSiteWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin
 		middleware.AccessTokenAudit(),
 		middleware.GlobalWebRateLimit(siteFS),
 		middleware.Cache(),
+		siteFrontendCacheHeaders(),
 		middleware.ServeFrontendFiles(siteFS),
 		func(c *gin.Context) {
 			if strings.HasPrefix(c.Request.RequestURI, "/v1") || strings.HasPrefix(c.Request.RequestURI, "/api") || strings.HasPrefix(c.Request.RequestURI, "/assets") {
@@ -81,4 +82,23 @@ func SetSiteWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin
 			c.Data(http.StatusOK, "text/html; charset=utf-8", assets.SiteIndexPage)
 		},
 	)
+}
+
+// MP-HOOK: cache policy for the standalone frontend (site/dist).
+//
+// index.html must be revalidated on every load: it is what points the browser
+// at the current asset hashes, and a stale copy is what made /models/:id white
+// screen after a deploy. Vite's /assets filenames are content-hashed, so they
+// can be cached forever.
+func siteFrontendCacheHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		path := c.Request.URL.Path
+		switch {
+		case strings.HasPrefix(path, "/assets/"):
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		case path == "/" || path == "/index.html":
+			c.Header("Cache-Control", "no-cache")
+		}
+		c.Next()
+	}
 }

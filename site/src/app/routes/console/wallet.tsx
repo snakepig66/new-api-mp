@@ -70,7 +70,7 @@ function WalletPage() {
       </Notice>
 
       {wallet.isPending ? (
-        <div className="mt-6 grid gap-6 border-b border-line pb-6 sm:grid-cols-3">
+        <div className="mt-6 grid grid-cols-2 gap-4 rounded-md border border-line bg-bg p-6 sm:grid-cols-3">
           <StatSkeleton />
           <StatSkeleton />
           <StatSkeleton />
@@ -82,13 +82,13 @@ function WalletPage() {
           onRetry={() => void wallet.refetch()}
         />
       ) : (
-        <div className="mt-6 grid gap-6 border-b border-line pb-6 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)] sm:divide-x sm:divide-line">
+        <div className="mt-6 grid gap-6 rounded-md border border-line bg-bg p-6 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)] sm:divide-x sm:divide-line">
           <div className="min-w-0 sm:pr-6">
-            <div className="text-[12px] text-muted">{page.balance}</div>
-            <div className="mt-1 break-all font-numeric text-[32px] font-medium leading-10 tabular-nums text-brand-dark">
+            <div className="text-[13px] text-ink-3">{page.balance}</div>
+            <div className="mt-1 break-all text-[32px] font-semibold leading-tight tracking-tight tabular-nums text-brand-ink">
               {formatYuan(wallet.data.balance_micro)}
             </div>
-            <div className="mt-1 text-[11px] leading-5 text-muted/80">{page.balanceHint}</div>
+            <div className="mt-1.5 text-[13px] leading-5 text-ink-3">{page.balanceHint}</div>
           </div>
           <Stat
             label={page.monthSpend}
@@ -98,21 +98,21 @@ function WalletPage() {
           <Stat
             label={page.monthSaved}
             value={formatYuan(wallet.data.month_saved_micro)}
-            tone="success"
+            tone="brand"
             className="sm:pl-6"
           />
         </div>
       )}
 
-      <div className="mt-7 grid gap-4 lg:grid-cols-2">
-        <section className="border border-line bg-surface p-4 sm:p-5">
+      <div className="mt-6 grid gap-4 lg:grid-cols-2">
+        <section className="rounded-md border border-line bg-bg p-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-[14px] font-semibold tracking-tight text-ink">
               {page.recharge.title}
             </h2>
             <Tag tone="neutral">{page.recharge.soon}</Tag>
           </div>
-          <p className="mt-2 text-[12.5px] leading-6 text-muted">{page.recharge.body}</p>
+          <p className="mt-2 text-[13px] leading-6 text-ink-3">{page.recharge.body}</p>
           <Button className="mt-4" variant="secondary" disabled>
             {page.recharge.action}
           </Button>
@@ -151,16 +151,16 @@ function WalletPage() {
               <TableBody>
                 {ledger.data.items.map((entry, index) => (
                   <TableRow key={`${entry.request_id}-${entry.entry_type}-${index}`}>
-                    <TableCell className="whitespace-nowrap font-numeric text-[12px] text-muted">
+                    <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
                       {formatDateTime(entry.created_at)}
                     </TableCell>
                     <TableCell>{ledgerEntryLabel(entry.entry_type)}</TableCell>
-                    <TableCell className="max-w-[220px] truncate font-numeric text-[11.5px] text-muted">
+                    <TableCell className="max-w-[220px] truncate tabular-nums text-[13px] text-ink-3">
                       {entry.request_id || copy.pages.consoleShared.none}
                     </TableCell>
                     <TableCell
                       numeric
-                      className={entry.entry_type === 'refund' ? 'text-success' : undefined}
+                      className={entry.entry_type === 'refund' ? 'text-brand-ink' : undefined}
                     >
                       {formatYuan(entry.amount_micro)}
                     </TableCell>
@@ -173,7 +173,7 @@ function WalletPage() {
             </Table>
 
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
-              <span className="font-numeric text-[11.5px] text-muted">
+              <span className="tabular-nums text-[13px] text-ink-3">
                 {copy.pages.consoleRecords.pagination.summary(currentPage, totalPages)}
               </span>
               <div className="flex items-center gap-2">
@@ -204,8 +204,8 @@ function WalletPage() {
 
 function LedgerStatus({ status }: { status: string }) {
   const label = ledgerStatusLabel(status)
-  if (status === 'available') return <Tag tone="success">{label}</Tag>
-  if (status === 'pending') return <Tag tone="warning">{label}</Tag>
+  if (status === 'available') return <Tag tone="brand">{label}</Tag>
+  if (status === 'pending') return <Tag tone="neutral">{label}</Tag>
   if (status === 'reversed') return <Tag tone="danger">{label}</Tag>
   return <Tag tone="neutral">{label}</Tag>
 }
@@ -244,11 +244,11 @@ function RedeemPanel() {
   }
 
   return (
-    <section className="border border-line bg-surface p-4 sm:p-5">
-      <h2 className="text-[14px] font-semibold tracking-tight text-ink">{page.redeem.title}</h2>
-      <p className="mt-2 text-[12.5px] leading-6 text-muted">{page.redeem.hint}</p>
+    <section className="rounded-md border border-line bg-bg p-6">
+      <h2 className="text-[16px] font-semibold tracking-tight text-ink">{page.redeem.title}</h2>
+      <p className="mt-2 text-[13px] leading-6 text-ink-3">{page.redeem.hint}</p>
       <form
-        className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-start"
+        className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-start"
         onSubmit={(event) => {
           event.preventDefault()
           void submit()
@@ -256,12 +256,11 @@ function RedeemPanel() {
         noValidate
       >
         <div className="min-w-0 flex-1">
-          <label htmlFor="redeem-code" className="mb-1.5 block text-[12px] font-medium text-ink">
+          <label htmlFor="redeem-code" className="mb-2 block text-[14px] font-medium text-ink">
             {page.redeem.label}
           </label>
           <Input
             id="redeem-code"
-            mono
             autoComplete="off"
             placeholder={page.redeem.placeholder}
             value={code}
@@ -269,12 +268,12 @@ function RedeemPanel() {
             onChange={(event) => setCode(event.target.value)}
           />
         </div>
-        <Button type="submit" className="sm:mt-[26px]" loading={submitting}>
+        <Button type="submit" className="sm:mt-[30px]" loading={submitting}>
           {submitting ? page.redeem.redeeming : page.redeem.action}
         </Button>
       </form>
       {error ? (
-        <p role="alert" className="mt-2 text-[12px] text-danger">
+        <p role="alert" className="mt-2 text-[13px] text-danger">
           {error}
         </p>
       ) : null}

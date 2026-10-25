@@ -18,9 +18,9 @@ export function tokenStatusMeta(status: number): StatusMeta {
   const labels = copy.pages.consoleKeys.status
   switch (status) {
     case TOKEN_STATUS_ENABLED:
-      return { label: labels.enabled, tone: 'success' }
+      return { label: labels.enabled, tone: 'brand' }
     case TOKEN_STATUS_DISABLED:
-      return { label: labels.disabled, tone: 'warning' }
+      return { label: labels.disabled, tone: 'neutral' }
     case TOKEN_STATUS_EXPIRED:
       return { label: labels.expired, tone: 'neutral' }
     case TOKEN_STATUS_EXHAUSTED:

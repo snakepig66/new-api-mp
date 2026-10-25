@@ -1,38 +1,39 @@
 @import 'tailwindcss';
+@import '@fontsource-variable/inter';
 @import '@fontsource-variable/jetbrains-mono';
 
+/*
+ * DeepSeek-inspired visual language, per docs/marketplace/VISUAL-SPEC.md §1.
+ * One accent only (brand blue). The old green palette is retired.
+ */
 @theme {
   --font-sans:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'HarmonyOS Sans SC', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans SC',
-    sans-serif;
+    'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC',
+    'HarmonyOS Sans SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  /* Mono is for code blocks only. */
   --font-mono:
-    'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SFMono-Regular',
-    Menlo, Consolas, monospace;
+    'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
 
-  /* Paper, ink and quiet neutrals: a market board, not a marketing page. */
-  --color-paper: #fbfcfb;
-  --color-surface: #ffffff;
-  --color-ink: #10201d;
-  --color-muted: #61716d;
-  --color-line: #e1e7e5;
-  --color-line-strong: #c9d3d0;
-  --color-wash: #f4f7f6;
+  --color-bg: #ffffff;
+  --color-bg-soft: #f7f8fa;
+  --color-ink: #0f1115;
+  --color-ink-2: #4b5160;
+  --color-ink-3: #8a909c;
+  --color-line: #eceef2;
+  --color-line-strong: #dfe2e8;
+  --color-brand: #4d6bfe;
+  --color-brand-hover: #3b58f0;
+  --color-brand-soft: #eef1ff;
+  --color-brand-ink: #2f4bd8;
+  --color-cta: #0f1115;
+  --color-cta-hover: #2a2d34;
+  --color-danger: #e5484d;
+  --color-warn: #f59e0b;
 
-  /* Brand: the specification's button and brand colors. */
-  --color-brand: #0e9f8e;
-  --color-brand-dark: #087266;
-  --color-brand-soft: #e7f5f2;
-
-  --color-success: #15803d;
-  --color-success-soft: #eaf6ee;
-  --color-warning: #b45309;
-  --color-warning-soft: #fdf3e7;
-  --color-danger: #b42318;
-  --color-danger-soft: #fceceb;
-
-  --radius-sm: 4px;
-  --radius-md: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
 }
 
 @layer base {
@@ -42,9 +43,10 @@
   }
 
   body {
-    @apply bg-paper font-sans text-ink antialiased;
-    font-size: 14px;
-    line-height: 1.6;
+    @apply bg-bg font-sans text-ink antialiased;
+    font-size: 15px;
+    line-height: 1.75;
+    background: var(--color-bg);
   }
 
   ::selection {
@@ -53,7 +55,7 @@
   }
 
   :focus-visible {
-    outline: 2px solid var(--color-brand-dark);
+    outline: 2px solid var(--color-brand);
     outline-offset: 2px;
   }
 
@@ -62,8 +64,32 @@
     text-decoration: none;
   }
 
+  /* Thin neutral scrollbars, both engines. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border-radius: 999px;
+  }
+
+  /*
+   * Legacy numeric utility kept so untouched pages keep compiling. It is now
+   * sans + tabular figures; numbers never use the mono face outside code.
+   */
   .font-numeric {
-    font-family: var(--font-mono);
+    font-family: var(--font-sans);
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.01em;
   }
@@ -71,27 +97,27 @@
 
 @layer components {
   .prose-doc {
-    @apply text-[14px] leading-7 text-ink;
+    @apply text-[15px] leading-7 text-ink;
   }
 
   .prose-doc p {
-    @apply text-muted;
+    @apply text-ink-2;
   }
 
   .prose-doc h2 {
-    @apply mt-10 mb-3 scroll-mt-24 text-[18px] font-semibold tracking-tight text-ink;
+    @apply mt-10 mb-3 scroll-mt-24 text-[24px] font-semibold tracking-tight text-ink;
   }
 
   .prose-doc h3 {
-    @apply mt-6 mb-2 scroll-mt-24 text-[15px] font-semibold text-ink;
+    @apply mt-6 mb-2 scroll-mt-24 text-[18px] font-semibold text-ink;
   }
 
   .prose-doc code:not(pre code) {
-    @apply rounded-[3px] border border-line bg-wash px-1 py-0.5 font-mono text-[12px] text-ink;
+    @apply rounded-sm border border-line bg-bg-soft px-1.5 py-0.5 font-mono text-[13px] text-ink;
   }
 
   .code-block {
-    @apply overflow-x-auto rounded-[4px] border border-line bg-[#101b19] p-4 font-mono text-[12.5px] leading-6 text-[#d8e5e1];
+    @apply overflow-x-auto rounded-md border border-[#1f242c] bg-[#0d1117] p-4 font-mono text-[13px] leading-6 text-[#e6edf3];
   }
 }
 

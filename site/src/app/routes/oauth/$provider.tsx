@@ -67,9 +67,9 @@ function OAuthCallbackPage() {
 
       {state === 'working' ? (
         <div className="mt-8 space-y-4" aria-busy="true">
-          <div className="h-4 w-56 animate-pulse rounded-[3px] bg-line" />
-          <div className="h-4 w-full animate-pulse rounded-[3px] bg-line" />
-          <div className="h-4 w-3/4 animate-pulse rounded-[3px] bg-line" />
+          <div className="h-4 w-56 animate-pulse rounded-sm bg-line" />
+          <div className="h-4 w-full animate-pulse rounded-sm bg-line" />
+          <div className="h-4 w-3/4 animate-pulse rounded-sm bg-line" />
         </div>
       ) : (
         <div className="mt-6">

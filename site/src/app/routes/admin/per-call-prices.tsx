@@ -111,7 +111,7 @@ function PerCallPricesContent() {
             {groups.map((group) => (
               <Section
                 key={group.vendor}
-                title={<span className="font-numeric">{group.vendor}</span>}
+                title={<span className="tabular-nums">{group.vendor}</span>}
                 hint={page.groupCount(group.rows.length)}
               >
                 <Table minWidth={720}>
@@ -127,16 +127,16 @@ function PerCallPricesContent() {
                     {group.rows.map((row) => (
                       <TableRow key={row.id}>
                         <TableCell>
-                          <span className="font-numeric text-[12.5px]">{itemLabel(row.item)}</span>
+                          <span className="tabular-nums text-[13px]">{itemLabel(row.item)}</span>
                         </TableCell>
                         <TableCell numeric>
                           {formatYuan(row.unit_price_micro)}
-                          <span className="ml-1 text-[11px] text-muted">/ 次</span>
+                          <span className="ml-1 text-[13px] text-ink-3">/ 次</span>
                         </TableCell>
-                        <TableCell className="font-numeric text-[12px] text-muted">
+                        <TableCell className="tabular-nums text-[13px] text-ink-3">
                           v{row.version}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap font-numeric text-[12px] text-muted">
+                        <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
                           {formatDateTime(row.effective_at)}
                         </TableCell>
                       </TableRow>
@@ -300,7 +300,7 @@ function PerCallDialog({ open, onClose }: { open: boolean; onClose: () => void }
       {submitError ? (
         <p
           role="alert"
-          className="mt-4 border border-danger/25 bg-danger-soft px-3 py-2 text-[12px] text-danger"
+          className="mt-4 border border-danger/25 bg-danger/10 px-3 py-2 text-[13px] text-danger"
         >
           {submitError}
         </p>

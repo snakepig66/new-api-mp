@@ -2,8 +2,11 @@
 #
 # 词元市场前端部署脚本（F5）。
 #
-# 只做编排：本地构建 site/dist → 通过 SSH 隧道传到 llmjar → 服务器上把
-# MP_FRONTEND=site 写进 /etc/new-api.env → 重新编译 Go 二进制 → 重启服务。
+# 只做编排：本地构建 site/dist → 通过 SSH 隧道传到 llmjar → 校验远端
+# index.html 与本地哈希一致 → 服务器上把 MP_FRONTEND=site 写进
+# /etc/new-api.env → 重新编译 Go 二进制（重新 embed 新 dist）→ 重启服务。
+# 顺序不能调换：Go 的 embed 在编译期读 site/dist，先重启后编译会继续
+# 提供旧资源，这正是 /models/:id 白屏的来源。
 # 不执行任何 git 操作，也不在脚本里保存任何口令、密钥或令牌。
 #
 # 用法：
@@ -37,21 +40,39 @@ SSH=(ssh -p "$SSH_PORT" -i "$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChec
 step() { printf '\n==> %s\n' "$*"; }
 fail() { printf 'deploy: %s\n' "$*" >&2; exit 1; }
 
+# sha256 of one local file, portable across GNU coreutils and macOS shasum.
+file_hash() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
 [ -f "$SSH_KEY" ] || fail "SSH 私钥不存在：$SSH_KEY"
 [ -f "$SITE_DIR/package.json" ] || fail "找不到 $SITE_DIR/package.json"
 
-step "1/6 本地构建前端（bun run build）"
+step "1/7 本地构建前端（bun run build）"
 (cd "$SITE_DIR" && bun run build)
 [ -f "$SITE_DIR/dist/index.html" ] || fail "构建产物缺少 dist/index.html"
 
-step "2/6 检查 SSH 连通性（$SSH_USER@$SSH_HOST:$SSH_PORT）"
+step "2/7 检查 SSH 连通性（$SSH_USER@$SSH_HOST:$SSH_PORT）"
 "${SSH[@]}" 'printf "remote: %s\n" "$(hostname)"' || fail "SSH 连接失败"
 
-step "3/6 上传 site/dist 到 $TARGET_DIR/site/dist（tar over ssh）"
+step "3/7 上传 site/dist 到 $TARGET_DIR/site/dist（tar over ssh）"
 "${SSH[@]}" "sudo mkdir -p '$TARGET_DIR/site/dist' && sudo chown -R \"\$(id -u):\$(id -g)\" '$TARGET_DIR/site/dist'"
 tar -C "$SITE_DIR/dist" -czf - . | "${SSH[@]}" "tar -xzf - -C '$TARGET_DIR/site/dist'"
 
-step "4/6 确保 $ENV_FILE 含 MP_FRONTEND=site"
+step "4/7 校验远端 index.html 哈希与本地一致（防半传）"
+LOCAL_INDEX_HASH="$(file_hash "$SITE_DIR/dist/index.html")"
+REMOTE_INDEX_HASH="$("${SSH[@]}" "sha256sum '$TARGET_DIR/site/dist/index.html'" | awk '{print $1}')" ||
+  fail "无法读取远端 index.html 的哈希"
+[ -n "$LOCAL_INDEX_HASH" ] || fail "无法计算本地 index.html 的哈希"
+[ "$LOCAL_INDEX_HASH" = "$REMOTE_INDEX_HASH" ] ||
+  fail "index.html 哈希不一致（本地 $LOCAL_INDEX_HASH / 远端 $REMOTE_INDEX_HASH），上传不完整"
+printf 'index.html sha256: %s\n' "$LOCAL_INDEX_HASH"
+
+step "5/7 确保 $ENV_FILE 含 MP_FRONTEND=site"
 "${SSH[@]}" "
   set -e
   if ! sudo test -f '$ENV_FILE'; then sudo touch '$ENV_FILE'; fi
@@ -63,10 +84,10 @@ step "4/6 确保 $ENV_FILE 含 MP_FRONTEND=site"
   echo 'MP_FRONTEND 已设为 site'
 "
 
-step "5/6 服务器上重新编译（CGO_ENABLED=0 $GO_BIN build）"
+step "6/7 服务器上重新编译（CGO_ENABLED=0 $GO_BIN build，重新 embed 新 dist）"
 "${SSH[@]}" "cd '$TARGET_DIR' && CGO_ENABLED=0 '$GO_BIN' build -o new-api ."
 
-step "6/6 重启 systemd 服务（sudo systemctl restart $SERVICE）"
+step "7/7 重启 systemd 服务（sudo systemctl restart $SERVICE）"
 "${SSH[@]}" "sudo systemctl restart '$SERVICE' && sleep 1 && sudo systemctl --no-pager --lines=5 status '$SERVICE' || true"
 
 printf '\n完成：前端已部署，服务 %s 已重启。\n' "$SERVICE"

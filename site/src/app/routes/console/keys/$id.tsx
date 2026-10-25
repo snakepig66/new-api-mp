@@ -128,7 +128,7 @@ function BackLink() {
   return (
     <Link
       to="/console/keys"
-      className="inline-flex items-center gap-1 text-[12px] text-muted transition-colors hover:text-ink"
+      className="inline-flex items-center gap-1 text-[13px] text-ink-2 transition-colors hover:text-ink"
     >
       <span aria-hidden="true">←</span>
       {page.backToKeys}
@@ -249,14 +249,14 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
               {status.label}
             </Tag>
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-muted">
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-ink-3">
             <span>{page.maskedKey}</span>
-            <code className="rounded-[3px] border border-line bg-wash px-1.5 py-0.5 font-numeric text-[12px] text-ink">
+            <code className="rounded-sm bg-bg-soft px-2 py-0.5 text-[13px] tabular-nums text-ink">
               {token.key}
             </code>
             <span>{page.copyKeyHint}</span>
           </div>
-          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[11.5px] text-muted">
+          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-ink-3">
             <span>
               {copy.pages.consoleKeys.columns.spend}：{copy.pages.consoleKeys.spend.used(formatYuan(token.used_quota))}
             </span>
@@ -310,7 +310,6 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
           >
             <Input
               id="pref-price-cap"
-              mono
               inputMode="decimal"
               placeholder="0.85"
               {...form.register('priceCap')}
@@ -325,7 +324,6 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
           >
             <Input
               id="pref-rpm"
-              mono
               inputMode="numeric"
               placeholder="60"
               {...form.register('rpm')}
@@ -342,7 +340,6 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
           >
             <Input
               id="pref-prefer"
-              mono
               placeholder={page.sellerIds.placeholder}
               {...form.register('prefer')}
             />
@@ -366,7 +363,6 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
           >
             <Input
               id="pref-block"
-              mono
               placeholder={page.sellerIds.placeholder}
               {...form.register('block')}
             />
@@ -390,7 +386,6 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
           >
             <Input
               id="pref-only"
-              mono
               inputMode="numeric"
               placeholder="10023"
               {...form.register('only')}
@@ -403,15 +398,15 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
           </Field>
 
           <div className="sm:col-span-2">
-            <label className="inline-flex items-start gap-2 text-[12.5px] text-ink">
+            <label className="inline-flex items-start gap-2 text-[13px] text-ink">
               <input
                 type="checkbox"
-                className="mt-0.5 h-3.5 w-3.5 accent-[#087266]"
+                className="mt-0.5 h-3.5 w-3.5 accent-brand"
                 {...form.register('allowFallback')}
               />
               <span>
                 {page.config.allowFallback}
-                <span className="mt-0.5 block text-[11.5px] leading-5 text-muted">
+                <span className="mt-0.5 block text-[13px] leading-5 text-ink-3">
                   {page.config.allowFallbackHint}
                 </span>
               </span>
@@ -421,7 +416,7 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
           {form.formState.errors.root?.message ? (
             <p
               role="alert"
-              className="border border-danger/25 bg-danger-soft px-3 py-2 text-[12.5px] text-danger sm:col-span-2"
+              className="border border-danger/25 bg-danger/10 px-3 py-2 text-[13px] text-danger sm:col-span-2"
             >
               {form.formState.errors.root.message}
             </p>
@@ -438,8 +433,8 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
       <ModelsSection tokenId={tokenId} models={models} />
 
       <Section className="mt-10" title={page.danger.title}>
-        <div className="flex flex-col gap-3 border border-danger/20 bg-danger-soft/40 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-[12.5px] leading-5 text-muted">{page.danger.hint}</p>
+        <div className="flex flex-col gap-3 rounded-md border border-danger/20 bg-danger/5 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[13px] leading-5 text-ink-3">{page.danger.hint}</p>
           <Button variant="danger" size="sm" onClick={() => setDeleteOpen(true)}>
             {page.danger.action}
           </Button>
@@ -455,7 +450,7 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
         description={page.danger.confirmBody(token.name || shared.none)}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setDeleteOpen(false)} disabled={deleting}>
+            <Button variant="secondary" onClick={() => setDeleteOpen(false)} disabled={deleting}>
               {shared.cancel}
             </Button>
             <Button variant="danger" loading={deleting} onClick={() => void handleDelete()}>
@@ -464,9 +459,9 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
           </>
         }
       >
-        <p className="text-[13px] leading-6 text-muted">{page.danger.hint}</p>
+        <p className="text-[13px] leading-6 text-ink-3">{page.danger.hint}</p>
         {deleteError ? (
-          <p role="alert" className="mt-3 text-[12.5px] text-danger">
+          <p role="alert" className="mt-3 text-[13px] text-danger">
             {deleteError}
           </p>
         ) : null}
@@ -477,19 +472,19 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
 
 function SellerChips({ ids, onRemove }: { ids: number[]; onRemove: (id: number) => void }) {
   if (ids.length === 0) {
-    return <p className="mt-1.5 text-[11.5px] text-muted">{page.sellerIds.empty}</p>
+    return <p className="mt-1.5 text-[13px] text-ink-3">{page.sellerIds.empty}</p>
   }
   return (
     <div className="mt-2 flex flex-wrap gap-1.5">
       {ids.map((sellerId) => (
         <span
           key={sellerId}
-          className="inline-flex items-center gap-1 border border-line bg-wash px-1.5 py-0.5"
+          className="inline-flex items-center gap-1 rounded-full border border-line bg-bg-soft px-2.5 py-1"
         >
           <SellerId id={sellerId} />
           <button
             type="button"
-            className="ml-0.5 grid h-4 w-4 place-items-center rounded-[2px] text-muted hover:bg-surface hover:text-ink"
+            className="ml-0.5 grid h-4 w-4 place-items-center rounded-full text-ink-3 hover:bg-danger/10 hover:text-danger"
             aria-label={`${shared.remove} ${sellerId}`}
             onClick={() => onRemove(sellerId)}
           >
@@ -596,13 +591,13 @@ function ModelsSection({
           <TableBody>
             {models.map((model) => (
               <TableRow key={model.model}>
-                <TableCell className="font-numeric text-[12.5px]">{model.model}</TableCell>
-                <TableCell numeric className="text-[12.5px]">
+                <TableCell className="tabular-nums text-[13px]">{model.model}</TableCell>
+                <TableCell numeric className="text-[13px]">
                   {model.price_cap_milli > 0
                     ? `${milliToMultiplierInput(model.price_cap_milli)}x`
                     : page.models.capFollow}
                 </TableCell>
-                <TableCell className="whitespace-nowrap font-numeric text-[11.5px] text-muted">
+                <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
                   {formatDateTime(model.added_at)}
                 </TableCell>
                 <TableCell>
@@ -622,7 +617,7 @@ function ModelsSection({
       )}
 
       <div className="mt-4 border-t border-line pt-4">
-        <div className="text-[12.5px] font-medium text-ink">{page.models.addTitle}</div>
+        <div className="text-[13px] font-medium text-ink">{page.models.addTitle}</div>
         {square.isError ? (
           <ErrorBlock
             className="mt-2"
@@ -630,9 +625,9 @@ function ModelsSection({
             onRetry={() => void square.refetch()}
           />
         ) : square.isPending ? (
-          <p className="mt-2 text-[12px] text-muted">{shared.loadingOne}</p>
+          <p className="mt-2 text-[13px] text-ink-3">{shared.loadingOne}</p>
         ) : available.length === 0 ? (
-          <p className="mt-2 text-[12px] text-muted">
+          <p className="mt-2 text-[13px] text-ink-3">
             {models.length > 0 ? page.models.allAdded : page.models.noModels}
           </p>
         ) : (
@@ -661,7 +656,6 @@ function ModelsSection({
             >
               <Input
                 id="add-key-model-cap"
-                mono
                 inputMode="decimal"
                 placeholder="0.85"
                 value={cap}

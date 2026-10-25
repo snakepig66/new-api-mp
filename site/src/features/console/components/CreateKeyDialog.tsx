@@ -186,7 +186,7 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: CreateKeyDial
       footer={
         <div className="flex w-full items-center justify-between gap-2">
           <Button
-            variant="ghost"
+            variant="secondary"
             onClick={() => onOpenChange(false)}
             disabled={submitting}
           >
@@ -225,13 +225,13 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: CreateKeyDial
             <li key={label} className="min-w-0">
               <div
                 className={cn(
-                  'border-t-2 pt-1.5 text-[11.5px]',
-                  state === 'current' && 'border-brand-dark font-medium text-ink',
-                  state === 'done' && 'border-brand/50 text-muted',
-                  state === 'todo' && 'border-line text-muted/70',
+                  'border-t-2 pt-1.5 text-[13px]',
+                  state === 'current' && 'border-brand font-medium text-ink',
+                  state === 'done' && 'border-brand/50 text-ink-3',
+                  state === 'todo' && 'border-line text-ink-3/70',
                 )}
               >
-                <span className="font-numeric text-[10.5px] text-muted/80">0{index + 1}</span>{' '}
+                <span className="tabular-nums text-[13px] text-ink-3/80">0{index + 1}</span>{' '}
                 <span className="truncate">{label}</span>
               </div>
             </li>
@@ -240,7 +240,7 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: CreateKeyDial
       </ol>
 
       {error ? (
-        <p role="alert" className="mb-4 border border-danger/25 bg-danger-soft px-3 py-2 text-[12.5px] leading-5 text-danger">
+        <p role="alert" className="mb-4 border border-danger/25 bg-danger/10 px-3 py-2 text-[13px] leading-5 text-danger">
           {error}
         </p>
       ) : null}
@@ -261,7 +261,7 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: CreateKeyDial
               onChange={(event) => setName(event.target.value)}
             />
           </Field>
-          <p className="text-[12px] leading-5 text-muted">{copy.pages.consoleKeys.lead}</p>
+          <p className="text-[13px] leading-5 text-ink-3">{copy.pages.consoleKeys.lead}</p>
         </div>
       ) : null}
 
@@ -269,10 +269,10 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: CreateKeyDial
         <div>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <div className="text-[12.5px] font-medium text-ink">{wizard.models.label}</div>
-              <p className="mt-0.5 text-[11.5px] text-muted">{wizard.models.hint}</p>
+              <div className="text-[13px] font-medium text-ink">{wizard.models.label}</div>
+              <p className="mt-0.5 text-[13px] text-ink-3">{wizard.models.hint}</p>
             </div>
-            <span className="font-numeric text-[11.5px] text-brand-dark">
+            <span className="tabular-nums text-[13px] text-brand-ink">
               {wizard.models.selected(selectedCount)}
             </span>
           </div>
@@ -298,7 +298,7 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: CreateKeyDial
             </Button>
           </div>
 
-          <div className="mt-3 max-h-64 overflow-y-auto border border-line">
+          <div className="mt-3 max-h-64 overflow-y-auto rounded-md border border-line">
             {modelsQuery.isPending ? (
               <div className="space-y-2 p-3">
                 <Skeleton className="h-5" />
@@ -329,24 +329,24 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: CreateKeyDial
                       key={`${model.model}/${model.vendor}`}
                       className={cn(
                         'flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 transition-colors',
-                        checked ? 'bg-brand-soft/50' : 'bg-surface hover:bg-wash/60',
+                        checked ? 'bg-brand-soft/50' : 'bg-bg hover:bg-bg-soft/60',
                       )}
                     >
                       <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
                         <input
                           type="checkbox"
-                          className="h-3.5 w-3.5 shrink-0 accent-[#087266]"
+                          className="h-3.5 w-3.5 shrink-0 accent-brand"
                           checked={checked}
                           onChange={() => toggleModel(model.model)}
                         />
                         <span className="min-w-0">
                           <span className="block truncate text-[13px] text-ink">{model.model}</span>
-                          <span className="block text-[11px] text-muted">
+                          <span className="block text-[13px] text-ink-3">
                             {model.vendor} · {wizard.models.sellers(model.listing_count)}
                           </span>
                         </span>
                       </label>
-                      <label className="flex shrink-0 items-center gap-1.5 text-[11.5px] text-muted">
+                      <label className="flex shrink-0 items-center gap-1.5 text-[13px] text-ink-3">
                         <span className="whitespace-nowrap">{wizard.models.capLabel}</span>
                         <input
                           type="text"
@@ -356,7 +356,7 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: CreateKeyDial
                           placeholder={wizard.models.capPlaceholder}
                           value={selection[model.model] ?? ''}
                           onChange={(event) => setCap(model.model, event.target.value)}
-                          className="h-7 w-32 rounded-[3px] border border-line-strong bg-surface px-2 font-numeric text-[12px] text-ink disabled:bg-wash disabled:text-muted"
+                          className="h-8 w-32 rounded-sm border border-transparent bg-bg-soft px-2 tabular-nums text-[13px] text-ink disabled:bg-bg-soft disabled:text-ink-3"
                         />
                       </label>
                     </li>
@@ -370,8 +370,8 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: CreateKeyDial
 
       {step === 2 ? (
         <div>
-          <div className="text-[12.5px] font-medium text-ink">{wizard.strategy.label}</div>
-          <p className="mt-0.5 text-[11.5px] text-muted">{wizard.strategy.hint}</p>
+          <div className="text-[13px] font-medium text-ink">{wizard.strategy.label}</div>
+          <p className="mt-0.5 text-[13px] text-ink-3">{wizard.strategy.hint}</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
             {STRATEGIES.map((value) => {
               const option = strategyLabels[value]
@@ -383,17 +383,17 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: CreateKeyDial
                   aria-pressed={active}
                   onClick={() => setStrategy(value)}
                   className={cn(
-                    'border px-3 py-2.5 text-left transition-colors',
+                    'rounded-md border px-3 py-3 text-left transition-colors',
                     active
-                      ? 'border-brand-dark bg-brand-soft'
-                      : 'border-line bg-surface hover:border-line-strong hover:bg-wash/50',
+                      ? 'border-brand bg-brand-soft'
+                      : 'border-line bg-bg hover:border-line-strong hover:bg-bg-soft/60',
                   )}
                 >
                   <span className="flex items-center justify-between gap-2">
                     <span className="text-[13px] font-medium text-ink">{option.label}</span>
                     {active ? <Tag tone="brand">{copy.pages.consoleShared.confirm}</Tag> : null}
                   </span>
-                  <span className="mt-1 block text-[11.5px] leading-5 text-muted">
+                  <span className="mt-1 block text-[13px] leading-5 text-ink-3">
                     {option.hint}
                   </span>
                 </button>
@@ -417,13 +417,12 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: CreateKeyDial
                 placeholder={wizard.spend.placeholder}
                 value={spendCap}
                 onChange={(event) => setSpendCap(event.target.value)}
-                mono
               />
-              <span className="shrink-0 text-[12.5px] text-muted">{wizard.spend.currency}</span>
+              <span className="shrink-0 text-[13px] text-ink-3">{wizard.spend.currency}</span>
             </div>
           </Field>
 
-          <dl className="divide-y divide-line border-y border-line text-[12.5px]">
+          <dl className="divide-y divide-line border-y border-line text-[13px]">
             <ReviewRow label={wizard.review.name} value={name.trim() || copy.pages.consoleShared.none} />
             <ReviewRow
               label={wizard.review.models}
@@ -444,7 +443,7 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: CreateKeyDial
 function ReviewRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-baseline justify-between gap-4 py-2">
-      <dt className="text-muted">{label}</dt>
+      <dt className="text-ink-3">{label}</dt>
       <dd className="min-w-0 truncate text-right font-medium text-ink">{value}</dd>
     </div>
   )

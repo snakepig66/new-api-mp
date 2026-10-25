@@ -11,11 +11,16 @@ import {
   type SquareModelDetail,
   type SquareTierPrices,
 } from '@/features/market/api'
+import { capabilitiesOf } from '@/features/market/capabilities'
 import { CodeBlock } from '@/features/market/code-block'
+import { CopyButton } from '@/features/market/copy-button'
+import { PeakBar } from '@/features/market/peak-bar'
 import { QueryError } from '@/features/market/query-error'
 import { currentBaseUrl } from '@/features/market/url'
+import { vendorLabel } from '@/features/market/vendors'
 import { ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { cn } from '@/lib/cn'
 import { formatYuan } from '@/lib/money'
 import { formatMultiplier } from '@/lib/multiplier'
 import {
@@ -24,7 +29,6 @@ import {
   DialogClose,
   Empty,
   Multiplier,
-  PageHeader,
   PeakBadge,
   Price,
   Table,
@@ -42,7 +46,7 @@ export const Route = createFileRoute('/models/$id')({
   component: ModelDetailPage,
 })
 
-type CodeTab = 'openai' | 'anthropic' | 'curl'
+type CodeTab = 'curl' | 'python' | 'node'
 
 const PRICE_TIERS: MarketTier[] = ['peak', 'offpeak', 'flat']
 
@@ -64,7 +68,7 @@ function addErrorCopy(error: unknown): string {
   return copy.pages.modelDetail.addToKey.failed
 }
 
-function AddToKeyButton({ model }: { model: string }) {
+function AddToKeyButton({ model, className }: { model: string; className?: string }) {
   const page = copy.pages.modelDetail.addToKey
   const { isLoggedIn } = useAuth()
   const navigate = useNavigate()
@@ -125,7 +129,7 @@ function AddToKeyButton({ model }: { model: string }) {
 
   return (
     <>
-      <Button onClick={handleClick} loading={loading}>
+      <Button size="lg" onClick={handleClick} loading={loading} className={className}>
         {mutation.isPending ? page.adding : page.action}
       </Button>
 
@@ -163,10 +167,10 @@ function AddToKeyButton({ model }: { model: string }) {
         }
       >
         {tokens.isPending ? (
-          <p className="text-[13px] text-muted">{copy.common.loading}</p>
+          <p className="text-[14px] text-ink-2">{copy.common.loading}</p>
         ) : tokens.isError ? (
           <div>
-            <p className="text-[13px] text-muted">{page.failed}</p>
+            <p className="text-[14px] text-ink-2">{page.failed}</p>
             <Button
               variant="secondary"
               size="sm"
@@ -187,18 +191,18 @@ function AddToKeyButton({ model }: { model: string }) {
           <ul className="divide-y divide-line border-y border-line">
             {enabledTokens.map((token) => (
               <li key={token.id}>
-                <label className="flex cursor-pointer items-center gap-3 py-2.5 text-[13px]">
+                <label className="flex cursor-pointer items-center gap-3 py-3 text-[14px]">
                   <input
                     type="radio"
                     name="key-choice"
                     checked={selected === token.id}
                     onChange={() => setSelected(token.id)}
-                    className="h-3.5 w-3.5 accent-brand-dark"
+                    className="h-4 w-4 accent-brand"
                   />
                   <span className="min-w-0 flex-1 truncate text-ink">
                     {token.name || `Key #${token.id}`}
                   </span>
-                  <span className="font-numeric text-[11.5px] text-muted">#{token.id}</span>
+                  <span className="tabular-nums text-[13px] text-ink-3">#{token.id}</span>
                 </label>
               </li>
             ))}
@@ -212,10 +216,30 @@ function AddToKeyButton({ model }: { model: string }) {
 function DetailSkeleton() {
   return (
     <div className="space-y-6" aria-busy="true">
-      <div className="h-8 w-64 animate-pulse rounded-[3px] bg-line" />
-      <div className="h-4 w-full max-w-xl animate-pulse rounded-[3px] bg-line" />
-      <div className="h-48 animate-pulse rounded-[3px] border border-line bg-wash" />
-      <div className="h-32 animate-pulse rounded-[3px] border border-line bg-wash" />
+      <div className="h-8 w-64 animate-pulse rounded-sm bg-line" />
+      <div className="h-4 w-full max-w-xl animate-pulse rounded-sm bg-line" />
+      <div className="h-64 animate-pulse rounded-lg bg-bg-soft" />
+      <div className="h-40 animate-pulse rounded-lg bg-bg-soft" />
+    </div>
+  )
+}
+
+function InfoRow({
+  label,
+  value,
+  copyValue,
+}: {
+  label: string
+  value: string
+  copyValue?: string
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-line py-2.5 last:border-b-0">
+      <span className="shrink-0 text-[13px] text-ink-3">{label}</span>
+      <div className="flex min-w-0 items-center gap-1">
+        <code className="truncate text-[13px] tabular-nums text-ink">{value}</code>
+        <CopyButton text={copyValue ?? value} />
+      </div>
     </div>
   )
 }
@@ -224,12 +248,12 @@ function ModelDetailPage() {
   const { id } = Route.useParams()
   const page = copy.pages.modelDetail
   const detail = useQuery(squareModelQuery(id))
-  const [tab, setTab] = useState<CodeTab>('openai')
+  const baseUrl = currentBaseUrl()
 
   if (detail.isPending) {
     return (
-      <div className="mx-auto max-w-[1180px] px-5 py-10">
-        <PageHeader title={id} lead={page.loading} />
+      <div className="mx-auto w-full max-w-[1200px] px-5 py-12 sm:px-6 sm:py-16">
+        <p className="text-[13px] text-ink-3">{page.loading}</p>
         <div className="mt-8">
           <DetailSkeleton />
         </div>
@@ -240,9 +264,9 @@ function ModelDetailPage() {
   if (detail.isError) {
     const notFound = detail.error instanceof ApiError && detail.error.status === 404
     return (
-      <div className="mx-auto max-w-[1180px] px-5 py-10">
-        <PageHeader title={id} lead={page.lead} />
-        <div className="mt-6">
+      <div className="mx-auto w-full max-w-[1200px] px-5 py-12 sm:px-6 sm:py-16">
+        <h1 className="text-[32px] font-semibold tracking-tight text-ink">{id}</h1>
+        <div className="mt-8">
           {notFound ? (
             <Empty
               title={page.empty.title}
@@ -272,13 +296,7 @@ function ModelDetailPage() {
   const otherTier = otherTierOf(data.tier)
   const otherPrice = otherTier ? data.prices[otherTier] : undefined
   const tiers = PRICE_TIERS.filter((tier) => data.official_prices[tier])
-  const baseUrl = currentBaseUrl()
-  const codeFor = {
-    openai: page.code.openai,
-    anthropic: page.code.anthropic,
-    curl: page.code.curl,
-  }
-  const tabLabel = page.code.tabs[tab]
+  const capabilities = capabilitiesOf(data.model)
   const dimensions = [
     { key: 'input_micro_per_mtok', label: page.dimensions.input },
     { key: 'output_micro_per_mtok', label: page.dimensions.output },
@@ -286,208 +304,217 @@ function ModelDetailPage() {
     { key: 'cache_write_micro_per_mtok', label: page.dimensions.cacheWrite },
   ] as const
 
+  const codeTabs = (Object.keys(page.code.tabs) as CodeTab[]).map((key) => ({
+    key,
+    label: page.code.tabs[key],
+    code: page.code[key](baseUrl, data.model),
+  }))
+
   return (
-    <div className="mx-auto max-w-[1180px] px-5 py-10">
-      <PageHeader
-        title={data.model}
-        lead={page.lead}
-        actions={
-          <>
-            {data.tier === 'flat' ? (
-              <Tag>{copy.pages.models.flat}</Tag>
-            ) : (
-              <PeakBadge tier={data.tier} nextSwitchAt={data.next_switch} />
-            )}
-            <AddToKeyButton model={data.model} />
-          </>
-        }
-      />
+    <div className="mx-auto w-full max-w-[1200px] px-5 py-12 sm:px-6 sm:py-16">
+      <header>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-ink">
+            {data.model}
+          </h1>
+          <Tag>{vendorLabel(data.vendor)}</Tag>
+        </div>
+        {capabilities.length > 0 ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {capabilities.map((key) => (
+              <Tag key={key} tone="brand">
+                {copy.pages.models.capabilities[key]}
+              </Tag>
+            ))}
+          </div>
+        ) : null}
+      </header>
 
-      <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 text-[12px] text-muted">
-        <span>
-          {page.meta.vendor} <span className="text-ink">{data.vendor}</span>
-        </span>
-        <span>
-          {page.meta.listings}{' '}
-          <span className="font-numeric text-ink">{data.listing_count}</span>
-        </span>
-        <span>
-          {page.meta.tier}{' '}
-          <span className="text-ink">
-            {data.tier_label || copy.tiers[data.tier] || copy.common.none}
-          </span>
-        </span>
-      </div>
-
-      <div className="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-start">
-        <section>
-          <h2 className="text-[15px] font-semibold tracking-tight text-ink">
-            {page.sections.official}
-          </h2>
-          <p className="mt-1 text-[11.5px] text-muted">{page.tierNote}</p>
-
-          {tiers.length === 0 ? (
-            <div className="mt-3">
-              <Empty
-                title={page.noOfficial.title}
-                reason={page.noOfficial.reason}
-                next={page.noOfficial.next}
-              />
-            </div>
-          ) : (
-            <div className="mt-3">
-              <Table minWidth={520}>
-                <TableHead>
-                  <TableRow interactive={false}>
-                    <TableHeaderCell>{page.officialColumns.dimension}</TableHeaderCell>
-                    {tiers.map((tier) => (
-                      <TableHeaderCell key={tier} numeric>
-                        <span className="inline-flex items-center gap-1.5">
-                          {tier === 'flat'
-                            ? page.officialColumns.flat
-                            : copy.tiers[tier]}
-                          {tier === data.tier ? (
-                            <span className="h-1.5 w-1.5 rounded-full bg-brand" aria-hidden="true" />
-                          ) : null}
-                        </span>
-                      </TableHeaderCell>
-                    ))}
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {dimensions.map((dimension) => (
-                    <TableRow key={dimension.key}>
-                      <TableCell className="text-muted">{dimension.label}</TableCell>
-                      {tiers.map((tier) => (
-                        <TableCell
-                          key={tier}
-                          numeric
-                          className={tier === data.tier ? 'bg-brand-soft/40' : undefined}
-                        >
-                          <span className="font-numeric tabular-nums text-ink">
-                            {formatYuan(data.official_prices[tier]![dimension.key])}
-                          </span>
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </section>
-
-        <aside className="border border-line bg-surface">
-          <div className="border-b border-line px-4 py-3">
-            <div className="text-[11.5px] text-muted">{page.buyerPrice}</div>
-            {price ? (
-              <div className="mt-1">
-                <Price
-                  value={price.input_micro_per_mtok}
-                  tier={data.tier}
-                  other={
-                    otherPrice && otherTier
-                      ? { value: otherPrice.input_micro_per_mtok, tier: otherTier }
-                      : null
-                  }
-                  size="lg"
-                />
-                <p className="mt-1 text-[11.5px] text-muted">
-                  {copy.pages.models.outputPrefix}{' '}
-                  <span className="font-numeric tabular-nums text-ink">
-                    {formatYuan(price.output_micro_per_mtok)}
-                  </span>
-                  {otherPrice ? (
-                    <span className="font-numeric tabular-nums text-muted/80">
-                      {' '}
-                      / {formatYuan(otherPrice.output_micro_per_mtok)}
+      <div className="mt-10 grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
+        <div className="min-w-0 space-y-8">
+          <section className="rounded-lg border border-line p-6 sm:p-8">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <div className="text-[13px] text-ink-3">{page.lowestPrice}</div>
+                {price ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-3">
+                    <Price
+                      value={price.input_micro_per_mtok}
+                      tier={data.tier}
+                      other={
+                        otherPrice && otherTier
+                          ? { value: otherPrice.input_micro_per_mtok, tier: otherTier }
+                          : null
+                      }
+                      size="lg"
+                      className="[&_span.tabular-nums]:text-[32px] [&_span.tabular-nums]:font-semibold"
+                    />
+                    <Multiplier milli={data.multiplier_min_milli} />
+                  </div>
+                ) : (
+                  <p className="mt-2 text-[15px] text-ink-3">{copy.common.none}</p>
+                )}
+                {price ? (
+                  <p className="mt-2 text-[14px] text-ink-2">
+                    {copy.pages.models.outputPrefix}{' '}
+                    <span className="tabular-nums text-ink">
+                      {formatYuan(price.output_micro_per_mtok)}
                     </span>
-                  ) : null}
-                </p>
+                    {otherPrice ? (
+                      <span className="tabular-nums text-ink-3">
+                        {' '}
+                        / {formatYuan(otherPrice.output_micro_per_mtok)}
+                      </span>
+                    ) : null}
+                  </p>
+                ) : null}
               </div>
-            ) : (
-              <p className="mt-1 text-[13px] text-muted">{copy.common.none}</p>
-            )}
-          </div>
-
-          <dl className="divide-y divide-line text-[12.5px]">
-            <div className="flex items-baseline justify-between gap-3 px-4 py-2.5">
-              <dt className="text-muted">{page.listingAggregate.min}</dt>
-              <dd>
-                <Multiplier milli={data.multiplier_min_milli} />
-              </dd>
-            </div>
-            <div className="flex items-baseline justify-between gap-3 px-4 py-2.5">
-              <dt className="text-muted">{page.listingAggregate.max}</dt>
-              <dd>
-                <Multiplier milli={data.multiplier_max_milli} showSaving={false} />
-              </dd>
-            </div>
-            <div className="flex items-baseline justify-between gap-3 px-4 py-2.5">
-              <dt className="text-muted">{page.meta.listings}</dt>
-              <dd className="font-numeric tabular-nums text-ink">{data.listing_count}</dd>
-            </div>
-          </dl>
-        </aside>
-      </div>
-
-      <section className="mt-10">
-        <h2 className="text-[15px] font-semibold tracking-tight text-ink">
-          {page.sections.listings}
-        </h2>
-        <div className="mt-3 grid border-y border-line text-[12.5px] sm:grid-cols-3 sm:divide-x sm:divide-line">
-          <div className="py-3 sm:pr-5">
-            <div className="text-[11.5px] text-muted">{page.listingAggregate.range}</div>
-            <div className="mt-1 font-numeric text-[15px] tabular-nums text-ink">
-              {formatMultiplier(data.multiplier_min_milli)}x –{' '}
-              {formatMultiplier(data.multiplier_max_milli)}x
-            </div>
-          </div>
-          <div className="border-t border-line py-3 sm:border-t-0 sm:px-5">
-            <div className="text-[11.5px] text-muted">{page.meta.listings}</div>
-            <div className="mt-1 font-numeric text-[15px] tabular-nums text-ink">
-              {data.listing_count}
-            </div>
-          </div>
-          <div className="border-t border-line py-3 sm:border-t-0 sm:pl-5">
-            <div className="text-[11.5px] text-muted">{copy.pages.models.columns.tier}</div>
-            <div className="mt-1">
               {data.tier === 'flat' ? (
                 <Tag>{copy.pages.models.flat}</Tag>
               ) : (
                 <PeakBadge tier={data.tier} nextSwitchAt={data.next_switch} />
               )}
             </div>
-          </div>
-        </div>
-        <p className="mt-2 text-[11.5px] leading-5 text-muted">{page.listingAggregate.note}</p>
-      </section>
 
-      <section className="mt-10">
-        <h2 className="text-[15px] font-semibold tracking-tight text-ink">{page.sections.code}</h2>
-        <div className="mt-3" role="tablist" aria-label={page.code.aria}>
-          {(Object.keys(page.code.tabs) as CodeTab[]).map((key) => (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              aria-selected={tab === key}
-              onClick={() => setTab(key)}
-              className={
-                tab === key
-                  ? 'border-b-2 border-brand-dark px-3 py-1.5 text-[12.5px] font-medium text-ink'
-                  : 'border-b-2 border-transparent px-3 py-1.5 text-[12.5px] text-muted hover:text-ink'
-              }
-            >
-              {page.code.tabs[key]}
-            </button>
-          ))}
+            <div className="mt-8 border-t border-line pt-6">
+              <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+                {page.sections.official}
+              </h2>
+              <p className="mt-1 text-[13px] text-ink-3">{page.tierNote}</p>
+
+              {tiers.length === 0 ? (
+                <div className="mt-3">
+                  <Empty
+                    title={page.noOfficial.title}
+                    reason={page.noOfficial.reason}
+                    next={page.noOfficial.next}
+                  />
+                </div>
+              ) : (
+                <div className="mt-4">
+                  <Table minWidth={520} size="compact">
+                    <TableHead>
+                      <TableRow interactive={false}>
+                        <TableHeaderCell>{page.officialColumns.dimension}</TableHeaderCell>
+                        {tiers.map((tier) => (
+                          <TableHeaderCell key={tier} numeric>
+                            <span className="inline-flex items-center gap-1.5">
+                              {tier === 'flat'
+                                ? page.officialColumns.flat
+                                : copy.tiers[tier]}
+                              {tier === data.tier ? (
+                                <span
+                                  className="h-1.5 w-1.5 rounded-full bg-brand"
+                                  aria-hidden="true"
+                                />
+                              ) : null}
+                            </span>
+                          </TableHeaderCell>
+                        ))}
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {dimensions.map((dimension) => (
+                        <TableRow key={dimension.key}>
+                          <TableCell className="text-ink-2">{dimension.label}</TableCell>
+                          {tiers.map((tier) => (
+                            <TableCell
+                              key={tier}
+                              numeric
+                              className={cn(
+                                'tabular-nums',
+                                tier === data.tier ? 'bg-brand-soft/50' : undefined,
+                              )}
+                            >
+                              {formatYuan(data.official_prices[tier]![dimension.key])}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+
+            {data.tier !== 'flat' ? (
+              <div className="mt-8 border-t border-line pt-6">
+                <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+                  {page.peakBar.title}
+                </h2>
+                <PeakBar nextSwitchAt={data.next_switch} className="mt-4" />
+              </div>
+            ) : null}
+          </section>
+
+          <section>
+            <h2 className="text-[24px] font-semibold tracking-tight text-ink">
+              {page.sections.listings}
+            </h2>
+            <div className="mt-4">
+              <Table minWidth={480} size="compact">
+                <TableHead>
+                  <TableRow interactive={false}>
+                    <TableHeaderCell>指标</TableHeaderCell>
+                    <TableHeaderCell numeric>数值</TableHeaderCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  <TableRow>
+                    <TableCell className="text-ink-2">{page.listingAggregate.range}</TableCell>
+                    <TableCell numeric>
+                      {formatMultiplier(data.multiplier_min_milli)}x –{' '}
+                      {formatMultiplier(data.multiplier_max_milli)}x
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="text-ink-2">{page.listingAggregate.min}</TableCell>
+                    <TableCell numeric>
+                      <Multiplier milli={data.multiplier_min_milli} />
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="text-ink-2">{page.listingAggregate.max}</TableCell>
+                    <TableCell numeric>
+                      {formatMultiplier(data.multiplier_max_milli)}x
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="text-ink-2">{page.meta.listings}</TableCell>
+                    <TableCell numeric>
+                      {data.listing_count}
+                      <span className="ml-0.5 text-[13px] text-ink-3">
+                        {copy.pages.models.sellerUnit}
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
+            <p className="mt-3 text-[13px] leading-6 text-ink-3">{page.listingAggregate.note}</p>
+          </section>
         </div>
-        <div className="mt-3 max-w-[820px]">
-          <CodeBlock code={codeFor[tab](baseUrl, data.model)} label={tabLabel} />
-          <p className="mt-2 text-[11.5px] leading-5 text-muted">{page.code.note}</p>
-        </div>
-      </section>
+
+        <aside className="lg:sticky lg:top-24">
+          <div className="rounded-lg border border-line p-6">
+            <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+              {page.access.title}
+            </h2>
+            <div className="mt-3">
+              <InfoRow label={page.access.baseUrl} value={`${baseUrl}/v1`} />
+              <InfoRow label={page.access.model} value={data.model} />
+            </div>
+
+            <div className="mt-5">
+              <CodeBlock tabs={codeTabs} />
+            </div>
+
+            <p className="mt-3 text-[13px] leading-6 text-ink-3">{page.code.note}</p>
+
+            <AddToKeyButton model={data.model} className="mt-5 w-full" />
+          </div>
+        </aside>
+      </div>
     </div>
   )
 }

@@ -6,19 +6,20 @@ export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'link
 export type ButtonSize = 'sm' | 'md' | 'lg'
 
 const variants: Record<ButtonVariant, string> = {
-  primary:
-    'bg-brand-dark text-white hover:bg-[#065d54] active:bg-[#054b44] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]',
-  secondary:
-    'border border-line-strong bg-surface text-ink hover:border-brand/50 hover:bg-wash active:bg-[#edf2f0]',
-  ghost: 'text-muted hover:bg-wash hover:text-ink',
-  danger: 'bg-danger text-white hover:bg-[#96180f] active:bg-[#7f140d]',
-  link: 'h-auto px-0 text-brand-dark underline-offset-4 hover:underline',
+  /* Near-black pill: the single loud action on a page. */
+  primary: 'bg-cta text-white hover:bg-cta-hover active:bg-ink',
+  /* White pill with a hairline border. */
+  secondary: 'border border-line-strong bg-bg text-ink hover:bg-bg-soft active:bg-bg-soft',
+  ghost: 'text-ink-2 hover:bg-bg-soft hover:text-ink',
+  /* Destructive only: red type on white, never a red block. */
+  danger: 'border border-danger/30 bg-bg text-danger hover:bg-danger/5 active:bg-danger/10',
+  link: 'h-auto px-0 text-brand underline-offset-4 hover:text-brand-hover hover:underline',
 }
 
 const sizes: Record<ButtonSize, string> = {
-  sm: 'h-8 px-3 text-[12.5px]',
-  md: 'h-9 px-4 text-[13.5px]',
-  lg: 'h-10 px-5 text-[14px]',
+  sm: 'h-8 gap-1 px-3 text-[13px]',
+  md: 'h-10 gap-1.5 px-5 text-[14px]',
+  lg: 'h-12 gap-2 px-6 text-[15px]',
 }
 
 /** Classes for links that must look like buttons (TanStack Link, anchors). */
@@ -28,7 +29,7 @@ export function buttonClasses(
   className?: string,
 ): string {
   return cn(
-    'inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-[4px] font-medium transition-colors',
+    'inline-flex select-none items-center justify-center whitespace-nowrap rounded-full font-medium transition-colors',
     variant !== 'link' &&
       'disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50',
     variants[variant],

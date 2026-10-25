@@ -1,51 +1,55 @@
 import { copy } from '@/copy'
+import { cn } from '@/lib/cn'
 
 export interface LogoMarkProps {
+  /** Wordmark font size in px; the blue dot stays 8px. */
   size?: number
   className?: string
 }
 
 /**
- * The token mark: a quote line inside a token square. One shape, used in the
- * header, the footer, empty states and the favicon.
+ * Pure-text wordmark: the first two characters of the brand name, tightened,
+ * with one 8px brand dot. No SVG.
  */
-export function LogoMark({ size = 24, className }: LogoMarkProps) {
+export function LogoMark({ size = 20, className }: LogoMarkProps) {
+  const mark = copy.brand.name.slice(0, 2)
+
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 32 32"
-      fill="none"
-      aria-hidden="true"
-      className={className}
-    >
-      <rect x="1" y="1" width="30" height="30" rx="7" stroke="currentColor" strokeWidth="2" />
-      <path
-        d="M8.5 21.5 13.25 14.5l3.75 3.75L23.5 9.5"
-        stroke="currentColor"
-        strokeWidth="2.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx="23.5" cy="9.5" r="1.9" fill="currentColor" />
-    </svg>
+    <span className={cn('inline-flex items-start text-ink', className)} aria-hidden="true">
+      <span
+        style={{ fontSize: `${size}px`, lineHeight: 1 }}
+        className="font-semibold tracking-[-0.03em]"
+      >
+        {mark}
+      </span>
+      <span className="ml-1 mt-0.5 h-2 w-2 shrink-0 rounded-full bg-brand" />
+    </span>
   )
 }
 
 export interface LogoProps {
   className?: string
   markSize?: number
+  /** Optional quiet suffix rendered after the wordmark. */
+  subtitle?: string
 }
 
-export function Logo({ className, markSize = 22 }: LogoProps) {
+/** Full wordmark: brand name from copy.ts plus the brand dot. */
+export function Logo({ className, markSize = 20, subtitle }: LogoProps) {
   return (
-    <span className={className}>
-      <span className="flex items-center gap-2">
-        <LogoMark size={markSize} className="text-brand-dark" />
-        <span className="text-[15px] font-semibold tracking-[0.02em] text-ink">
+    <span className={cn('inline-flex items-start gap-2', className)}>
+      <span className="inline-flex items-start">
+        <span
+          style={{ fontSize: `${markSize}px`, lineHeight: 1 }}
+          className="font-semibold tracking-[-0.03em] text-ink"
+        >
           {copy.brand.name}
         </span>
+        <span className="ml-1 mt-0.5 h-2 w-2 shrink-0 rounded-full bg-brand" aria-hidden="true" />
       </span>
+      {subtitle ? (
+        <span className="text-[13px] leading-5 text-ink-3">{subtitle}</span>
+      ) : null}
     </span>
   )
 }

@@ -140,7 +140,6 @@ function PayoutDialog({
         >
           <Input
             id="payout-amount"
-            mono
             inputMode="decimal"
             placeholder={page.dialog.amountPlaceholder}
             value={amount}
@@ -150,7 +149,7 @@ function PayoutDialog({
             }}
           />
         </Field>
-        <p className="text-[11px] text-muted">
+        <p className="text-[13px] text-ink-3">
           {page.min} · {page.weeklyHint}
         </p>
       </div>
@@ -204,52 +203,52 @@ function SellerPayoutsPage() {
         }
       />
 
-      <section className="mt-6 grid gap-6 border-b border-line pb-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+      <section className="mt-6 grid gap-6 rounded-md border border-line bg-bg p-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <div>
-          <div className="text-[12px] text-muted">{page.available}</div>
-          <div className="mt-1 break-words font-numeric text-[34px] font-medium leading-tight tabular-nums text-brand-dark">
+          <div className="text-[13px] text-ink-3">{page.available}</div>
+          <div className="mt-1 break-words text-[32px] font-semibold leading-tight tracking-tight tabular-nums text-brand-ink">
             {formatYuan(availableMicro)}
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-muted">
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-ink-3">
             <span>{page.min}</span>
             <span className="h-3 w-px bg-line-strong" aria-hidden="true" />
             {recent ? (
-              <Tag tone="warning" dot>
+              <Tag tone="neutral" dot>
                 {page.weekly}
               </Tag>
             ) : (
-              <Tag tone="success" dot>
+              <Tag tone="brand" dot>
                 {page.weeklyFree}
               </Tag>
             )}
           </div>
-          <p className="mt-2 text-[11.5px] leading-5 text-muted">{page.weeklyHint}</p>
+          <p className="mt-2 text-[13px] leading-5 text-ink-3">{page.weeklyHint}</p>
         </div>
         <div className="flex flex-col justify-end gap-3 border-t border-line pt-4 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
           <div>
-            <div className="text-[12px] text-muted">{page.pending}</div>
-            <div className="mt-1 font-numeric text-[21px] font-medium tabular-nums text-ink">
+            <div className="text-[13px] text-ink-3">{page.pending}</div>
+            <div className="mt-1 text-[24px] font-semibold tabular-nums text-ink">
               {formatYuan(data?.pending_micro ?? 0)}
             </div>
           </div>
-          <p className="text-[11.5px] leading-5 text-muted">{page.reserveHint}</p>
+          <p className="text-[13px] leading-5 text-ink-3">{page.reserveHint}</p>
         </div>
       </section>
 
-      <section className="mt-8">
+      <section className="mt-6 rounded-md border border-line bg-bg p-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 className="text-[15px] font-semibold tracking-tight text-ink">
+            <h2 className="text-[16px] font-semibold tracking-tight text-ink">
               {page.history.title}
             </h2>
-            <p className="mt-1 text-[12px] text-muted">{page.history.lead}</p>
+            <p className="mt-1 text-[13px] text-ink-3">{page.history.lead}</p>
           </div>
-          <span className="font-numeric text-[11.5px] text-muted">
+          <span className="tabular-nums text-[13px] text-ink-3">
             {copy.pages.sellerCommon.totalCount(total)}
           </span>
         </div>
 
-        <div className="mt-4">
+        <div className="mt-5">
           {payouts.isPending ? (
             <TableSkeleton rows={4} columns={4} />
           ) : payouts.isError ? (
@@ -285,7 +284,7 @@ function SellerPayoutsPage() {
                     const status = payoutStatusView(payout.status)
                     return (
                       <TableRow key={payout.id}>
-                        <TableCell className="whitespace-nowrap font-numeric text-[12px] text-muted">
+                        <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
                           {formatDateTime(payout.created_at)}
                         </TableCell>
                         <TableCell numeric className="whitespace-nowrap font-medium">
@@ -296,7 +295,7 @@ function SellerPayoutsPage() {
                             {status.label}
                           </Tag>
                         </TableCell>
-                        <TableCell className="whitespace-nowrap font-numeric text-[12px] text-muted">
+                        <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
                           {payout.reviewed_at ? formatDateTime(payout.reviewed_at) : '—'}
                         </TableCell>
                       </TableRow>
@@ -305,8 +304,8 @@ function SellerPayoutsPage() {
                 </TableBody>
               </Table>
 
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <span className="text-[11.5px] text-muted">
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+                <span className="text-[13px] text-ink-3">
                   {page.pagination.summary(pageNumber, pages, total)}
                 </span>
                 <div className="flex items-center gap-2">

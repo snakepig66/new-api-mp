@@ -15,6 +15,7 @@ import {
   Input,
   Multiplier,
   PageHeader,
+  PasswordInput,
   Price,
   Tag,
   useToast,
@@ -113,7 +114,7 @@ function windowsValid(windows: { start: string; end: string }[]): boolean {
 
 function StepRail({ step, onJump }: { step: number; onJump: (next: WizardStep) => void }) {
   return (
-    <ol className="mt-6 grid gap-px border border-line bg-line sm:grid-cols-4">
+    <ol className="mt-6 grid grid-cols-2 gap-3 rounded-md border border-line bg-bg p-4 sm:grid-cols-4">
       {page.steps.map((title, index) => {
         const completed = index < step
         const active = index === step
@@ -121,7 +122,10 @@ function StepRail({ step, onJump }: { step: number; onJump: (next: WizardStep) =
           <li
             key={title}
             aria-current={active ? 'step' : undefined}
-            className={cn('bg-surface p-3.5', active && 'shadow-[inset_0_2px_0_var(--color-brand-dark)]')}
+            className={cn(
+              'rounded-md border p-3.5',
+              active ? 'border-brand bg-brand-soft/50' : 'border-line bg-bg',
+            )}
           >
             <button
               type="button"
@@ -135,16 +139,16 @@ function StepRail({ step, onJump }: { step: number; onJump: (next: WizardStep) =
               <span
                 aria-hidden="true"
                 className={cn(
-                  'grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[10px] font-medium',
+                  'grid h-6 w-6 shrink-0 place-items-center rounded-full border text-[13px] font-medium',
                   completed
-                    ? 'border-success/30 bg-success-soft text-success'
+                    ? 'border-transparent bg-brand-soft text-brand-ink'
                     : active
-                      ? 'border-brand-dark bg-brand-dark text-white'
-                      : 'border-line-strong bg-wash text-muted',
+                      ? 'border-transparent bg-brand text-white'
+                      : 'border-line bg-bg-soft text-ink-3',
                 )}
               >
                 {completed ? (
-                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                     <path
                       d="M2.5 6.2l2.2 2.2 4.8-5"
                       stroke="currentColor"
@@ -159,8 +163,8 @@ function StepRail({ step, onJump }: { step: number; onJump: (next: WizardStep) =
               </span>
               <span
                 className={cn(
-                  'text-[12px] font-medium',
-                  completed || active ? 'text-ink' : 'text-muted',
+                  'text-[14px] font-medium',
+                  completed || active ? 'text-ink' : 'text-ink-3',
                 )}
               >
                 {title}
@@ -177,7 +181,7 @@ function ProbeSummary({ probe }: { probe: ProbeResult }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Tag tone={probe.key_valid ? 'success' : 'danger'} dot>
+        <Tag tone={probe.key_valid ? 'brand' : 'danger'} dot>
           {probe.key_valid ? page.verify.valid : page.verify.invalid}
         </Tag>
         {probe.prompt_cache ? (
@@ -191,37 +195,37 @@ function ProbeSummary({ probe }: { probe: ProbeResult }) {
         )}
       </div>
 
-      <dl className="grid grid-cols-2 gap-px border border-line bg-line sm:grid-cols-3">
-        <div className="bg-surface px-3 py-2.5">
-          <dt className="text-[11px] text-muted">{page.verify.balance}</dt>
-          <dd className="mt-0.5 font-numeric text-[13px] tabular-nums text-ink">
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className="rounded-md bg-bg-soft px-4 py-3">
+          <dt className="text-[13px] text-ink-3">{page.verify.balance}</dt>
+          <dd className="mt-0.5 tabular-nums text-[14px] text-ink">
             {probe.balance_micro === null || probe.balance_micro === undefined
               ? page.verify.balanceUnknown
               : formatYuan(probe.balance_micro)}
           </dd>
         </div>
-        <div className="bg-surface px-3 py-2.5">
-          <dt className="text-[11px] text-muted">{page.verify.latency}</dt>
-          <dd className="mt-0.5 font-numeric text-[13px] tabular-nums text-ink">
+        <div className="rounded-md bg-bg-soft px-4 py-3">
+          <dt className="text-[13px] text-ink-3">{page.verify.latency}</dt>
+          <dd className="mt-0.5 tabular-nums text-[14px] text-ink">
             {probe.latency_ms} ms
           </dd>
         </div>
-        <div className="bg-surface px-3 py-2.5">
-          <dt className="text-[11px] text-muted">{page.verify.cache}</dt>
-          <dd className="mt-0.5 text-[13px] text-ink">
+        <div className="rounded-md bg-bg-soft px-4 py-3">
+          <dt className="text-[13px] text-ink-3">{page.verify.cache}</dt>
+          <dd className="mt-0.5 text-[14px] text-ink">
             {probe.prompt_cache ? page.verify.cacheYes : page.verify.cacheNo}
           </dd>
         </div>
       </dl>
 
       {probe.fail_reason ? (
-        <div className="border border-warning/25 bg-warning-soft px-3 py-2 text-[12px] leading-5 text-warning">
+        <div className="rounded-md border border-warn/25 bg-warn/10 px-4 py-3 text-[13px] leading-5 text-warn">
           {page.verify.failReason}：{probeFailReasonLabel(probe.fail_reason)}
         </div>
       ) : null}
 
       {probe.missing_models.length > 0 ? (
-        <p className="text-[12px] leading-5 text-warning">
+        <p className="text-[13px] leading-5 text-warn">
           {page.verify.missing(probe.missing_models.join('、'))}
         </p>
       ) : null}
@@ -369,20 +373,20 @@ function NewListingPage() {
       <StepRail step={step} onJump={handleJump} />
 
       <form
-        className="mt-6 border border-line bg-surface"
+        className="mt-6 rounded-md border border-line bg-bg p-6"
         onSubmit={form.handleSubmit(onSubmit)}
       >
-        <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-5 py-4">
+        <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-4">
           <div>
-            <h2 className="text-[15px] font-semibold tracking-tight text-ink">
+            <h2 className="text-[16px] font-semibold tracking-tight text-ink">
               {page.steps[step]}
             </h2>
-            <p className="mt-1 text-[12px] leading-5 text-muted">{page.stepLead[step]}</p>
+            <p className="mt-1 text-[13px] leading-5 text-ink-3">{page.stepLead[step]}</p>
           </div>
-          <span className="font-numeric text-[11.5px] text-muted">0{step + 1} / 04</span>
+          <span className="tabular-nums text-[13px] text-ink-3">0{step + 1} / 04</span>
         </header>
 
-        <div className="px-5 py-5">
+        <div className="pt-5">
           {step === 0 ? (
             <div className="space-y-4">
               <Field
@@ -397,24 +401,24 @@ function NewListingPage() {
                       <label
                         key={vendor.id}
                         className={cn(
-                          'flex cursor-pointer items-center justify-between gap-3 rounded-[4px] border px-4 py-3 transition-colors',
+                          'flex cursor-pointer items-center justify-between gap-3 rounded-md border px-4 py-3.5 transition-colors',
                           checked
-                            ? 'border-brand-dark bg-brand-soft/60'
-                            : 'border-line-strong bg-surface hover:border-brand/40',
+                            ? 'border-brand bg-brand-soft/60'
+                            : 'border-line bg-bg hover:border-brand/40',
                         )}
                       >
                         <span>
                           <span className="block text-[13px] font-medium text-ink">
                             {vendor.name}
                           </span>
-                          <span className="font-numeric text-[11px] text-muted">
+                          <span className="tabular-nums text-[13px] text-ink-3">
                             {vendor.id}
                           </span>
                         </span>
                         <input
                           type="radio"
                           value={vendor.id}
-                          className="h-3.5 w-3.5 accent-[var(--color-brand-dark)]"
+                          className="h-4 w-4 accent-brand"
                           {...form.register('vendor_id')}
                         />
                       </label>
@@ -433,10 +437,8 @@ function NewListingPage() {
                 hint={page.key.hint}
                 error={form.formState.errors.api_key?.message}
               >
-                <Input
+                <PasswordInput
                   id="new-listing-key"
-                  type="password"
-                  mono
                   autoComplete="new-password"
                   spellCheck={false}
                   placeholder={page.key.placeholder}
@@ -444,8 +446,8 @@ function NewListingPage() {
                   {...form.register('api_key')}
                 />
               </Field>
-              <div className="border border-line bg-wash px-3 py-2 text-[12px]">
-                <span className="text-muted">
+              <div className="rounded-md bg-bg-soft px-4 py-3 text-[13px]">
+                <span className="text-ink-3">
                   {values.api_key.trim().length >= 4
                     ? page.key.preview(values.api_key.trim().slice(-4))
                     : page.key.previewEmpty}
@@ -458,7 +460,7 @@ function NewListingPage() {
             <div className="space-y-5">
               {probe.isPending ? (
                 <div className="space-y-3" aria-busy="true" aria-live="polite">
-                  <p className="text-[12.5px] text-muted">{page.verify.probing}</p>
+                  <p className="text-[13px] text-ink-3">{page.verify.probing}</p>
                   <Skeleton className="h-16 w-full" />
                   <Skeleton className="h-10 w-2/3" />
                 </div>
@@ -482,14 +484,14 @@ function NewListingPage() {
                       <h3 className="text-[13px] font-medium text-ink">
                         {page.verify.modelsTitle}
                       </h3>
-                      <span className="text-[11.5px] text-muted">
+                      <span className="text-[13px] text-ink-3">
                         {page.verify.selected(values.models.length, probedModels.length)}
                       </span>
                     </div>
-                    <p className="mt-1 text-[11.5px] text-muted">{page.verify.modelsHint}</p>
+                    <p className="mt-1 text-[13px] text-ink-3">{page.verify.modelsHint}</p>
 
                     {probedModels.length === 0 ? (
-                      <p className="mt-3 text-[12.5px] text-warning">
+                      <p className="mt-3 text-[13px] text-warn">
                         {page.verify.modelsEmpty}
                       </p>
                     ) : (
@@ -497,21 +499,21 @@ function NewListingPage() {
                         {probedModels.map((model) => (
                           <label
                             key={model}
-                            className="flex cursor-pointer items-center gap-2 rounded-[4px] border border-line px-3 py-2 text-[12.5px] text-ink hover:border-brand/40"
+                            className="flex cursor-pointer items-center gap-2 rounded-md border border-line px-3 py-2 text-[13px] text-ink hover:border-brand/40"
                           >
                             <input
                               type="checkbox"
                               checked={values.models.includes(model)}
                               onChange={(event) => toggleModel(model, event.target.checked)}
-                              className="h-3.5 w-3.5 accent-[var(--color-brand-dark)]"
+                              className="h-4 w-4 accent-brand"
                             />
-                            <span className="font-numeric">{model}</span>
+                            <span className="tabular-nums">{model}</span>
                           </label>
                         ))}
                       </div>
                     )}
                     {form.formState.errors.models?.message ? (
-                      <p className="mt-2 text-[11.5px] text-danger" role="alert">
+                      <p className="mt-2 text-[13px] text-danger" role="alert">
                         {form.formState.errors.models.message}
                       </p>
                     ) : null}
@@ -554,13 +556,12 @@ function NewListingPage() {
                             setMultiplierText((next / 1000).toFixed(3))
                             form.setValue('multiplier_milli', next, { shouldValidate: true })
                           }}
-                          className="h-1.5 w-full cursor-pointer accent-[var(--color-brand-dark)]"
+                          className="h-1.5 w-full cursor-pointer accent-brand"
                           aria-label={page.pricing.label}
                         />
                         <Input
                           aria-label={page.pricing.inputLabel}
                           className="w-24 shrink-0 text-right"
-                          mono
                           inputMode="decimal"
                           value={multiplierText}
                           onChange={(event) => {
@@ -580,7 +581,7 @@ function NewListingPage() {
                     </Field>
                   </div>
                   {form.formState.errors.multiplier_milli?.message ? (
-                    <p className="mt-1 text-[11.5px] text-danger" role="alert">
+                    <p className="mt-1 text-[13px] text-danger" role="alert">
                       {form.formState.errors.multiplier_milli.message}
                     </p>
                   ) : null}
@@ -600,7 +601,6 @@ function NewListingPage() {
                         type="number"
                         min={1}
                         max={1000}
-                        mono
                         {...form.register('concurrency', { valueAsNumber: true })}
                       />
                     </Field>
@@ -615,7 +615,6 @@ function NewListingPage() {
                         type="number"
                         min={0}
                         max={1_000_000}
-                        mono
                         {...form.register('rpm', { valueAsNumber: true })}
                       />
                     </Field>
@@ -628,7 +627,6 @@ function NewListingPage() {
                       <Input
                         id="listing-daily-cap"
                         inputMode="decimal"
-                        mono
                         {...form.register('daily_cap_yuan')}
                       />
                     </Field>
@@ -639,12 +637,12 @@ function NewListingPage() {
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <h3 className="text-[13px] font-medium text-ink">{page.pricing.hours}</h3>
-                      <p className="mt-1 text-[11.5px] text-muted">{page.pricing.hoursHint}</p>
+                      <p className="mt-1 text-[13px] text-ink-3">{page.pricing.hoursHint}</p>
                     </div>
-                    <label className="flex items-center gap-2 text-[12px] text-ink">
+                    <label className="flex items-center gap-2 text-[13px] text-ink">
                       <input
                         type="checkbox"
-                        className="h-3.5 w-3.5 accent-[var(--color-brand-dark)]"
+                        className="h-4 w-4 accent-brand"
                         {...form.register('use_hours')}
                         onChange={(event) => {
                           const checked = event.target.checked
@@ -661,7 +659,7 @@ function NewListingPage() {
                   {values.use_hours ? (
                     <div className="mt-3 space-y-2">
                       {fields.length === 0 ? (
-                        <p className="text-[12px] text-muted">{page.pricing.noWindow}</p>
+                        <p className="text-[13px] text-ink-3">{page.pricing.noWindow}</p>
                       ) : null}
                       {fields.map((field, index) => (
                         <div key={field.id} className="flex flex-wrap items-end gap-2">
@@ -670,9 +668,9 @@ function NewListingPage() {
                             className="w-[132px]"
                             error={form.formState.errors.hours?.[index]?.start?.message}
                           >
-                            <Input type="time" mono {...form.register(`hours.${index}.start`)} />
+                            <Input type="time" {...form.register(`hours.${index}.start`)} />
                           </Field>
-                          <span className="pb-2 text-muted" aria-hidden="true">
+                          <span className="pb-2 text-ink-3" aria-hidden="true">
                             –
                           </span>
                           <Field
@@ -680,7 +678,7 @@ function NewListingPage() {
                             className="w-[132px]"
                             error={form.formState.errors.hours?.[index]?.end?.message}
                           >
-                            <Input type="time" mono {...form.register(`hours.${index}.end`)} />
+                            <Input type="time" {...form.register(`hours.${index}.end`)} />
                           </Field>
                           <Button
                             variant="ghost"
@@ -701,17 +699,17 @@ function NewListingPage() {
                       </Button>
                     </div>
                   ) : (
-                    <p className="mt-2 text-[12px] text-muted">{page.pricing.noWindow}</p>
+                    <p className="mt-2 text-[13px] text-ink-3">{page.pricing.noWindow}</p>
                   )}
                 </div>
               </div>
 
-              <aside className="border border-line bg-wash/60 p-4">
-                <h3 className="text-[12.5px] font-medium text-ink">{page.pricing.title}</h3>
+              <aside className="rounded-md bg-bg-soft p-5">
+                <h3 className="text-[14px] font-semibold text-ink">{page.pricing.title}</h3>
 
                 {values.models.length > 1 ? (
                   <label className="mt-3 block">
-                    <span className="block text-[11px] text-muted">
+                    <span className="block text-[13px] text-ink-3">
                       {page.pricing.previewModel}
                     </span>
                     <select
@@ -727,7 +725,7 @@ function NewListingPage() {
                     </select>
                   </label>
                 ) : (
-                  <div className="mt-2 font-numeric text-[11.5px] text-muted">
+                  <div className="mt-2 tabular-nums text-[13px] text-ink-3">
                     {effectivePreviewModel || '—'}
                   </div>
                 )}
@@ -740,7 +738,7 @@ function NewListingPage() {
                 ) : preview ? (
                   <dl className="mt-4 space-y-3">
                     <div className="flex items-baseline justify-between gap-3">
-                      <dt className="text-[11.5px] text-muted">{page.pricing.official}</dt>
+                      <dt className="text-[13px] text-ink-3">{page.pricing.official}</dt>
                       <dd>
                         <Price
                           value={officialPrice ?? 0}
@@ -751,50 +749,50 @@ function NewListingPage() {
                       </dd>
                     </div>
                     <div className="flex items-baseline justify-between gap-3">
-                      <dt className="text-[11.5px] text-muted">{page.pricing.buyer}</dt>
+                      <dt className="text-[13px] text-ink-3">{page.pricing.buyer}</dt>
                       <dd>
                         <Price value={preview.buyerMicro} tier={tier} size="sm" unit={null} />
                       </dd>
                     </div>
                     <div className="flex items-baseline justify-between gap-3 border-t border-line pt-3">
-                      <dt className="text-[11.5px] text-muted">{page.pricing.seller}</dt>
-                      <dd className="font-numeric text-[16px] font-medium tabular-nums text-brand-dark">
+                      <dt className="text-[13px] text-ink-3">{page.pricing.seller}</dt>
+                      <dd className="text-[18px] font-semibold tabular-nums text-brand-ink">
                         {formatYuan(preview.sellerMicro)}
                       </dd>
                     </div>
                     <div className="flex items-baseline justify-between gap-3">
-                      <dt className="text-[11.5px] text-muted">{page.pricing.fee}</dt>
-                      <dd className="font-numeric text-[12px] tabular-nums text-muted">
+                      <dt className="text-[13px] text-ink-3">{page.pricing.fee}</dt>
+                      <dd className="text-[13px] tabular-nums text-ink-3">
                         {formatYuan(preview.feeMicro)}
                       </dd>
                     </div>
                   </dl>
                 ) : (
-                  <p className="mt-4 text-[12px] leading-5 text-muted">
+                  <p className="mt-4 text-[13px] leading-5 text-ink-3">
                     {page.pricing.noOfficial}
                   </p>
                 )}
 
                 <div className="mt-4 border-t border-line pt-3">
                   <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-[11.5px] text-muted">{page.pricing.marketLowest}</span>
+                    <span className="text-[13px] text-ink-3">{page.pricing.marketLowest}</span>
                     <span>
                       {marketMin ? (
                         <Multiplier milli={marketMin} showSaving={false} />
                       ) : (
-                        <span className="text-[12px] text-muted">—</span>
+                        <span className="text-[13px] text-ink-3">—</span>
                       )}
                     </span>
                   </div>
                   {comparison ? (
                     <p
                       className={cn(
-                        'mt-2 text-[11.5px]',
+                        'mt-2 text-[13px]',
                         comparison === 'lower'
-                          ? 'text-success'
+                          ? 'text-brand-ink'
                           : comparison === 'higher'
-                            ? 'text-warning'
-                            : 'text-muted',
+                            ? 'text-warn'
+                            : 'text-ink-3',
                       )}
                     >
                       {comparison === 'higher'
@@ -808,16 +806,16 @@ function NewListingPage() {
                           : page.pricing.compareSame}
                     </p>
                   ) : (
-                    <p className="mt-2 text-[11.5px] text-muted">{page.pricing.noMarket}</p>
+                    <p className="mt-2 text-[13px] text-ink-3">{page.pricing.noMarket}</p>
                   )}
                 </div>
 
-                <div className="mt-4 border-t border-line pt-3 text-[11px] leading-5 text-muted">
+                <div className="mt-4 border-t border-line pt-3 text-[13px] leading-5 text-ink-3">
                   {page.pricing.summary(
                     formatMultiplier(values.multiplier_milli),
                     savingPercent(values.multiplier_milli),
                   )}
-                  <span className="mt-1 block text-[10.5px] text-muted/80">
+                  <span className="mt-1 block text-[13px] text-ink-3/80">
                     {page.pricing.tierNote(copy.tiers[tier])}
                   </span>
                 </div>
@@ -826,14 +824,14 @@ function NewListingPage() {
           ) : null}
 
           {submitError ? (
-            <p className="mt-4 text-[12px] text-danger" role="alert">
+            <p className="mt-4 text-[13px] text-danger" role="alert">
               {submitError}
             </p>
           ) : null}
         </div>
 
-        <footer className="flex items-center justify-between gap-2 border-t border-line px-5 py-4">
-          <div className="text-[11px] text-muted">
+        <footer className="mt-6 flex items-center justify-between gap-2 border-t border-line pt-4">
+          <div className="text-[13px] text-ink-3">
             {values.models.length > 0
               ? page.pricing.selectedCount(values.models.length)
               : null}

@@ -59,7 +59,7 @@ function ShareRecordsPage() {
         title={page.title}
         lead={page.lead}
         actions={
-          <span className="font-numeric text-[11.5px] text-muted">
+          <span className="tabular-nums text-[13px] text-ink-3">
             {copy.pages.sellerCommon.totalCount(total)}
           </span>
         }
@@ -74,7 +74,7 @@ function ShareRecordsPage() {
         />
       ) : (
         <>
-          <div className="mt-4">
+          <div className="mt-6 rounded-md border border-line bg-bg p-6">
             <Table minWidth={920}>
               <TableHead>
                 <TableRow>
@@ -92,12 +92,12 @@ function ShareRecordsPage() {
                   const status = shareStatusView(record.status)
                   return (
                     <TableRow key={record.request_id}>
-                      <TableCell className="whitespace-nowrap font-numeric text-[12px] text-muted">
+                      <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
                         {formatDateTime(record.created_at)}
                       </TableCell>
                       <TableCell>
-                        <div className="font-numeric text-[12.5px] text-ink">{record.model}</div>
-                        <div className="text-[11px] text-muted">
+                        <div className="tabular-nums text-[13px] text-ink">{record.model}</div>
+                        <div className="text-[13px] text-ink-3">
                           {page.tierPrefix} {record.tier_label || record.tier}
                         </div>
                       </TableCell>
@@ -111,7 +111,7 @@ function ShareRecordsPage() {
                       <TableCell numeric className="whitespace-nowrap font-medium">
                         {formatYuan(record.seller_credit_micro)}
                       </TableCell>
-                      <TableCell numeric className="whitespace-nowrap text-muted">
+                      <TableCell numeric className="whitespace-nowrap text-ink-3">
                         {formatYuan(record.platform_fee_micro)}
                       </TableCell>
                       <TableCell>
@@ -124,29 +124,29 @@ function ShareRecordsPage() {
                 })}
               </TableBody>
             </Table>
-          </div>
 
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <span className="text-[11.5px] text-muted">
-              {page.pagination.summary(pageNumber, pages, total)}
-            </span>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={pageNumber <= 1}
-                onClick={() => setPageNumber((current) => Math.max(1, current - 1))}
-              >
-                {page.pagination.prev}
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={pageNumber >= pages}
-                onClick={() => setPageNumber((current) => Math.min(pages, current + 1))}
-              >
-                {page.pagination.next}
-              </Button>
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+              <span className="text-[13px] text-ink-3">
+                {page.pagination.summary(pageNumber, pages, total)}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={pageNumber <= 1}
+                  onClick={() => setPageNumber((current) => Math.max(1, current - 1))}
+                >
+                  {page.pagination.prev}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={pageNumber >= pages}
+                  onClick={() => setPageNumber((current) => Math.min(pages, current + 1))}
+                >
+                  {page.pagination.next}
+                </Button>
+              </div>
             </div>
           </div>
         </>

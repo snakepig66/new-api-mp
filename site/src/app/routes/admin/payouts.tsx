@@ -164,6 +164,7 @@ function PayoutsContent() {
             next={page.emptyNext}
           />
         ) : (
+          <div className="rounded-md border border-line bg-bg p-6">
           <Table minWidth={860}>
             <TableHead>
               <TableRow>
@@ -183,7 +184,7 @@ function PayoutsContent() {
                   payout.status === 'pending' || payout.status === 'approved'
                 return (
                   <TableRow key={payout.id}>
-                    <TableCell className="font-numeric text-[12px] text-muted">
+                    <TableCell className="tabular-nums text-[13px] text-ink-3">
                       #{payout.id}
                     </TableCell>
                     <TableCell>
@@ -192,7 +193,7 @@ function PayoutsContent() {
                     <TableCell numeric className="font-medium">
                       {formatYuan(payout.amount_micro)}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap font-numeric text-[12px] text-muted">
+                    <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
                       {formatDateTime(payout.created_at)}
                     </TableCell>
                     <TableCell>
@@ -202,13 +203,13 @@ function PayoutsContent() {
                     </TableCell>
                     <TableCell>
                       {isSelf && actionable ? (
-                        <span className="text-[11.5px] text-muted" title={page.selfHint}>
+                        <span className="text-[13px] text-ink-3" title={page.selfHint}>
                           {page.selfHint}
                         </span>
                       ) : payout.status === 'pending' ? (
                         <div className="flex flex-wrap items-center gap-2">
                           <Button
-                            variant="secondary"
+                            variant="primary"
                             size="sm"
                             onClick={() => {
                               setActionError(null)
@@ -218,9 +219,8 @@ function PayoutsContent() {
                             {page.approve}
                           </Button>
                           <Button
-                            variant="secondary"
+                            variant="danger"
                             size="sm"
-                            className="text-danger"
                             onClick={() => {
                               setActionError(null)
                               setReason('')
@@ -233,7 +233,7 @@ function PayoutsContent() {
                         </div>
                       ) : payout.status === 'approved' ? (
                         <Button
-                          variant="secondary"
+                          variant="primary"
                           size="sm"
                           onClick={() => {
                             setActionError(null)
@@ -243,7 +243,7 @@ function PayoutsContent() {
                           {page.markPaid}
                         </Button>
                       ) : (
-                        <span className="text-[11.5px] text-muted">{copy.pages.adminCommon.none}</span>
+                        <span className="text-[13px] text-ink-3">{copy.pages.adminCommon.none}</span>
                       )}
                     </TableCell>
                   </TableRow>
@@ -251,6 +251,7 @@ function PayoutsContent() {
               })}
             </TableBody>
           </Table>
+          </div>
         )}
       </div>
 
@@ -269,10 +270,10 @@ function PayoutsContent() {
       >
         {confirming ? (
           <div className="space-y-3">
-            <p className="text-[12.5px] text-ink">
-              <span className="font-numeric">#{confirming.payout.id}</span> ·{' '}
+            <p className="text-[13px] text-ink">
+              <span className="tabular-nums">#{confirming.payout.id}</span> ·{' '}
               <SellerId id={confirming.payout.seller_id} /> ·{' '}
-              <span className="font-numeric">{formatYuan(confirming.payout.amount_micro)}</span>
+              <span className="tabular-nums">{formatYuan(confirming.payout.amount_micro)}</span>
             </p>
             {actionError ? (
               <Notice tone="warning">
@@ -303,10 +304,10 @@ function PayoutsContent() {
       >
         {rejecting ? (
           <div className="space-y-4">
-            <p className="text-[12.5px] text-ink">
-              <span className="font-numeric">#{rejecting.id}</span> ·{' '}
+            <p className="text-[13px] text-ink">
+              <span className="tabular-nums">#{rejecting.id}</span> ·{' '}
               <SellerId id={rejecting.seller_id} /> ·{' '}
-              <span className="font-numeric">{formatYuan(rejecting.amount_micro)}</span>
+              <span className="tabular-nums">{formatYuan(rejecting.amount_micro)}</span>
             </p>
             <Field
               label={page.reason}
@@ -323,7 +324,7 @@ function PayoutsContent() {
                   setReasonError(null)
                   setActionError(null)
                 }}
-                className="w-full resize-y rounded-[4px] border border-line-strong bg-surface px-3 py-2 text-[13px] leading-6 text-ink transition-colors placeholder:text-muted/60 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15"
+                className="w-full resize-y rounded-md border border-transparent bg-bg-soft px-4 py-3 text-[15px] leading-6 text-ink transition-colors placeholder:text-ink-3 focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft"
               />
             </Field>
             {actionError ? (

@@ -1,42 +1,59 @@
 import type { ReactNode } from 'react'
 
-import { copy } from '@/copy'
-import { LogoMark } from '@/ui'
+import { Logo } from '@/ui'
+
+export interface AuthPoint {
+  title: string
+  body: string
+}
 
 export interface AuthSplitProps {
   headline: string
   body: string
+  points: readonly AuthPoint[]
   children: ReactNode
 }
 
 /**
- * Two-column auth frame: the market's promise on the left, one focused card
- * on the right. The left column is decoration only below lg; the form is
- * always centred on mobile.
+ * Standalone auth frame (no AppShell): a deep-blue promise panel on the left
+ * and a focused white form column on the right. Below lg the panel collapses
+ * to a short top banner and the form owns the rest of the viewport.
  */
-export function AuthSplit({ headline, body, children }: AuthSplitProps) {
+export function AuthSplit({ headline, body, points, children }: AuthSplitProps) {
   return (
-    <div className="mx-auto grid min-h-[calc(100dvh-14rem)] max-w-[1180px] gap-12 px-5 py-12 lg:grid-cols-[minmax(0,1fr)_400px] lg:gap-20 lg:py-20">
-      <div className="hidden lg:block">
-        <LogoMark size={34} className="text-brand-dark" />
-        <h1 className="mt-8 max-w-[520px] text-[32px] font-semibold leading-[1.25] tracking-tight text-ink">
-          {headline}
-        </h1>
-        <p className="mt-4 max-w-md text-[13.5px] leading-7 text-muted">{body}</p>
-        <dl className="mt-10 max-w-sm border-t border-line text-[12.5px]">
-          {copy.pages.home.facts.map((fact) => (
-            <div
-              key={fact.label}
-              className="flex items-baseline justify-between gap-4 border-b border-line/70 py-2.5"
-            >
-              <dt className="text-muted">{fact.label}</dt>
-              <dd className="font-medium text-ink">{fact.value}</dd>
-            </div>
-          ))}
-        </dl>
+    <div className="min-h-dvh bg-bg lg:grid lg:grid-cols-[45%_55%]">
+      <div className="relative overflow-hidden bg-[linear-gradient(160deg,#1c2b8f_0%,#4d6bfe_100%)] px-6 py-8 text-white sm:px-10 lg:flex lg:flex-col lg:justify-between lg:px-16 lg:py-16">
+        <div>
+          <p className="text-[14px] font-medium tracking-tight text-white/80">词元市场</p>
+          <h1 className="mt-3 max-w-[460px] text-[24px] font-semibold leading-[1.2] tracking-[-0.02em] sm:text-[28px] lg:mt-10 lg:text-[32px]">
+            {headline}
+          </h1>
+          <p className="mt-3 hidden max-w-[420px] text-[15px] leading-7 text-white/70 lg:mt-5 lg:block">
+            {body}
+          </p>
+
+          <ul className="mt-8 hidden space-y-5 lg:block">
+            {points.map((point) => (
+              <li key={point.title} className="flex items-start gap-3">
+                <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-white/80" aria-hidden="true" />
+                <div>
+                  <p className="text-[15px] font-medium text-white">{point.title}</p>
+                  <p className="mt-0.5 text-[14px] leading-6 text-white/70">{point.body}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <p className="hidden text-[13px] text-white/50 lg:block">按量结算，失败调用不收费。</p>
       </div>
 
-      <div className="w-full max-w-[400px] justify-self-start lg:justify-self-end">{children}</div>
+      <div className="flex items-center justify-center px-5 py-12 sm:px-8 lg:py-16">
+        <div className="w-full max-w-[380px]">
+          <Logo markSize={22} />
+          <div className="mt-8">{children}</div>
+        </div>
+      </div>
     </div>
   )
 }

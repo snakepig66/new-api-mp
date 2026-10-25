@@ -21,7 +21,7 @@ export function Skeleton({ className }: { className?: string }) {
   return (
     <div
       aria-hidden="true"
-      className={cn('animate-pulse rounded-[3px] bg-wash motion-reduce:animate-none', className)}
+      className={cn('animate-pulse rounded-sm bg-bg-soft motion-reduce:animate-none', className)}
     />
   )
 }
@@ -69,13 +69,13 @@ export function ErrorBlock({
   const message = adminErrorMessage(error)
   const code = error instanceof ApiError && error.code ? error.code : null
   return (
-    <div role="alert" className={cn('border border-danger/25 bg-danger-soft px-4 py-3.5', className)}>
+    <div role="alert" className={cn('rounded-md border border-danger/25 bg-danger/10 px-4 py-3.5', className)}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <p className="text-[13px] font-medium text-danger">{copy.pages.adminCommon.loadError}</p>
-          <p className="mt-1 text-[12.5px] leading-5 text-danger/90">{message}</p>
+          <p className="mt-1 text-[13px] leading-5 text-danger/90">{message}</p>
           {code ? (
-            <p className="mt-1 font-numeric text-[11px] text-danger/70">
+            <p className="mt-1 tabular-nums text-[13px] text-danger/70">
               {copy.pages.adminCommon.errorCode}
               {code}
             </p>
@@ -105,15 +105,15 @@ export function Section({
   className?: string
 }) {
   return (
-    <section className={cn('min-w-0', className)}>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-line pb-2.5">
-        <div className="flex min-w-0 items-baseline gap-2.5">
-          <h2 className="text-[14px] font-semibold tracking-tight text-ink">{title}</h2>
-          {hint ? <span className="text-[11.5px] text-muted">{hint}</span> : null}
+    <section className={cn('min-w-0 rounded-md border border-line bg-bg p-6', className)}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-line pb-4">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-2.5">
+          <h2 className="text-[16px] font-semibold tracking-tight text-ink">{title}</h2>
+          {hint ? <span className="text-[13px] text-ink-3">{hint}</span> : null}
         </div>
         {action ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}
       </div>
-      <div className="pt-3.5">{children}</div>
+      <div className="pt-4">{children}</div>
     </section>
   )
 }
@@ -135,16 +135,16 @@ export function Field({
 }) {
   return (
     <div className={cn('min-w-0', className)}>
-      <label htmlFor={htmlFor} className="mb-1.5 block text-[12.5px] font-medium text-ink">
+      <label htmlFor={htmlFor} className="mb-2 block text-[14px] font-medium text-ink">
         {label}
       </label>
       {children}
       {error ? (
-        <p className="mt-1 text-[11.5px] leading-5 text-danger" role="alert">
+        <p className="mt-1 text-[13px] leading-5 text-danger" role="alert">
           {error}
         </p>
       ) : hint ? (
-        <p className="mt-1 text-[11.5px] leading-5 text-muted">{hint}</p>
+        <p className="mt-1 text-[13px] leading-5 text-ink-3">{hint}</p>
       ) : null}
     </div>
   )
@@ -154,9 +154,9 @@ export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectE
   return (
     <select
       className={cn(
-        'h-9 w-full rounded-[4px] border border-line-strong bg-surface px-2.5 text-[13.5px] text-ink transition-colors',
-        'focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15',
-        'disabled:cursor-not-allowed disabled:bg-wash disabled:text-muted',
+        'h-12 w-full rounded-md border border-transparent bg-bg-soft px-4 text-[15px] text-ink transition-colors',
+        'focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft',
+        'disabled:cursor-not-allowed disabled:bg-bg-soft disabled:text-ink-3',
         className,
       )}
       {...props}
@@ -166,7 +166,7 @@ export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectE
 
 export function TextInput({
   invalid = false,
-  mono = true,
+  mono = false,
   className,
   ...props
 }: InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean; mono?: boolean }) {
@@ -174,7 +174,7 @@ export function TextInput({
     <Input
       invalid={invalid}
       mono={mono}
-      className={cn('h-9 text-[13px]', className)}
+      className={cn('h-12 text-[15px]', className)}
       {...props}
     />
   )
@@ -192,14 +192,14 @@ export function Notice({
   className?: string
 }) {
   const tones = {
-    neutral: 'border-line bg-wash text-muted',
-    warning: 'border-warning/25 bg-warning-soft text-warning',
-    brand: 'border-brand/25 bg-brand-soft text-brand-dark',
+    neutral: 'border-line bg-bg-soft text-ink-3',
+    warning: 'border-warn/25 bg-warn/10 text-warn',
+    brand: 'border-brand/25 bg-brand-soft text-brand-ink',
   }
   return (
-    <div className={cn('border px-4 py-3', tones[tone], className)} role={tone === 'warning' ? 'status' : undefined}>
-      {title ? <p className="text-[12.5px] font-medium">{title}</p> : null}
-      {children ? <div className={cn('text-[12.5px] leading-6', title && 'mt-1')}>{children}</div> : null}
+    <div className={cn('rounded-md border px-4 py-3', tones[tone], className)} role={tone === 'warning' ? 'status' : undefined}>
+      {title ? <p className="text-[13px] font-medium">{title}</p> : null}
+      {children ? <div className={cn('text-[13px] leading-6', title && 'mt-1')}>{children}</div> : null}
     </div>
   )
 }
@@ -239,7 +239,7 @@ export function FilterTabs<T extends string>({
     <div
       role="tablist"
       aria-label={ariaLabel}
-      className="-mx-1 mb-5 flex items-center gap-1 overflow-x-auto border-b border-line"
+      className="mb-5 flex flex-wrap items-center gap-1.5"
     >
       {options.map((option) => {
         const active = option.value === value
@@ -251,10 +251,10 @@ export function FilterTabs<T extends string>({
             aria-selected={active}
             onClick={() => onChange(option.value)}
             className={cn(
-              '-mb-px shrink-0 border-b-2 px-3 py-2 text-[13px] transition-colors',
+              'inline-flex h-9 shrink-0 items-center rounded-full px-3.5 text-[14px] transition-colors',
               active
-                ? 'border-brand-dark font-medium text-ink'
-                : 'border-transparent text-muted hover:border-line-strong hover:text-ink',
+                ? 'bg-brand-soft font-medium text-brand-ink'
+                : 'text-ink-2 hover:bg-bg-soft hover:text-ink',
             )}
           >
             {option.label}

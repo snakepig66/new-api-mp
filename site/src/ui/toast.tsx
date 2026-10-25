@@ -30,9 +30,10 @@ interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue | null>(null)
 
+/* Success is not a separate colour: only errors get the red bar. */
 const accent: Record<ToastTone, string> = {
-  default: 'border-l-brand-dark',
-  success: 'border-l-success',
+  default: 'border-l-brand',
+  success: 'border-l-brand',
   error: 'border-l-danger',
 }
 
@@ -70,23 +71,23 @@ export function ToastProvider({ children, duration = 4000 }: ToastProviderProps)
               if (!open) remove(item.id)
             }}
             className={cn(
-              'toast-root flex items-start gap-3 rounded-[4px] border border-line border-l-[3px] bg-surface px-4 py-3 shadow-[0_8px_28px_rgba(16,32,29,0.12)]',
+              'toast-root flex items-start gap-3 rounded-md border border-line border-l-4 bg-bg px-4 py-3',
               accent[item.tone ?? 'default'],
             )}
           >
             <div className="min-w-0 flex-1">
-              <ToastPrimitive.Title className="text-[13px] font-medium text-ink">
+              <ToastPrimitive.Title className="text-[14px] font-medium leading-5 text-ink">
                 {item.title}
               </ToastPrimitive.Title>
               {item.description ? (
-                <ToastPrimitive.Description className="mt-0.5 text-[12px] leading-5 text-muted">
+                <ToastPrimitive.Description className="mt-1 text-[13px] leading-5 text-ink-3">
                   {item.description}
                 </ToastPrimitive.Description>
               ) : null}
             </div>
             <ToastPrimitive.Close
               aria-label={copy.actions.close}
-              className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-[3px] text-muted transition-colors hover:bg-wash hover:text-ink"
+              className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full text-ink-3 transition-colors hover:bg-bg-soft hover:text-ink"
             >
               <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                 <path d="M1.5 1.5l9 9M10.5 1.5l-9 9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />

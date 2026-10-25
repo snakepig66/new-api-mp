@@ -16,14 +16,14 @@ export interface FieldProps {
 export function Field({ label, htmlFor, hint, error, children, className }: FieldProps) {
   return (
     <div className={cn('min-w-0', className)}>
-      <label htmlFor={htmlFor} className="mb-1.5 block text-[12.5px] font-medium text-ink">
+      <label htmlFor={htmlFor} className="mb-2 block text-[14px] font-medium text-ink">
         {label}
       </label>
       {children}
       {error ? (
-        <p className="mt-1 text-[11.5px] leading-5 text-danger">{error}</p>
+        <p className="mt-1 text-[13px] leading-5 text-danger">{error}</p>
       ) : hint ? (
-        <p className="mt-1 text-[11.5px] leading-5 text-muted">{hint}</p>
+        <p className="mt-1 text-[13px] leading-5 text-ink-3">{hint}</p>
       ) : null}
     </div>
   )
@@ -33,9 +33,9 @@ export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectE
   return (
     <select
       className={cn(
-        'h-9 w-full rounded-[4px] border border-line-strong bg-surface px-2.5 text-[13.5px] text-ink transition-colors',
-        'focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15',
-        'disabled:cursor-not-allowed disabled:bg-wash disabled:text-muted',
+        'h-12 w-full rounded-md border border-transparent bg-bg-soft px-4 text-[15px] text-ink transition-colors',
+        'focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft',
+        'disabled:cursor-not-allowed disabled:bg-bg-soft disabled:text-ink-3',
         className,
       )}
       {...props}
@@ -48,12 +48,12 @@ export interface TextInputProps extends InputHTMLAttributes<HTMLInputElement> {
   mono?: boolean
 }
 
-export function TextInput({ invalid = false, mono = true, className, ...props }: TextInputProps) {
+export function TextInput({ invalid = false, mono = false, className, ...props }: TextInputProps) {
   return (
     <Input
       invalid={invalid}
       mono={mono}
-      className={cn('h-9 text-[13px]', className)}
+      className={cn('h-12 text-[15px]', className)}
       {...props}
     />
   )
@@ -72,14 +72,14 @@ export function Notice({
   className?: string
 }) {
   const tones = {
-    neutral: 'border-line bg-wash text-muted',
-    warning: 'border-warning/25 bg-warning-soft text-warning',
-    brand: 'border-brand/25 bg-brand-soft text-brand-dark',
+    neutral: 'border-line bg-bg-soft text-ink-3',
+    warning: 'border-warn/25 bg-warn/10 text-warn',
+    brand: 'border-brand/25 bg-brand-soft text-brand-ink',
   }
   return (
-    <div className={cn('border px-4 py-3', tones[tone], className)}>
-      {title ? <p className="text-[12.5px] font-medium">{title}</p> : null}
-      <div className={cn('text-[12.5px] leading-6', title && 'mt-1')}>{children}</div>
+    <div className={cn('rounded-md border px-4 py-3', tones[tone], className)}>
+      {title ? <p className="text-[13px] font-medium">{title}</p> : null}
+      <div className={cn('text-[13px] leading-6', title && 'mt-1')}>{children}</div>
     </div>
   )
 }

@@ -92,13 +92,13 @@ function HolidaysContent() {
         </Notice>
       ) : null}
 
-      <div className="mt-5 flex flex-wrap items-center gap-2">
-        <label htmlFor="holiday-year" className="text-[12.5px] text-muted">
+      <div className="mt-5 flex flex-wrap items-center gap-3">
+        <label htmlFor="holiday-year" className="text-[14px] text-ink-2">
           {page.year}
         </label>
         <Select
           id="holiday-year"
-          className="h-8 w-28"
+          className="w-32"
           value={String(year)}
           onChange={(event) => setYear(Number(event.target.value))}
         >
@@ -127,6 +127,7 @@ function HolidaysContent() {
             }
           />
         ) : (
+          <div className="rounded-md border border-line bg-bg p-6">
           <Table minWidth={480}>
             <TableHead>
               <TableRow>
@@ -139,7 +140,7 @@ function HolidaysContent() {
                 const view = adminHolidayStatus(item.kind)
                 return (
                   <TableRow key={item.date}>
-                    <TableCell className="font-numeric text-[13px]">{item.date}</TableCell>
+                    <TableCell className="tabular-nums text-[13px]">{item.date}</TableCell>
                     <TableCell>
                       <Tag tone={view.tone} dot>
                         {view.label}
@@ -150,6 +151,7 @@ function HolidaysContent() {
               })}
             </TableBody>
           </Table>
+          </div>
         )}
       </div>
 
@@ -254,7 +256,7 @@ function ImportDialog({
             setText(event.target.value)
             setError(null)
           }}
-          className="w-full resize-y rounded-[4px] border border-line-strong bg-surface px-3 py-2 font-mono text-[12px] leading-6 text-ink transition-colors placeholder:text-muted/60 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15"
+          className="w-full resize-y rounded-md border border-transparent bg-bg-soft px-4 py-3 text-[15px] leading-6 text-ink transition-colors placeholder:text-ink-3 focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft"
         />
       </Field>
     </Dialog>

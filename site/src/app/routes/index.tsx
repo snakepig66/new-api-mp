@@ -5,28 +5,22 @@ import { useMemo } from 'react'
 import { copy } from '@/copy'
 import { publicStatsQuery, squareModelsQuery, useSquareModelDetails } from '@/features/market/api'
 import { CodeBlock } from '@/features/market/code-block'
+import { CopyButton } from '@/features/market/copy-button'
 import { formatCount } from '@/features/market/format'
 import { ModelTable } from '@/features/market/model-table'
 import { QueryError } from '@/features/market/query-error'
 import { currentBaseUrl } from '@/features/market/url'
 import { formatMultiplier } from '@/lib/multiplier'
-import { formatTime } from '@/lib/time'
-import { Button, Empty, Stat, buttonClasses } from '@/ui'
+import { Empty, buttonClasses } from '@/ui'
 
 export const Route = createFileRoute('/')({
   component: HomePage,
 })
 
-function StatPulse() {
-  return (
-    <span
-      className="mt-1 block h-6 w-24 animate-pulse rounded-[3px] bg-line"
-      aria-hidden="true"
-    />
-  )
-}
+const CONTAINER = 'mx-auto w-full max-w-[1200px] px-5 sm:px-6'
+const SECTION = 'py-16 sm:py-20 lg:py-[120px]'
 
-function HomePage() {
+export function HomePage() {
   const home = copy.pages.home
   const stats = useQuery(publicStatsQuery())
   const models = useQuery(squareModelsQuery())
@@ -36,139 +30,97 @@ function HomePage() {
   const top = useMemo(() => {
     return [...(models.data ?? [])]
       .sort((a, b) => b.listing_count - a.listing_count || a.model.localeCompare(b.model))
-      .slice(0, 8)
+      .slice(0, 6)
   }, [models.data])
 
   const { details, loading: detailsLoading } = useSquareModelDetails(top)
 
   const sampleModel = top[0]?.model ?? 'deepseek-flash'
   const baseUrl = currentBaseUrl()
-  const statsError = stats.isError
+  const statsReady = stats.data !== undefined
 
   return (
-    <>
-      <section className="border-b border-line">
-        <div className="mx-auto grid max-w-[1180px] gap-10 px-5 pb-12 pt-14 sm:pt-16 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
-          <div>
-            <p className="flex items-center gap-2 text-[11.5px] text-muted">
-              <span className="h-1.5 w-1.5 rounded-full bg-brand" aria-hidden="true" />
-              {home.kicker}
-            </p>
-            <h1 className="mt-4 max-w-[560px] text-[32px] font-semibold leading-[1.22] tracking-tight text-ink sm:text-[42px]">
-              {home.headlineLines[0]}
-              <br />
-              {home.headlineLines[1]}
+    <div>
+      <section className="relative overflow-hidden">
+        {/* Decorative wash only: it must not affect flow or hit-testing. */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 top-0 h-[640px] bg-[linear-gradient(180deg,#eef1ff_0%,#ffffff_100%)]"
+        />
+
+        <div className="relative mx-auto w-full max-w-[1200px] px-5 pb-16 pt-16 sm:px-6 sm:pb-20 sm:pt-24 lg:pt-28">
+          <div className="mx-auto max-w-[820px] text-center">
+            <h1 className="text-[36px] font-semibold leading-[1.15] tracking-[-0.02em] text-ink sm:text-[56px]">
+              {home.headline}
             </h1>
-            <p className="mt-5 max-w-xl text-[14px] leading-7 text-muted">{home.lead}</p>
-            <div className="mt-7 flex flex-wrap gap-2.5">
-              <Link to="/models" className={buttonClasses('primary', 'md')}>
+            <p className="mx-auto mt-5 max-w-[620px] text-[16px] leading-7 text-ink-2">{home.lead}</p>
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+              <Link to="/register" className={buttonClasses('primary', 'lg')}>
+                {home.ctaStart}
+              </Link>
+              <Link to="/models" className={buttonClasses('secondary', 'lg')}>
                 {copy.actions.browseModels}
               </Link>
-              <Link to="/seller" className={buttonClasses('secondary', 'md')}>
-                {copy.actions.becomeSeller}
-              </Link>
             </div>
-            <dl className="mt-8 flex flex-wrap gap-x-8 gap-y-2 border-t border-line pt-4 text-[12.5px]">
-              {home.facts.map((fact) => (
-                <div key={fact.label} className="flex items-baseline gap-2">
-                  <dt className="text-muted">{fact.label}</dt>
-                  <dd className="font-medium text-ink">{fact.value}</dd>
-                </div>
-              ))}
-            </dl>
           </div>
 
-          <aside className="border border-line bg-surface" aria-label={home.live}>
-            <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
-              <span className="text-[11.5px] font-medium text-ink">{home.live}</span>
-              <span className="font-numeric text-[11px] text-muted">
-                {stats.data
-                  ? home.liveUpdated(formatTime(stats.data.generated_at))
-                  : stats.isPending
-                    ? copy.common.loading
-                    : copy.common.none}
-              </span>
-            </div>
-
-            {statsError ? (
-              <div className="px-4 py-4" role="alert">
-                <p className="text-[13px] font-medium text-ink">{home.statsErrorTitle}</p>
-                <p className="mt-1 text-[12px] leading-5 text-muted">{home.statsErrorReason}</p>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="mt-3"
-                  loading={stats.isFetching}
-                  onClick={() => void stats.refetch()}
-                >
-                  {copy.actions.retry}
-                </Button>
+          {statsReady ? (
+            <div className="mx-auto mt-16 grid max-w-[760px] grid-cols-1 gap-10 sm:grid-cols-3">
+              <div className="text-center">
+                <div className="text-[32px] font-semibold leading-tight tracking-tight tabular-nums text-ink">
+                  {formatCount(stats.data.models_on_sale)}
+                </div>
+                <div className="mt-1 text-[13px] text-ink-3">{home.stats.models}</div>
               </div>
-            ) : (
-              <dl className="divide-y divide-line">
-                <div className="px-4 py-3">
-                  <Stat
-                    label={home.stats.models}
-                    value={stats.data ? formatCount(stats.data.models_on_sale) : <StatPulse />}
-                  />
+              <div className="text-center">
+                <div className="text-[32px] font-semibold leading-tight tracking-tight tabular-nums text-ink">
+                  {stats.data.min_multiplier_milli > 0
+                    ? `${formatMultiplier(stats.data.min_multiplier_milli)}x`
+                    : copy.common.none}
                 </div>
-                <div className="px-4 py-3">
-                  <Stat
-                    label={home.stats.lowestMultiplier}
-                    tone="brand"
-                    value={
-                      stats.data ? (
-                        stats.data.min_multiplier_milli > 0 ? (
-                          `${formatMultiplier(stats.data.min_multiplier_milli)}x`
-                        ) : (
-                          copy.common.none
-                        )
-                      ) : (
-                        <StatPulse />
-                      )
-                    }
-                    hint={
-                      stats.data && stats.data.models_on_sale === 0
-                        ? home.topEmptyTitle
-                        : undefined
-                    }
-                  />
+                <div className="mt-1 text-[13px] text-ink-3">{home.stats.lowestMultiplier}</div>
+              </div>
+              <div className="text-center">
+                <div className="text-[32px] font-semibold leading-tight tracking-tight tabular-nums text-ink">
+                  {formatCount(stats.data.today_requests)}
                 </div>
-                <div className="px-4 py-3">
-                  <Stat
-                    label={home.stats.callsToday}
-                    value={stats.data ? formatCount(stats.data.today_requests) : <StatPulse />}
-                  />
-                </div>
-              </dl>
-            )}
-            <p className="border-t border-line px-4 py-2.5 text-[11px] leading-5 text-muted">
-              {home.statsHint}
-            </p>
-          </aside>
+                <div className="mt-1 text-[13px] text-ink-3">{home.stats.callsToday}</div>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="mx-auto mt-14 max-w-[860px] rounded-lg border border-line bg-bg p-3 sm:p-4">
+            <div className="flex items-center justify-between gap-3 rounded-sm px-2 py-1.5">
+              <span className="shrink-0 text-[13px] text-ink-3">{home.baseUrlLabel}</span>
+              <div className="flex min-w-0 items-center gap-1">
+                <code className="truncate text-[13px] tabular-nums text-ink">{baseUrl}/v1</code>
+                <CopyButton text={`${baseUrl}/v1`} />
+              </div>
+            </div>
+            <CodeBlock code={home.firstCurl(baseUrl, sampleModel)} label="curl" className="mt-2" />
+            <p className="mt-3 px-2 text-[13px] leading-6 text-ink-3">{home.stepsCurlNote}</p>
+          </div>
         </div>
       </section>
 
-      <section className="border-b border-line">
-        <div className="mx-auto max-w-[1180px] px-5 py-12">
+      <section className={SECTION}>
+        <div className={CONTAINER}>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h2 className="text-[22px] font-semibold leading-snug tracking-tight text-ink">
+              <h2 className="text-[24px] font-semibold leading-snug tracking-tight text-ink">
                 {home.topTitle}
               </h2>
-              <p className="mt-1 text-[13px] leading-6 text-muted">{home.topLead}</p>
+              <p className="mt-2 text-[15px] leading-6 text-ink-2">{home.topLead}</p>
             </div>
-            {models.data && models.data.length > 8 ? (
-              <Link
-                to="/models"
-                className="shrink-0 text-[12.5px] text-brand-dark hover:underline"
-              >
-                {home.viewAll(models.data.length)}
-              </Link>
-            ) : null}
+            <Link
+              to="/models"
+              className="shrink-0 text-[14px] text-brand transition-colors hover:text-brand-hover hover:underline"
+            >
+              {home.viewAll} →
+            </Link>
           </div>
 
-          <div className="mt-6">
+          <div className="mt-8">
             {models.isError ? (
               <QueryError
                 title={home.topErrorTitle}
@@ -177,7 +129,7 @@ function HomePage() {
                 retrying={models.isFetching}
               />
             ) : models.isPending ? (
-              <ModelTable models={[]} loading skeletonRows={8} />
+              <ModelTable models={[]} loading skeletonRows={6} />
             ) : top.length === 0 ? (
               <Empty
                 title={home.topEmptyTitle}
@@ -194,70 +146,62 @@ function HomePage() {
             )}
           </div>
 
-          <p className="mt-3 text-[11.5px] text-muted">{copy.pages.models.priceNote}</p>
+          <p className="mt-4 text-[13px] text-ink-3">{copy.pages.models.priceNote}</p>
         </div>
       </section>
 
-      <section className="border-b border-line bg-surface">
-        <div className="mx-auto max-w-[1180px] px-5 py-14">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <h2 className="text-[22px] font-semibold leading-snug tracking-tight text-ink">
+      <section className={SECTION}>
+        <div className={CONTAINER}>
+          <div className="max-w-[640px]">
+            <h2 className="text-[24px] font-semibold leading-snug tracking-tight text-ink">
               {home.steps.title}
             </h2>
-            <p className="text-[12.5px] text-muted">{home.steps.hint}</p>
+            <p className="mt-2 text-[15px] leading-6 text-ink-2">{home.steps.hint}</p>
           </div>
 
-          <ol className="mt-8 grid gap-8 sm:grid-cols-3">
-            <li className="border-t-2 border-brand/70 pt-4">
-              <span className="font-numeric text-[12px] text-brand-dark">01</span>
-              <h3 className="mt-2 text-[15px] font-semibold text-ink">{home.steps.items[0].title}</h3>
-              <p className="mt-1 text-[13px] leading-6 text-muted">{home.steps.items[0].body}</p>
-              <Link
-                to="/register"
-                className="mt-2 inline-block text-[12.5px] text-brand-dark hover:underline"
-              >
-                {copy.actions.register}
-              </Link>
-            </li>
-            <li className="border-t-2 border-brand/70 pt-4">
-              <span className="font-numeric text-[12px] text-brand-dark">02</span>
-              <h3 className="mt-2 text-[15px] font-semibold text-ink">{home.steps.items[1].title}</h3>
-              <p className="mt-1 text-[13px] leading-6 text-muted">{home.steps.items[1].body}</p>
-              <p className="mt-2 text-[12.5px] text-muted">
-                {home.stepsKeyHint}{' '}
-                <Link to="/console" className="text-brand-dark hover:underline">
-                  {home.stepsKeyAction}
-                </Link>
-              </p>
-            </li>
-            <li className="border-t-2 border-brand/70 pt-4">
-              <span className="font-numeric text-[12px] text-brand-dark">03</span>
-              <h3 className="mt-2 text-[15px] font-semibold text-ink">{home.steps.items[2].title}</h3>
-              <p className="mt-1 text-[13px] leading-6 text-muted">{home.steps.items[2].body}</p>
-            </li>
+          <ol className="mt-10 grid gap-10 sm:grid-cols-3 sm:gap-8">
+            {home.steps.items.map((item, index) => (
+              <li key={item.title}>
+                <span className="grid h-7 w-7 place-items-center rounded-full bg-brand-soft text-[13px] font-medium tabular-nums text-brand-ink">
+                  {index + 1}
+                </span>
+                <h3 className="mt-4 text-[16px] font-semibold text-ink">{item.title}</h3>
+                <p className="mt-1.5 text-[14px] leading-6 text-ink-2">{item.body}</p>
+                {index === 0 ? (
+                  <Link
+                    to="/register"
+                    className="mt-2 inline-block text-[14px] text-brand hover:underline"
+                  >
+                    {copy.actions.register}
+                  </Link>
+                ) : null}
+                {index === 1 ? (
+                  <p className="mt-2 text-[14px] text-ink-2">
+                    {home.stepsKeyHint}{' '}
+                    <Link to="/console" className="text-brand hover:underline">
+                      {home.stepsKeyAction}
+                    </Link>
+                  </p>
+                ) : null}
+              </li>
+            ))}
           </ol>
+        </div>
+      </section>
 
-          <div className="mt-8 max-w-[820px]">
-            <div className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-              <h3 className="text-[13px] font-medium text-ink">{home.stepsCurlTitle}</h3>
-              <span className="text-[11.5px] text-muted">{home.stepsCurlNote}</span>
+      <section className="pb-16 sm:pb-20 lg:pb-[120px]">
+        <div className={CONTAINER}>
+          <div className="flex flex-col gap-6 rounded-lg bg-bg-soft px-6 py-8 sm:flex-row sm:items-center sm:justify-between sm:px-10 sm:py-10">
+            <div className="min-w-0">
+              <h2 className="text-[20px] font-semibold tracking-tight text-ink">{home.seller.title}</h2>
+              <p className="mt-2 max-w-[560px] text-[15px] leading-6 text-ink-2">{home.seller.body}</p>
             </div>
-            <CodeBlock code={home.firstCurl(baseUrl, sampleModel)} label="curl" />
+            <Link to="/seller" className={buttonClasses('primary', 'md', 'shrink-0')}>
+              {copy.actions.becomeSeller}
+            </Link>
           </div>
         </div>
       </section>
-
-      <section className="mx-auto max-w-[1180px] px-5 py-12">
-        <div className="flex flex-col gap-4 border-l-[3px] border-brand-dark bg-brand-soft px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-[16px] font-semibold text-ink">{home.seller.title}</h2>
-            <p className="mt-1 text-[13px] leading-6 text-muted">{home.seller.body}</p>
-          </div>
-          <Link to="/seller" className={buttonClasses('primary', 'md', 'shrink-0')}>
-            {copy.actions.becomeSeller}
-          </Link>
-        </div>
-      </section>
-    </>
+    </div>
   )
 }

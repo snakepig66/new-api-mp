@@ -13,7 +13,7 @@ import { Turnstile, isTurnstileConfigured } from '@/features/auth/turnstile'
 import { ApiError } from '@/lib/api'
 import { isLoggedIn } from '@/lib/auth'
 import { safeRedirect } from '@/lib/navigation'
-import { Button, Input } from '@/ui'
+import { Button, Input, PasswordInput } from '@/ui'
 
 interface LoginSearch {
   redirect?: string
@@ -81,34 +81,22 @@ function LoginPage() {
   })
 
   return (
-    <AuthSplit headline={page.brandHeading} body={page.brandBody}>
-      <h1 className="text-[24px] font-semibold tracking-tight text-ink">{page.title}</h1>
-      <p className="mt-1.5 text-[13px] leading-6 text-muted">{page.lead}</p>
+    <AuthSplit headline={page.brandHeading} body={page.brandBody} points={page.points}>
+      <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-ink">{page.title}</h1>
+      <p className="mt-2 text-[15px] leading-6 text-ink-2">{page.lead}</p>
 
       {registered ? (
         <p
           role="status"
-          className="mt-4 border border-success/25 bg-success-soft px-3 py-2 text-[12.5px] leading-5 text-success"
+          className="mt-5 rounded-md bg-brand-soft px-3 py-2 text-[13px] leading-5 text-brand-ink"
         >
           {page.registered}
         </p>
       ) : null}
 
-      <GithubButton
-        redirectTo={safeRedirect(redirectTo, '/console')}
-        onError={(message) => setError('root', { message })}
-        className="mt-6"
-      />
-
-      <div className="my-5 flex items-center gap-3 text-[11.5px] text-muted">
-        <span className="h-px flex-1 bg-line" aria-hidden="true" />
-        {page.or}
-        <span className="h-px flex-1 bg-line" aria-hidden="true" />
-      </div>
-
-      <form className="space-y-4" onSubmit={onSubmit} noValidate>
+      <form className="mt-7 space-y-4" onSubmit={onSubmit} noValidate>
         <div>
-          <label htmlFor="login-identifier" className="mb-1.5 block text-[12.5px] font-medium text-ink">
+          <label htmlFor="login-identifier" className="mb-2 block text-[13px] font-medium text-ink">
             {page.identifier}
           </label>
           <Input
@@ -119,24 +107,23 @@ function LoginPage() {
             {...register('identifier')}
           />
           {errors.identifier ? (
-            <p className="mt-1 text-[11.5px] text-danger">{errors.identifier.message}</p>
+            <p className="mt-1.5 text-[13px] text-danger">{errors.identifier.message}</p>
           ) : null}
         </div>
 
         <div>
-          <label htmlFor="login-password" className="mb-1.5 block text-[12.5px] font-medium text-ink">
+          <label htmlFor="login-password" className="mb-2 block text-[13px] font-medium text-ink">
             {page.password}
           </label>
-          <Input
+          <PasswordInput
             id="login-password"
-            type="password"
             autoComplete="current-password"
             placeholder={page.passwordPlaceholder}
             invalid={Boolean(errors.password)}
             {...register('password')}
           />
           {errors.password ? (
-            <p className="mt-1 text-[11.5px] text-danger">{errors.password.message}</p>
+            <p className="mt-1.5 text-[13px] text-danger">{errors.password.message}</p>
           ) : null}
         </div>
 
@@ -145,25 +132,36 @@ function LoginPage() {
         {errors.root?.message ? (
           <p
             role="alert"
-            className="border border-danger/25 bg-danger-soft px-3 py-2 text-[12.5px] leading-5 text-danger"
+            className="rounded-md bg-danger/10 px-3 py-2 text-[13px] leading-5 text-danger"
           >
             {errors.root.message}
           </p>
         ) : null}
 
-        <Button type="submit" className="w-full" loading={isSubmitting}>
+        <Button type="submit" size="lg" className="w-full" loading={isSubmitting}>
           {isSubmitting ? page.submitting : page.submit}
         </Button>
       </form>
 
-      <p className="mt-4 text-[12.5px] text-muted">
+      <div className="my-6 flex items-center gap-3 text-[13px] text-ink-3">
+        <span className="h-px flex-1 bg-line" aria-hidden="true" />
+        {page.or}
+        <span className="h-px flex-1 bg-line" aria-hidden="true" />
+      </div>
+
+      <GithubButton
+        redirectTo={safeRedirect(redirectTo, '/console')}
+        onError={(message) => setError('root', { message })}
+      />
+
+      <p className="mt-6 text-[14px] text-ink-2">
         {page.noAccount}{' '}
-        <Link to="/register" className="text-brand-dark hover:underline">
+        <Link to="/register" className="text-brand hover:underline">
           {page.toRegister}
         </Link>
       </p>
 
-      <p className="mt-8 border-t border-line pt-4 text-[11.5px] leading-5 text-muted">{page.note}</p>
+      <p className="mt-8 border-t border-line pt-4 text-[13px] leading-6 text-ink-3">{page.note}</p>
     </AuthSplit>
   )
 }

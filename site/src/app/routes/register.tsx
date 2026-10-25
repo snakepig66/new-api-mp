@@ -6,14 +6,14 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 
 import { copy } from '@/copy'
-import { registerUser, sendEmailCode, systemStatusQuery } from '@/features/auth/api'
+import { registerUser, sendEmailCode as requestEmailCode, systemStatusQuery } from '@/features/auth/api'
 import { AuthSplit } from '@/features/auth/auth-split'
 import { GithubButton } from '@/features/auth/github-button'
 import { Turnstile, isTurnstileConfigured } from '@/features/auth/turnstile'
 import { ApiError } from '@/lib/api'
 import { isLoggedIn } from '@/lib/auth'
 import { safeRedirect } from '@/lib/navigation'
-import { Button, Input, useToast } from '@/ui'
+import { Button, Input, PasswordInput, useToast } from '@/ui'
 
 interface RegisterSearch {
   redirect?: string
@@ -63,6 +63,14 @@ function buildSchema(emailVerification: boolean) {
 
 type RegisterForm = z.infer<ReturnType<typeof buildSchema>>
 
+function FieldLabel({ htmlFor, children }: { htmlFor: string; children: string }) {
+  return (
+    <label htmlFor={htmlFor} className="mb-2 block text-[13px] font-medium text-ink">
+      {children}
+    </label>
+  )
+}
+
 function RegisterPage() {
   const page = copy.pages.register
   const { redirect: redirectTo } = Route.useSearch()
@@ -71,7 +79,7 @@ function RegisterPage() {
   const status = useQuery(systemStatusQuery())
   const emailVerification = status.data?.email_verification === true
   const [turnstileToken, setTurnstileToken] = useState('')
-  const [sendingCode, setSendingCode] = useState(false)
+  const [sending, setSending] = useState(false)
 
   const {
     register,
@@ -84,7 +92,7 @@ function RegisterPage() {
     defaultValues: { username: '', email: '', password: '', confirm: '', code: '' },
   })
 
-  async function handleSendCode() {
+  async function requestCode() {
     const email = getValues('email').trim()
     if (!EMAIL_RE.test(email)) {
       setError('email', { message: copy.validation.email })
@@ -100,9 +108,9 @@ function RegisterPage() {
         return
       }
     }
-    setSendingCode(true)
+    setSending(true)
     try {
-      await sendEmailCode(email, turnstileToken || undefined)
+      await requestEmailCode(email, turnstileToken || undefined)
       toast.show({ title: page.codeSent, tone: 'success' })
     } catch (error) {
       toast.show({
@@ -111,7 +119,7 @@ function RegisterPage() {
         tone: 'error',
       })
     } finally {
-      setSendingCode(false)
+      setSending(false)
     }
   }
 
@@ -148,27 +156,13 @@ function RegisterPage() {
   })
 
   return (
-    <AuthSplit headline={page.brandHeading} body={page.brandBody}>
-      <h1 className="text-[24px] font-semibold tracking-tight text-ink">{page.title}</h1>
-      <p className="mt-1.5 text-[13px] leading-6 text-muted">{page.lead}</p>
+    <AuthSplit headline={page.brandHeading} body={page.brandBody} points={page.points}>
+      <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-ink">{page.title}</h1>
+      <p className="mt-2 text-[15px] leading-6 text-ink-2">{page.lead}</p>
 
-      <GithubButton
-        redirectTo={safeRedirect(redirectTo, '/console')}
-        onError={(message) => setError('root', { message })}
-        className="mt-6"
-      />
-
-      <div className="my-5 flex items-center gap-3 text-[11.5px] text-muted">
-        <span className="h-px flex-1 bg-line" aria-hidden="true" />
-        {copy.pages.login.or}
-        <span className="h-px flex-1 bg-line" aria-hidden="true" />
-      </div>
-
-      <form className="space-y-4" onSubmit={onSubmit} noValidate>
+      <form className="mt-7 space-y-4" onSubmit={onSubmit} noValidate>
         <div>
-          <label htmlFor="register-username" className="mb-1.5 block text-[12.5px] font-medium text-ink">
-            {page.username}
-          </label>
+          <FieldLabel htmlFor="register-username">{page.username}</FieldLabel>
           <Input
             id="register-username"
             autoComplete="username"
@@ -177,14 +171,12 @@ function RegisterPage() {
             {...register('username')}
           />
           {errors.username ? (
-            <p className="mt-1 text-[11.5px] text-danger">{errors.username.message}</p>
+            <p className="mt-1.5 text-[13px] text-danger">{errors.username.message}</p>
           ) : null}
         </div>
 
         <div>
-          <label htmlFor="register-email" className="mb-1.5 block text-[12.5px] font-medium text-ink">
-            {page.email}
-          </label>
+          <FieldLabel htmlFor="register-email">{page.email}</FieldLabel>
           <Input
             id="register-email"
             type="email"
@@ -194,17 +186,15 @@ function RegisterPage() {
             {...register('email')}
           />
           {errors.email ? (
-            <p className="mt-1 text-[11.5px] text-danger">{errors.email.message}</p>
+            <p className="mt-1.5 text-[13px] text-danger">{errors.email.message}</p>
           ) : (
-            <p className="mt-1 text-[11px] text-muted">{page.emailOptional}</p>
+            <p className="mt-1.5 text-[13px] text-ink-3">{page.emailOptional}</p>
           )}
         </div>
 
         {emailVerification ? (
           <div>
-            <label htmlFor="register-code" className="mb-1.5 block text-[12.5px] font-medium text-ink">
-              {page.code}
-            </label>
+            <FieldLabel htmlFor="register-code">{page.code}</FieldLabel>
             <div className="flex gap-2">
               <Input
                 id="register-code"
@@ -216,54 +206,48 @@ function RegisterPage() {
               />
               <Button
                 variant="secondary"
-                className="shrink-0"
-                loading={sendingCode}
-                onClick={() => void handleSendCode()}
+                className="h-12 shrink-0 px-5"
+                loading={sending}
+                onClick={() => void requestCode()}
               >
-                {sendingCode ? page.sendingCode : page.sendCode}
+                {sending ? page.sendingCode : page.sendCode}
               </Button>
             </div>
             {errors.code ? (
-              <p className="mt-1 text-[11.5px] text-danger">{errors.code.message}</p>
+              <p className="mt-1.5 text-[13px] text-danger">{errors.code.message}</p>
             ) : (
-              <p className="mt-1 text-[11px] text-muted">{page.emailVerificationHint}</p>
+              <p className="mt-1.5 text-[13px] text-ink-3">{page.emailVerificationHint}</p>
             )}
           </div>
         ) : null}
 
         <div>
-          <label htmlFor="register-password" className="mb-1.5 block text-[12.5px] font-medium text-ink">
-            {page.password}
-          </label>
-          <Input
+          <FieldLabel htmlFor="register-password">{page.password}</FieldLabel>
+          <PasswordInput
             id="register-password"
-            type="password"
             autoComplete="new-password"
             placeholder={page.passwordPlaceholder}
             invalid={Boolean(errors.password)}
             {...register('password')}
           />
           {errors.password ? (
-            <p className="mt-1 text-[11.5px] text-danger">{errors.password.message}</p>
+            <p className="mt-1.5 text-[13px] text-danger">{errors.password.message}</p>
           ) : (
-            <p className="mt-1 text-[11px] text-muted">{page.passwordHint}</p>
+            <p className="mt-1.5 text-[13px] text-ink-3">{page.passwordHint}</p>
           )}
         </div>
 
         <div>
-          <label htmlFor="register-confirm" className="mb-1.5 block text-[12.5px] font-medium text-ink">
-            {page.confirm}
-          </label>
-          <Input
+          <FieldLabel htmlFor="register-confirm">{page.confirm}</FieldLabel>
+          <PasswordInput
             id="register-confirm"
-            type="password"
             autoComplete="new-password"
             placeholder={page.confirmPlaceholder}
             invalid={Boolean(errors.confirm)}
             {...register('confirm')}
           />
           {errors.confirm ? (
-            <p className="mt-1 text-[11.5px] text-danger">{errors.confirm.message}</p>
+            <p className="mt-1.5 text-[13px] text-danger">{errors.confirm.message}</p>
           ) : null}
         </div>
 
@@ -272,31 +256,42 @@ function RegisterPage() {
         {errors.root?.message ? (
           <p
             role="alert"
-            className="border border-danger/25 bg-danger-soft px-3 py-2 text-[12.5px] leading-5 text-danger"
+            className="rounded-md bg-danger/10 px-3 py-2 text-[13px] leading-5 text-danger"
           >
             {errors.root.message}
           </p>
         ) : null}
 
-        <Button type="submit" className="w-full" loading={isSubmitting}>
+        <Button type="submit" size="lg" className="w-full" loading={isSubmitting}>
           {isSubmitting ? page.submitting : page.submit}
         </Button>
       </form>
 
-      <p className="mt-4 text-[12.5px] text-muted">
+      <div className="my-6 flex items-center gap-3 text-[13px] text-ink-3">
+        <span className="h-px flex-1 bg-line" aria-hidden="true" />
+        {copy.pages.login.or}
+        <span className="h-px flex-1 bg-line" aria-hidden="true" />
+      </div>
+
+      <GithubButton
+        redirectTo={safeRedirect(redirectTo, '/console')}
+        onError={(message) => setError('root', { message })}
+      />
+
+      <p className="mt-6 text-[14px] text-ink-2">
         {page.haveAccount}{' '}
-        <Link to="/login" className="text-brand-dark hover:underline">
+        <Link to="/login" className="text-brand hover:underline">
           {page.toLogin}
         </Link>
       </p>
 
-      <p className="mt-6 border-t border-line pt-4 text-[11px] leading-5 text-muted">
+      <p className="mt-6 border-t border-line pt-4 text-[13px] leading-6 text-ink-3">
         {page.agreementPrefix}{' '}
-        <Link to="/docs" hash="terms" className="hover:text-ink">
+        <Link to="/agreement" className="text-ink-2 hover:text-brand">
           {copy.footer.terms}
         </Link>{' '}
         {page.agreementAnd}{' '}
-        <Link to="/docs" hash="privacy" className="hover:text-ink">
+        <Link to="/privacy" className="text-ink-2 hover:text-brand">
           {copy.footer.privacy}
         </Link>
         {page.agreementPeriod}

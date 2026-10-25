@@ -13,6 +13,7 @@ import {
   Input,
   Multiplier,
   PageHeader,
+  PasswordInput,
   Table,
   TableBody,
   TableCell,
@@ -71,8 +72,8 @@ function limitsText(listing: SellerListing): string {
 function PauseReason({ id }: { id: number }) {
   const { data, isPending, isError } = useQuery(sellerListingDetailQuery(id))
   if (isPending) return <Skeleton className="h-3 w-20" />
-  if (isError) return <span className="text-muted">—</span>
-  return <span className="text-[12px] text-warning">{pauseReasonView(data.pause_reason)}</span>
+  if (isError) return <span className="text-ink-3">—</span>
+  return <span className="text-[13px] text-warn">{pauseReasonView(data.pause_reason)}</span>
 }
 
 function useCooldown(listingId: number) {
@@ -163,7 +164,7 @@ function MultiplierDialog({
     >
       <div className="space-y-4">
         <div className="flex items-baseline justify-between gap-3 border-b border-line pb-3">
-          <span className="text-[12px] text-muted">{vendorName(listing.vendor)}</span>
+          <span className="text-[13px] text-ink-3">{vendorName(listing.vendor)}</span>
           <Multiplier milli={listing.multiplier_milli} />
         </div>
 
@@ -186,12 +187,11 @@ function MultiplierDialog({
                 setMilli(next)
                 setMilliText((next / 1000).toFixed(3))
               }}
-              className="h-1.5 w-full cursor-pointer accent-[var(--color-brand-dark)] disabled:cursor-not-allowed"
+              className="h-1.5 w-full cursor-pointer accent-brand disabled:cursor-not-allowed"
             />
             <Input
               aria-label={page.multiplierDialog.label}
               className="w-24 shrink-0 text-right"
-              mono
               inputMode="decimal"
               disabled={locked}
               value={milliText}
@@ -206,13 +206,13 @@ function MultiplierDialog({
         </Field>
 
         {locked ? (
-          <p className="text-[12px] text-warning" role="status">
+          <p className="text-[13px] text-warn" role="status">
             {page.multiplierDialog.cooldown(formatCountdown(cooldown.remaining))}
           </p>
         ) : null}
 
         {error ? (
-          <p className="text-[12px] text-danger" role="alert">
+          <p className="text-[13px] text-danger" role="alert">
             {error}
           </p>
         ) : null}
@@ -289,10 +289,8 @@ function KeyDialog({
           hint={page.keyDialog.hint}
           error={error ?? undefined}
         >
-          <Input
+          <PasswordInput
             id="replacement-key"
-            type="password"
-            mono
             autoComplete="new-password"
             spellCheck={false}
             placeholder={page.keyDialog.placeholder}
@@ -301,9 +299,9 @@ function KeyDialog({
           />
         </Field>
 
-        <div className="border border-line bg-wash px-3 py-2">
-          <div className="text-[11px] text-muted">{common.keyPreviewHint}</div>
-          <div className="mt-1 font-numeric text-[12.5px] text-ink">{preview}</div>
+        <div className="rounded-md bg-bg-soft px-4 py-3">
+          <div className="text-[13px] text-ink-3">{common.keyPreviewHint}</div>
+          <div className="mt-1 tabular-nums text-[14px] text-ink">{preview}</div>
         </div>
       </div>
     </Dialog>
@@ -390,8 +388,8 @@ function SellerListingsPage() {
         />
       ) : (
         <>
-          <p className="mt-3 text-[11.5px] text-muted">{page.pausedNote}</p>
-          <div className="mt-4">
+          <p className="mt-4 text-[13px] text-ink-3">{page.pausedNote}</p>
+          <div className="mt-4 rounded-md border border-line bg-bg p-6">
             <Table minWidth={1040}>
               <TableHead>
                 <TableRow>
@@ -415,7 +413,7 @@ function SellerListingsPage() {
                     <TableRow key={listing.id}>
                       <TableCell>
                         <div className="font-medium text-ink">{vendorName(listing.vendor)}</div>
-                        <div className="font-numeric text-[11px] text-muted">
+                        <div className="tabular-nums text-[13px] text-ink-3">
                           #{listing.id} · {common.keyFingerprint}{' '}
                           {listing.key_fingerprint8 || '—'}
                         </div>
@@ -435,14 +433,14 @@ function SellerListingsPage() {
                       <TableCell numeric>
                         <Multiplier milli={listing.multiplier_milli} />
                       </TableCell>
-                      <TableCell numeric className="whitespace-nowrap text-muted">
+                      <TableCell numeric className="whitespace-nowrap text-ink-3">
                         {limitsText(listing)}
                       </TableCell>
                       <TableCell>
                         {listing.status === 'paused' ? (
                           <PauseReason id={listing.id} />
                         ) : (
-                          <span className="text-muted">—</span>
+                          <span className="text-ink-3">—</span>
                         )}
                       </TableCell>
                       <TableCell>

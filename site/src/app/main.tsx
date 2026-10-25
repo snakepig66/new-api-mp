@@ -9,6 +9,7 @@ import { ToastProvider } from '@/ui'
 import { queryClient } from '@/lib/query-client'
 
 import { routeTree } from './routeTree.gen'
+import { RouteErrorComponent } from './routes/__root'
 
 const router = createRouter({
   routeTree,
@@ -16,6 +17,9 @@ const router = createRouter({
   defaultPreload: 'intent',
   defaultPreloadStaleTime: 0,
   scrollRestoration: true,
+  // Same Chinese error page for every route, including lazy chunks that fail
+  // to load after a deploy.
+  defaultErrorComponent: RouteErrorComponent,
 })
 
 declare module '@tanstack/react-router' {

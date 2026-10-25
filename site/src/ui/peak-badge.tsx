@@ -15,6 +15,7 @@ export interface PeakBadgeProps {
 
 /**
  * Peak / off-peak badge with a live countdown to the next switch.
+ * No fill: peak is ink text + an orange dot, off-peak grey text + grey dot.
  * The countdown is deliberately not an aria-live region: it ticks every second.
  */
 export function PeakBadge({ tier, nextSwitchAt = null, className }: PeakBadgeProps) {
@@ -39,10 +40,8 @@ export function PeakBadge({ tier, nextSwitchAt = null, className }: PeakBadgePro
   return (
     <span
       className={cn(
-        'inline-flex h-5 items-center gap-1.5 rounded-[3px] border px-1.5 text-[11px] leading-none',
-        isPeak
-          ? 'border-warning/25 bg-warning-soft text-warning'
-          : 'border-success/20 bg-success-soft text-success',
+        'inline-flex items-center gap-1.5 whitespace-nowrap text-[13px] leading-none',
+        isPeak ? 'text-ink' : 'text-ink-2',
         className,
       )}
       title={
@@ -51,10 +50,13 @@ export function PeakBadge({ tier, nextSwitchAt = null, className }: PeakBadgePro
           : copy.peak[tier]
       }
     >
-      <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
+      <span
+        className={cn('h-1.5 w-1.5 rounded-full', isPeak ? 'bg-warn' : 'bg-ink-3')}
+        aria-hidden="true"
+      />
       <span>{copy.peak[tier]}</span>
       {countdown ? (
-        <span className="border-l border-current/25 pl-1.5 font-numeric text-[10.5px] tabular-nums opacity-85">
+        <span className="text-[13px] tabular-nums text-ink-3">
           {copy.peak.nextSwitch} {countdown}
         </span>
       ) : null}

@@ -43,9 +43,6 @@ export const copy = {
     loading: '加载中',
     emptyTitle: '暂时没有内容',
     nextStep: '下一步',
-    sample: '示例',
-    sampleNotice: '以下为版式示例，实时行情接入后由后端数据替换。',
-    dataPending: '实时数据接入后显示',
     none: '—',
     unitSuffix: '/',
     comingSoon: '该功能将在下一阶段开放。',
@@ -83,6 +80,16 @@ export const copy = {
     buyer: '买家',
   },
 
+  consoleShell: {
+    buyerGroup: '控制台',
+    sellerGroup: '分享者',
+    adminGroup: '运营后台',
+    identityTitle: '身份切换',
+    buyer: '使用者',
+    seller: '分享者',
+    backToConsole: '返回使用者控制台',
+  },
+
   footer: {
     copyright: '© 2026 词元市场',
     company: '运营主体：待定',
@@ -96,8 +103,8 @@ export const copy = {
     home: {
       kicker: '官方模型额度，按量结算',
       headline: '同一个 Key，用官方模型更便宜',
-      headlineLines: ['同一个 Key，', '用官方模型更便宜'],
       lead: '分享者把闲置的官方额度挂上市场，买家按当前倍率取用。价格写在明面上，调用失败不收费。',
+      ctaStart: '开始使用',
       facts: [
         { label: '计费', value: '按实际 tokens' },
         { label: '失败调用', value: '不计费' },
@@ -138,19 +145,20 @@ export const copy = {
         title: '有闲置的官方额度？',
         body: '把它挂上市场，按你定的倍率接单。平台按 T+7 结算，提现记录可查。',
       },
-      live: '实时行情',
       liveUpdated: (time: string) => `更新于 ${time}`,
       statsHint: '在售模型与最低倍率来自当前挂单；调用量按北京时间当天统计。',
-      statsErrorTitle: '实时数据暂时不可用',
-      statsErrorReason: '行情接口没有返回数据，页面其余部分仍可使用。',
       topTitle: '热门模型',
-      topLead: '按在售分享者数量排序，展示前 8 个模型。价格随峰谷时段切换。',
+      topLead: '按在售分享者数量排序，最多展示 6 个模型。价格随峰谷时段切换。',
       topEmptyTitle: '暂时没有在售模型',
       topEmptyReason: '市场还没有可用的分享者挂单，所以没有价格可以展示。',
       topEmptyNext: '你可以先看接入文档，或者成为第一个分享者。',
       topErrorTitle: '模型行情加载失败',
       topErrorReason: '广场接口没有返回数据，请稍后重试。',
-      viewAll: (count: number) => `查看全部 ${count} 个模型`,
+      viewAll: '查看全部模型',
+      baseUrlLabel: 'base_url',
+      copy: '复制',
+      copied: '已复制',
+      copyFailed: '复制失败，请手动选择。',
       stepsCurlTitle: '第一笔请求',
       stepsCurlNote: '把 <你的Key> 换成控制台里的 Key。模型名可以在模型广场复制。',
       stepsKeyHint: '还没有 Key？',
@@ -162,79 +170,24 @@ export const copy = {
     models: {
       title: '模型广场',
       lead: '官方价与市场最低倍率并排比较，按当前时段结算。',
-      priceUnit: '价格单位：¥ / 百万 tokens',
+      leadSummary: (count: number, lowest: string | null) =>
+        lowest
+          ? `${count} 个模型 · 最低 ${lowest}x`
+          : `${count} 个模型 · 暂无在售倍率`,
+      searchPlaceholder: '搜索模型名称',
+      searchAria: '按模型名称搜索',
+      allVendors: '全部',
       sellerUnit: '位',
       outputPrefix: '出',
-      filtersSoon: '厂商、能力和「只看有货」筛选将在实时行情接入后开放。',
       columns: {
         model: '模型',
-        vendor: '厂商',
-        official: '官方价（输入 / 输出）',
+        input: '输入价',
+        output: '输出价',
         multiplier: '最低倍率',
-        buyerPrice: '到手价（输入 / 输出）',
-        sellers: '分享者',
-        availability: '可用率',
-        latency: '延迟 P50',
+        buyerPrice: '到手价',
+        sellers: '分享者数',
         tier: '当前时段',
       },
-      sample: [
-        {
-          id: 'deepseek-v3',
-          name: 'DeepSeek V3',
-          vendor: '深度求索',
-          officialInput: 2_000_000,
-          officialOutput: 8_000_000,
-          multiplierMilli: 300,
-          buyerInput: 600_000,
-          buyerOutput: 2_400_000,
-          sellers: 3,
-          availability: '99.2%',
-          latency: '820 ms',
-          tier: 'offpeak' as const,
-        },
-        {
-          id: 'qwen3-235b',
-          name: 'Qwen3 235B',
-          vendor: '阿里云',
-          officialInput: 2_400_000,
-          officialOutput: 9_600_000,
-          multiplierMilli: 450,
-          buyerInput: 1_080_000,
-          buyerOutput: 4_320_000,
-          sellers: 2,
-          availability: '98.6%',
-          latency: '1.1 s',
-          tier: 'peak' as const,
-        },
-        {
-          id: 'deepseek-r1',
-          name: 'DeepSeek R1',
-          vendor: '深度求索',
-          officialInput: 4_000_000,
-          officialOutput: 16_000_000,
-          multiplierMilli: 520,
-          buyerInput: 2_080_000,
-          buyerOutput: 8_320_000,
-          sellers: 1,
-          availability: '97.4%',
-          latency: '1.8 s',
-          tier: 'offpeak' as const,
-        },
-        {
-          id: 'glm-4-plus',
-          name: 'GLM-4 Plus',
-          vendor: '智谱',
-          officialInput: 5_000_000,
-          officialOutput: 20_000_000,
-          multiplierMilli: 680,
-          buyerInput: 3_400_000,
-          buyerOutput: 13_600_000,
-          sellers: 1,
-          availability: '99.0%',
-          latency: '740 ms',
-          tier: 'peak' as const,
-        },
-      ],
       empty: {
         title: '暂时没有在售模型',
         reason: '市场还没有可用的分享者挂单，所以这里没有价格可报。',
@@ -244,14 +197,7 @@ export const copy = {
       filteredCount: (shown: number, total: number) => `筛选后 ${shown} / ${total} 个模型`,
       priceNote: '官方价与到手价均为 ¥ / 百万 tokens；到手价按当前最低倍率计算。',
       filters: {
-        title: '筛选',
-        vendor: '厂商',
-        capability: '能力',
-        inStock: '只看有货',
         clear: '清除筛选',
-        capabilityHint: '能力标签按模型名关键词推断，仅用于筛选，不代表供应商承诺。',
-        inStockHint: '隐藏当前没有在售分享者的模型。',
-        vendorHint: '同一模型可能由不同厂商的价目表覆盖。',
       },
       capabilities: {
         reasoning: '推理',
@@ -298,6 +244,23 @@ export const copy = {
       },
       tierNote: '价格为 ¥ / 百万 tokens。高峰与空闲两档按北京时间自动切换。',
       buyerPrice: '到手价（当前时段）',
+      lowestPrice: '最低到手价',
+      access: {
+        title: '接入信息',
+        baseUrl: 'base_url',
+        model: '模型名',
+        copy: '复制',
+        copied: '已复制',
+        copyFailed: '复制失败，请手动选择。',
+      },
+      peakBar: {
+        title: '峰谷时段',
+        peak: '高峰',
+        offpeak: '空闲',
+        now: '现在',
+        next: '下次切换',
+        note: '按北京时间每个工作日计算；周末与法定节假日全天按空闲计费。',
+      },
       officialColumns: {
         dimension: '计费项',
         peak: '高峰',
@@ -325,44 +288,35 @@ export const copy = {
       },
       code: {
         aria: '代码示例',
-        tabs: { openai: 'OpenAI', anthropic: 'Anthropic', curl: 'curl' },
+        tabs: { curl: 'curl', python: 'Python', node: 'Node.js' },
         note: '把 <你的Key> 换成控制台里的 Key；base_url 已按当前站点填好。',
         copied: '已复制',
         copy: '复制',
         failed: '复制失败，请手动选择代码。',
-        openai: (baseUrl: string, model: string) =>
-          `const response = await fetch("${baseUrl}/v1/chat/completions", {
-  method: "POST",
-  headers: {
-    "Authorization": "Bearer <你的Key>",
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    model: "${model}",
-    messages: [{ role: "user", content: "你好" }],
-  }),
-})
+        python: (baseUrl: string, model: string) =>
+          `from openai import OpenAI
 
-const data = await response.json()
-console.log(data.choices[0].message.content)
+client = OpenAI(base_url="${baseUrl}/v1", api_key="<你的Key>")
+response = client.chat.completions.create(
+    model="${model}",
+    messages=[{"role": "user", "content": "你好"}],
+)
+print(response.choices[0].message.content)
 `,
-        anthropic: (baseUrl: string, model: string) =>
-          `const response = await fetch("${baseUrl}/v1/messages", {
-  method: "POST",
-  headers: {
-    "x-api-key": "<你的Key>",
-    "anthropic-version": "2023-06-01",
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    model: "${model}",
-    max_tokens: 256,
-    messages: [{ role: "user", content: "你好" }],
-  }),
+        node: (baseUrl: string, model: string) =>
+          `import OpenAI from "openai"
+
+const client = new OpenAI({
+  baseURL: "${baseUrl}/v1",
+  apiKey: "<你的Key>",
 })
 
-const data = await response.json()
-console.log(data.content[0].text)
+const response = await client.chat.completions.create({
+  model: "${model}",
+  messages: [{ role: "user", content: "你好" }],
+})
+
+console.log(response.choices[0].message.content)
 `,
         curl: (baseUrl: string, model: string) =>
           `curl "${baseUrl}/v1/chat/completions" \\\n  -H "Authorization: Bearer <你的Key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${model}","messages":[{"role":"user","content":"你好"}]}'`,
@@ -388,14 +342,16 @@ console.log(data.content[0].text)
     docs: {
       title: '文档',
       lead: '一页讲清接入、计费与错误处理。每段代码都可以直接粘贴。',
-      toc: '目录',
+      toc: '文档导航',
+      onThisPage: '本页目录',
+      searchPlaceholder: '搜索文档',
+      searchAria: '搜索文档导航',
+      searchEmpty: '没有匹配的章节',
       sections: {
         quickstart: '快速开始',
         streaming: '流式输出',
         billing: '计费规则',
         errors: '错误码',
-        terms: '用户协议',
-        privacy: '隐私政策',
       },
       quickstart: {
         body: '把请求地址指向本站的 /v1，模型名使用模型广场里的完整 ID，Authorization 使用控制台创建的 Key。',
@@ -440,9 +396,9 @@ console.log(data.content[0].text)
       errors: {
         body: '接口错误使用稳定的错误码，界面按错误码显示中文提示。',
         rows: [
+          { code: '400', meaning: '参数错误或模型未加入 Key', action: '核对模型 ID，并把模型加到当前 Key。' },
           { code: '401', meaning: 'Key 无效或已失效', action: '检查 Authorization，必要时新建 Key。' },
           { code: '402', meaning: '余额不足', action: '充值后重试。' },
-          { code: '400', meaning: '参数错误或模型未加入 Key', action: '核对模型 ID，并把模型加到当前 Key。' },
           { code: '429', meaning: '触发限流', action: '按响应中的提示退避重试。' },
           { code: '503', meaning: '暂无可用供应商', action: '稍后重试，或换一个时段。' },
         ],
@@ -450,12 +406,6 @@ console.log(data.content[0].text)
         testNote: '用一个不存在的 Key 可以复现 401 响应：',
         codeWithBase: (baseUrl: string, model: string) =>
           `curl -i "${baseUrl}/v1/chat/completions" \\\n  -H "Authorization: Bearer invalid-key" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${model}","messages":[{"role":"user","content":"你好"}]}'`,
-      },
-      terms: {
-        body: '用户协议正式文本将在上线前发布。当前阶段接入即表示你同意按实际调用量结算，并遵守模型供应商的使用条款。',
-      },
-      privacy: {
-        body: '隐私政策正式文本将在上线前发布。当前阶段我们只保存提供服务所必需的账号、调用与结算数据。',
       },
     },
 
@@ -465,6 +415,11 @@ console.log(data.content[0].text)
       brandHeading: '同一个 Key，用官方模型更便宜',
       brandBody:
         '买家用一个 Key 调用广场上的模型；分享者把官方额度挂上市场。价格、倍率和可用率都公开。',
+      points: [
+        { title: '价格一次看清', body: '官方价、最低倍率、到手价并排展示。' },
+        { title: '失败调用不收费', body: '只有成功的请求计费。' },
+        { title: '一个 Key 通用', body: '换模型不换接入方式。' },
+      ],
       username: '用户名',
       usernamePlaceholder: '输入用户名',
       password: '密码',
@@ -497,6 +452,11 @@ console.log(data.content[0].text)
       brandHeading: '一个账号，买家与分享者两用',
       brandBody:
         '注册后即可浏览模型广场、创建 Key；同一账号也能开通分享者，把官方额度挂上市场。',
+      points: [
+        { title: '注册即用', body: '无需单独申请各厂商账号。' },
+        { title: '余额与用量透明', body: '每一笔扣费都能查到明细。' },
+        { title: '随时成为分享者', body: '同一账号即可上架闲置额度。' },
+      ],
       username: '用户名',
       usernamePlaceholder: '最多 20 个字符',
       email: '邮箱',
@@ -542,6 +502,8 @@ console.log(data.content[0].text)
         spendHint: '按实际扣费统计（Asia/Shanghai）',
         savedThisMonth: '本月节省',
         savedHint: '相对官方价省下的金额',
+        requests7d: '近 7 天请求',
+        requests7dHint: '按天汇总的调用次数',
       },
       chart: {
         title: '近 7 天用量',
@@ -1712,6 +1674,28 @@ console.log(data.content[0].text)
       title: '页面不存在',
       reason: '地址可能已经变化，或者这个页面还没有对外开放。',
       next: '回到首页，从模型广场重新开始。',
+    },
+
+    errorPage: {
+      title: '出错了',
+      detailLabel: '错误信息',
+      chunkTitle: '页面资源已更新，请刷新重试',
+      chunkReason: '站点发布了新版本，当前页面引用的脚本已经失效。刷新一次即可继续。',
+      refresh: '刷新页面',
+    },
+
+    agreement: {
+      title: '用户协议',
+      placeholder: '正文将于上线前补充。',
+      contactLabel: '联系方式',
+      contact: 'support@quantumnous.com',
+    },
+
+    privacy: {
+      title: '隐私政策',
+      placeholder: '正文将于上线前补充。',
+      contactLabel: '联系方式',
+      contact: 'support@quantumnous.com',
     },
 
     oauth: {

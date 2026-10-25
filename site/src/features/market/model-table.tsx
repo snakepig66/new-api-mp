@@ -2,10 +2,9 @@ import { Link } from '@tanstack/react-router'
 
 import { copy } from '@/copy'
 import { formatYuan } from '@/lib/money'
+import { formatMultiplier } from '@/lib/multiplier'
 import {
-  Multiplier,
   PeakBadge,
-  Price,
   Table,
   TableBody,
   TableCell,
@@ -15,7 +14,8 @@ import {
   Tag,
 } from '@/ui'
 
-import type { MarketTier, SquareModel, SquareModelDetail, SquareTierPrices } from './api'
+import type { SquareModel, SquareModelDetail, SquareTierPrices } from './api'
+import { vendorLabel } from './vendors'
 
 export interface ModelTableProps {
   models: SquareModel[]
@@ -31,64 +31,33 @@ function currentPrices(model: SquareModel): SquareTierPrices | undefined {
   return model.prices[model.tier] ?? model.prices.peak ?? model.prices.offpeak
 }
 
-function otherTierOf(tier: MarketTier): 'peak' | 'offpeak' | null {
-  if (tier === 'peak') return 'offpeak'
-  if (tier === 'offpeak') return 'peak'
-  return null
-}
-
 function skeletonCell(width = 'w-16') {
-  return <div className={`h-3.5 animate-pulse rounded-[2px] bg-line ${width}`} />
+  return <div className={`h-3.5 animate-pulse rounded-sm bg-line ${width}`} />
 }
 
-/** Two price rows (input on top, output below) for one tier pair. */
-function PricePair({
-  current,
-  other,
-  tier,
-  otherTier,
-}: {
-  current: SquareTierPrices
-  other?: SquareTierPrices
-  tier: MarketTier
-  otherTier: 'peak' | 'offpeak' | null
-}) {
+function Missing() {
+  return <span className="text-ink-3">{copy.common.none}</span>
+}
+
+/** Buyer input/output pair, stacked so one row stays 56px tall. */
+function BuyerPair({ prices }: { prices?: SquareTierPrices }) {
+  if (!prices) return <Missing />
   return (
-    <div className="leading-tight">
-      <Price
-        value={current.input_micro_per_mtok}
-        tier={tier}
-        other={
-          other && otherTier
-            ? { value: other.input_micro_per_mtok, tier: otherTier }
-            : null
-        }
-        unit={null}
-        size="sm"
-      />
-      <div className="mt-0.5 text-[11px] text-muted">
-        {copy.pages.models.outputPrefix}{' '}
-        <span className="font-numeric tabular-nums text-ink">
-          {formatYuan(current.output_micro_per_mtok)}
-        </span>
-        {other && otherTier ? (
-          <span className="font-numeric tabular-nums text-muted/80">
-            {' '}
-            / {formatYuan(other.output_micro_per_mtok)}
-          </span>
-        ) : null}
+    <div className="leading-tight tabular-nums">
+      <div>{formatYuan(prices.input_micro_per_mtok)}</div>
+      <div className="mt-0.5 text-[13px] text-ink-3">
+        {copy.pages.models.outputPrefix} {formatYuan(prices.output_micro_per_mtok)}
       </div>
     </div>
   )
 }
 
 /**
- * The dense model board, shared by the homepage top-8 and the full square.
+ * The model board shared by the homepage (top 6) and the full square.
  *
- * Columns 可用率 and 延迟 P50 from the design brief are deliberately absent:
- * the square API exposes neither field (see marketplace/api_square.go), and
- * this table does not invent numbers. Add them back when the API carries
- * availability/latency aggregates.
+ * Columns follow VISUAL-SPEC §4: model / input / output / lowest multiplier /
+ * buyer price / sellers / tier. 可用率 and 延迟 P50 stay absent because the
+ * square API exposes neither field.
  */
 export function ModelTable({
   models,
@@ -96,7 +65,7 @@ export function ModelTable({
   detailsLoading = false,
   loading = false,
   skeletonRows = 6,
-  minWidth = 900,
+  minWidth = 960,
 }: ModelTableProps) {
   const columns = copy.pages.models.columns
 
@@ -105,9 +74,9 @@ export function ModelTable({
       <TableHead>
         <TableRow interactive={false}>
           <TableHeaderCell>{columns.model}</TableHeaderCell>
-          <TableHeaderCell>{columns.vendor}</TableHeaderCell>
-          <TableHeaderCell numeric>{columns.official}</TableHeaderCell>
-          <TableHeaderCell numeric>{columns.multiplier}</TableHeaderCell>
+          <TableHeaderCell numeric>{columns.input}</TableHeaderCell>
+          <TableHeaderCell numeric>{columns.output}</TableHeaderCell>
+          <TableHeaderCell>{columns.multiplier}</TableHeaderCell>
           <TableHeaderCell numeric>{columns.buyerPrice}</TableHeaderCell>
           <TableHeaderCell numeric>{columns.sellers}</TableHeaderCell>
           <TableHeaderCell>{columns.tier}</TableHeaderCell>
@@ -116,17 +85,26 @@ export function ModelTable({
       <TableBody>
         {loading
           ? Array.from({ length: skeletonRows }, (_, index) => (
-              <TableRow key={`skeleton-${index}`} aria-hidden="true">
-                <TableCell>{skeletonCell('w-40')}</TableCell>
-                <TableCell>{skeletonCell('w-16')}</TableCell>
-                <TableCell numeric>
-                  <div className="flex justify-end">{skeletonCell('w-20')}</div>
+              <TableRow
+                key={`skeleton-${index}`}
+                className="[&>td]:h-14 [&>td]:py-0"
+                aria-hidden="true"
+              >
+                <TableCell>
+                  <div className="space-y-1.5">
+                    {skeletonCell('w-40')}
+                    {skeletonCell('w-16')}
+                  </div>
                 </TableCell>
                 <TableCell numeric>
                   <div className="flex justify-end">{skeletonCell('w-16')}</div>
                 </TableCell>
                 <TableCell numeric>
-                  <div className="flex justify-end">{skeletonCell('w-20')}</div>
+                  <div className="flex justify-end">{skeletonCell('w-16')}</div>
+                </TableCell>
+                <TableCell>{skeletonCell('w-12')}</TableCell>
+                <TableCell numeric>
+                  <div className="flex justify-end">{skeletonCell('w-16')}</div>
                 </TableCell>
                 <TableCell numeric>
                   <div className="flex justify-end">{skeletonCell('w-8')}</div>
@@ -136,62 +114,70 @@ export function ModelTable({
             ))
           : models.map((model) => {
               const row = currentPrices(model)
-              const otherTier = otherTierOf(model.tier)
-              const other = otherTier ? model.prices[otherTier] : undefined
               const detail = details?.get(model.model)
               const official = detail?.official_prices[model.tier]
-              const officialOther = otherTier ? detail?.official_prices[otherTier] : undefined
 
               return (
-                <TableRow key={`${model.model}:${model.vendor}`} interactive>
+                <TableRow
+                  key={`${model.model}:${model.vendor}`}
+                  interactive
+                  className="relative [&>td]:h-14 [&>td]:py-0"
+                >
                   <TableCell>
                     <Link
                       to="/models/$id"
                       params={{ id: model.model }}
-                      className="font-medium text-ink transition-colors hover:text-brand-dark"
+                      className="block min-w-0 after:absolute after:inset-0 after:content-['']"
                     >
-                      {model.model}
+                      <span className="block truncate text-[15px] font-medium text-ink transition-colors hover:text-brand-ink">
+                        {model.model}
+                      </span>
+                      <span className="block truncate text-[13px] text-ink-3">
+                        {vendorLabel(model.vendor)}
+                      </span>
                     </Link>
                   </TableCell>
-                  <TableCell className="text-muted">{model.vendor}</TableCell>
                   <TableCell numeric>
                     {official ? (
-                      <PricePair
-                        current={official}
-                        other={officialOther}
-                        tier={model.tier}
-                        otherTier={otherTier}
-                      />
-                    ) : detailsLoading ? (
-                      <div className="flex justify-end">{skeletonCell('w-20')}</div>
-                    ) : (
-                      <span className="text-muted">{copy.common.none}</span>
-                    )}
-                  </TableCell>
-                  <TableCell numeric>
-                    {detail ? (
-                      <Multiplier milli={detail.multiplier_min_milli} />
+                      <span className="tabular-nums">
+                        {formatYuan(official.input_micro_per_mtok)}
+                      </span>
                     ) : detailsLoading ? (
                       <div className="flex justify-end">{skeletonCell('w-16')}</div>
                     ) : (
-                      <span className="text-muted">{copy.common.none}</span>
+                      <Missing />
                     )}
                   </TableCell>
                   <TableCell numeric>
-                    {row ? (
-                      <PricePair
-                        current={row}
-                        other={other}
-                        tier={model.tier}
-                        otherTier={otherTier}
-                      />
+                    {official ? (
+                      <span className="tabular-nums">
+                        {formatYuan(official.output_micro_per_mtok)}
+                      </span>
+                    ) : detailsLoading ? (
+                      <div className="flex justify-end">{skeletonCell('w-16')}</div>
                     ) : (
-                      <span className="text-muted">{copy.common.none}</span>
+                      <Missing />
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {detail ? (
+                      <span className="font-medium tabular-nums text-brand-ink">
+                        {formatMultiplier(detail.multiplier_min_milli)}x
+                      </span>
+                    ) : detailsLoading ? (
+                      skeletonCell('w-12')
+                    ) : (
+                      <Missing />
                     )}
                   </TableCell>
                   <TableCell numeric>
-                    {model.listing_count}
-                    <span className="ml-0.5 text-[11px] text-muted">{copy.pages.models.sellerUnit}</span>
+                    <BuyerPair prices={row} />
+                  </TableCell>
+                  <TableCell numeric>
+                    <span className="tabular-nums">{model.listing_count}</span>
+                    <span className="ml-0.5 text-[13px] text-ink-3">
+                      {copy.pages.models.sellerUnit}
+                    </span>
                   </TableCell>
                   <TableCell>
                     {model.tier === 'flat' ? (

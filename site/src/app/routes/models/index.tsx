@@ -1,236 +1,190 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState } from 'react'
 
 import { copy } from '@/copy'
 import { squareModelsQuery, useSquareModelDetails } from '@/features/market/api'
-import {
-  CAPABILITY_KEYS,
-  matchesCapabilities,
-  type CapabilityKey,
-} from '@/features/market/capabilities'
 import { ModelTable } from '@/features/market/model-table'
 import { QueryError } from '@/features/market/query-error'
+import { vendorOptions } from '@/features/market/vendors'
 import { cn } from '@/lib/cn'
-import { Button, Empty, PageHeader, Tag, buttonClasses } from '@/ui'
+import { formatMultiplier } from '@/lib/multiplier'
+import { Button, Empty, Input, PageHeader, buttonClasses } from '@/ui'
 
 export const Route = createFileRoute('/models/')({
   component: ModelsPage,
 })
 
-function FilterCheck({
-  checked,
-  onChange,
-  label,
-  count,
-}: {
-  checked: boolean
-  onChange: (checked: boolean) => void
-  label: string
-  count?: number
-}) {
-  return (
-    <label className="flex cursor-pointer items-center justify-between gap-2 py-0.5 text-[12.5px] text-ink">
-      <span className="flex min-w-0 items-center gap-2">
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={(event) => onChange(event.target.checked)}
-          className="h-3.5 w-3.5 shrink-0 accent-brand-dark"
-        />
-        <span className="truncate">{label}</span>
-      </span>
-      {typeof count === 'number' ? (
-        <span className="font-numeric text-[11px] text-muted">{count}</span>
-      ) : null}
-    </label>
-  )
-}
-
-function FilterGroup({
-  title,
-  hint,
+function Pill({
+  active,
+  onClick,
   children,
 }: {
-  title?: string
-  hint?: string
-  children: ReactNode
+  active: boolean
+  onClick: () => void
+  children: string
 }) {
   return (
-    <div className="border-t border-line pt-3 first:border-t-0 first:pt-0">
-      {title ? <h2 className="text-[11.5px] font-medium text-ink">{title}</h2> : null}
-      {hint ? <p className="mt-0.5 text-[10.5px] leading-4 text-muted">{hint}</p> : null}
-      <div className="mt-2">{children}</div>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'inline-flex h-9 shrink-0 items-center rounded-full px-4 text-[14px] transition-colors',
+        active
+          ? 'bg-cta font-medium text-white hover:bg-cta-hover'
+          : 'bg-bg-soft text-ink-2 hover:bg-line/70 hover:text-ink',
+      )}
+    >
+      {children}
+    </button>
   )
 }
 
 export function ModelsPage() {
   const modelsCopy = copy.pages.models
   const models = useQuery(squareModelsQuery())
-  const [vendors, setVendors] = useState<string[]>([])
-  const [capabilities, setCapabilities] = useState<CapabilityKey[]>([])
-  const [inStockOnly, setInStockOnly] = useState(false)
+  const [vendor, setVendor] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
 
   const rows = models.data ?? []
-  const vendorOptions = useMemo(
-    () => [...new Set(rows.map((row) => row.vendor))].sort((a, b) => a.localeCompare(b)),
-    [rows],
-  )
+  const pills = useMemo(() => vendorOptions(rows.map((row) => row.vendor)), [rows])
+  const query = search.trim().toLowerCase()
 
   const filtered = useMemo(() => {
     return rows.filter((row) => {
-      if (inStockOnly && row.listing_count <= 0) return false
-      if (vendors.length > 0 && !vendors.includes(row.vendor)) return false
-      return matchesCapabilities(row.model, capabilities)
+      if (vendor && row.vendor !== vendor) return false
+      if (query && !row.model.toLowerCase().includes(query)) return false
+      return true
     })
-  }, [rows, vendors, capabilities, inStockOnly])
+  }, [rows, vendor, query])
 
-  // Detail queries fill 官方价 and 最低倍率, which the list endpoint omits.
-  const { details, loading: detailsLoading } = useSquareModelDetails(filtered)
+  // Detail queries carry 官方价 and 最低倍率, which the list endpoint omits.
+  // Fetch for the whole catalog so the header's lowest multiplier is stable
+  // while a vendor pill or search narrows the table.
+  const { details, loading: detailsLoading } = useSquareModelDetails(rows)
 
-  const hasFilters = vendors.length > 0 || capabilities.length > 0 || inStockOnly
+  const lowestMilli = useMemo(() => {
+    let lowest: number | null = null
+    for (const detail of details.values()) {
+      if (lowest === null || detail.multiplier_min_milli < lowest) {
+        lowest = detail.multiplier_min_milli
+      }
+    }
+    return lowest
+  }, [details])
 
-  function toggle<T>(list: T[], value: T): T[] {
-    return list.includes(value) ? list.filter((item) => item !== value) : [...list, value]
-  }
+  const hasFilters = vendor !== null || query.length > 0
 
   function clearFilters() {
-    setVendors([])
-    setCapabilities([])
-    setInStockOnly(false)
+    setVendor(null)
+    setSearch('')
   }
 
   return (
-    <div className="mx-auto max-w-[1180px] px-5 py-10">
+    <div className="mx-auto w-full max-w-[1200px] px-5 py-12 sm:px-6 sm:py-16">
       <PageHeader
         title={modelsCopy.title}
-        lead={modelsCopy.lead}
-        actions={
-          models.data ? (
-            <Tag tone="brand">{modelsCopy.count(models.data.length)}</Tag>
-          ) : null
+        lead={
+          detailsLoading
+            ? modelsCopy.count(rows.length)
+            : modelsCopy.leadSummary(
+                rows.length,
+                lowestMilli === null ? null : formatMultiplier(lowestMilli),
+              )
         }
+        className="border-b-0 pb-0"
       />
 
-      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-muted">
-        <span>{modelsCopy.priceUnit}</span>
-        <span>{modelsCopy.priceNote}</span>
-      </div>
-
-      <div className="mt-6 grid gap-8 lg:grid-cols-[200px_minmax(0,1fr)] lg:items-start">
-        <aside className="border border-line bg-surface px-4 py-4 lg:sticky lg:top-20">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-[12.5px] font-medium text-ink">{modelsCopy.filters.title}</h2>
-            {hasFilters ? (
-              <button
-                type="button"
-                onClick={clearFilters}
-                className="text-[11.5px] text-brand-dark hover:underline"
-              >
-                {modelsCopy.filters.clear}
-              </button>
-            ) : null}
-          </div>
-
-          <div className="mt-3 space-y-4">
-            <FilterGroup title={modelsCopy.filters.vendor} hint={modelsCopy.filters.vendorHint}>
-              {vendorOptions.length === 0 ? (
-                <p className="text-[11.5px] text-muted">{copy.common.none}</p>
-              ) : (
-                vendorOptions.map((vendor) => (
-                  <FilterCheck
-                    key={vendor}
-                    label={vendor}
-                    count={rows.filter((row) => row.vendor === vendor).length}
-                    checked={vendors.includes(vendor)}
-                    onChange={() => setVendors((current) => toggle(current, vendor))}
-                  />
-                ))
-              )}
-            </FilterGroup>
-
-            <FilterGroup
-              title={modelsCopy.filters.capability}
-              hint={modelsCopy.filters.capabilityHint}
+      <div className="mt-8 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1">
+          <Pill active={vendor === null} onClick={() => setVendor(null)}>
+            {modelsCopy.allVendors}
+          </Pill>
+          {pills.map((pill) => (
+            <Pill
+              key={pill.value}
+              active={vendor === pill.value}
+              onClick={() => setVendor(vendor === pill.value ? null : pill.value)}
             >
-              {CAPABILITY_KEYS.map((key) => (
-                <FilterCheck
-                  key={key}
-                  label={modelsCopy.capabilities[key]}
-                  checked={capabilities.includes(key)}
-                  onChange={() => setCapabilities((current) => toggle(current, key))}
-                />
-              ))}
-            </FilterGroup>
+              {pill.label}
+            </Pill>
+          ))}
+        </div>
 
-            <FilterGroup hint={modelsCopy.filters.inStockHint}>
-              <FilterCheck
-                label={modelsCopy.filters.inStock}
-                checked={inStockOnly}
-                onChange={setInStockOnly}
-              />
-            </FilterGroup>
-          </div>
-        </aside>
-
-        <div className="min-w-0">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <p className={cn('text-[11.5px] text-muted', models.isPending && 'invisible')}>
-              {models.data
-                ? hasFilters
-                  ? modelsCopy.filteredCount(filtered.length, models.data.length)
-                  : modelsCopy.count(models.data.length)
-                : null}
-            </p>
-          </div>
-
-          {models.isError ? (
-            <QueryError
-              title={modelsCopy.error.title}
-              reason={modelsCopy.error.reason}
-              onRetry={() => void models.refetch()}
-              retrying={models.isFetching}
-            />
-          ) : models.isPending ? (
-            <ModelTable models={[]} loading skeletonRows={8} minWidth={980} />
-          ) : rows.length === 0 ? (
-            <Empty
-              title={modelsCopy.empty.title}
-              reason={modelsCopy.empty.reason}
-              next={modelsCopy.empty.next}
-              action={
-                <div className="flex flex-wrap gap-2">
-                  <Link to="/docs" className={buttonClasses('secondary', 'md')}>
-                    {copy.actions.viewDocs}
-                  </Link>
-                  <Link to="/seller" className={buttonClasses('primary', 'md')}>
-                    {copy.actions.becomeSeller}
-                  </Link>
-                </div>
-              }
-            />
-          ) : filtered.length === 0 ? (
-            <Empty
-              title={modelsCopy.filteredEmpty.title}
-              reason={modelsCopy.filteredEmpty.reason}
-              next={modelsCopy.filteredEmpty.next}
-              action={
-                <Button variant="secondary" size="md" onClick={clearFilters}>
-                  {modelsCopy.filters.clear}
-                </Button>
-              }
-            />
-          ) : (
-            <ModelTable
-              models={filtered}
-              details={details}
-              detailsLoading={detailsLoading}
-              minWidth={980}
-            />
-          )}
+        <div className="relative w-full shrink-0 lg:w-[260px]">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            aria-hidden="true"
+            className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-3"
+          >
+            <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.5" />
+            <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          <Input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={modelsCopy.searchPlaceholder}
+            aria-label={modelsCopy.searchAria}
+            className="h-10 rounded-full pl-10 text-[14px]"
+          />
         </div>
       </div>
+
+      <div className="mt-6">
+        {models.isError ? (
+          <QueryError
+            title={modelsCopy.error.title}
+            reason={modelsCopy.error.reason}
+            onRetry={() => void models.refetch()}
+            retrying={models.isFetching}
+          />
+        ) : models.isPending ? (
+          <ModelTable models={[]} loading skeletonRows={8} />
+        ) : rows.length === 0 ? (
+          <Empty
+            title={modelsCopy.empty.title}
+            reason={modelsCopy.empty.reason}
+            next={modelsCopy.empty.next}
+            action={
+              <div className="flex flex-wrap gap-2">
+                <Link to="/docs" className={buttonClasses('secondary', 'md')}>
+                  {copy.actions.viewDocs}
+                </Link>
+                <Link to="/seller" className={buttonClasses('primary', 'md')}>
+                  {copy.actions.becomeSeller}
+                </Link>
+              </div>
+            }
+          />
+        ) : filtered.length === 0 ? (
+          <Empty
+            title={modelsCopy.filteredEmpty.title}
+            reason={modelsCopy.filteredEmpty.reason}
+            next={modelsCopy.filteredEmpty.next}
+            action={
+              <Button variant="secondary" size="md" onClick={clearFilters}>
+                {modelsCopy.filters.clear}
+              </Button>
+            }
+          />
+        ) : (
+          <>
+            {hasFilters ? (
+              <p className="mb-3 text-[13px] text-ink-3">
+                {modelsCopy.filteredCount(filtered.length, rows.length)}
+              </p>
+            ) : null}
+            <ModelTable models={filtered} details={details} detailsLoading={detailsLoading} />
+          </>
+        )}
+      </div>
+
+      <p className="mt-4 text-[13px] text-ink-3">{modelsCopy.priceNote}</p>
     </div>
   )
 }

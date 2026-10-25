@@ -117,7 +117,7 @@ function RecordsPage() {
           </Table>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
-            <span className="font-numeric text-[11.5px] text-muted">
+            <span className="tabular-nums text-[13px] text-ink-3">
               {page.pagination.summary(currentPage, totalPages)}
             </span>
             <div className="flex items-center gap-2">
@@ -173,7 +173,7 @@ function RecordRow({ row }: { row: UsageRow }) {
     <tr
       tabIndex={0}
       aria-label={`${page.detail.title} ${row.requestId}`}
-      className="cursor-pointer border-b border-line/70 transition-colors last:border-b-0 hover:bg-wash/70 focus-visible:bg-wash/70"
+      className="cursor-pointer border-b border-line/70 transition-colors last:border-b-0 hover:bg-bg-soft/70 focus-visible:bg-bg-soft/70"
       onClick={open}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
@@ -182,14 +182,14 @@ function RecordRow({ row }: { row: UsageRow }) {
         }
       }}
     >
-      <TableCell className="whitespace-nowrap font-numeric text-[12px] text-muted">
+      <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
         {formatDateTime(row.createdAt)}
       </TableCell>
       <TableCell>
         <div className="max-w-[220px] truncate font-medium text-ink" title={row.model}>
           {row.model}
         </div>
-        <div className="font-numeric text-[10.5px] text-muted">{row.requestId}</div>
+        <div className="tabular-nums text-[13px] text-ink-3">{row.requestId}</div>
       </TableCell>
       <TableCell>
         <SellerId id={row.sellerId} />
@@ -198,23 +198,23 @@ function RecordRow({ row }: { row: UsageRow }) {
         <TierBadge tier={row.tier} />
       </TableCell>
       <TableCell numeric>
-        <div className="text-[12px]">
+        <div className="text-[13px]">
           {page.tokens.input(formatCount(row.inputTokens))}
           {' · '}
           {page.tokens.output(formatCount(row.outputTokens))}
         </div>
-        <div className="text-[10.5px] text-muted">
+        <div className="text-[13px] text-ink-3">
           {page.tokens.cache(formatCount(row.cacheReadTokens))}
         </div>
       </TableCell>
-      <TableCell numeric className="text-[12.5px]">
+      <TableCell numeric className="text-[13px]">
         {row.searchCount} / {row.fetchCount}
       </TableCell>
-      <TableCell numeric className="text-muted">
+      <TableCell numeric className="text-ink-3">
         {formatYuan(row.officialCostMicro)}
       </TableCell>
       <TableCell numeric>{formatYuan(row.totalDebitMicro)}</TableCell>
-      <TableCell numeric className="text-success">
+      <TableCell numeric className="text-brand-ink">
         {formatYuan(row.savedMicro)}
       </TableCell>
       <TableCell>
@@ -230,7 +230,7 @@ function TierBadge({ tier }: { tier: UsageTier }) {
 }
 
 function StatusTag({ status }: { status: string }) {
-  if (status === 'success') return <Tag tone="success">{page.status.success}</Tag>
+  if (status === 'success') return <Tag tone="brand">{page.status.success}</Tag>
   if (status === 'failed') return <Tag tone="danger">{page.status.failed}</Tag>
   return <Tag tone="neutral">{page.status.unknown}</Tag>
 }
@@ -275,24 +275,24 @@ function RecordDetailBody({ detail }: { detail: UsageRecordDetail }) {
   const retryText = prettyJson(detail.retry_chain)
   return (
     <div className="space-y-5">
-      <dl className="grid grid-cols-2 gap-x-5 gap-y-2 text-[12.5px]">
+      <dl className="grid grid-cols-2 gap-x-5 gap-y-2 text-[13px]">
         <Info label={page.detail.requestId} value={row.requestId} mono />
         <Info label={page.detail.createdAt} value={formatDateTime(row.createdAt)} mono />
         <Info label={page.detail.model} value={row.model} mono />
         <div>
-          <dt className="text-muted">{page.detail.seller}</dt>
+          <dt className="text-ink-3">{page.detail.seller}</dt>
           <dd className="mt-0.5">
             <SellerId id={row.sellerId} />
           </dd>
         </div>
         <div>
-          <dt className="text-muted">{page.detail.tier}</dt>
+          <dt className="text-ink-3">{page.detail.tier}</dt>
           <dd className="mt-0.5">
             <TierBadge tier={row.tier} />
           </dd>
         </div>
         <div>
-          <dt className="text-muted">{page.detail.status}</dt>
+          <dt className="text-ink-3">{page.detail.status}</dt>
           <dd className="mt-0.5">
             <StatusTag status={row.status} />
           </dd>
@@ -300,16 +300,16 @@ function RecordDetailBody({ detail }: { detail: UsageRecordDetail }) {
       </dl>
 
       {row.usageEstimated ? (
-        <p className="border border-warning/25 bg-warning-soft px-3 py-2 text-[12px] text-warning">
+        <p className="border border-warn/25 bg-warn/10 px-3 py-2 text-[13px] text-warn">
           {page.detail.estimated}
         </p>
       ) : null}
 
       <div>
-        <h3 className="border-b border-line pb-1.5 text-[12.5px] font-medium text-ink">
+        <h3 className="border-b border-line pb-1.5 text-[13px] font-medium text-ink">
           {page.detail.tokens}
         </h3>
-        <dl className="mt-2 grid grid-cols-2 gap-x-5 gap-y-1.5 text-[12.5px] sm:grid-cols-3">
+        <dl className="mt-2 grid grid-cols-2 gap-x-5 gap-y-1.5 text-[13px] sm:grid-cols-3">
           <Info label={page.detail.input} value={formatCount(row.inputTokens)} mono />
           <Info label={page.detail.output} value={formatCount(row.outputTokens)} mono />
           <Info label={page.detail.cacheRead} value={formatCount(row.cacheReadTokens)} mono />
@@ -321,10 +321,10 @@ function RecordDetailBody({ detail }: { detail: UsageRecordDetail }) {
       </div>
 
       <div>
-        <h3 className="border-b border-line pb-1.5 text-[12.5px] font-medium text-ink">
+        <h3 className="border-b border-line pb-1.5 text-[13px] font-medium text-ink">
           {page.detail.cost}
         </h3>
-        <dl className="mt-2 grid grid-cols-2 gap-x-5 gap-y-1.5 text-[12.5px] sm:grid-cols-3">
+        <dl className="mt-2 grid grid-cols-2 gap-x-5 gap-y-1.5 text-[13px] sm:grid-cols-3">
           <Info label={page.detail.official} value={formatYuan(row.officialCostMicro)} mono />
           <Info label={page.detail.paid} value={formatYuan(row.totalDebitMicro)} mono />
           <Info label={page.detail.saved} value={formatYuan(row.savedMicro)} mono />
@@ -333,15 +333,15 @@ function RecordDetailBody({ detail }: { detail: UsageRecordDetail }) {
       </div>
 
       <div>
-        <h3 className="border-b border-line pb-1.5 text-[12.5px] font-medium text-ink">
+        <h3 className="border-b border-line pb-1.5 text-[13px] font-medium text-ink">
           {page.detail.retry}
         </h3>
         {retryText ? (
-          <pre className="mt-2 max-h-64 overflow-auto rounded-[4px] border border-line bg-[#101b19] p-3 font-mono text-[11.5px] leading-5 text-[#d8e5e1]">
+          <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-[#0d1117] p-4 font-mono text-[13px] leading-6 text-[#e6edf3]">
             <code>{retryText}</code>
           </pre>
         ) : (
-          <p className="mt-2 text-[12.5px] text-muted">{page.detail.retryEmpty}</p>
+          <p className="mt-2 text-[13px] text-ink-3">{page.detail.retryEmpty}</p>
         )}
       </div>
     </div>
@@ -351,8 +351,8 @@ function RecordDetailBody({ detail }: { detail: UsageRecordDetail }) {
 function Info({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="min-w-0">
-      <dt className="text-muted">{label}</dt>
-      <dd className={mono ? 'mt-0.5 truncate font-numeric text-[12px] text-ink' : 'mt-0.5 truncate text-ink'}>
+      <dt className="text-ink-3">{label}</dt>
+      <dd className={mono ? 'mt-0.5 truncate tabular-nums text-[13px] text-ink' : 'mt-0.5 truncate text-ink'}>
         {value}
       </dd>
     </div>

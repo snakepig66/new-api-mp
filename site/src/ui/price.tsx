@@ -22,12 +22,12 @@ export interface PriceProps {
 const sizeClass: Record<PriceSize, string> = {
   sm: 'text-[13px]',
   md: 'text-[15px]',
-  lg: 'text-[22px] font-medium',
+  lg: 'text-[22px] font-semibold',
 }
 
 const tierDot: Record<PriceTier, string> = {
-  peak: 'bg-warning',
-  offpeak: 'bg-success',
+  peak: 'bg-warn',
+  offpeak: 'bg-ink-3',
   flat: 'bg-line-strong',
 }
 
@@ -37,7 +37,7 @@ function tierLabel(tier: PriceTier): string {
 
 /**
  * Price per million tokens. The current tier is the loud one; the other tier
- * sits on a quiet second line.
+ * sits on a quiet second line. Figures are sans + tabular, never mono.
  */
 export function Price({
   value,
@@ -63,7 +63,7 @@ export function Price({
         )}
       >
         {tier !== 'flat' ? (
-          <span className="inline-flex items-center gap-1 text-[11px] text-muted">
+          <span className="inline-flex items-center gap-1 text-[13px] text-ink-3">
             <span
               className={cn('h-1.5 w-1.5 rounded-full', tierDot[tier])}
               aria-hidden="true"
@@ -71,15 +71,15 @@ export function Price({
             {tierLabel(tier)}
           </span>
         ) : null}
-        <span className={cn('font-numeric tabular-nums text-ink', sizeClass[size])}>
+        <span className={cn('tabular-nums text-ink', sizeClass[size])}>
           {formatYuan(value)}
         </span>
-        {unit ? <span className="text-[11px] text-muted">/ {unit}</span> : null}
+        {unit ? <span className="text-[13px] text-ink-3">/ {unit}</span> : null}
       </div>
       {other ? (
-        <div className="mt-0.5 text-[11px] text-muted/80">
+        <div className="mt-0.5 text-[13px] text-ink-3">
           {copy.price.otherTier(tierLabel(other.tier))}{' '}
-          <span className="font-numeric tabular-nums">{formatYuan(other.value)}</span>
+          <span className="tabular-nums">{formatYuan(other.value)}</span>
         </div>
       ) : null}
     </div>

@@ -1,10 +1,10 @@
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 import { copy } from '@/copy'
 import { logout, useAuth } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { Button, Logo } from '@/ui'
+import { Button, Logo, buttonClasses } from '@/ui'
 
 type NavTo = '/' | '/models' | '/docs' | '/seller' | '/console' | '/admin'
 
@@ -15,27 +15,41 @@ const navItems: { to: NavTo; label: string; exact?: boolean }[] = [
   { to: '/seller', label: copy.nav.seller },
 ]
 
-function NavItem({
-  to,
-  label,
-  exact = false,
-  className,
-}: {
-  to: NavTo
-  label: string
-  exact?: boolean
-  className?: string
-}) {
+function useIsActive(to: NavTo, exact = false): boolean {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const active = exact ? pathname === to : pathname === to || pathname.startsWith(`${to}/`)
+  return exact ? pathname === to : pathname === to || pathname.startsWith(`${to}/`)
+}
+
+/** Desktop nav item: 14px, bottom-aligned 2px blue rule when active. */
+function NavItem({ to, label, exact = false }: { to: NavTo; label: string; exact?: boolean }) {
+  const active = useIsActive(to, exact)
 
   return (
     <Link
       to={to}
       className={cn(
-        'rounded-[4px] px-2 py-1 text-[12.5px] leading-6 text-muted transition-colors hover:bg-wash hover:text-ink',
-        active && 'bg-wash font-medium text-ink',
-        className,
+        'relative inline-flex h-16 items-center px-3 text-[14px] font-medium transition-colors',
+        active ? 'text-ink' : 'text-ink-2 hover:text-ink',
+      )}
+    >
+      {label}
+      {active ? (
+        <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-brand" aria-hidden="true" />
+      ) : null}
+    </Link>
+  )
+}
+
+/** Right-hand utility link (console/admin when signed in). */
+function UtilityLink({ to, label, exact = false }: { to: NavTo; label: string; exact?: boolean }) {
+  const active = useIsActive(to, exact)
+
+  return (
+    <Link
+      to={to}
+      className={cn(
+        'hidden h-9 items-center rounded-full px-3 text-[14px] transition-colors md:inline-flex',
+        active ? 'bg-bg-soft text-ink' : 'text-ink-2 hover:text-ink',
       )}
     >
       {label}
@@ -43,14 +57,55 @@ function NavItem({
   )
 }
 
-function Divider() {
-  return <span className="h-3 w-px bg-line-strong" aria-hidden="true" />
+/** Mobile menu row: 44px tap target, soft pill when active. */
+function MobileNavItem({
+  to,
+  label,
+  exact = false,
+  onNavigate,
+}: {
+  to: NavTo
+  label: string
+  exact?: boolean
+  onNavigate: () => void
+}) {
+  const active = useIsActive(to, exact)
+
+  return (
+    <Link
+      to={to}
+      onClick={onNavigate}
+      className={cn(
+        'flex h-11 items-center rounded-full px-4 text-[14px] transition-colors',
+        active ? 'bg-bg-soft font-medium text-ink' : 'text-ink-2 hover:bg-bg-soft hover:text-ink',
+      )}
+    >
+      {label}
+    </Link>
+  )
+}
+
+/**
+ * Footers must not carry placeholder copy (§0). A company/ICP line only
+ * renders when copy.ts holds a real value; the current 待定/待填 strings are
+ * treated as empty until the operator fills them in.
+ */
+function realFooterValue(value: string | undefined): value is string {
+  if (!value) return false
+  const trimmed = value.trim()
+  return trimmed.length > 0 && !/待定|待填/.test(trimmed)
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, isLoggedIn, isAdmin } = useAuth()
   const navigate = useNavigate()
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
   const [signingOut, setSigningOut] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  useEffect(() => {
+    setMenuOpen(false)
+  }, [pathname])
 
   async function handleLogout() {
     setSigningOut(true)
@@ -62,33 +117,37 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   }
 
+  const company = realFooterValue(copy.footer.company)
+  const icp = realFooterValue(copy.footer.icp)
+
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="sticky top-0 z-30 border-b border-line bg-paper/95 backdrop-blur supports-[backdrop-filter]:bg-paper/80">
-        <div className="mx-auto flex h-14 max-w-[1180px] items-center gap-5 px-4 sm:px-5">
+      <header className="sticky top-0 z-30 border-b border-line bg-bg/95 backdrop-blur supports-[backdrop-filter]:bg-bg/85">
+        <div className="mx-auto flex h-16 max-w-[1200px] items-center gap-6 px-5 sm:px-6">
           <Link to="/" aria-label={copy.brand.name} className="shrink-0">
             <Logo />
           </Link>
 
-          <nav className="hidden items-center gap-0.5 sm:flex" aria-label={copy.nav.ariaMain}>
+          <nav className="hidden h-16 items-stretch gap-1 md:flex" aria-label={copy.nav.ariaMain}>
             {navItems.map((item) => (
               <NavItem key={item.to} {...item} />
             ))}
           </nav>
 
-          <div className="ml-auto flex items-center gap-2">
+          {/* TODO: ⌘K search pill goes here once the command palette ships (§3). */}
+
+          <div className="ml-auto flex items-center gap-2 sm:gap-3">
             {isLoggedIn ? (
               <>
-                {isAdmin ? (
-                  <NavItem to="/admin" label={copy.nav.admin} className="hidden md:inline-flex" />
-                ) : null}
-                <NavItem to="/console" label={copy.nav.console} />
-                <span className="hidden max-w-[120px] truncate text-[12px] text-muted md:inline">
+                {isAdmin ? <UtilityLink to="/admin" label={copy.nav.admin} /> : null}
+                <UtilityLink to="/console" label={copy.nav.console} />
+                <span className="hidden max-w-[120px] truncate text-[13px] text-ink-3 lg:inline">
                   {user?.display_name || user?.username}
                 </span>
                 <Button
                   variant="ghost"
                   size="sm"
+                  className="hidden md:inline-flex"
                   loading={signingOut}
                   onClick={() => void handleLogout()}
                 >
@@ -96,54 +155,104 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </Button>
               </>
             ) : (
-              <>
+              <div className="hidden items-center gap-1 md:flex">
                 <Link
                   to="/login"
-                  className="rounded-[4px] px-2 py-1 text-[12.5px] text-muted transition-colors hover:bg-wash hover:text-ink"
+                  className="inline-flex h-9 items-center rounded-full px-3 text-[14px] text-ink-2 transition-colors hover:text-ink"
                 >
                   {copy.nav.login}
                 </Link>
-                <Link
-                  to="/register"
-                  className="inline-flex h-8 items-center rounded-[4px] bg-brand-dark px-3 text-[12.5px] font-medium text-white transition-colors hover:bg-[#065d54]"
-                >
+                <Link to="/register" className={buttonClasses('primary', 'sm')}>
                   {copy.nav.register}
                 </Link>
-              </>
+              </div>
             )}
+
+            <button
+              type="button"
+              aria-label={copy.nav.ariaMobile}
+              aria-expanded={menuOpen}
+              aria-controls="mobile-nav"
+              onClick={() => setMenuOpen((open) => !open)}
+              className="grid h-10 w-10 place-items-center rounded-full text-ink-2 transition-colors hover:bg-bg-soft hover:text-ink md:hidden"
+            >
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                {menuOpen ? (
+                  <path d="M4 4l12 12M16 4L4 16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                ) : (
+                  <path d="M3 6h14M3 10h14M3 14h14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                )}
+              </svg>
+            </button>
           </div>
         </div>
 
-        <nav
-          className="flex items-center gap-1 overflow-x-auto border-t border-line px-4 py-1.5 sm:hidden"
-          aria-label={copy.nav.ariaMobile}
-        >
-          {navItems.map((item) => (
-            <NavItem key={item.to} {...item} className="whitespace-nowrap" />
-          ))}
-          {isAdmin ? (
-            <NavItem to="/admin" label={copy.nav.admin} className="whitespace-nowrap" />
-          ) : null}
-        </nav>
+        {menuOpen ? (
+          <div id="mobile-nav" className="border-t border-line bg-bg md:hidden">
+            <nav className="mx-auto flex max-w-[1200px] flex-col gap-1 px-4 py-3" aria-label={copy.nav.ariaMobile}>
+              {navItems.map((item) => (
+                <MobileNavItem key={item.to} {...item} onNavigate={() => setMenuOpen(false)} />
+              ))}
+              {isAdmin ? (
+                <MobileNavItem to="/admin" label={copy.nav.admin} onNavigate={() => setMenuOpen(false)} />
+              ) : null}
+              {isLoggedIn ? (
+                <MobileNavItem to="/console" label={copy.nav.console} onNavigate={() => setMenuOpen(false)} />
+              ) : null}
+
+              <div className="mt-2 flex items-center gap-2 border-t border-line px-1 pt-3">
+                {isLoggedIn ? (
+                  <>
+                    <span className="min-w-0 flex-1 truncate text-[13px] text-ink-3">
+                      {user?.display_name || user?.username}
+                    </span>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      loading={signingOut}
+                      onClick={() => void handleLogout()}
+                    >
+                      {copy.nav.logout}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Link
+                      to="/login"
+                      onClick={() => setMenuOpen(false)}
+                      className="inline-flex h-9 flex-1 items-center justify-center rounded-full px-3 text-[14px] text-ink-2 transition-colors hover:bg-bg-soft hover:text-ink"
+                    >
+                      {copy.nav.login}
+                    </Link>
+                    <Link
+                      to="/register"
+                      onClick={() => setMenuOpen(false)}
+                      className={buttonClasses('primary', 'sm', 'flex-1')}
+                    >
+                      {copy.nav.register}
+                    </Link>
+                  </>
+                )}
+              </div>
+            </nav>
+          </div>
+        ) : null}
       </header>
 
       <main className="flex-1 overflow-x-clip">{children}</main>
 
       <footer className="border-t border-line">
-        <div className="mx-auto flex max-w-[1180px] flex-col gap-3 px-5 py-6 text-[11.5px] text-muted sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <div className="mx-auto flex max-w-[1200px] flex-col gap-3 px-5 py-8 text-[13px] text-ink-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <span>{copy.footer.copyright}</span>
-            <Divider />
-            <span>{copy.footer.company}</span>
-            <Divider />
-            <span>{copy.footer.icp}</span>
+            {company ? <span>{copy.footer.company}</span> : null}
+            {icp ? <span>{copy.footer.icp}</span> : null}
           </div>
-          <div className="flex items-center gap-3">
-            <Link to="/docs" hash="terms" className="hover:text-ink">
+          <div className="flex items-center gap-5">
+            <Link to="/agreement" className="text-ink-2 transition-colors hover:text-ink">
               {copy.footer.terms}
             </Link>
-            <Divider />
-            <Link to="/docs" hash="privacy" className="hover:text-ink">
+            <Link to="/privacy" className="text-ink-2 transition-colors hover:text-ink">
               {copy.footer.privacy}
             </Link>
           </div>

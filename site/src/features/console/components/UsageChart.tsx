@@ -42,12 +42,13 @@ export function UsageChart({ items }: { items: UsageDayStat[] }) {
         grid: { left: 4, right: 8, top: 18, bottom: 2, containLabel: true },
         tooltip: {
           trigger: 'axis',
-          axisPointer: { type: 'shadow' },
+          axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(77,107,254,0.06)' } },
           backgroundColor: '#ffffff',
-          borderColor: '#e1e7e5',
+          borderColor: '#eceef2',
           borderWidth: 1,
-          padding: [8, 10],
-          textStyle: { color: '#10201d', fontSize: 12 },
+          padding: [10, 12],
+          extraCssText: 'border-radius:12px;box-shadow:none;',
+          textStyle: { color: '#4b5160', fontSize: 12 },
           formatter: (params: unknown) => {
             const list = Array.isArray(params) ? (params as TooltipParam[]) : []
             const index = list[0]?.dataIndex ?? -1
@@ -59,14 +60,14 @@ export function UsageChart({ items }: { items: UsageDayStat[] }) {
           type: 'category',
           data: items.map((item) => item.date.slice(5)),
           axisTick: { show: false },
-          axisLine: { lineStyle: { color: '#e1e7e5' } },
-          axisLabel: { color: '#61716d', fontSize: 11 },
+          axisLine: { lineStyle: { color: '#eceef2' } },
+          axisLabel: { color: '#8a909c', fontSize: 12 },
         },
         yAxis: {
           type: 'value',
           minInterval: 1,
-          axisLabel: { color: '#61716d', fontSize: 11 },
-          splitLine: { lineStyle: { color: '#f4f7f6' } },
+          axisLabel: { color: '#8a909c', fontSize: 12 },
+          splitLine: { lineStyle: { color: '#eceef2' } },
         },
         series: [
           {
@@ -74,8 +75,8 @@ export function UsageChart({ items }: { items: UsageDayStat[] }) {
             type: 'bar',
             data: items.map((item) => item.requests),
             barMaxWidth: 26,
-            itemStyle: { color: '#0e9f8e', borderRadius: [2, 2, 0, 0] },
-            emphasis: { itemStyle: { color: '#087266' } },
+            itemStyle: { color: '#4d6bfe', borderRadius: [4, 4, 0, 0] },
+            emphasis: { itemStyle: { color: '#3b58f0' } },
           },
         ],
       })

@@ -1,5 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="词元市场">
-  <rect x="1" y="1" width="30" height="30" rx="7" fill="none" stroke="#0E9F8E" stroke-width="2"/>
-  <path d="M8.5 21.5 13.25 14.5l3.75 3.75L23.5 9.5" fill="none" stroke="#087266" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="23.5" cy="9.5" r="1.9" fill="#0E9F8E"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="8" fill="#4d6bfe"/>
+  <circle cx="22" cy="10" r="3.4" fill="#ffffff"/>
 </svg>

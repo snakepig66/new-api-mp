@@ -119,6 +119,7 @@ function ListingsContent() {
             next={page.emptyNext}
           />
         ) : (
+          <div className="rounded-md border border-line bg-bg p-6">
           <Table minWidth={1000}>
             <TableHead>
               <TableRow>
@@ -139,13 +140,13 @@ function ListingsContent() {
                 const canBan = BANNABLE.has(listing.status)
                 return (
                   <TableRow key={listing.id}>
-                    <TableCell className="font-numeric text-[12px] text-muted">
+                    <TableCell className="tabular-nums text-[13px] text-ink-3">
                       #{listing.id}
                     </TableCell>
                     <TableCell>
                       <SellerId id={listing.seller_id} />
                     </TableCell>
-                    <TableCell className="font-mono text-[12px]">{listing.vendor}</TableCell>
+                    <TableCell className=" text-[13px]">{listing.vendor}</TableCell>
                     <TableCell>
                       <div className="flex max-w-[240px] flex-wrap gap-1">
                         {listing.models.slice(0, 2).map((model) => (
@@ -159,7 +160,7 @@ function ListingsContent() {
                     <TableCell numeric>
                       <Multiplier milli={listing.multiplier_milli} showSaving={false} />
                     </TableCell>
-                    <TableCell numeric className="text-muted">
+                    <TableCell numeric className="text-ink-3">
                       {listing.concurrency_limit}
                     </TableCell>
                     <TableCell>
@@ -168,14 +169,14 @@ function ListingsContent() {
                       </Tag>
                     </TableCell>
                     <TableCell>
-                      <span className="font-numeric text-[12px] text-muted">
+                      <span className="tabular-nums text-[13px] text-ink-3">
                         {listing.key_fingerprint8 || copy.pages.adminCommon.none}
                       </span>
                     </TableCell>
                     <TableCell>
                       {canBan ? (
                         <Button
-                          variant="secondary"
+                          variant="danger"
                           size="sm"
                           onClick={() => {
                             setActionError(null)
@@ -186,7 +187,7 @@ function ListingsContent() {
                         </Button>
                       ) : listing.status === 'banned' ? (
                         <Button
-                          variant="secondary"
+                          variant="primary"
                           size="sm"
                           onClick={() => {
                             setActionError(null)
@@ -196,7 +197,7 @@ function ListingsContent() {
                           {page.unban}
                         </Button>
                       ) : (
-                        <span className="text-[11.5px] text-muted">{copy.pages.adminCommon.none}</span>
+                        <span className="text-[13px] text-ink-3">{copy.pages.adminCommon.none}</span>
                       )}
                     </TableCell>
                   </TableRow>
@@ -204,6 +205,7 @@ function ListingsContent() {
               })}
             </TableBody>
           </Table>
+          </div>
         )}
       </div>
 
@@ -222,7 +224,7 @@ function ListingsContent() {
       >
         {pending ? (
           <div className="space-y-3">
-            <p className="font-numeric text-[12.5px] text-ink">
+            <p className="tabular-nums text-[13px] text-ink">
               {page.target} #{pending.listing.id} · {pending.listing.vendor} ·{' '}
               <SellerId id={pending.listing.seller_id} />
             </p>

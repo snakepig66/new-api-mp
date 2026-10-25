@@ -80,14 +80,14 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
   const done = completedStepCount(seller.progress)
 
   return (
-    <section aria-label={page.progress} className="mt-6">
+    <section aria-label={page.progress} className="mt-6 rounded-md border border-line bg-bg p-6">
       <div className="flex items-baseline justify-between">
-        <h2 className="text-[13px] font-medium text-ink">{page.progress}</h2>
-        <span className="font-numeric text-[11.5px] text-muted">
+        <h2 className="text-[16px] font-semibold tracking-tight text-ink">{page.progress}</h2>
+        <span className="tabular-nums text-[13px] text-ink-3">
           {done}/3
         </span>
       </div>
-      <ol className="mt-3 grid gap-px border border-line bg-line sm:grid-cols-3">
+      <ol className="mt-5 grid gap-3 sm:grid-cols-3">
         {page.stepTitles.map((title, index) => {
           const completed = index < current
           const active = index === current && current < 3
@@ -96,24 +96,26 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
               key={title}
               aria-current={active ? 'step' : undefined}
               className={cn(
-                'relative bg-surface p-4',
-                active && 'shadow-[inset_0_2px_0_var(--color-brand-dark)]',
+                'relative rounded-md border p-4',
+                active
+                  ? 'border-brand bg-brand-soft/50'
+                  : 'border-line bg-bg',
               )}
             >
               <div className="flex items-center gap-2">
                 <span
                   className={cn(
-                    'grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[10px] font-medium',
+                    'grid h-6 w-6 shrink-0 place-items-center rounded-full border text-[13px] font-medium',
                     completed
-                      ? 'border-success/30 bg-success-soft text-success'
+                      ? 'border-transparent bg-brand-soft text-brand-ink'
                       : active
-                        ? 'border-brand-dark bg-brand-dark text-white'
-                        : 'border-line-strong bg-wash text-muted',
+                        ? 'border-transparent bg-brand text-white'
+                        : 'border-line bg-bg-soft text-ink-3',
                   )}
                   aria-hidden="true"
                 >
                   {completed ? (
-                    <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                       <path
                         d="M2.5 6.2l2.2 2.2 4.8-5"
                         stroke="currentColor"
@@ -128,17 +130,17 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
                 </span>
                 <span
                   className={cn(
-                    'text-[12.5px] font-medium',
-                    completed || active ? 'text-ink' : 'text-muted',
+                    'text-[14px] font-medium',
+                    completed || active ? 'text-ink' : 'text-ink-3',
                   )}
                 >
                   {title}
                 </span>
               </div>
-              <p className="mt-2 text-[11.5px] leading-5 text-muted">
+              <p className="mt-2 text-[13px] leading-5 text-ink-3">
                 {page.stepHints[index]}
               </p>
-              <p className="mt-1 text-[10.5px] text-muted/80">
+              <p className="mt-1 text-[13px] text-ink-3">
                 {completed ? page.state.done : active ? page.state.current : page.state.todo}
               </p>
             </li>
@@ -198,11 +200,11 @@ function SellerOnboardingPage() {
         lead={page.lead}
         actions={
           finished ? (
-            <Tag tone="success" dot>
+            <Tag tone="brand" dot>
               {page.activeBadge}
             </Tag>
           ) : (
-            <Tag tone="warning" dot>
+            <Tag tone="neutral" dot>
               {page.pendingBadge}
             </Tag>
           )
@@ -241,21 +243,21 @@ function SellerOnboardingPage() {
               }
             />
           ) : (
-            <section className="mt-6 border border-line bg-surface">
-              <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-5 py-4">
-                <h2 className="text-[15px] font-semibold tracking-tight text-ink">
+            <section className="mt-6 rounded-md border border-line bg-bg p-6">
+              <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-4">
+                <h2 className="text-[16px] font-semibold tracking-tight text-ink">
                   {page.stepTitles[current]}
                 </h2>
-                <span className="font-numeric text-[11.5px] text-muted">
+                <span className="tabular-nums text-[13px] text-ink-3">
                   0{current + 1} / 03
                 </span>
               </header>
 
-              <div className="px-5 py-5">
+              <div className="pt-5">
                 {current === 0 ? (
                   <div className="space-y-5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-[13px] text-muted">
+                      <p className="text-[13px] text-ink-3">
                         {page.agreement.hint}
                       </p>
                       <Tag>{page.agreement.version}</Tag>
@@ -267,7 +269,7 @@ function SellerOnboardingPage() {
                           <h3 className="text-[13px] font-medium text-ink">
                             {clause.title}
                           </h3>
-                          <p className="mt-1 text-[12.5px] leading-6 text-muted">
+                          <p className="mt-1 text-[13px] leading-6 text-ink-3">
                             {clause.body}
                           </p>
                         </li>
@@ -275,26 +277,33 @@ function SellerOnboardingPage() {
                     </ol>
 
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <label className="flex cursor-pointer items-start gap-2 text-[12.5px] text-ink">
+                      <label className="flex cursor-pointer items-start gap-2 text-[13px] text-ink">
                         <input
                           type="checkbox"
                           checked={accepted}
                           onChange={(event) => setAccepted(event.target.checked)}
-                          className="mt-0.5 h-3.5 w-3.5 accent-[var(--color-brand-dark)]"
+                          className="mt-0.5 h-4 w-4 accent-brand"
                         />
                         <span>{page.agreement.checkbox}</span>
                       </label>
-                      <Link
-                        to="/docs"
-                        hash="terms"
-                        className="text-[12px] text-brand-dark underline-offset-4 hover:underline"
-                      >
-                        {copy.footer.terms}
-                      </Link>
+                      <span className="flex items-center gap-4">
+                        <Link
+                          to="/agreement"
+                          className="text-[13px] text-brand underline-offset-4 hover:underline"
+                        >
+                          {copy.footer.terms}
+                        </Link>
+                        <Link
+                          to="/privacy"
+                          className="text-[13px] text-brand underline-offset-4 hover:underline"
+                        >
+                          {copy.footer.privacy}
+                        </Link>
+                      </span>
                     </div>
 
                     {errorText ? (
-                      <p className="text-[12px] text-danger" role="alert">
+                      <p className="text-[13px] text-danger" role="alert">
                         {errorText}
                       </p>
                     ) : null}
@@ -323,7 +332,7 @@ function SellerOnboardingPage() {
                       }),
                     )}
                   >
-                    <p className="text-[13px] leading-6 text-muted">{page.realName.lead}</p>
+                    <p className="text-[13px] leading-6 text-ink-3">{page.realName.lead}</p>
                     <div className="grid gap-4 sm:grid-cols-2">
                       <Field
                         label={page.realName.nameLabel}
@@ -347,7 +356,6 @@ function SellerOnboardingPage() {
                       >
                         <Input
                           id="id-card"
-                          mono
                           autoComplete="off"
                           spellCheck={false}
                           placeholder={page.realName.idPlaceholder}
@@ -358,7 +366,7 @@ function SellerOnboardingPage() {
                     </div>
 
                     {errorText ? (
-                      <p className="text-[12px] text-danger" role="alert">
+                      <p className="text-[13px] text-danger" role="alert">
                         {errorText}
                       </p>
                     ) : null}
@@ -380,7 +388,7 @@ function SellerOnboardingPage() {
                       submit({ alipay_account: values.alipay_account }),
                     )}
                   >
-                    <p className="text-[13px] leading-6 text-muted">{page.alipay.lead}</p>
+                    <p className="text-[13px] leading-6 text-ink-3">{page.alipay.lead}</p>
                     <Field
                       label={page.alipay.accountLabel}
                       htmlFor="alipay-account"
@@ -389,7 +397,6 @@ function SellerOnboardingPage() {
                     >
                       <Input
                         id="alipay-account"
-                        mono
                         autoComplete="off"
                         placeholder={page.alipay.accountPlaceholder}
                         invalid={Boolean(alipayForm.formState.errors.alipay_account)}
@@ -398,7 +405,7 @@ function SellerOnboardingPage() {
                     </Field>
 
                     {errorText ? (
-                      <p className="text-[12px] text-danger" role="alert">
+                      <p className="text-[13px] text-danger" role="alert">
                         {errorText}
                       </p>
                     ) : null}

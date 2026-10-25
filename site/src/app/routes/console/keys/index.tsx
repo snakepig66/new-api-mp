@@ -131,14 +131,14 @@ function KeyRow({ item }: { item: ConsoleKey }) {
         <Link
           to="/console/keys/$id"
           params={{ id: String(token.id) }}
-          className="font-medium text-ink hover:text-brand-dark"
+          className="font-medium text-ink hover:text-brand-ink"
         >
           {token.name || copy.pages.consoleShared.none}
         </Link>
-        <div className="font-numeric text-[11px] text-muted">{token.key}</div>
+        <div className="tabular-nums text-[13px] text-ink-3">{token.key}</div>
       </TableCell>
       <TableCell numeric>
-        <span className="text-[12.5px]">
+        <span className="text-[13px]">
           {copy.pages.consoleKeys.modelsUnit(pref?.models.length ?? 0)}
         </span>
       </TableCell>
@@ -146,15 +146,15 @@ function KeyRow({ item }: { item: ConsoleKey }) {
         {strategy ? (
           <>
             <Tag tone="brand">{strategyLabelMap[strategy]}</Tag>
-            <div className="mt-1 text-[11px] text-muted">{strategyHintMap[strategy]}</div>
+            <div className="mt-1 text-[13px] text-ink-3">{strategyHintMap[strategy]}</div>
           </>
         ) : (
-          <span className="text-[12px] text-muted">{copy.pages.consoleShared.none}</span>
+          <span className="text-[13px] text-ink-3">{copy.pages.consoleShared.none}</span>
         )}
       </TableCell>
       <TableCell numeric>
-        <div className="text-[12.5px]">{page.spend.used(formatYuan(token.used_quota))}</div>
-        <div className="text-[11px] text-muted">
+        <div className="text-[13px]">{page.spend.used(formatYuan(token.used_quota))}</div>
+        <div className="text-[13px] text-ink-3">
           {token.unlimited_quota
             ? page.spend.unlimited
             : page.spend.remaining(formatYuan(token.remain_quota))}

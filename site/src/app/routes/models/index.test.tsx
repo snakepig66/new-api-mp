@@ -52,6 +52,23 @@ const squareItems = [
     listing_count: 1,
     generated_at: '2030-01-01T00:00:00+08:00',
   },
+  {
+    model: 'glm-4-plus',
+    vendor: 'zhipu',
+    tier: 'flat',
+    tier_label: '平价',
+    prices: {
+      flat: {
+        input_micro_per_mtok: 3_000_000,
+        output_micro_per_mtok: 12_000_000,
+        cache_read_micro_per_mtok: 0,
+        cache_write_micro_per_mtok: 0,
+      },
+    },
+    next_switch: null,
+    listing_count: 1,
+    generated_at: '2030-01-01T00:00:00+08:00',
+  },
 ]
 
 function detailFor(model: string) {
@@ -61,7 +78,7 @@ function detailFor(model: string) {
   )
   return {
     ...item,
-    multiplier_min_milli: model === 'deepseek-r1' ? 520 : 300,
+    multiplier_min_milli: model === 'deepseek-r1' ? 520 : model === 'glm-4-plus' ? 680 : 300,
     multiplier_max_milli: model === 'deepseek-r1' ? 650 : 480,
     official_prices: officialPrices,
   }
@@ -106,8 +123,13 @@ function renderPage() {
     path: '/models',
     component: ModelsPage,
   })
+  const detailRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/models/$id',
+    component: () => null,
+  })
   const router = createRouter({
-    routeTree: rootRoute.addChildren([modelsRoute]),
+    routeTree: rootRoute.addChildren([modelsRoute, detailRoute]),
     history: createMemoryHistory({ initialEntries: ['/models'] }),
   })
 
@@ -124,26 +146,43 @@ describe('models page', () => {
 
     expect(await screen.findByText('deepseek-chat')).toBeTruthy()
     expect(screen.getByText('deepseek-r1')).toBeTruthy()
-
-    // 2 listings for the first model, 1 for the second.
-    expect(screen.getAllByText('2').length).toBeGreaterThan(0)
+    expect(screen.getByText('glm-4-plus')).toBeTruthy()
 
     // Detail enrichment: the list endpoint has no multiplier/official price.
     await waitFor(() => {
       expect(screen.getAllByText('0.30x').length).toBeGreaterThan(0)
     })
     expect(screen.getAllByText('0.52x').length).toBeGreaterThan(0)
+
+    // The whole row is one link to the detail page.
+    const link = screen.getByRole('link', { name: /deepseek-chat/ })
+    expect(link.getAttribute('href')).toBe('/models/deepseek-chat')
   })
 
-  it('filters by an inferred capability', async () => {
+  it('filters by model name from the search field', async () => {
     renderPage()
     await screen.findByText('deepseek-chat')
 
-    fireEvent.click(screen.getByLabelText('推理'))
+    fireEvent.change(screen.getByLabelText('按模型名称搜索'), {
+      target: { value: 'r1' },
+    })
 
     await waitFor(() => {
       expect(screen.queryByText('deepseek-chat')).toBeNull()
     })
     expect(screen.getByText('deepseek-r1')).toBeTruthy()
+    expect(screen.queryByText('glm-4-plus')).toBeNull()
+  })
+
+  it('filters by a vendor pill generated from the data', async () => {
+    renderPage()
+    await screen.findByText('deepseek-chat')
+
+    fireEvent.click(screen.getByRole('button', { name: '智谱' }))
+
+    await waitFor(() => {
+      expect(screen.queryByText('deepseek-chat')).toBeNull()
+    })
+    expect(screen.getByText('glm-4-plus')).toBeTruthy()
   })
 })

@@ -52,8 +52,8 @@ const page = copy.pages.adminPrices
 const common = copy.pages.adminCommon
 
 const tierTones: Record<AdminTier, TagTone> = {
-  peak: 'warning',
-  offpeak: 'success',
+  peak: 'neutral',
+  offpeak: 'brand',
   flat: 'neutral',
 }
 
@@ -118,7 +118,7 @@ function PricesContent() {
             {groups.map((group) => (
               <Section
                 key={group.model}
-                title={<span className="font-numeric">{group.model}</span>}
+                title={<span className="tabular-nums">{group.model}</span>}
                 hint={page.groupCount(group.rows.length)}
               >
                 <Table minWidth={900}>
@@ -145,7 +145,7 @@ function PricesContent() {
                   <TableBody>
                     {group.rows.map((row) => (
                       <TableRow key={row.id}>
-                        <TableCell className="font-mono text-[12px]">{row.vendor}</TableCell>
+                        <TableCell className=" text-[13px]">{row.vendor}</TableCell>
                         <TableCell>
                           <Tag tone={tierTones[row.tier as AdminTier] ?? 'neutral'}>
                             {tierLabel(row.tier)}
@@ -153,16 +153,16 @@ function PricesContent() {
                         </TableCell>
                         <TableCell numeric>{formatYuan(row.input_micro_per_mtok)}</TableCell>
                         <TableCell numeric>{formatYuan(row.output_micro_per_mtok)}</TableCell>
-                        <TableCell numeric className="text-muted">
+                        <TableCell numeric className="text-ink-3">
                           {formatYuan(row.cache_read_micro_per_mtok)}
                         </TableCell>
-                        <TableCell numeric className="text-muted">
+                        <TableCell numeric className="text-ink-3">
                           {formatYuan(row.cache_write_micro_per_mtok)}
                         </TableCell>
-                        <TableCell className="font-numeric text-[12px] text-muted">
+                        <TableCell className="tabular-nums text-[13px] text-ink-3">
                           v{row.version}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap font-numeric text-[12px] text-muted">
+                        <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
                           {formatDateTime(row.effective_at)}
                         </TableCell>
                       </TableRow>
@@ -375,7 +375,7 @@ function PriceDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
       {submitError ? (
         <p
           role="alert"
-          className="mt-4 border border-danger/25 bg-danger-soft px-3 py-2 text-[12px] text-danger"
+          className="mt-4 border border-danger/25 bg-danger/10 px-3 py-2 text-[13px] text-danger"
         >
           {submitError}
         </p>

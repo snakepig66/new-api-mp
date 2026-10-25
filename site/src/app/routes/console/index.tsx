@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, type ReactNode } from 'react'
 
 import { copy } from '@/copy'
 import { formatYuan } from '@/lib/money'
@@ -48,6 +48,7 @@ function ConsoleOverviewPage() {
   const wallet = useQuery(walletQuery())
   const stats = useQuery(usageStatsQuery(7))
   const recent = useQuery(usageRecordsQuery(1, 10))
+  const requestsTotal = stats.data?.items.reduce((sum, item) => sum + item.requests, 0) ?? 0
 
   return (
     <>
@@ -68,37 +69,52 @@ function ConsoleOverviewPage() {
           onRetry={() => void wallet.refetch()}
         />
       ) : (
-        <div className="mt-6 grid gap-6 border-b border-line pb-6 sm:grid-cols-3 sm:divide-x sm:divide-line">
+        <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
           {wallet.isPending ? (
             <>
-              <StatSkeleton />
-              <StatSkeleton />
-              <StatSkeleton />
+              <StatCard>
+                <StatSkeleton />
+              </StatCard>
+              <StatCard>
+                <StatSkeleton />
+              </StatCard>
+              <StatCard>
+                <StatSkeleton />
+              </StatCard>
             </>
           ) : (
             <>
-              <Stat
-                label={page.stats.balance}
-                value={formatYuan(wallet.data.balance_micro)}
-                hint={page.stats.balanceHint}
-                tone="brand"
-                className="sm:pr-6"
-              />
-              <Stat
-                label={page.stats.spendThisMonth}
-                value={formatYuan(wallet.data.month_spend_micro)}
-                hint={page.stats.spendHint}
-                className="sm:px-6"
-              />
-              <Stat
-                label={page.stats.savedThisMonth}
-                value={formatYuan(wallet.data.month_saved_micro)}
-                hint={page.stats.savedHint}
-                tone="success"
-                className="sm:pl-6"
-              />
+              <StatCard>
+                <Stat
+                  label={page.stats.balance}
+                  value={formatYuan(wallet.data.balance_micro)}
+                  hint={page.stats.balanceHint}
+                  tone="brand"
+                />
+              </StatCard>
+              <StatCard>
+                <Stat
+                  label={page.stats.spendThisMonth}
+                  value={formatYuan(wallet.data.month_spend_micro)}
+                  hint={page.stats.spendHint}
+                />
+              </StatCard>
+              <StatCard>
+                <Stat
+                  label={page.stats.savedThisMonth}
+                  value={formatYuan(wallet.data.month_saved_micro)}
+                  hint={page.stats.savedHint}
+                />
+              </StatCard>
             </>
           )}
+          <StatCard>
+            <Stat
+              label={page.stats.requests7d}
+              value={stats.data ? formatCount(requestsTotal) : copy.common.none}
+              hint={page.stats.requests7dHint}
+            />
+          </StatCard>
         </div>
       )}
 
@@ -137,7 +153,7 @@ function ConsoleOverviewPage() {
           <Link
             to="/console/records"
             search={{ page: 1 }}
-            className="text-[12px] text-brand-dark hover:underline"
+            className="text-[13px] text-brand-ink hover:underline"
           >
             {page.recent.viewAll}
           </Link>
@@ -175,7 +191,7 @@ function ConsoleOverviewPage() {
                 const row = toUsageRow(record)
                 return (
                   <TableRow key={row.requestId} interactive>
-                    <TableCell className="whitespace-nowrap font-numeric text-[12px] text-muted">
+                    <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
                       {formatDateTime(row.createdAt)}
                     </TableCell>
                     <TableCell>
@@ -188,14 +204,14 @@ function ConsoleOverviewPage() {
                       <SellerId id={row.sellerId} />
                     </TableCell>
                     <TableCell numeric>
-                      <span className="text-[12px]">
+                      <span className="text-[13px]">
                         {copy.pages.consoleRecords.tokens.input(formatCount(row.inputTokens))}
                         {' · '}
                         {copy.pages.consoleRecords.tokens.output(formatCount(row.outputTokens))}
                       </span>
                     </TableCell>
                     <TableCell numeric>{formatYuan(row.totalDebitMicro)}</TableCell>
-                    <TableCell numeric className="text-success">
+                    <TableCell numeric className="text-brand-ink">
                       {formatYuan(row.savedMicro)}
                     </TableCell>
                   </TableRow>
@@ -212,4 +228,8 @@ function ConsoleOverviewPage() {
 function TierBadge({ tier }: { tier: UsageTier }) {
   if (tier === 'peak' || tier === 'offpeak') return <PeakBadge tier={tier} />
   return <Tag tone="neutral">{copy.pages.consoleRecords.tierFlat}</Tag>
+}
+
+function StatCard({ children }: { children: ReactNode }) {
+  return <div className="min-w-0 rounded-md border border-line bg-bg p-5">{children}</div>
 }

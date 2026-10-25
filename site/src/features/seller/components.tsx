@@ -13,7 +13,7 @@ export function Skeleton({ className }: { className?: string }) {
   return (
     <span
       aria-hidden="true"
-      className={cn('block animate-pulse rounded-[3px] bg-wash', className)}
+      className={cn('block animate-pulse rounded-sm bg-bg-soft', className)}
     />
   )
 }
@@ -27,9 +27,9 @@ export function PageSkeleton({ rows = 5 }: { rows?: number }) {
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 4 }, (_, index) => (
-          <div key={index} className="border border-line bg-surface p-4">
+          <div key={index} className="rounded-md border border-line bg-bg p-5">
             <Skeleton className="h-3 w-20" />
-            <Skeleton className="mt-2 h-6 w-28" />
+            <Skeleton className="mt-2 h-7 w-28" />
           </div>
         ))}
       </div>
@@ -98,23 +98,23 @@ export function Field({
 }) {
   return (
     <div className={cn('min-w-0', className)}>
-      <label htmlFor={htmlFor} className="block text-[12px] font-medium text-ink">
+      <label htmlFor={htmlFor} className="block text-[14px] font-medium text-ink">
         {label}
       </label>
-      <div className="mt-1.5">{children}</div>
+      <div className="mt-2">{children}</div>
       {error ? (
-        <p className="mt-1 text-[11.5px] leading-5 text-danger" role="alert">
+        <p className="mt-1 text-[13px] leading-5 text-danger" role="alert">
           {error}
         </p>
       ) : hint ? (
-        <p className="mt-1 text-[11.5px] leading-5 text-muted">{hint}</p>
+        <p className="mt-1 text-[13px] leading-5 text-ink-3">{hint}</p>
       ) : null}
     </div>
   )
 }
 
 export const selectClass =
-  'h-9 w-full rounded-[4px] border border-line-strong bg-surface px-2.5 text-[13.5px] text-ink transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15 disabled:cursor-not-allowed disabled:bg-wash disabled:text-muted'
+  'h-12 w-full rounded-md border border-transparent bg-bg-soft px-4 text-[15px] text-ink transition-colors focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft disabled:cursor-not-allowed disabled:bg-bg-soft disabled:text-ink-3'
 
 export function SectionHeading({
   title,
@@ -128,8 +128,8 @@ export function SectionHeading({
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0">
-        <h2 className="text-[15px] font-semibold tracking-tight text-ink">{title}</h2>
-        {lead ? <p className="mt-1 text-[12px] leading-5 text-muted">{lead}</p> : null}
+        <h2 className="text-[16px] font-semibold tracking-tight text-ink">{title}</h2>
+        {lead ? <p className="mt-1 text-[13px] leading-5 text-ink-3">{lead}</p> : null}
       </div>
       {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
     </div>
@@ -137,7 +137,7 @@ export function SectionHeading({
 }
 
 export function MonoNumber({ children }: { children: ReactNode }) {
-  return <span className="font-numeric tabular-nums">{children}</span>
+  return <span className="tabular-nums">{children}</span>
 }
 
 /**
@@ -161,8 +161,8 @@ export function notify(toast: unknown, options: ToastOptions): void {
 export function BuyerCode({ code }: { code: string }) {
   return (
     <span className="inline-flex items-baseline gap-1 whitespace-nowrap">
-      <span className="text-[11px] text-muted">{copy.identity.buyer}</span>
-      <span className="font-numeric text-[13px] uppercase tabular-nums tracking-[0.04em] text-ink">
+      <span className="text-[13px] text-ink-3">{copy.identity.buyer}</span>
+      <span className="text-[13px] tabular-nums uppercase tracking-[0.04em] text-ink">
         {code}
       </span>
     </span>
