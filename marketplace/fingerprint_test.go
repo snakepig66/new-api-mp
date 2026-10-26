@@ -128,20 +128,30 @@ func TestFingerprintCompareTolerance(t *testing.T) {
 				newFingerprintVendor(t, candidateSrv), "sk-candidate-secret", "candidate-upstream",
 				prompt)
 
-			if tc.wantFail != "" {
-				assert.Equal(t, tc.wantFail, res.FailReason)
-				assert.False(t, res.Checked, "a failed comparison is not checked")
+			if !tc.wantChecked {
+				if tc.wantFail != "" {
+					assert.Equal(t, tc.wantFail, res.FailReason)
+				} else {
+					assert.NotEmpty(t, res.FailReason)
+				}
+				assert.False(t, res.Checked, "an incomplete comparison is not checked")
 				assert.False(t, res.Comparable)
 				assert.False(t, res.WithinTolerance)
+				assert.False(t, res.Passed(), "an incomplete comparison fails closed")
 				return
 			}
-			require.Empty(t, res.FailReason)
 			assert.Equal(t, tc.officialTokens, res.PromptTokensOfficial)
 			assert.Equal(t, tc.candidateTokens, res.PromptTokensCandidate)
 			assert.InDelta(t, tc.wantRatio, res.Ratio, 0.00005)
-			assert.Equal(t, tc.wantChecked, res.Checked)
-			assert.Equal(t, tc.wantChecked, res.Comparable)
+			assert.True(t, res.Checked)
+			assert.True(t, res.Comparable)
 			assert.Equal(t, tc.wantWithin, res.WithinTolerance)
+			assert.Equal(t, tc.wantWithin, res.Passed(), "only a completed comparison inside tolerance passes")
+			if tc.wantWithin {
+				assert.Empty(t, res.FailReason)
+			} else {
+				assert.Equal(t, "prompt token mismatch", res.FailReason)
+			}
 
 			// Both requests carry the minimal paid settings and the bearer key,
 			// but the result never exposes the key.
@@ -174,6 +184,7 @@ func TestFingerprintCompareTolerance(t *testing.T) {
 		assert.False(t, res.Checked)
 		assert.False(t, res.Comparable)
 		assert.False(t, res.WithinTolerance)
+		assert.False(t, res.Passed(), "too small a sample fails closed")
 		assert.Equal(t, "prompt too short to compare", res.FailReason)
 	})
 }
@@ -197,6 +208,7 @@ func TestFingerprintCompareFailurePaths(t *testing.T) {
 	t.Run("official non-200", func(t *testing.T) {
 		res := run(t, http.StatusInternalServerError, 0, context.Background(), 0)
 		require.NotEmpty(t, res.FailReason)
+		assert.False(t, res.Passed(), "an official failure fails closed")
 		assert.Contains(t, res.FailReason, "official")
 		assert.NotContains(t, res.FailReason, "sk-official-secret")
 		assert.NotContains(t, res.FailReason, "upstream secret body")
@@ -205,6 +217,7 @@ func TestFingerprintCompareFailurePaths(t *testing.T) {
 	t.Run("candidate non-200", func(t *testing.T) {
 		res := run(t, 0, http.StatusUnauthorized, context.Background(), 0)
 		require.NotEmpty(t, res.FailReason)
+		assert.False(t, res.Passed(), "a candidate failure fails closed")
 		assert.Contains(t, res.FailReason, "candidate")
 		assert.NotContains(t, res.FailReason, "sk-candidate-secret")
 		assert.NotContains(t, res.FailReason, "upstream secret body")
@@ -215,8 +228,27 @@ func TestFingerprintCompareFailurePaths(t *testing.T) {
 		defer cancel()
 		res := run(t, 0, 0, ctx, 200*time.Millisecond)
 		require.NotEmpty(t, res.FailReason)
+		assert.False(t, res.Passed(), "a timeout fails closed")
 		assert.NotContains(t, res.FailReason, "sk-official-secret")
 	})
+}
+
+func TestFingerprintNilClientFailsClosed(t *testing.T) {
+	// nil client with no package override must fail closed instead of falling
+	// back to http.DefaultClient (which follows redirects and skips egress).
+	oldClient := fingerprintHTTPClient
+	fingerprintHTTPClient = nil
+	t.Cleanup(func() { fingerprintHTTPClient = oldClient })
+
+	res := CompareFingerprint(context.Background(), nil,
+		Vendor{ID: "official", BaseURL: "https://official.example.com"},
+		"sk-official", "official-upstream",
+		Vendor{ID: "candidate", BaseURL: "https://candidate.example.com"},
+		"sk-candidate", "candidate-upstream",
+		"prompt")
+	assert.False(t, res.Checked)
+	assert.False(t, res.Passed())
+	assert.Contains(t, res.FailReason, "no http client")
 }
 
 func TestFingerprintHTTPClientOverride(t *testing.T) {
@@ -232,8 +264,8 @@ func TestFingerprintHTTPClientOverride(t *testing.T) {
 	fingerprintHTTPClient = candidateSrv.Client()
 	t.Cleanup(func() { fingerprintHTTPClient = old })
 
-	// nil client would otherwise use http.DefaultClient; the package override
-	// must win and make both requests reachable.
+	// A nil client is only valid because the package override supplies one; the
+	// override must win and make both requests reachable.
 	res := CompareFingerprint(context.Background(), nil,
 		newFingerprintVendor(t, officialSrv), "sk-official", "official-upstream",
 		newFingerprintVendor(t, candidateSrv), "sk-candidate", "candidate-upstream",
@@ -460,7 +492,7 @@ func (h *probeVendorMock) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/user/balance":
 		_, _ = w.Write([]byte(`{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"5.00"}]}`))
 	case "/chat/completions":
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"pong"}}],"usage":{"prompt_cache_hit_tokens":4,"prompt_cache_miss_tokens":1,"prompt_tokens":5}}`))
+		_, _ = w.Write([]byte(`{"model":"up-a1","choices":[{"message":{"content":"pong"}}],"usage":{"prompt_cache_hit_tokens":4,"prompt_cache_miss_tokens":1,"prompt_tokens":5}}`))
 	default:
 		http.NotFound(w, r)
 	}
@@ -555,7 +587,8 @@ func TestProbeReturnsCertifiedIntersection(t *testing.T) {
 	assert.Equal(t, true, data["ok"])
 	assert.Equal(t, true, data["key_valid"])
 	assert.Equal(t, true, data["prompt_cache"])
-	assert.EqualValues(t, 5_000_000, data["balance_micro"])
+	assert.Equal(t, true, data["balance_sufficient"], "only enough/not-enough is surfaced")
+	assert.NotContains(t, data, "balance_micro", "the upstream balance itself is never returned")
 	assert.Equal(t, []any{"deepseek-flash"}, data["models"])
 	assert.Equal(t, []any{"deepseek-flash"}, data["verified_models"])
 	assert.Equal(t, []any{}, data["missing_models"])

@@ -13,17 +13,23 @@ package marketplace
 //
 // Security (§3.11 stays in force):
 //   - the base URL must be https, host-based (never an IP literal), without
-//     userinfo, query or fragment;
-//   - the host enters the egress whitelist through the normal pool refresh,
-//     and every dial still passes ValidateEgressIP — loopback/private/CGNAT
-//     destinations are refused at connect time, so a seller-controlled URL can
-//     never become an SSRF vector against internal networks;
+//     userinfo, query or fragment, with a canonical path and only the default
+//     :443 port;
+//   - loopback upstreams (localhost/127.*/::1) are refused unless the
+//     operator opts in with MP_ALLOW_LOOPBACK_BASE_URL=1 — a production host
+//     usually has an internal gateway listening on 127.0.0.1;
+//   - the host enters the relay egress whitelist only after a listing on the
+//     channel is live/canary (vendors.go), and every dial still passes
+//     ValidateEgressIP — private/CGNAT destinations are refused at connect
+//     time, so a seller-controlled URL can never become an SSRF vector;
 //   - custom channels are visible only to their owner (listVendors filters by
 //     session), and each seller is capped at maxCustomChannelsPerSeller rows.
 //
 // Path normalization: OpenAI-compatible upstreams mount /models and
 // /chat/completions either at the root or under /v1. The seller pastes
-// whichever base they have; the first successful verification probes
+// whichever base they have; validateCustomBaseURL strips a pasted endpoint
+// suffix (…/chat/completions, …/messages, …/responses, …/models) and folds
+// repeated /v1 segments. The first successful verification then probes
 // base+"/models" then base+"/v1/models" and rewrites the stored base to the
 // form that answers, with strip_v1_prefix on — the buyer's /v1 is then always
 // dropped and the upstream path is base + /chat/completions.
@@ -38,9 +44,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 
+	"golang.org/x/net/idna"
+	"golang.org/x/net/publicsuffix"
 	"gorm.io/gorm"
 
 	"github.com/QuantumNous/new-api/common"
@@ -59,13 +68,32 @@ const maxCustomChannelsPerSeller = 10
 // message names the rule, never the URL the seller typed.
 var ErrCustomBaseURL = errors.New("marketplace: custom base url is invalid")
 
+// MPAllowLoopbackBaseURLEnv re-enables loopback custom upstreams. It exists
+// for local development and httptest fixtures; production MUST leave it unset.
+const MPAllowLoopbackBaseURLEnv = "MP_ALLOW_LOOPBACK_BASE_URL"
+
+// endpointSuffixes are the trailing API paths sellers paste along with a base
+// URL. They are removed so the stored base is the mount point, not one of its
+// endpoints.
+var endpointSuffixes = []string{"/chat/completions", "/messages", "/responses", "/models"}
+
 // validateCustomBaseURL normalizes and validates a seller-supplied upstream
-// base URL. Rules: https scheme, host-based (no IP literal), no userinfo, no
-// query or fragment; the path may carry a version segment (/v1, /api/v3, …)
-// and is trimmed of trailing slashes. Loopback hosts (127.0.0.1, ::1,
-// localhost) are the one exception — they keep the codebase's test-upstream
-// convention — and are still refused by the §3.11 dial guard in production,
-// so they can never relay. Returns the normalized base and its host.
+// base URL. Rules:
+//
+//   - absolute https URL, host-based (no IP literal except opted-in loopback),
+//     no userinfo, query or fragment;
+//   - loopback hosts (localhost/127.*/::1) only when
+//     MP_ALLOW_LOOPBACK_BASE_URL=1;
+//   - non-loopback hosts allow no port or :443 only;
+//   - the path must not carry dot segments, encoded separators, empty
+//     segments or path parameters;
+//   - the host is lowercased and IDNA-encoded; a bare public suffix (com,
+//     com.cn) is refused;
+//   - the path loses a trailing endpoint suffix and repeated /v1 segments.
+//
+// It returns the single authoritative base and the host taken from that same
+// string, so the whitelist match and the dialed URL can never disagree. An
+// already-stored base is not migrated.
 func validateCustomBaseURL(raw string) (string, string, error) {
 	text := strings.TrimSpace(raw)
 	if text == "" {
@@ -75,36 +103,127 @@ func validateCustomBaseURL(raw string) (string, string, error) {
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return "", "", fmt.Errorf("%w: must be an absolute https address", ErrCustomBaseURL)
 	}
-	host := normalizeEgressHost(u.Host)
-	if host == "" {
-		return "", "", fmt.Errorf("%w: host is required", ErrCustomBaseURL)
-	}
-	loopback := host == "localhost" || host == "::1" || strings.HasPrefix(host, "127.")
-	if !loopback {
-		if !strings.EqualFold(u.Scheme, "https") {
-			return "", "", fmt.Errorf("%w: only https is accepted", ErrCustomBaseURL)
-		}
-		if net.ParseIP(host) != nil {
-			// Public IP literals are refused by the egress guard anyway;
-			// rejecting here gives the seller a rule they can act on.
-			return "", "", fmt.Errorf("%w: use a domain, not an ip address", ErrCustomBaseURL)
-		}
-		lower := strings.ToLower(host)
-		if strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
-			return "", "", fmt.Errorf("%w: internal hostnames are not accepted", ErrCustomBaseURL)
-		}
-	}
 	if u.User != nil {
 		return "", "", fmt.Errorf("%w: userinfo in the address is not accepted", ErrCustomBaseURL)
 	}
 	if u.RawQuery != "" || u.Fragment != "" || u.RawFragment != "" {
 		return "", "", fmt.Errorf("%w: query strings and fragments are not accepted", ErrCustomBaseURL)
 	}
-	base := strings.TrimRight(u.Scheme+"://"+u.Host+u.Path, "/")
-	if base == "" {
-		return "", "", fmt.Errorf("%w: address is required", ErrCustomBaseURL)
+	host := normalizeEgressHost(u.Host)
+	if host == "" {
+		return "", "", fmt.Errorf("%w: host is required", ErrCustomBaseURL)
 	}
-	return base, host, nil
+	loopback := host == "localhost"
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		loopback = true
+	}
+	if loopback && strings.TrimSpace(os.Getenv(MPAllowLoopbackBaseURLEnv)) != "1" {
+		return "", "", fmt.Errorf("%w: loopback addresses are disabled; set %s=1 to enable them",
+			ErrCustomBaseURL, MPAllowLoopbackBaseURLEnv)
+	}
+	if !loopback && !strings.EqualFold(u.Scheme, "https") {
+		return "", "", fmt.Errorf("%w: only https is accepted", ErrCustomBaseURL)
+	}
+	if loopback && !strings.EqualFold(u.Scheme, "https") && !strings.EqualFold(u.Scheme, "http") {
+		return "", "", fmt.Errorf("%w: only http and https are accepted", ErrCustomBaseURL)
+	}
+	if net.ParseIP(host) == nil {
+		ascii, ierr := idna.Lookup.ToASCII(strings.ToLower(host))
+		if ierr != nil || ascii == "" {
+			return "", "", fmt.Errorf("%w: host is not a valid domain name", ErrCustomBaseURL)
+		}
+		host = ascii
+	}
+	if !loopback {
+		if net.ParseIP(host) != nil {
+			// Public IP literals are refused by the egress guard anyway;
+			// rejecting here gives the seller a rule they can act on.
+			return "", "", fmt.Errorf("%w: use a domain, not an ip address", ErrCustomBaseURL)
+		}
+		if suffix := "." + host; strings.HasSuffix(suffix, ".local") || strings.HasSuffix(suffix, ".internal") {
+			return "", "", fmt.Errorf("%w: internal hostnames are not accepted", ErrCustomBaseURL)
+		}
+		if suffix, _ := publicsuffix.PublicSuffix(host); suffix == "" || suffix == host {
+			return "", "", fmt.Errorf("%w: %q is a public suffix, not an upstream host", ErrCustomBaseURL, host)
+		}
+	}
+	port := u.Port()
+	if !loopback && port != "" && port != "443" {
+		return "", "", fmt.Errorf("%w: only the default https port 443 is accepted", ErrCustomBaseURL)
+	}
+	if err := validateCustomBasePath(u.EscapedPath(), u.Path); err != nil {
+		return "", "", err
+	}
+	path := normalizeCustomBasePath(u.Path)
+	scheme := strings.ToLower(u.Scheme)
+	authority := host
+	switch {
+	case port == "":
+		if strings.Contains(host, ":") {
+			authority = "[" + host + "]"
+		}
+	case scheme == "https" && port == "443":
+		// The default port is dropped so one upstream has one canonical base.
+	default:
+		authority = net.JoinHostPort(host, port)
+	}
+	return scheme + "://" + authority + path, host, nil
+}
+
+// validateCustomBasePath refuses path shapes that could escape the intended
+// mount point or confuse an upstream router. escaped is the raw
+// (percent-encoded) path and decoded is net/url's decoded form; both are
+// checked so a doubly encoded or encoded separator never slips through.
+func validateCustomBasePath(escaped, decoded string) error {
+	for _, path := range []string{escaped, decoded} {
+		lower := strings.ToLower(path)
+		for _, encoded := range []string{"%2e", "%2f", "%5c"} {
+			if strings.Contains(lower, encoded) {
+				return fmt.Errorf("%w: encoded path separators (%s) are not accepted", ErrCustomBaseURL, encoded)
+			}
+		}
+		if strings.Contains(path, "//") {
+			return fmt.Errorf("%w: empty path segments (//) are not accepted", ErrCustomBaseURL)
+		}
+		if strings.Contains(path, ";") {
+			return fmt.Errorf("%w: path parameters (;) are not accepted", ErrCustomBaseURL)
+		}
+		for segment := range strings.SplitSeq(path, "/") {
+			if segment == ".." {
+				return fmt.Errorf("%w: dot segments (..) are not accepted", ErrCustomBaseURL)
+			}
+		}
+	}
+	return nil
+}
+
+// normalizeCustomBasePath turns a pasted upstream path into the canonical
+// mount point: trailing slashes, a trailing endpoint suffix and consecutive
+// /v1 segments are removed.
+func normalizeCustomBasePath(path string) string {
+	path = strings.TrimRight(path, "/")
+	for changed := true; changed; {
+		changed = false
+		for _, suffix := range endpointSuffixes {
+			if strings.HasSuffix(path, suffix) {
+				path = strings.TrimRight(strings.TrimSuffix(path, suffix), "/")
+				changed = true
+				break
+			}
+		}
+	}
+	if path == "" {
+		return ""
+	}
+	segments := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	folded := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		if segment == "v1" && len(folded) > 0 && folded[len(folded)-1] == "v1" {
+			continue
+		}
+		folded = append(folded, segment)
+	}
+	return "/" + strings.Join(folded, "/")
 }
 
 // customChannelSlug derives the deterministic slug for one (seller, base URL)
@@ -199,9 +318,10 @@ func ensureCustomChannel(db *gorm.DB, sellerID int64, rawURL string, models []st
 			return "", fmt.Errorf("marketplace: qualify model %q on custom channel: %w", m, merr)
 		}
 	}
-	// The host must pass the §3.11 guard on the verification dials that start
-	// seconds after this insert; force the registry reload now instead of
-	// waiting out the TTL.
+	// Reload the registry now so the new pool row is resolvable at once. The
+	// host is still only admitted to the relay whitelist once a listing on it
+	// is live/canary (vendors.go); verification uses the whitelist-exempt
+	// EgressVerifyHTTPClient.
 	refreshVendorRegistry(true)
 	return slug, nil
 }

@@ -305,13 +305,27 @@ func Reverse(db *gorm.DB, requestID string, now time.Time) error {
 		}
 		// Return the money to the buyer's real wallet in this same
 		// transaction; the ledger refund alone would leave the wallet short.
+		// A gift-funded part goes back to gift_quota so the original funding
+		// split is restored (both columns increase, so gift <= quota holds).
 		if total > 0 {
 			if buyerID == 0 {
 				return fmt.Errorf("marketplace: reverse request %s: cannot resolve buyer account", requestID)
 			}
+			var giftUsed int64
+			if err := tx.Model(&Request{}).
+				Select("gift_debit_micro").
+				Where("request_id = ?", requestID).
+				Scan(&giftUsed).Error; err != nil {
+				return err
+			}
+			giftUsed = max(min(giftUsed, total), 0)
+			updates := map[string]any{"quota": gorm.Expr("quota + ?", total)}
+			if giftUsed > 0 {
+				updates["gift_quota"] = gorm.Expr("gift_quota + ?", giftUsed)
+			}
 			res := tx.Model(&model.User{}).
 				Where("id = ?", buyerID).
-				Update("quota", gorm.Expr("quota + ?", total))
+				Updates(updates)
 			if res.Error != nil {
 				return res.Error
 			}

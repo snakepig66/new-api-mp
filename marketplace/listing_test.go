@@ -247,18 +247,31 @@ func TestListingStateMachine(t *testing.T) {
 		require.NoError(t, err)
 		return row.Status
 	}
+	passVerification := func() {
+		t.Helper()
+		require.NoError(t, db.Create(&Probe{
+			ListingID: listing.ID, Type: ProbeTypeVerify, OK: true,
+		}).Error)
+		require.NoError(t, PassVerification(db, listing.ID))
+	}
 	require.Equal(t, ListingDraft, status())
 
-	// The full legal chain: draft → verifying → canary → live ⇄ paused → banned.
+	// The full legal chain: draft → verifying → canary → live ⇄ paused →
+	// draft (a resume re-verifies) → verifying → canary → live → banned.
 	require.NoError(t, StartVerification(db, listing.ID))
 	assert.Equal(t, ListingVerifying, status())
-	require.NoError(t, PassVerification(db, listing.ID))
+	passVerification()
 	assert.Equal(t, ListingCanary, status())
 	require.NoError(t, GoLive(db, listing.ID))
 	assert.Equal(t, ListingLive, status())
 	require.NoError(t, PauseListing(db, listing.ID))
 	assert.Equal(t, ListingPaused, status())
 	require.NoError(t, ResumeListing(db, listing.ID))
+	assert.Equal(t, ListingDraft, status(), "a platform resume must re-run full verification")
+	require.NoError(t, StartVerification(db, listing.ID))
+	passVerification()
+	assert.Equal(t, ListingCanary, status())
+	require.NoError(t, GoLive(db, listing.ID))
 	assert.Equal(t, ListingLive, status())
 	require.NoError(t, BanListing(db, listing.ID))
 	assert.Equal(t, ListingBanned, status())
@@ -266,20 +279,29 @@ func TestListingStateMachine(t *testing.T) {
 
 func TestTransitionIllegal(t *testing.T) {
 	db := newListingTestDB(t)
+	seedPassingProbe := func(id int64) {
+		t.Helper()
+		require.NoError(t, db.Create(&Probe{ListingID: id, Type: ProbeTypeVerify, OK: true}).Error)
+	}
 
 	// draft → live skips verification and canary.
 	draft := createTestListing(t, db, 10023, listingTestKey)
 	err := GoLive(db, draft.ID)
 	assert.ErrorIs(t, err, ErrInvalidTransition)
 
-	// paused → verifying is not an edge.
+	// paused → verifying is not an edge, and nothing may jump paused → live.
 	paused := createTestListing(t, db, 10023, "sk-test-key-2")
 	require.NoError(t, StartVerification(db, paused.ID))
+	seedPassingProbe(paused.ID)
 	require.NoError(t, PassVerification(db, paused.ID))
 	require.NoError(t, GoLive(db, paused.ID))
 	require.NoError(t, PauseListing(db, paused.ID))
 	err = StartVerification(db, paused.ID)
 	assert.ErrorIs(t, err, ErrInvalidTransition)
+	err = TransitionListing(db, paused.ID, ListingPaused, ListingLive)
+	assert.ErrorIs(t, err, ErrInvalidTransition, "live is reachable only from canary")
+	require.NoError(t, ResumeListing(db, paused.ID))
+	require.NoError(t, StartVerification(db, paused.ID), "resume lands in draft so verification is mandatory")
 
 	// banned is terminal: nothing leaves it.
 	banned := createTestListing(t, db, 10023, "sk-test-key-3")
@@ -293,12 +315,97 @@ func TestTransitionIllegal(t *testing.T) {
 	// canary → banned is legal (§3.5 lists canary among ban sources).
 	canary := createTestListing(t, db, 10023, "sk-test-key-4")
 	require.NoError(t, StartVerification(db, canary.ID))
+	seedPassingProbe(canary.ID)
 	require.NoError(t, PassVerification(db, canary.ID))
 	require.NoError(t, BanListing(db, canary.ID))
 
 	// Unknown id.
 	err = StartVerification(db, 999999)
 	assert.ErrorIs(t, err, ErrListingNotFound)
+}
+
+// TestPassVerificationRequiresPassingProbe proves the verifying → canary edge
+// cannot be taken without the verdict VerifyListing writes: no probe, or a
+// failed probe, leaves the listing in verifying.
+func TestPassVerificationRequiresPassingProbe(t *testing.T) {
+	db := newListingTestDB(t)
+
+	noProbe := createTestListing(t, db, 10023, listingTestKey)
+	require.NoError(t, StartVerification(db, noProbe.ID))
+	err := PassVerification(db, noProbe.ID)
+	assert.ErrorIs(t, err, ErrVerificationRequired)
+	row, err := GetListing(db, noProbe.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingVerifying, row.Status)
+
+	failed := createTestListing(t, db, 10023, "sk-test-key-probe-fail")
+	require.NoError(t, StartVerification(db, failed.ID))
+	require.NoError(t, db.Create(&Probe{
+		ListingID: failed.ID, Type: ProbeTypeVerify, OK: false,
+		Detail: `{"fail_reason":"fingerprint verification failed"}`,
+	}).Error)
+	err = PassVerification(db, failed.ID)
+	assert.ErrorIs(t, err, ErrVerificationRequired)
+	row, err = GetListing(db, failed.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingVerifying, row.Status)
+
+	passed := createTestListing(t, db, 10023, "sk-test-key-probe-ok")
+	require.NoError(t, StartVerification(db, passed.ID))
+	require.NoError(t, db.Create(&Probe{
+		ListingID: passed.ID, Type: ProbeTypeVerify, OK: true,
+	}).Error)
+	require.NoError(t, PassVerification(db, passed.ID))
+	row, err = GetListing(db, passed.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingCanary, row.Status)
+}
+
+// TestSellerResumeRefusesFailedVerification proves a seller pause-lift cannot
+// return a listing whose last verification failed to live.
+func TestSellerResumeRefusesFailedVerification(t *testing.T) {
+	db := newListingTestDB(t)
+	listing := createTestListing(t, db, 10023, listingTestKey)
+	require.NoError(t, db.Model(&Listing{}).Where("id = ?", listing.ID).
+		Update("status", ListingPaused).Error)
+	require.NoError(t, db.Create(&Probe{
+		ListingID: listing.ID, Type: ProbeTypeVerify, OK: false,
+	}).Error)
+
+	err := ResumeSellerListing(db, listing.ID)
+	assert.ErrorIs(t, err, ErrVerificationRequired)
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingPaused, row.Status)
+
+	// A passing verdict allows the seller pause-lift again.
+	require.NoError(t, db.Create(&Probe{
+		ListingID: listing.ID, Type: ProbeTypeVerify, OK: true,
+	}).Error)
+	require.NoError(t, ResumeSellerListing(db, listing.ID))
+	row, err = GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingLive, row.Status)
+}
+
+// TestResumeListingRequiresReverification proves a platform resume never
+// restores live directly: it lands in draft, so the full verify path runs
+// again.
+func TestResumeListingRequiresReverification(t *testing.T) {
+	db := newListingTestDB(t)
+	listing := createTestListing(t, db, 10023, listingTestKey)
+	require.NoError(t, StartVerification(db, listing.ID))
+	require.NoError(t, db.Create(&Probe{ListingID: listing.ID, Type: ProbeTypeVerify, OK: true}).Error)
+	require.NoError(t, PassVerification(db, listing.ID))
+	require.NoError(t, GoLive(db, listing.ID))
+	require.NoError(t, PauseListing(db, listing.ID))
+
+	require.NoError(t, ResumeListing(db, listing.ID))
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingDraft, row.Status)
+	assert.Empty(t, row.PauseReason)
+	assert.Nil(t, row.ResumeAt)
 }
 
 func TestUpdateMultiplier(t *testing.T) {

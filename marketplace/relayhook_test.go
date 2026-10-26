@@ -38,6 +38,13 @@ type relayFixture struct {
 
 func newRelayFixture(t *testing.T, buyerQuota int) *relayFixture {
 	t.Helper()
+	return newRelayFixtureWithGift(t, buyerQuota, 0)
+}
+
+// newRelayFixtureWithGift is newRelayFixture with an initial gift_quota on the
+// buyer, for the funded-balance policy tests.
+func newRelayFixtureWithGift(t *testing.T, buyerQuota, buyerGift int) *relayFixture {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
 	migrateAll(t, db)
@@ -70,7 +77,7 @@ func newRelayFixture(t *testing.T, buyerQuota int) *relayFixture {
 		relayStateMu.Unlock()
 	})
 
-	buyer := model.User{Username: "buyer", Password: "placeholder-pass", AffCode: "buyer", Quota: buyerQuota}
+	buyer := model.User{Username: "buyer", Password: "placeholder-pass", AffCode: "buyer", Quota: buyerQuota, GiftQuota: buyerGift}
 	require.NoError(t, db.Create(&buyer).Error)
 	seller := model.User{Username: "seller", Password: "placeholder-pass", AffCode: "seller"}
 	require.NoError(t, db.Create(&seller).Error)

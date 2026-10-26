@@ -647,7 +647,7 @@ func TestRelayIT_NonStreamSuccess(t *testing.T) {
 	sellerKey := "sk-seller-alpha"
 	listing := h.addListing(upstream.url(), sellerKey, 1000)
 
-	res := h.doChat(chatBody(false, 100))
+	res := h.doChat(chatBody(false, 1000))
 	require.Equal(h.t, http.StatusOK, res.status, string(res.body))
 	require.Equal(h.t, 1, upstream.callCount())
 	// The listing's real key — not the channel placeholder — went upstream (§4.4 A).
@@ -669,7 +669,7 @@ func TestRelayIT_StreamSuccess(t *testing.T) {
 	sellerKey := "sk-seller-stream"
 	listing := h.addListing(upstream.url(), sellerKey, 1000)
 
-	res := h.doChat(chatBody(true, 100))
+	res := h.doChat(chatBody(true, 1000))
 	require.Equal(h.t, http.StatusOK, res.status, string(res.body))
 	bodyStr := string(res.body)
 	assert.Contains(h.t, bodyStr, "data: [DONE]")
@@ -693,7 +693,7 @@ func TestRelayIT_SwitchListingOn500(t *testing.T) {
 	listingA := h.addListing(first.url(), "sk-seller-a", 500)
 	listingB := h.addListing(second.url(), "sk-seller-b", 1000)
 
-	res := h.doChat(chatBody(false, 100))
+	res := h.doChat(chatBody(false, 1000))
 	require.Equal(h.t, http.StatusOK, res.status, string(res.body))
 	assert.Equal(h.t, 1, first.callCount())
 	assert.Equal(h.t, 1, second.callCount())

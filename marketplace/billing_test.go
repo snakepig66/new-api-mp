@@ -34,6 +34,13 @@ func TestMain(m *testing.M) {
 // on this database, and creates one buyer row with startQuota.
 func newBillingFixture(t *testing.T, startQuota int) (*gorm.DB, int64) {
 	t.Helper()
+	return newBillingFixtureWithGift(t, startQuota, 0)
+}
+
+// newBillingFixtureWithGift is newBillingFixture plus an initial gift_quota,
+// for the funded-balance split tests.
+func newBillingFixtureWithGift(t *testing.T, startQuota, giftQuota int) (*gorm.DB, int64) {
+	t.Helper()
 	db := newTestDB(t)
 	migrateAll(t, db)
 	require.NoError(t, db.AutoMigrate(&model.User{}))
@@ -42,7 +49,7 @@ func newBillingFixture(t *testing.T, startQuota int) (*gorm.DB, int64) {
 	model.DB = db
 	t.Cleanup(func() { model.DB = oldDB })
 
-	buyer := model.User{Username: "buyer", Password: "placeholder-pass", Quota: startQuota}
+	buyer := model.User{Username: "buyer", Password: "placeholder-pass", Quota: startQuota, GiftQuota: giftQuota}
 	require.NoError(t, db.Create(&buyer).Error)
 	return db, int64(buyer.Id)
 }
@@ -52,6 +59,14 @@ func buyerQuota(t *testing.T, buyerID int64) int {
 	quota, err := model.GetUserQuota(int(buyerID), true)
 	require.NoError(t, err)
 	return quota
+}
+
+func buyerGiftQuota(t *testing.T, buyerID int64) int {
+	t.Helper()
+	var gift int
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", buyerID).
+		Select("gift_quota").Scan(&gift).Error)
+	return gift
 }
 
 // 1. Pre-freeze deducts the estimated amount atomically.
@@ -93,31 +108,69 @@ func TestBillingSettleRefundsDifference(t *testing.T) {
 	assert.Equal(t, 700, buyerQuota(t, buyerID))
 }
 
-// 4. Settle with actual > preConsumed tops up; a short balance is drained to
-// exactly zero, never negative, and the shortfall is logged (SysError).
-func TestBillingSettleTopUp(t *testing.T) {
-	t.Run("covered", func(t *testing.T) {
+// 4. Settle with actual > preConsumed is capped at the pre-freeze: the buyer
+// never pays more than the amount frozen before the request, and the excess is
+// borne by the platform (recorded by SettleRelay). No balance is ever drained.
+func TestBillingSettleCappedAtPreFreeze(t *testing.T) {
+	t.Run("capped with balance left over", func(t *testing.T) {
 		_, buyerID := newBillingFixture(t, 1000)
 		s, err := NewBillingSession(nil, buyerID, 300)
 		require.NoError(t, err)
 		assert.Equal(t, 700, buyerQuota(t, buyerID))
 
 		require.NoError(t, s.Settle(500))
-		assert.Equal(t, 500, buyerQuota(t, buyerID), "300 frozen, 500 actual -> 200 more deducted")
+		assert.Equal(t, 700, buyerQuota(t, buyerID), "300 frozen; 500 actual is charged as 300")
 	})
 
-	t.Run("shortfall drains to zero", func(t *testing.T) {
+	t.Run("overage never drains the remaining balance", func(t *testing.T) {
 		_, buyerID := newBillingFixture(t, 350)
 		s, err := NewBillingSession(nil, buyerID, 300)
 		require.NoError(t, err)
 		assert.Equal(t, 50, buyerQuota(t, buyerID))
 
 		require.NoError(t, s.Settle(500))
-		final := buyerQuota(t, buyerID)
-		assert.GreaterOrEqual(t, final, 0, "balance must never go negative")
-		assert.Equal(t, 0, final, "only the remaining 50 could be deducted of the 200 delta")
-		assert.False(t, s.NeedsRefund(), "session is settled for what could be deducted")
+		assert.Equal(t, 50, buyerQuota(t, buyerID), "the 50 left after the freeze is not touched")
+		assert.False(t, s.NeedsRefund(), "session is settled for the frozen amount")
 	})
+}
+
+// 4d. The settlement splits the charge: gift first (up to the gift balance
+// present at settle time), then paid. Gift is not reserved at freeze time.
+func TestBillingSettleGiftSplit(t *testing.T) {
+	db, buyerID := newBillingFixtureWithGift(t, 1000, 400)
+	s, err := NewBillingSessionWithPolicy(db, buyerID, 500, false)
+	require.NoError(t, err)
+	assert.Equal(t, 500, buyerQuota(t, buyerID), "the whole wallet (gift included) may be frozen on an official channel")
+
+	charged := settleAtomic(t, db, s, 300)
+	assert.Equal(t, Micro(300), charged)
+	assert.Equal(t, Micro(300), s.SettledGift(), "300 charged against a 400 gift balance is all gift")
+	assert.Equal(t, 700, buyerQuota(t, buyerID), "1000 − 500 frozen + 200 refund")
+	assert.Equal(t, 100, buyerGiftQuota(t, buyerID), "400 gift − 300 consumed")
+
+	// Replay reports the same split and moves nothing.
+	assert.Equal(t, Micro(300), settleAtomic(t, db, s, 300))
+	assert.Equal(t, Micro(300), s.SettledGift())
+	assert.Equal(t, 700, buyerQuota(t, buyerID))
+	assert.Equal(t, 100, buyerGiftQuota(t, buyerID))
+}
+
+// 4e. A seller channel (paidOnly) may only freeze paid balance; gift cannot be
+// used there even though the total wallet would cover the request.
+func TestBillingPaidOnlyRejectsGift(t *testing.T) {
+	_, buyerID := newBillingFixtureWithGift(t, 1000, 700)
+
+	_, err := NewBillingSessionWithPolicy(nil, buyerID, 500, true)
+	assert.ErrorIs(t, err, ErrInsufficientBalance, "paid balance is only 300")
+	assert.Equal(t, 1000, buyerQuota(t, buyerID), "a refused freeze moves nothing")
+
+	s, err := NewBillingSessionWithPolicy(nil, buyerID, 300, true)
+	require.NoError(t, err)
+	assert.Equal(t, 700, buyerQuota(t, buyerID))
+	assert.True(t, s.PaidOnly())
+	require.NoError(t, s.Settle(300))
+	assert.Equal(t, 700, buyerQuota(t, buyerID))
+	assert.Equal(t, 700, buyerGiftQuota(t, buyerID), "gift is untouched by a paid-only request")
 }
 
 // settleAtomic runs one SettleAtomic inside its own transaction, mirroring how
@@ -150,30 +203,29 @@ func TestBillingSettleAtomic(t *testing.T) {
 		assert.Equal(t, 700, buyerQuota(t, buyerID))
 	})
 
-	t.Run("covered top-up", func(t *testing.T) {
+	t.Run("capped at pre-freeze", func(t *testing.T) {
 		db, buyerID := newBillingFixture(t, 1000)
 		s, err := NewBillingSession(db, buyerID, 300)
 		require.NoError(t, err)
 		assert.Equal(t, 700, buyerQuota(t, buyerID))
 
-		assert.Equal(t, Micro(500), settleAtomic(t, db, s, 500))
-		assert.Equal(t, 500, buyerQuota(t, buyerID), "300 frozen + 200 collected")
+		assert.Equal(t, Micro(300), settleAtomic(t, db, s, 500), "500 actual is capped to the 300 freeze")
+		assert.Equal(t, 700, buyerQuota(t, buyerID), "no extra deduction beyond the freeze")
 	})
 
-	t.Run("shortfall charges only what was collectable", func(t *testing.T) {
+	t.Run("overage leaves the remaining balance untouched", func(t *testing.T) {
 		db, buyerID := newBillingFixture(t, 350)
 		s, err := NewBillingSession(db, buyerID, 300)
 		require.NoError(t, err)
 		assert.Equal(t, 50, buyerQuota(t, buyerID))
 
 		charged := settleAtomic(t, db, s, 500)
-		assert.Equal(t, Micro(350), charged, "300 frozen + 50 drained; never more than actual")
-		assert.Less(t, charged, Micro(500))
-		assert.Equal(t, 0, buyerQuota(t, buyerID), "balance is drained to exactly zero, never negative")
+		assert.Equal(t, Micro(300), charged, "only the frozen 300 is charged")
+		assert.Equal(t, 50, buyerQuota(t, buyerID), "the balance is never drained for an overage")
 
-		// Replay must not charge the remaining shortfall again.
-		assert.Equal(t, Micro(350), settleAtomic(t, db, s, 500))
-		assert.Equal(t, 0, buyerQuota(t, buyerID))
+		// Replay must not charge again.
+		assert.Equal(t, Micro(300), settleAtomic(t, db, s, 500))
+		assert.Equal(t, 50, buyerQuota(t, buyerID))
 	})
 
 	t.Run("refund-first wins", func(t *testing.T) {

@@ -65,6 +65,10 @@ const (
 	// the actual usage: the ledger charges the amount actually collected and
 	// the difference is this event's detail (H3).
 	HopEventSettleShortfall = "settle_shortfall"
+	// HopEventSettleCapped records that the actual usage priced above the
+	// pre-freeze: the buyer is charged only the frozen amount and the platform
+	// absorbs the excess.
+	HopEventSettleCapped = "settle_capped"
 	// HopEventMaxOutputSkipped records that the affordable max-output estimate
 	// could not be written back into the outbound request type (H3).
 	HopEventMaxOutputSkipped = "max_output_writeback_skipped"
@@ -844,7 +848,8 @@ func PrepareBilling(c *gin.Context, info *relaycommon.RelayInfo, estimateFn func
 		common.SysError(common.LogText("marketplace: pre-freeze quote: %s", qerr.Error()))
 		return types.NewError(errors.New("marketplace: no covering price for this request"), types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest), types.ErrOptionWithSkipRetry())
 	}
-	session, qerr := NewBillingSession(db, int64(s.buyerUserID), quote.TotalDebit)
+	session, qerr := NewBillingSessionWithPolicy(db, int64(s.buyerUserID), quote.TotalDebit,
+		!channelAllowsGift(db, listing.Vendor))
 	if errors.Is(qerr, ErrInsufficientBalance) {
 		// §10-3 暂定 402, OpenAI 错误格式, 语义为余额不足.
 		return types.NewOpenAIError(ErrInsufficientBalance, types.ErrorCodeInsufficientUserQuota, http.StatusPaymentRequired, types.ErrOptionWithSkipRetry())
@@ -914,6 +919,11 @@ func (s *RelaySession) affordableMaxOutput(db *gorm.DB, cal *Calendar, freezeAt 
 
 	maxOut := ModelMaxOutputTokens(modelName)
 	balance, err := model.GetUserQuota(buyerID, true)
+	if !channelAllowsGift(db, listing.Vendor) {
+		// A seller channel may only spend paid balance; gifting must not let the
+		// affordable output estimate promise quota the freezer will refuse.
+		balance, err = model.GetUserPaidQuota(buyerID)
+	}
 	if err != nil || balance <= 0 {
 		// Let the authoritative reserve in NewBillingSession produce the 402.
 		return maxOut, nil
@@ -1085,7 +1095,8 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 		}
 		return nil, types.NewError(errors.New("marketplace: no covering price for this request"), types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest), types.ErrOptionWithSkipRetry())
 	}
-	session, err := NewBillingSession(db, int64(s.buyerUserID), quote.TotalDebit)
+	session, err := NewBillingSessionWithPolicy(db, int64(s.buyerUserID), quote.TotalDebit,
+		!channelAllowsGift(db, next.Vendor))
 	if errors.Is(err, ErrInsufficientBalance) {
 		s.releaseSlot()
 		if tookProbe {

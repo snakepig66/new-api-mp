@@ -23,16 +23,23 @@ import (
 
 func TestValidateCustomBaseURL(t *testing.T) {
 	cases := []struct {
-		name    string
-		raw     string
-		wantErr string
-		want    string
+		name          string
+		raw           string
+		wantErr       string
+		want          string
+		wantHost      string
+		allowLoopback bool
 	}{
-		{name: "https root", raw: "https://api.example.com", want: "https://api.example.com"},
-		{name: "https with version path", raw: "https://gw.example.com/v1/", want: "https://gw.example.com/v1"},
-		{name: "trailing slash trimmed", raw: "https://api.example.com/", want: "https://api.example.com"},
-		{name: "port kept", raw: "https://api.example.com:8443/v1", want: "https://api.example.com:8443/v1"},
-		{name: "loopback test upstream", raw: "http://127.0.0.1:9911", want: "http://127.0.0.1:9911"},
+		{name: "https root", raw: "https://api.example.com", want: "https://api.example.com", wantHost: "api.example.com"},
+		{name: "https with version path", raw: "https://gw.example.com/v1/", want: "https://gw.example.com/v1", wantHost: "gw.example.com"},
+		{name: "trailing slash trimmed", raw: "https://api.example.com/", want: "https://api.example.com", wantHost: "api.example.com"},
+		{name: "default port removed", raw: "https://api.example.com:443/v1", want: "https://api.example.com/v1", wantHost: "api.example.com"},
+		{name: "non-default port refused", raw: "https://api.example.com:8443/v1", wantErr: "port 443"},
+		{name: "loopback refused by default", raw: "http://127.0.0.1:9911", wantErr: "loopback"},
+		{name: "localhost refused by default", raw: "https://localhost:8443/v1", wantErr: "loopback"},
+		{name: "loopback test upstream", raw: "http://127.0.0.1:9911", want: "http://127.0.0.1:9911", wantHost: "127.0.0.1", allowLoopback: true},
+		{name: "localhost allowed on opt-in", raw: "https://localhost:8443/v1", want: "https://localhost:8443/v1", wantHost: "localhost", allowLoopback: true},
+		{name: "ipv6 loopback allowed on opt-in", raw: "http://[::1]:9911", want: "http://[::1]:9911", wantHost: "::1", allowLoopback: true},
 		{name: "empty", raw: "   ", wantErr: "address is required"},
 		{name: "relative", raw: "/v1", wantErr: "absolute"},
 		{name: "http public host refused", raw: "http://api.example.com", wantErr: "https"},
@@ -40,10 +47,30 @@ func TestValidateCustomBaseURL(t *testing.T) {
 		{name: "internal suffix refused", raw: "https://db.corp.internal", wantErr: "internal"},
 		{name: "userinfo refused", raw: "https://user:pass@api.example.com", wantErr: "userinfo"},
 		{name: "query refused", raw: "https://api.example.com/v1?x=1", wantErr: "query"},
+		{name: "dot segment refused", raw: "https://api.example.com/v1/../admin", wantErr: "dot segments"},
+		{name: "encoded dot refused", raw: "https://api.example.com/%2e%2e/admin", wantErr: "encoded path separators"},
+		{name: "encoded uppercase dot refused", raw: "https://api.example.com/%2E/admin", wantErr: "encoded path separators"},
+		{name: "encoded slash refused", raw: "https://api.example.com/a%2Fb", wantErr: "encoded path separators"},
+		{name: "encoded backslash refused", raw: "https://api.example.com/a%5cb", wantErr: "encoded path separators"},
+		{name: "double slash refused", raw: "https://api.example.com//v1", wantErr: "empty path segments"},
+		{name: "semicolon refused", raw: "https://api.example.com/v1;foo", wantErr: "path parameters"},
+		{name: "public suffix host refused", raw: "https://com", wantErr: "public suffix"},
+		{name: "multi-label public suffix refused", raw: "https://com.cn", wantErr: "public suffix"},
+		{name: "chat completions suffix trimmed", raw: "https://api.example.com/v1/chat/completions/", want: "https://api.example.com/v1", wantHost: "api.example.com"},
+		{name: "messages suffix trimmed", raw: "https://api.example.com/messages", want: "https://api.example.com", wantHost: "api.example.com"},
+		{name: "responses suffix trimmed", raw: "https://api.example.com/v1/responses", want: "https://api.example.com/v1", wantHost: "api.example.com"},
+		{name: "models suffix trimmed", raw: "https://api.example.com/v1/models/", want: "https://api.example.com/v1", wantHost: "api.example.com"},
+		{name: "repeated v1 folded", raw: "https://api.example.com/v1/v1", want: "https://api.example.com/v1", wantHost: "api.example.com"},
+		{name: "repeated v1 before trimmed endpoint", raw: "https://api.example.com/api/v1/v1/models", want: "https://api.example.com/api/v1", wantHost: "api.example.com"},
+		{name: "idna host encoded", raw: "https://bücher.example.com/v1", want: "https://xn--bcher-kva.example.com/v1", wantHost: "xn--bcher-kva.example.com"},
+		{name: "host lowercased", raw: "https://API.Example.COM/v1", want: "https://api.example.com/v1", wantHost: "api.example.com"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			base, _, err := validateCustomBaseURL(tc.raw)
+			if tc.allowLoopback {
+				t.Setenv(MPAllowLoopbackBaseURLEnv, "1")
+			}
+			base, host, err := validateCustomBaseURL(tc.raw)
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, ErrCustomBaseURL)
@@ -52,6 +79,7 @@ func TestValidateCustomBaseURL(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, base)
+			assert.Equal(t, tc.wantHost, host)
 		})
 	}
 }
@@ -107,9 +135,9 @@ func TestCreateListingWithCustomBaseURL(t *testing.T) {
 
 	listing, err := CreateListing(db, CreateListingInput{
 		SellerID:        10023,
-		APIKey:         listingTestKey,
-		CustomBaseURL:  "https://api.example.com",
-		Models:         []string{"deepseek-flash"},
+		APIKey:          listingTestKey,
+		CustomBaseURL:   "https://api.example.com",
+		Models:          []string{"deepseek-flash"},
 		MultiplierMilli: 500,
 	})
 	require.NoError(t, err)
@@ -129,9 +157,9 @@ func TestCreateListingWithCustomBaseURL(t *testing.T) {
 	// A second listing on the same URL reuses the channel row.
 	again, err := CreateListing(db, CreateListingInput{
 		SellerID:        10023,
-		APIKey:         "sk-other-key-abcdef",
-		CustomBaseURL:  "https://api.example.com",
-		Models:         []string{"deepseek-flash"},
+		APIKey:          "sk-other-key-abcdef",
+		CustomBaseURL:   "https://api.example.com",
+		Models:          []string{"deepseek-flash"},
 		MultiplierMilli: 400,
 	})
 	require.NoError(t, err)
@@ -140,9 +168,9 @@ func TestCreateListingWithCustomBaseURL(t *testing.T) {
 	// A model outside the platform catalogue is refused.
 	_, err = CreateListing(db, CreateListingInput{
 		SellerID:        10023,
-		APIKey:         "sk-third-key-abcdef",
-		CustomBaseURL:  "https://api2.example.com",
-		Models:         []string{"not-in-catalogue"},
+		APIKey:          "sk-third-key-abcdef",
+		CustomBaseURL:   "https://api2.example.com",
+		Models:          []string{"not-in-catalogue"},
 		MultiplierMilli: 400,
 	})
 	require.Error(t, err)
@@ -177,6 +205,7 @@ func fakeCustomUpstream(t *testing.T, key string, models ...string) *httptest.Se
 		seen[fmt.Sprint(body["model"])] = true
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   body["model"],
 			"choices": []map[string]any{{"message": map[string]any{"content": "pong"}}},
 			"usage":   map[string]any{"prompt_tokens": 1, "completion_tokens": 1},
 		})
@@ -190,6 +219,7 @@ func fakeCustomUpstream(t *testing.T, key string, models ...string) *httptest.Se
 }
 
 func TestVerifyListingCustomChannelNormalizesBase(t *testing.T) {
+	t.Setenv(MPAllowLoopbackBaseURLEnv, "1")
 	db := newListingTestDB(t)
 
 	const key = "sk-custom-upstream-key"
@@ -197,9 +227,9 @@ func TestVerifyListingCustomChannelNormalizesBase(t *testing.T) {
 
 	listing, err := CreateListing(db, CreateListingInput{
 		SellerID:        10023,
-		APIKey:         key,
-		CustomBaseURL:  server.URL, // no /v1 — detection must add it
-		Models:         []string{"deepseek-flash"},
+		APIKey:          key,
+		CustomBaseURL:   server.URL, // no /v1 — detection must add it
+		Models:          []string{"deepseek-flash"},
 		MultiplierMilli: 500,
 	})
 	require.NoError(t, err)
@@ -231,15 +261,16 @@ func TestVerifyListingCustomChannelNormalizesBase(t *testing.T) {
 }
 
 func TestVerifyListingCustomChannelBadKeyStaysDraft(t *testing.T) {
+	t.Setenv(MPAllowLoopbackBaseURLEnv, "1")
 	db := newListingTestDB(t)
 
 	server := fakeCustomUpstream(t, "sk-the-right-key", "deepseek-flash")
 
 	listing, err := CreateListing(db, CreateListingInput{
 		SellerID:        10023,
-		APIKey:         "sk-the-wrong-key",
-		CustomBaseURL:  server.URL,
-		Models:         []string{"deepseek-flash"},
+		APIKey:          "sk-the-wrong-key",
+		CustomBaseURL:   server.URL,
+		Models:          []string{"deepseek-flash"},
 		MultiplierMilli: 500,
 	})
 	require.NoError(t, err)
@@ -298,6 +329,7 @@ func TestListVendorsHidesCustomChannelsFromOthers(t *testing.T) {
 }
 
 func TestProbeCustomChannelKeyDetectsV1(t *testing.T) {
+	t.Setenv(MPAllowLoopbackBaseURLEnv, "1")
 	db := newListingTestDB(t)
 
 	const key = "sk-probe-key"

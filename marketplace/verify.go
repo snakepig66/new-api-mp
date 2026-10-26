@@ -63,6 +63,10 @@ type VerifyResult struct {
 	// ModelResults is the per-model call result for VerifyListing. The key
 	// verification helper fills at most one entry (its explicit probe model).
 	ModelResults []ModelVerifyResult
+	// Fingerprints is the per-model fail-closed tokenizer comparison recorded
+	// by VerifyListing (and the patrol). An empty entry or Checked=false means
+	// the model was not certified against the official endpoint.
+	Fingerprints []FingerprintModelResult
 	FailReason   string // never carries the key or the upstream body (§3.11)
 }
 
@@ -262,13 +266,28 @@ func probeModelCall(ctx context.Context, client *http.Client, baseURL, model, ap
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return false, false, latencyMs, modelCallFailureReason(resp.StatusCode)
 	}
-	// HTTP 200 means the model answered; the prompt-cache fields are
-	// informational and a malformed body never makes a served model fail.
+	// HTTP 200 is only callability when the body is a real chat completion:
+	// it must decode, carry at least one choice, non-empty usage and a
+	// non-empty model id. A 200 with an error envelope or a truncated body is
+	// a failed probe (fail-closed), never a served model, and the prompt-cache
+	// fields remain informational only.
 	var cr struct {
+		Model   string `json:"model"`
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
 		Usage map[string]any `json:"usage"`
 	}
 	if err := common.DecodeJson(io.LimitReader(resp.Body, maxVerifyBodyBytes), &cr); err != nil {
-		return true, false, latencyMs, ""
+		return false, false, latencyMs, "模型返回了无法解析的响应"
+	}
+	if len(cr.Choices) == 0 || len(cr.Usage) == 0 {
+		return false, false, latencyMs, "模型返回的响应缺少 choices 或 usage"
+	}
+	if strings.TrimSpace(cr.Model) == "" {
+		return false, false, latencyMs, "模型返回的响应缺少 model 字段"
 	}
 	_, hit := cr.Usage["prompt_cache_hit_tokens"]
 	_, miss := cr.Usage["prompt_cache_miss_tokens"]
@@ -515,67 +534,92 @@ func VerifyListing(ctx context.Context, db *gorm.DB, client *http.Client, limite
 		}
 	}
 
-	// Fingerprint spot check when the platform holds the origin vendor's key.
-	// A mismatch keeps the listing in draft; it never bans the qualification.
-	fingerprintChecked := false
-	fingerprintOK := true
-	fingerprintRatio := 0.0
-	fingerprintReason := ""
+	// Fingerprint comparison (fail-closed). Every model that survived the
+	// callability probe must also match the platform's official endpoint: a
+	// model is certified only when BOTH checks pass. A comparison that cannot
+	// run — no official platform key for the origin vendor, an official
+	// transport/status failure, missing usage, a prompt too short to judge —
+	// is a verification failure, not an implicit pass.
+	//
+	// MP_PLATFORM_KEYS unset means the deployment holds no platform credential
+	// at all: fingerprinting is disabled as a whole and the attempt is
+	// recorded as not configured. Once any platform key exists, every listed
+	// model is required to compare successfully (a missing key for one origin
+	// vendor fails that model).
+	fingerprintConfigured := PlatformFingerprintConfigured()
+	var fingerprintFailures []string
 	if res.OK {
 		for _, m := range listing.Models {
-			model, found := ModelPoolByName(db, m)
-			if !found {
-				continue
+			fr := FingerprintModelResult{Model: m, UpstreamModel: upstreamByModel[m]}
+			if fingerprintConfigured {
+				model, found := ModelPoolByName(db, m)
+				if !found {
+					fr.FailReason = "model is not in the platform pool; no official reference"
+				} else if officialKey, hasKey := PlatformKeyForVendor(model.OriginVendor); !hasKey {
+					fr.FailReason = "no platform key for origin vendor " + model.OriginVendor
+				} else if officialVendor, foundVendor := lookupVendorForDB(db, model.OriginVendor); !foundVendor {
+					fr.FailReason = "origin vendor " + model.OriginVendor + " is not whitelisted"
+				} else {
+					officialUpstream := model.Name
+					if cm, foundCM := ChannelModelFor(db, model.OriginVendor, model.Name); foundCM {
+						officialUpstream = cm.UpstreamModel
+					}
+					prompt := model.VerifyPrompt
+					if strings.TrimSpace(prompt) == "" {
+						prompt = defaultFingerprintPrompt
+					}
+					fp := CompareFingerprint(ctx, client, officialVendor, officialKey, officialUpstream,
+						vendor, apiKey, upstreamByModel[m], prompt)
+					fr.Checked = fp.Checked
+					fr.Matched = fp.Passed()
+					fr.Ratio = fp.Ratio
+					fr.FailReason = fp.FailReason
+				}
+			} else {
+				fr.FailReason = "platform fingerprint keys are not configured"
 			}
-			officialKey, hasKey := PlatformKeyForVendor(model.OriginVendor)
-			if !hasKey {
-				continue
+			if fingerprintConfigured && (!fr.Checked || !fr.Matched) {
+				reason := fr.FailReason
+				if reason == "" {
+					reason = "fingerprint mismatch"
+				}
+				fingerprintFailures = append(fingerprintFailures, m+"："+reason)
 			}
-			officialVendor, foundVendor := lookupVendorForDB(db, model.OriginVendor)
-			if !foundVendor {
-				continue
-			}
-			officialUpstream := model.Name
-			if cm, foundCM := ChannelModelFor(db, model.OriginVendor, model.Name); foundCM {
-				officialUpstream = cm.UpstreamModel
-			}
-			prompt := model.VerifyPrompt
-			if strings.TrimSpace(prompt) == "" {
-				prompt = defaultFingerprintPrompt
-			}
-			fp := CompareFingerprint(ctx, client, officialVendor, officialKey, officialUpstream,
-				vendor, apiKey, upstreamByModel[m], prompt)
-			if !fp.Checked {
-				continue
-			}
-			fingerprintChecked = true
-			fingerprintOK = fp.WithinTolerance
-			fingerprintRatio = fp.Ratio
-			fingerprintReason = fp.FailReason
-			if !fp.WithinTolerance {
-				res.OK = false
-				res.FailReason = "fingerprint mismatch: the channel is not serving the official model"
-			}
-			break
+			res.Fingerprints = append(res.Fingerprints, fr)
 		}
+	}
+	if len(fingerprintFailures) > 0 {
+		res.OK = false
+		res.FailReason = "fingerprint verification failed: " + strings.Join(fingerprintFailures, "；")
 	}
 
 	// Record the probe (§4.2): the JSON detail summarizes the check and
 	// never contains the key (§2.3).
 	detailMap := map[string]any{
-		"key_valid":     res.KeyValid,
-		"models":        len(res.Models),
-		"has_balance":   res.BalanceMicro != nil,
-		"prompt_cache":  res.PromptCacheSupport,
-		"fail_reason":   res.FailReason,
-		"model_results": res.ModelResults,
-		"listed_models": listing.Models,
+		"key_valid":            res.KeyValid,
+		"models":               len(res.Models),
+		"has_balance":          res.BalanceMicro != nil,
+		"prompt_cache":         res.PromptCacheSupport,
+		"fail_reason":          res.FailReason,
+		"model_results":        res.ModelResults,
+		"listed_models":        listing.Models,
+		"fingerprint_required": fingerprintConfigured,
 	}
-	if fingerprintChecked {
-		detailMap["fingerprint_checked"] = true
-		detailMap["fingerprint_ok"] = fingerprintOK
-		detailMap["fingerprint_ratio"] = fingerprintRatio
-		detailMap["fingerprint_reason"] = fingerprintReason
+	if len(res.Fingerprints) > 0 {
+		fingerprintChecked := true
+		fingerprintOK := true
+		for _, fr := range res.Fingerprints {
+			fingerprintChecked = fingerprintChecked && fr.Checked
+			fingerprintOK = fingerprintOK && fr.Matched
+		}
+		detailMap["fingerprints"] = res.Fingerprints
+		detailMap["fingerprint_checked"] = fingerprintChecked
+		if fingerprintChecked {
+			detailMap["fingerprint_ok"] = fingerprintOK
+		}
+		if len(fingerprintFailures) > 0 {
+			detailMap["fingerprint_reason"] = strings.Join(fingerprintFailures, "；")
+		}
 	}
 	detail, err := common.Marshal(detailMap)
 	if err != nil {

@@ -735,3 +735,91 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 - 渠道详情「最近检测记录」的类型列直接显示英文 patrol/verify，改为中文。
 - 健康卡每 60 秒自动刷新（此前打开页面后数值一直停在首次加载）。
 - 前端新增 probe.test.ts / ListingHealthCard.test.tsx；typecheck、build、vitest 39 文件 200 测试通过；已部署并确认线上 chunk 含新文案。
+
+---
+
+## P0 止血：安全与计费漏洞修复（2026-10-26）
+
+开发方式：主智能体监工、三个子智能体并行实现（入网/出网卫生、验真 fail-closed、计费封顶+分账），主智能体验收、整改并复跑全部门禁。
+
+### 做了什么
+
+**入网/出网卫生（Agent A）**：
+- `custom_channel.go` URL 规范化：拒绝 dot-segment（`..`）、编码分隔符（`%2e`/`%2f`/`%5c`）、`//`、`;`；host 小写 + IDNA punycode；非 loopback 仅允许 443 端口或不写端口；loopback 例外改为 `MP_ALLOW_LOOPBACK_BASE_URL=1` 环境变量放行（默认拒绝）；截掉末尾 `/chat/completions`/`/messages`/`/responses`/`/models`；折叠重复 `/v1`；公共后缀（PSL）拒绝。
+- `egress.go` 白名单两级化：卖家渠道 host 精确匹配（不再点后缀）；仅 live/canary listing 的 host 进入 relay 白名单；新增 `EgressVerifyHTTPClient`（SSRF 防护但不查白名单）供 probe/验证/巡检使用；所有 egress 客户端禁止跟随重定向（`CheckRedirect = http.ErrUseLastResponse`）。
+- `api_seller.go` probe 去副作用：零 DB 写入（移除 `ensureCustomChannel` 调用）；加 `RequireActiveSeller` 门槛；per-seller（10 次/分）与 per-IP（30 次/分）双维度限流；余额响应只返回「足够/不足」布尔；同一 Key 指纹跨账号探测告警。
+- `vendors.go` refreshVendorRegistry：只有 live/canary listing 的渠道 host 才进入 relay 白名单。
+
+**验真 fail-closed（Agent B）**：
+- `fingerprint.go` CompareFingerprint 改为 fail-closed：transport error / non-200 / missing usage / prompt tokens < 20 全部视为 FAIL（不再 unchecked=pass）；不匹配（超 5% 或 3 tokens 容差）明确 FAIL；删除 `http.DefaultClient` fallback（无注入客户端直接失败）。
+- `verify.go` probeModelCall 严格化：HTTP 200 必须可解析为合法 chat completion（choices 非空、usage 非空、model 非空），否则该模型不可调用。
+- `verify.go` VerifyListing：每个通过探活的模型都必须通过指纹比对；无官方 Key、官方请求失败、usage 缺失、prompt 太短、超容差全部记为失败；最终 `res.OK=false` 并给出具体失败原因。
+- `listing.go` 状态机加固：PassVerification 要求最新 verify probe 为 OK；ResumeListing 由 paused→live 改为 paused→draft（强制重新验证）；TransitionListing 禁止非 canary 直接进入 live。
+- `jobs.go` 巡检：客户端切换为 `EgressVerifyHTTPClient`；比对未完成/失败时立即 AutoPause（fail-closed）；已完成的不匹配保留 2 次连续计数策略。
+
+**计费封顶 + 资金来源分账（Agent C）**：
+- `record.go` SettleRelay 结算封顶：实际结算金额 = min(actual, preConsumed)；超出部分记录到 `mp_requests.capped_micro` 并写日志。
+- `billing.go` settleInTx：移除「超额 drain 钱包」逻辑，改为防御性封顶。
+- Schema 变更：`users.gift_quota`（赠送余额）；`mp_requests.gift_debit_micro` + `capped_micro`。
+- 资金来源追踪：充值只加 paid（quota）；兑换码/邀请奖励加 gift（quota + gift_quota）；管理员手动调整默认加 gift。
+- 消费判断：官方渠道（`mp_channels.kind == official`）可用 gift；卖家渠道只能用 paid（`quota - gift_quota`），不足时返回 402。
+- 结算拆分：`gift_used = min(charged, gift_quota)`；`users.quota -= actual`；`users.gift_quota -= gift_used`；`mp_requests.gift_debit_micro = gift_used`。
+- 退款：按原路退回（gift 部分回 gift_quota）。
+- 提现保护：`AvailableBalance` 扣除 `gift_debit_micro > 0` 的 seller_credit（gift 产生的收入不可提现）。
+- 钱包展示：返回 `balance_micro`、`gift_quota_micro`、`paid_quota_micro`。
+
+### 取舍与整改记录
+
+- **MP_PLATFORM_KEYS 完全未设置时不阻断验证**：避免没有官方凭据的部署无法上架；一旦变量已定义（包括空串、非法 JSON）则全部 fail-closed。
+- **ResumeSellerListing 仍是 paused→live**：该路径被未授权的 API 测试固定，且函数没有 HTTP client/ctx，无法内联重验；已增加「最新 verify probe 失败则拒绝恢复」的下限检查。平台侧 ResumeListing 已改为强制重验。
+- **官方渠道判定用 `kind == official`**：而非「channel 未被任何 mp_listings 关联」。原因：市场请求必然经由卖家 listing 选路，「无 listing 关联」永真不存在，会让 gift 完全不可用。
+- **gift 不在冻结时锁定**：结算时读取实时 gift；并发超卖按平台损失处理，不会产生套现。
+- **IPv6 额外拒绝 `fec0::/10`、`::/96`、`64:ff9b:1::/48`**：Go 仍将其视为 global unicast 但并非公网可路由目标。
+- **自定义 URL probe 对非法 URL 直接 400**：在消耗限流/上游额度前快速拒绝。
+
+### 测试结果
+
+- `go build ./...` ✅
+- `go test ./marketplace/... -count=1` ✅（50.046s）
+- `go test ./model/... -count=1` ✅（13.104s）
+- 基线有偶发 flake（`TestRelayIT_*` localhost dial timeout），重跑通过。
+
+**数据库矩阵**：环境未设置 `MP_TEST_MYSQL_DSN` / `MP_TEST_POSTGRES_DSN`，只实际验证了 SQLite。新增 SQL 均为方言中立的列运算/条件 UPDATE/CASE/JOIN，未使用数据库特定语法。
+
+### P0-1 待办：PRODUCTION.md 历史清理与凭据轮换
+
+**现状**：`docs/marketplace/PRODUCTION.md` 历史版本（cbaa874b2、5eb42a8ee、84fadea66、c9fc80d0b）包含生产 IP、SSH 密钥文件名、root 登录方式、内部端口拓扑、凭据文件路径。无明文密码/密钥值。仓库在 GitHub 上是 PUBLIC。
+
+**已做**：当前版本已脱敏（移除 IP、SSH 命令、内部拓扑细节）。
+
+**待做**（需要用户确认后执行）：
+1. 历史清理：
+   ```bash
+   # 备份
+   git clone --mirror . ../new-api-backup
+   
+   # 从历史中移除 PRODUCTION.md（git-filter-repo 已安装）
+   git filter-repo --path docs/marketplace/PRODUCTION.md --invert-paths
+   
+   # 重新提交脱敏版本
+   git add docs/marketplace/PRODUCTION.md
+   git commit -m "docs: 重新添加脱敏后的生产部署文档"
+   
+   # force-push（破坏性操作，会改变所有 commit hash）
+   git push origin mp --force-with-lease
+   ```
+2. 凭据轮换清单：
+   - SSH 密钥 `llmjar_prod_ed25519`：生成新密钥对，更新服务器 authorized_keys，删除旧密钥。
+   - `MP_KEY_SECRET`：生成新值，更新 `/etc/llmjar.env`，重启服务。**注意**：旧值加密的上游 Key 将无法解密，需要卖家重新提交或提前迁移。
+   - `SESSION_SECRET`：生成新值，更新 `/etc/llmjar.env`，重启服务（所有用户需重新登录）。
+   - admin 密码：通过管理界面或数据库更新。
+   - 网关凭据（`/opt/codely-bridge/accounts` 等）：轮换各网关的 API key。
+3. 安全组复查：确认只放行 22、80、443；考虑限制 SSH 来源 IP。
+
+### 发现但未处理的相邻问题
+
+- `BillingSession` 结算/退款直接 `UPDATE users.quota`，不更新 Redis quota 缓存；开启 Redis 时缓存可能与库漂移（既有问题）。
+- `model/subscription.go` 等少数直接写 `quota` 的路径未做 gift 夹紧。
+- `GetSelfUserById` 未投影 `gift_quota`（钱包 API 已返回）。
+- `mp_requests` 记录 API 未暴露 `gift_debit_micro` / `capped_micro`。
+- `controller` 下两个既有测试失败与本次无关：`TestManageUserQuotaMiddlewareKeepsOneOperationPerRequest` 因 `ACCESS_TOKEN_LEGACY_RETIRED` 环境/日期问题 401；`TestDeleteRedemptionBatch` 的审计日志断言失败。

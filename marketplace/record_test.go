@@ -3,6 +3,7 @@ package marketplace
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -21,7 +22,13 @@ import (
 // so SettleRelay/FailRelay can be exercised against a real session.
 func settleFixture(t *testing.T, buyerQuota int, multiplierMilli int64) (*relayFixture, *gin.Context, *relaycommon.RelayInfo, Listing) {
 	t.Helper()
-	f := newRelayFixture(t, buyerQuota)
+	return settleFixtureWithGift(t, buyerQuota, 0, multiplierMilli)
+}
+
+// settleFixtureWithGift is settleFixture with an initial gift_quota.
+func settleFixtureWithGift(t *testing.T, buyerQuota, buyerGift int, multiplierMilli int64) (*relayFixture, *gin.Context, *relaycommon.RelayInfo, Listing) {
+	t.Helper()
+	f := newRelayFixtureWithGift(t, buyerQuota, buyerGift)
 	l := f.addListing(t, multiplierMilli)
 	f.addKeyModel(t, 77, "deepseek-flash", 0)
 	c := f.newRelayContext(t, []byte(`{"model":"deepseek-flash","max_tokens":100}`))
@@ -32,6 +39,14 @@ func settleFixture(t *testing.T, buyerQuota int, multiplierMilli int64) (*relayF
 	info := newChatInfo("deepseek-flash", &maxTokens)
 	require.Nil(t, PrepareBilling(c, info, stubEstimator(1000)))
 	return f, c, info, l
+}
+
+func buyerGiftQuotaIn(t *testing.T, db *gorm.DB, buyerID int64) int {
+	t.Helper()
+	var gift int
+	require.NoError(t, db.Model(&model.User{}).Where("id = ?", buyerID).
+		Select("gift_quota").Scan(&gift).Error)
+	return gift
 }
 
 func countRequests(t *testing.T, db *gorm.DB, requestID string) int64 {
@@ -205,25 +220,31 @@ func TestSettleRelayChannelOriginAndCoefficient(t *testing.T) {
 	assert.Equal(t, int64(expected.OfficialCost), rec.OfficialCostMicro)
 }
 
-// ledger books only what was actually collected and the difference is recorded
-// in the retry chain — never a seller credit for money the platform never got.
-func TestSettleRelayShortfallBooksCollected(t *testing.T) {
+// The settlement is capped at the pre-freeze: usage above the frozen estimate
+// is borne by the platform, never collected from the buyer. The record stores
+// the capped charge in TotalDebitMicro and the absorbed amount in CappedMicro;
+// the ledger still balances.
+func TestSettleRelayCappedAtPreFreeze(t *testing.T) {
 	f, c, info, _ := settleFixture(t, 10_000_000, 500)
+	s := CurrentRelaySession(c)
+	frozen := s.preFreeze.TotalDebit
+	require.Greater(t, frozen, Micro(0))
+
 	// Simulate the balance being spent elsewhere after the pre-freeze.
 	require.NoError(t, f.db.Model(&model.User{}).Where("id = ?", f.buyerID).Update("quota", 0).Error)
 
-	// Output far above the pre-freeze's max_tokens=100, so the actual quote
-	// exceeds the pre-consumed amount and the top-up cannot be collected.
+	// Output far above the pre-freeze's max_tokens=100.
 	usage := &dto.Usage{PromptTokens: 900, CompletionTokens: 5000}
 	micro := SettleRelay(c, info, usage)
-	require.Greater(t, micro, 0, "the pre-freeze was still collectable")
+	assert.Equal(t, int(frozen), micro, "the charge is capped at the frozen amount")
 
 	var rec Request
 	require.NoError(t, f.db.Where("request_id = ?", "req_relayhook_test").Take(&rec).Error)
 	assert.Equal(t, RequestSuccess, rec.Status)
-	assert.Equal(t, int64(micro), rec.TotalDebitMicro, "the record books the collected amount")
+	assert.Equal(t, int64(frozen), rec.TotalDebitMicro)
 	assert.Equal(t, rec.TotalDebitMicro, rec.TokenDebitMicro+rec.ToolDebitMicro)
-	assert.Contains(t, rec.RetryChain, HopEventSettleShortfall)
+	assert.Greater(t, rec.CappedMicro, int64(0), "the platform-borne excess is recorded")
+	assert.Contains(t, rec.RetryChain, HopEventSettleCapped)
 
 	rows := ledgerRows(t, f.db, "req_relayhook_test")
 	require.NotEmpty(t, rows)
@@ -232,7 +253,88 @@ func TestSettleRelayShortfallBooksCollected(t *testing.T) {
 		sum += r.AmountMicro
 	}
 	assert.Zero(t, sum, "ledger signed sum stays zero")
-	assert.Equal(t, 0, buyerQuota(t, int64(f.buyerID)), "the balance is drained, never negative")
+	assert.Equal(t, 0, buyerQuota(t, int64(f.buyerID)), "the buyer is never charged beyond the freeze")
+}
+
+// An official channel may spend gifted balance; the recorded gift_debit_micro
+// is the gifted part of the charge and both balances drop by it.
+func TestSettleRelayGiftDebitOnOfficialChannel(t *testing.T) {
+	f, c, info, _ := settleFixtureWithGift(t, 10_000_000, 10_000_000, 500)
+
+	usage := &dto.Usage{PromptTokens: 900, CompletionTokens: 80}
+	micro := SettleRelay(c, info, usage)
+	require.Greater(t, micro, 0)
+
+	var rec Request
+	require.NoError(t, f.db.Where("request_id = ?", "req_relayhook_test").Take(&rec).Error)
+	assert.Equal(t, RequestSuccess, rec.Status)
+	assert.Equal(t, int64(micro), rec.GiftDebitMicro, "the whole charge fits in the gift balance")
+	assert.Equal(t, int64(0), rec.CappedMicro)
+
+	require.NoError(t, info.Billing.Settle(micro))
+	assert.Equal(t, int64(10_000_000-micro), int64(buyerQuota(t, int64(f.buyerID))))
+	assert.Equal(t, 10_000_000-micro, buyerGiftQuotaIn(t, f.db, int64(f.buyerID)))
+
+	// A 冲正 returns the money to the original funding pools: paid and gift.
+	require.NoError(t, Reverse(f.db, "req_relayhook_test", time.Now()))
+	assert.Equal(t, 10_000_000, buyerQuota(t, int64(f.buyerID)), "the whole debit is refunded")
+	assert.Equal(t, 10_000_000, buyerGiftQuotaIn(t, f.db, int64(f.buyerID)), "the gifted part returns to gift_quota")
+}
+
+// Gift-funded seller credit stays in the ledger for audit but is never
+// withdrawable: the platform never collected real money for it.
+func TestSettleRelayGiftFundedIncomeNotWithdrawable(t *testing.T) {
+	f, c, info, l := settleFixtureWithGift(t, 10_000_000, 10_000_000, 500)
+
+	micro := SettleRelay(c, info, &dto.Usage{PromptTokens: 900, CompletionTokens: 80})
+	require.Greater(t, micro, 0)
+	require.NoError(t, info.Billing.Settle(micro))
+
+	_, err := PromoteAvailable(f.db, time.Now().Add(DefaultMaturity+time.Hour))
+	require.NoError(t, err)
+
+	bal, err := AvailableBalance(f.db, l.SellerID)
+	require.NoError(t, err)
+	assert.Zero(t, bal, "income funded by gift balance is not withdrawable")
+
+	// The ledger still records the seller credit for the request.
+	var credit int64
+	require.NoError(t, f.db.Model(&LedgerEntry{}).
+		Where("request_id = ? AND entry_type = ?", "req_relayhook_test", EntrySellerCredit).
+		Select("amount_micro").Scan(&credit).Error)
+	assert.Greater(t, credit, int64(0))
+}
+
+// A seller (plan) channel may only spend paid balance: PrepareBilling returns
+// 402 even though the total wallet, mostly gift, would cover the freeze.
+func TestPrepareBillingRejectsGiftOnSellerChannel(t *testing.T) {
+	f := newRelayFixtureWithGift(t, 10_000_000, 10_000_000)
+	require.NoError(t, f.db.Model(&ChannelModel{}).
+		Where("channel_slug = ?", "volcengine-ark-coding-plan").
+		Update("verified", true).Error)
+	listing, err := CreateListing(f.db, CreateListingInput{
+		SellerID:          f.sellerID,
+		VendorID:          "volcengine-ark-coding-plan",
+		APIKey:            uniqueTestKey("sk-seller-gift-plan"),
+		Models:            []string{"deepseek-v4-pro"},
+		MultiplierMilli:   1000,
+		PlanTermsAccepted: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.db.Model(&Listing{}).Where("id = ?", listing.ID).Update("status", ListingLive).Error)
+	f.addKeyModel(t, 77, "deepseek-v4-pro", 0)
+
+	c := f.newRelayContext(t, []byte(`{"model":"deepseek-v4-pro","max_tokens":100}`))
+	_, handled, _, err := BeginDistribute(c, "deepseek-v4-pro")
+	require.NoError(t, err)
+	require.True(t, handled)
+	maxTokens := uint(100)
+	info := newChatInfo("deepseek-v4-pro", &maxTokens)
+	apiErr := PrepareBilling(c, info, stubEstimator(1000))
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusPaymentRequired, apiErr.StatusCode)
+	assert.Equal(t, 10_000_000, buyerQuota(t, int64(f.buyerID)), "a refused freeze moves nothing")
+	assert.Equal(t, 10_000_000, buyerGiftQuotaIn(t, f.db, int64(f.buyerID)))
 }
 
 // §3.7: 上游正常结束但 0 输出 token → 判失败不扣费 (covers chat / responses /

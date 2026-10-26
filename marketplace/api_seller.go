@@ -14,6 +14,7 @@ package marketplace
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
@@ -366,18 +367,21 @@ func postSellerListing(c *gin.Context) {
 }
 
 // sellerVerifyClient is the http.Client used for the async verification
-// triggered by listing create / key replace. It defaults to the egress-checked
-// client; tests swap it for an httptest mock via setSellerVerifyClientForTest.
+// triggered by listing create / key replace. It defaults to the verify egress
+// client: dial-time public-IP validation always runs, but whitelist membership
+// does not, so a seller-submitted host can be verified before its listing is
+// approved into the relay whitelist (§3). Tests swap it for an httptest mock
+// via setSellerVerifyClientForTest.
 var (
 	sellerVerifyMu       sync.RWMutex
-	sellerVerifyClient   = EgressHTTPClient()
+	sellerVerifyClient   = EgressVerifyHTTPClient()
 	sellerVerifyLimiter  = NewVerifyLimiter(VerifyMaxConcurrent, VerifyPerMinute)
 	sellerVerifyInterval = 5 * time.Millisecond
 )
 
 // setSellerVerifyClientForTest swaps the async-verification client and limiter
 // and returns a restore function. It exists ONLY for tests: their mock vendors
-// are httptest servers on 127.0.0.1, which the §3.11 egress guard must keep
+// are httptest servers on 127.0.0.1, which the §3.11 dial guard must keep
 // refusing in production. Never call from non-test code.
 func setSellerVerifyClientForTest(client *http.Client) (restore func()) {
 	sellerVerifyMu.Lock()
@@ -414,6 +418,10 @@ func verifyListingAsync(db *gorm.DB, listingID int64) {
 		common.SysError(common.LogText("marketplace: verify listing %d: %s", listingID, err.Error()))
 		return
 	}
+	// A verified listing becomes canary, which is what admits a seller-defined
+	// channel's host to the relay whitelist (vendors.go). Reload now instead of
+	// waiting out the registry TTL; the reload is in-memory only.
+	refreshVendorRegistry(true)
 	if !res.OK {
 		common.SysLog(common.LogText("marketplace: listing %d verification failed: %s", listingID, res.FailReason))
 	}
@@ -587,6 +595,9 @@ func pauseSellerListing(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
 		return
 	}
+	// A live listing was the channel's relay-whitelist membership; drop it on
+	// the next registry reload.
+	refreshVendorRegistry(true)
 	common.ApiSuccess(c, gin.H{"id": id, "status": ListingPaused})
 }
 
@@ -616,6 +627,9 @@ func resumeSellerListing(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
 		return
 	}
+	// The listing is live again, so its custom channel may rejoin the relay
+	// whitelist immediately.
+	refreshVendorRegistry(true)
 	common.ApiSuccess(c, gin.H{"id": id, "status": ListingLive})
 }
 
@@ -799,6 +813,113 @@ func sellerVerifyResources() (*http.Client, *VerifyLimiter) {
 	return sellerVerifyClient, sellerVerifyLimiter
 }
 
+// Probe rate limits (§5): dry-run probes spend upstream credit and can be
+// used to enumerate a key, so they are bounded per seller and per client IP in
+// process memory. A fixed one-minute window is enough — this is abuse
+// protection, not billing.
+const (
+	probeSellerPerMinute  = 10
+	probeIPPerMinute      = 30
+	probeRateWindowLength = time.Minute
+	// maxProbeRateWindows bounds the in-memory counter map; expired windows are
+	// purged when it is exceeded.
+	maxProbeRateWindows = 4096
+	// maxProbeFingerprintOwners bounds the cross-account probe tracker.
+	maxProbeFingerprintOwners = 4096
+)
+
+// ErrProbeRateLimited marks a probe refused by the per-seller or per-IP
+// fixed window. Callers map it to 429.
+var ErrProbeRateLimited = errors.New("marketplace: probe rate limit exceeded")
+
+// probeRateWindow is one fixed-window counter.
+type probeRateWindow struct {
+	start time.Time
+	count int
+}
+
+var probeRateState = struct {
+	mu      sync.Mutex
+	windows map[string]*probeRateWindow
+}{windows: make(map[string]*probeRateWindow)}
+
+// allowProbeRequest charges one probe to both the seller and the client IP,
+// returning ErrProbeRateLimited when either window is exhausted. The maps are
+// keyed with a prefix so the two dimensions never collide.
+func allowProbeRequest(sellerID int64, clientIP string, now time.Time) error {
+	probeRateState.mu.Lock()
+	defer probeRateState.mu.Unlock()
+	if len(probeRateState.windows) > maxProbeRateWindows {
+		for key, w := range probeRateState.windows {
+			if now.Sub(w.start) >= probeRateWindowLength {
+				delete(probeRateState.windows, key)
+			}
+		}
+	}
+	allow := func(key string, limit int) bool {
+		w, ok := probeRateState.windows[key]
+		if !ok || now.Sub(w.start) >= probeRateWindowLength {
+			probeRateState.windows[key] = &probeRateWindow{start: now, count: 1}
+			return true
+		}
+		if w.count >= limit {
+			return false
+		}
+		w.count++
+		return true
+	}
+	if !allow("seller:"+strconv.FormatInt(sellerID, 10), probeSellerPerMinute) {
+		return fmt.Errorf("%w: too many probes from this account", ErrProbeRateLimited)
+	}
+	if ip := strings.TrimSpace(clientIP); ip != "" && !allow("ip:"+ip, probeIPPerMinute) {
+		return fmt.Errorf("%w: too many probes from this address", ErrProbeRateLimited)
+	}
+	return nil
+}
+
+// probeFingerprintOwners remembers the first seller that probed each key
+// fingerprint. A second account probing the same key is an operator alert: it
+// suggests a leaked/shared credential. Nothing is persisted and only the
+// fingerprint prefix is logged (§2.3).
+var probeFingerprintOwners = struct {
+	mu     sync.Mutex
+	owners map[string]int64
+}{owners: make(map[string]int64)}
+
+// noteProbeFingerprint records one probe's key fingerprint and logs when a
+// different account probes the same key.
+func noteProbeFingerprint(fingerprint string, sellerID int64) {
+	prefix := fingerprint
+	if len(prefix) > 8 {
+		prefix = prefix[:8]
+	}
+	probeFingerprintOwners.mu.Lock()
+	owner, seen := probeFingerprintOwners.owners[fingerprint]
+	if !seen {
+		if len(probeFingerprintOwners.owners) >= maxProbeFingerprintOwners {
+			probeFingerprintOwners.owners = make(map[string]int64)
+		}
+		probeFingerprintOwners.owners[fingerprint] = sellerID
+	}
+	probeFingerprintOwners.mu.Unlock()
+	if seen && owner != sellerID {
+		common.SysError(common.LogText(
+			"marketplace: api key fp %s probed by seller %d, earlier probed by seller %d",
+			prefix, sellerID, owner))
+	}
+}
+
+// resetProbeStateForTest clears the process-local probe trackers so one test
+// cannot consume another test's quota.
+func resetProbeStateForTest() {
+	probeRateState.mu.Lock()
+	probeRateState.windows = make(map[string]*probeRateWindow)
+	probeRateState.mu.Unlock()
+	probeFingerprintOwners.mu.Lock()
+	probeFingerprintOwners.owners = make(map[string]int64)
+	probeFingerprintOwners.mu.Unlock()
+}
+
 // postSellerListingProbe serves POST /seller/listings/probe — one dry-run
 // verification identical to the async listing check (§3.5) plus the §4
 // certified-model discovery: key validity, balance, /models latency,
@@ -822,6 +943,13 @@ func postSellerListingProbe(c *gin.Context) {
 	if db == nil {
 		return
 	}
+	// A probe spends upstream credit and reads a seller's key; keep it behind
+	// the same active-seller gate as listing creation.
+	if err := RequireActiveSeller(db, sellerID); err != nil {
+		status, msg := sellerGateStatus(err)
+		common.ApiErrorStatus(c, status, errors.New(msg))
+		return
+	}
 	var req sellerProbeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
@@ -832,24 +960,34 @@ func postSellerListingProbe(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("api_key is required"))
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
-	defer cancel()
-	client, limiter := sellerVerifyResources()
-	if err := limiter.Acquire(ctx); err != nil {
-		common.ApiErrorStatus(c, http.StatusTooManyRequests, errors.New("verification is busy, try again later"))
+	// Two fixed windows: the account cannot fan out key checks, and one client
+	// address cannot sweep accounts. Both answer 429.
+	if err := allowProbeRequest(sellerID, c.ClientIP(), time.Now()); err != nil {
+		common.ApiErrorStatus(c, http.StatusTooManyRequests, err)
 		return
 	}
-	defer limiter.Release()
+	// Same key probed by a different account is an operator alert (memory only:
+	// the probe path never writes a row).
+	if fingerprint, ferr := ListingKeyFingerprint(apiKey); ferr == nil {
+		noteProbeFingerprint(fingerprint, sellerID)
+	}
 
-	// Seller-defined upstream: register the channel row (the host must pass
-	// the §3.11 egress guard on these dials), then probe the raw URL and
-	// intersect the upstream's model names with the platform catalogue.
+	// Seller-defined upstream: validation and the probe are read-only. The
+	// channel row (and any relay-whitelist membership) is provisioned by
+	// CreateListing when the seller submits, never by a dry run.
 	if strings.TrimSpace(req.CustomBaseURL) != "" {
-		if _, err := ensureCustomChannel(db, sellerID, req.CustomBaseURL, nil); err != nil {
+		if _, _, err := validateCustomBaseURL(req.CustomBaseURL); err != nil {
 			common.ApiErrorStatus(c, http.StatusBadRequest, err)
 			return
 		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+		defer cancel()
+		client, limiter := sellerVerifyResources()
+		if err := limiter.Acquire(ctx); err != nil {
+			common.ApiErrorStatus(c, http.StatusTooManyRequests, errors.New("verification is busy, try again later"))
+			return
+		}
+		defer limiter.Release()
 		detected, keyRes, sellable := probeCustomChannelKey(ctx, client, db, req.CustomBaseURL, apiKey)
 		coefficients := make(map[string]int64, len(sellable))
 		for _, m := range sellable {
@@ -873,16 +1011,16 @@ func postSellerListingProbe(c *gin.Context) {
 			failReason = "上游没有平台在售的模型（模型名需要与平台一致）"
 		}
 		common.ApiSuccess(c, gin.H{
-			"ok":              probeOK,
-			"models":          sellable,
-			"verified_models": sellable,
-			"coefficients":    coefficients,
-			"missing_models":  missing,
-			"latency_ms":      keyRes.LatencyMs,
-			"prompt_cache":    promptCache,
-			"balance_micro":   balance,
-			"key_valid":       keyRes.KeyValid,
-			"fail_reason":     failReason,
+			"ok":                 probeOK,
+			"models":             sellable,
+			"verified_models":    sellable,
+			"coefficients":       coefficients,
+			"missing_models":     missing,
+			"latency_ms":         keyRes.LatencyMs,
+			"prompt_cache":       promptCache,
+			"balance_sufficient": balance != nil && *balance > 0,
+			"key_valid":          keyRes.KeyValid,
+			"fail_reason":        failReason,
 		})
 		return
 	}
@@ -899,6 +1037,15 @@ func postSellerListingProbe(c *gin.Context) {
 			return
 		}
 	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+	client, limiter := sellerVerifyResources()
+	if err := limiter.Acquire(ctx); err != nil {
+		common.ApiErrorStatus(c, http.StatusTooManyRequests, errors.New("verification is busy, try again later"))
+		return
+	}
+	defer limiter.Release()
 
 	// §4 channel path: which upstream names can this key see on the channel?
 	keyRes := VerifyChannelKey(ctx, client, vendor, apiKey)
@@ -932,7 +1079,8 @@ func postSellerListingProbe(c *gin.Context) {
 
 	// Balance and prompt-cache support stay informational. They are only
 	// requested once the key listed at least one model: an invalid/empty key
-	// cannot turn OK, so spending its paid probe would be waste.
+	// cannot turn OK, so spending its paid probe would be waste. Only key
+	// sufficiency is surfaced — never the upstream balance itself.
 	var balance *int64
 	promptCache := false
 	if keyRes.OK {
@@ -956,16 +1104,16 @@ func postSellerListingProbe(c *gin.Context) {
 	}
 
 	common.ApiSuccess(c, gin.H{
-		"ok":              probeOK,
-		"models":          available,
-		"verified_models": available, // explicit alias for the seller wizard
-		"coefficients":    coefficients,
-		"missing_models":  missing,
-		"latency_ms":      keyRes.LatencyMs,
-		"prompt_cache":    promptCache,
-		"balance_micro":   balance, // null when the vendor has no balance endpoint
-		"key_valid":       keyRes.KeyValid,
-		"fail_reason":     failReason,
+		"ok":                 probeOK,
+		"models":             available,
+		"verified_models":    available, // explicit alias for the seller wizard
+		"coefficients":       coefficients,
+		"missing_models":     missing,
+		"latency_ms":         keyRes.LatencyMs,
+		"prompt_cache":       promptCache,
+		"balance_sufficient": balance != nil && *balance > 0,
+		"key_valid":          keyRes.KeyValid,
+		"fail_reason":        failReason,
 	})
 }
 

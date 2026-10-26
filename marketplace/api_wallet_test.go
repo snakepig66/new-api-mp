@@ -128,7 +128,9 @@ func seedWalletRequest(t *testing.T, db *gorm.DB, row Request) {
 func TestWalletSummary(t *testing.T) {
 	f := newWalletFixture(t)
 	const quota = 123_456_789
-	require.NoError(t, f.db.Model(&model.User{}).Where("id = ?", f.buyerID).Update("quota", quota).Error)
+	const gift = 23_456_789
+	require.NoError(t, f.db.Model(&model.User{}).Where("id = ?", f.buyerID).
+		Updates(map[string]any{"quota": quota, "gift_quota": gift}).Error)
 
 	now := time.Now()
 	monthStart, _, err := shanghaiMonthRange(now)
@@ -203,6 +205,8 @@ func TestWalletSummary(t *testing.T) {
 	require.Equal(t, true, body["success"])
 	data := apiData(t, body)
 	assert.Equal(t, int64(quota), apiNum(t, data, "balance_micro"))
+	assert.Equal(t, int64(gift), apiNum(t, data, "gift_quota_micro"))
+	assert.Equal(t, int64(quota-gift), apiNum(t, data, "paid_quota_micro"))
 	assert.Equal(t, int64(7500), apiNum(t, data, "month_spend_micro"))
 	assert.Equal(t, int64(6000), apiNum(t, data, "month_saved_micro"))
 

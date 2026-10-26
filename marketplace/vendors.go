@@ -251,8 +251,25 @@ func refreshVendorRegistry(force bool) {
 		return
 	}
 	channels := ChannelPoolAll(db)
+	// Seller-defined channels join the relay whitelist only once one of their
+	// listings is live (or canary, which carries gray traffic). Until then the
+	// host is reachable only by the verification client, whose dial policy
+	// skips whitelist membership (EgressVerifyHTTPClient). A query failure
+	// leaves the set empty, which fails closed.
+	liveVendors := make(map[string]bool)
+	if slices.ContainsFunc(channels, func(ch ChannelPool) bool { return isCustomChannelSlug(ch.Slug) }) {
+		var liveSlugs []string
+		if err := db.Model(&Listing{}).
+			Where("status IN ?", []string{ListingLive, ListingCanary}).
+			Distinct().Pluck("vendor", &liveSlugs).Error; err == nil {
+			for _, slug := range liveSlugs {
+				liveVendors[slug] = true
+			}
+		}
+	}
 	reg := make(map[string]Vendor, len(channels))
 	hosts := make([]string, 0, len(channels))
+	sellerHosts := make([]string, 0, len(channels))
 	patterns := make([]string, 0, len(channels))
 	for _, ch := range channels {
 		vendor, ok := ChannelPoolAsVendor(db, ch.Slug)
@@ -260,9 +277,21 @@ func refreshVendorRegistry(force bool) {
 			continue
 		}
 		reg[vendor.ID] = vendor
+		custom := isCustomChannelSlug(ch.Slug)
+		if custom && !liveVendors[ch.Slug] {
+			// The channel stays resolvable for verification/probe, but its
+			// seller-controlled host must not reach the relay whitelist yet.
+			continue
+		}
+		target := &hosts
+		if custom {
+			target = &sellerHosts
+		}
 		for _, raw := range []string{vendor.BaseURL, vendor.Protocols.OpenAI, vendor.Protocols.Anthropic} {
-			if u, err := url.Parse(raw); err == nil && u.Host != "" && !slices.Contains(hosts, u.Hostname()) {
-				hosts = append(hosts, u.Hostname())
+			if u, err := url.Parse(raw); err == nil && u.Host != "" {
+				if host := normalizeEgressHost(u.Hostname()); host != "" && !slices.Contains(*target, host) {
+					*target = append(*target, host)
+				}
 			}
 		}
 		if vendor.AllowHostPattern != "" && !slices.Contains(patterns, vendor.AllowHostPattern) {
@@ -277,7 +306,8 @@ func refreshVendorRegistry(force bool) {
 	// Keep egress in step with the pool. MP_EGRESS_DOMAINS adds deployment
 	// hosts on top of the pool (it no longer replaces the pool set, because
 	// seller-defined custom channels extend the pool at runtime); patterns
-	// always come from the pool.
+	// always come from the pool. Platform entries keep suffix semantics while
+	// seller hosts match exactly.
 	if extra := strings.TrimSpace(os.Getenv("MP_EGRESS_DOMAINS")); extra != "" {
 		for _, d := range strings.Split(extra, ",") {
 			if d = strings.TrimSpace(d); d != "" && !slices.Contains(hosts, d) {
@@ -286,6 +316,7 @@ func refreshVendorRegistry(force bool) {
 		}
 	}
 	SetEgressDomains(hosts)
+	SetEgressSellerHosts(sellerHosts)
 	if err := SetEgressPatterns(patterns); err != nil {
 		common.SysError(common.LogText("marketplace: vendor registry egress patterns: %s", err.Error()))
 	}

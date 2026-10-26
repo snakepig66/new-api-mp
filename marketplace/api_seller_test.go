@@ -100,6 +100,10 @@ func newSellerAPIFixture(t *testing.T) *sellerAPIFixture {
 	registerMeRoutes(grp)
 	RegisterVendorsRoutes(grp)
 
+	// Probe quota and fingerprint tracking are process-wide; a fresh fixture
+	// must not inherit another test's counters.
+	resetProbeStateForTest()
+
 	return &sellerAPIFixture{
 		db:       db,
 		engine:   engine,
@@ -554,8 +558,8 @@ func TestProbeDoesNotPersist(t *testing.T) {
 	assert.Equal(t, true, data["ok"])
 	assert.Equal(t, true, data["key_valid"])
 	assert.Equal(t, true, data["prompt_cache"])
-	assert.NotNil(t, data["balance_micro"])
-	assert.EqualValues(t, 12_340_000, data["balance_micro"])
+	assert.Equal(t, true, data["balance_sufficient"], "only enough/not-enough is surfaced")
+	assert.NotContains(t, data, "balance_micro", "the upstream balance itself is never returned")
 	models, ok := data["models"].([]any)
 	require.True(t, ok)
 	assert.Contains(t, models, "deepseek-flash")
@@ -571,6 +575,118 @@ func TestProbeDoesNotPersist(t *testing.T) {
 	require.NoError(t, f.db.Model(&Probe{}).Count(&probesAfter).Error)
 	assert.Equal(t, listingsBefore, listingsAfter, "probe must not create a listing")
 	assert.Equal(t, probesBefore, probesAfter, "probe must not write mp_probes")
+}
+
+// TestProbeRequiresActiveSeller covers the probe write gate: a pending (or
+// missing) seller row answers 403 before any upstream traffic.
+func TestProbeRequiresActiveSeller(t *testing.T) {
+	f := newSellerAPIFixture(t)
+	require.NoError(t, f.db.Model(&Seller{}).Where("user_id = ?", f.sellerID).
+		Update("status", SellerStatusPending).Error)
+
+	w := f.do(t, http.MethodPost, "/api/marketplace/seller/listings/probe", map[string]any{
+		"vendor_id": "deepseek", "api_key": verifyTestKey,
+	}, int(f.sellerID))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// TestProbeCustomURLDoesNotPersist covers the custom-URL dry run: it must not
+// create a channel-pool row, channel-model rows or egress whitelist
+// membership. Those side effects belong to CreateListing.
+func TestProbeCustomURLDoesNotPersist(t *testing.T) {
+	f := newSellerAPIFixture(t)
+	preserveEgressDomains(t)
+	SetEgressDomains(nil)
+	SetEgressSellerHosts(nil)
+
+	const key = "sk-probe-custom-key"
+	server := fakeCustomUpstream(t, key, "deepseek-flash")
+	target, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	restore := setSellerVerifyClientForTest(&http.Client{Transport: rewriteTransport{target: target}})
+	defer restore()
+
+	var channelsBefore, modelsBefore int64
+	require.NoError(t, f.db.Model(&ChannelPool{}).Count(&channelsBefore).Error)
+	require.NoError(t, f.db.Model(&ChannelModel{}).Count(&modelsBefore).Error)
+
+	w := f.do(t, http.MethodPost, "/api/marketplace/seller/listings/probe", map[string]any{
+		"custom_base_url": "https://probe-upstream.example.com",
+		"api_key":         key,
+		"models":          []string{"deepseek-flash"},
+	}, int(f.sellerID))
+	require.Equal(t, http.StatusOK, w.Code)
+	data := decodeSellerBody(t, w)["data"].(map[string]any)
+	assert.Equal(t, true, data["ok"])
+	assert.Equal(t, []any{"deepseek-flash"}, data["models"])
+	assert.NotContains(t, data, "balance_micro")
+	assert.Equal(t, false, data["balance_sufficient"], "the fake upstream has no balance endpoint")
+	assert.NotContains(t, w.Body.String(), key, "§2.3: probe never echoes the key")
+
+	var channelsAfter, modelsAfter int64
+	require.NoError(t, f.db.Model(&ChannelPool{}).Count(&channelsAfter).Error)
+	require.NoError(t, f.db.Model(&ChannelModel{}).Count(&modelsAfter).Error)
+	assert.Equal(t, channelsBefore, channelsAfter, "probe must not create a channel-pool row")
+	assert.Equal(t, modelsBefore, modelsAfter, "probe must not write channel-model rows")
+	var customChannels int64
+	require.NoError(t, f.db.Model(&ChannelPool{}).
+		Where("slug LIKE ?", customChannelSlugPrefix+"%").
+		Count(&customChannels).Error)
+	assert.Zero(t, customChannels, "probe must not provision a custom channel")
+	assert.ErrorIs(t, CheckEgressHost("probe-upstream.example.com"), ErrEgressDenied,
+		"probe must not touch the relay whitelist")
+}
+
+// TestProbeRateLimits covers both fixed windows: the account cap and the
+// client-IP cap each answer 429.
+func TestProbeRateLimits(t *testing.T) {
+	t.Run("per seller", func(t *testing.T) {
+		f := newSellerAPIFixture(t)
+		resetProbeStateForTest()
+		body := map[string]any{"vendor_id": "not-whitelisted", "api_key": verifyTestKey}
+		for i := range probeSellerPerMinute {
+			w := f.do(t, http.MethodPost, "/api/marketplace/seller/listings/probe", body, int(f.sellerID))
+			require.Equal(t, http.StatusBadRequest, w.Code, "request %d stays under the limit", i+1)
+		}
+		w := f.do(t, http.MethodPost, "/api/marketplace/seller/listings/probe", body, int(f.sellerID))
+		assert.Equal(t, http.StatusTooManyRequests, w.Code)
+	})
+
+	t.Run("per ip", func(t *testing.T) {
+		f := newSellerAPIFixture(t)
+		resetProbeStateForTest()
+		extraSellers := []int64{900001, 900002, 900003}
+		for _, uid := range extraSellers {
+			require.NoError(t, f.db.Create(&Seller{
+				UserID:           uid,
+				Status:           SellerStatusActive,
+				RealNameStatus:   SellerRealNameVerified,
+				AgreementVersion: CurrentSellerAgreementVersion,
+				PayoutAccount:    "fixture-encrypted-account",
+			}).Error)
+		}
+		sellers := append([]int64{f.sellerID}, extraSellers...)
+
+		codes := make([]int, 0, len(sellers)*probeSellerPerMinute)
+		for _, uid := range sellers {
+			body := map[string]any{
+				"vendor_id": "not-whitelisted",
+				"api_key":   uniqueTestKey("sk-probe-ip-" + strconv.FormatInt(uid, 10)),
+			}
+			for range probeSellerPerMinute {
+				w := f.do(t, http.MethodPost, "/api/marketplace/seller/listings/probe", body, int(uid))
+				codes = append(codes, w.Code)
+			}
+		}
+		require.Len(t, codes, len(sellers)*probeSellerPerMinute)
+		for i, code := range codes[:probeIPPerMinute] {
+			assert.Equal(t, http.StatusBadRequest, code, "request %d is under the IP limit", i+1)
+		}
+		for i, code := range codes[probeIPPerMinute:] {
+			assert.Equal(t, http.StatusTooManyRequests, code,
+				"request %d exceeds the IP limit", i+probeIPPerMinute+1)
+		}
+	})
 }
 
 // TestProbeListingDetail covers GET /seller/listings/:id: ownership, the last

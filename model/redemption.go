@@ -174,7 +174,8 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if result.RowsAffected == 0 {
 			return errors.New("redemption code already used")
 		}
-		return creditTopUpQuota(tx, userId, redemption.Quota, nil)
+		// 兑换码属于赠送额度：只可用于官方渠道，卖家渠道不可消费，也无法套现。
+		return creditTopUpQuota(tx, userId, redemption.Quota, redemption.Quota, nil)
 	})
 	if err != nil {
 		common.SysError(common.LogText("redemption failed: %s", err.Error()))

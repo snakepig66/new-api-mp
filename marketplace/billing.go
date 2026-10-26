@@ -66,9 +66,11 @@ type BillingSession struct {
 	db           *gorm.DB
 	buyerUserID  int
 	preConsumed  Micro
+	paidOnly     bool
 	settled      bool
 	refunded     bool
 	settledMicro Micro // amount actually charged by the winning Settle/SettleAtomic
+	settledGift  Micro // part of settledMicro paid with gifted balance
 	mu           sync.Mutex
 }
 
@@ -85,6 +87,14 @@ var _ relaycommon.BillingSettler = (*BillingSession)(nil)
 // phases (§3.8/§3.9); quota movement itself goes through the model package,
 // which owns the primary handle and the quota cache.
 func NewBillingSession(db *gorm.DB, buyerUserID int64, preConsume Micro) (*BillingSession, error) {
+	return NewBillingSessionWithPolicy(db, buyerUserID, preConsume, false)
+}
+
+// NewBillingSessionWithPolicy opens a pre-freeze session under an explicit
+// funding policy. paidOnly=true (a seller channel) freezes only the paid part
+// of users.quota, so gifted balance can never be spent there; paidOnly=false
+// (an official channel) may use the whole balance including gifts.
+func NewBillingSessionWithPolicy(db *gorm.DB, buyerUserID int64, preConsume Micro, paidOnly bool) (*BillingSession, error) {
 	if preConsume < 0 {
 		return nil, fmt.Errorf("%w: pre-freeze amount must be non-negative", ErrMoneyNegative)
 	}
@@ -96,7 +106,7 @@ func NewBillingSession(db *gorm.DB, buyerUserID int64, preConsume Micro) (*Billi
 	}
 	uid := int(buyerUserID)
 	if preConsume > 0 {
-		ok, err := model.TryReserveUserQuota(uid, int(preConsume))
+		ok, err := reserveBuyerQuota(uid, int(preConsume), paidOnly)
 		if err != nil {
 			return nil, fmt.Errorf("marketplace: pre-freeze reserve: %w", err)
 		}
@@ -104,18 +114,27 @@ func NewBillingSession(db *gorm.DB, buyerUserID int64, preConsume Micro) (*Billi
 			return nil, ErrInsufficientBalance
 		}
 	}
-	return &BillingSession{db: db, buyerUserID: uid, preConsumed: preConsume}, nil
+	return &BillingSession{db: db, buyerUserID: uid, preConsumed: preConsume, paidOnly: paidOnly}, nil
+}
+
+// reserveBuyerQuota performs the atomic freeze for the session's funding
+// policy: paid-only on seller channels, the whole wallet on official channels.
+func reserveBuyerQuota(uid, amount int, paidOnly bool) (bool, error) {
+	if paidOnly {
+		return model.TryReserveUserPaidQuota(uid, amount)
+	}
+	return model.TryReserveUserQuota(uid, amount)
 }
 
 // Settle reconciles the pre-freeze against the actual debit actualQuota
 // (微元, computed by Quote and passed in through the seam):
 //
 //   - actual < preConsumed: the difference is refunded to users.quota;
-//   - actual > preConsumed: the difference is topped up. When the balance
-//     cannot cover the top-up the session settles for what could actually be
-//     deducted (the balance is drained to exactly zero, never negative) and
-//     the shortfall is logged via common.SysError;
-//   - actual == preConsumed: no quota movement.
+//   - actual >= preConsumed: the charge is capped at preConsumed. A request
+//     never costs more than the amount frozen before it started; the excess is
+//     borne by the platform (it is recorded by SettleRelay as CappedMicro);
+//   - the gifted part of the charge is deducted from users.gift_quota, the
+//     paid part is the remainder (settleInTx).
 //
 // Settle is idempotent: once settled or refunded it returns nil without
 // moving quota again. It wraps SettleAtomic in its own transaction, so the
@@ -141,15 +160,13 @@ func (s *BillingSession) Settle(actualQuota int) error {
 //
 //   - actual <= preConsumed: the difference is credited back to users.quota;
 //     charged == actual.
-//   - actual > preConsumed: the difference is deducted from users.quota. When
-//     the balance cannot cover it, the remaining balance is drained to exactly
-//     zero and charged == preConsumed + drained (< actual); the shortfall is
-//     logged and the caller books only the money actually received.
+//   - actual > preConsumed: charged == preConsumed (the settlement cap); the
+//     excess is never collected. A defensive log records such a call.
 //
 // All quota movement is a direct conditional UPDATE inside tx, so it is atomic
 // with the caller's ledger writes and never crosses the transaction boundary.
 // Once settled (or refunded) the session replays its recorded charge and moves
-// no money.
+// no money. SettledGift reports the gifted part of the winning charge.
 func (s *BillingSession) SettleAtomic(tx *gorm.DB, actual Micro) (charged Micro, err error) {
 	if tx == nil {
 		return 0, errors.New("marketplace: settle requires a transaction")
@@ -165,69 +182,100 @@ func (s *BillingSession) SettleAtomic(tx *gorm.DB, actual Micro) (charged Micro,
 	if s.settled {
 		return s.settledMicro, nil
 	}
-	charged, err = s.settleInTx(tx, actual)
+	var giftUsed Micro
+	charged, giftUsed, err = s.settleInTx(tx, actual)
 	if err != nil {
 		return 0, err
 	}
 	s.settled = true
 	s.settledMicro = charged
+	s.settledGift = giftUsed
 	return charged, nil
 }
 
+// SettledGift returns the gifted part of the amount recorded by the winning
+// Settle/SettleAtomic (0 before settlement or after a refund). It is read
+// while the caller holds no session lock and is therefore safe to call right
+// after SettleAtomic returns.
+func (s *BillingSession) SettledGift() Micro {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.settledGift
+}
+
+// PaidOnly reports whether this session may only spend the paid part of the
+// wallet (seller channel).
+func (s *BillingSession) PaidOnly() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.paidOnly
+}
+
 // settleInTx performs the quota reconciliation against tx. The caller holds
-// s.mu.
-func (s *BillingSession) settleInTx(tx *gorm.DB, actual Micro) (Micro, error) {
-	if actual <= s.preConsumed {
-		refund := s.preConsumed - actual
-		if refund > 0 {
-			res := tx.Model(&model.User{}).
-				Where("id = ?", s.buyerUserID).
-				Update("quota", gorm.Expr("quota + ?", int64(refund)))
-			if res.Error != nil {
-				return 0, fmt.Errorf("marketplace: settle refund difference: %w", res.Error)
-			}
-			if res.RowsAffected != 1 {
-				return 0, fmt.Errorf("marketplace: settle refund difference: user %d not found", s.buyerUserID)
-			}
-		}
-		return actual, nil
+// s.mu. The settled amount is capped at the pre-freeze: the platform absorbs
+// any excess rather than charging the buyer beyond what was frozen.
+func (s *BillingSession) settleInTx(tx *gorm.DB, actual Micro) (charged, giftUsed Micro, err error) {
+	if actual > s.preConsumed {
+		common.SysError(common.LogText(
+			"marketplace: settle amount %d exceeds pre-freeze %d (userId=%d); charging pre-freeze only",
+			int64(actual), int64(s.preConsumed), s.buyerUserID))
+		actual = s.preConsumed
 	}
-
-	delta := actual - s.preConsumed
-	res := tx.Model(&model.User{}).
-		Where("id = ? AND quota >= ?", s.buyerUserID, int64(delta)).
-		Update("quota", gorm.Expr("quota - ?", int64(delta)))
-	if res.Error != nil {
-		return 0, fmt.Errorf("marketplace: settle top-up: %w", res.Error)
+	// Gift is not reserved at freeze time (P0: a concurrent oversell is a
+	// platform loss, never a cash-out path), so the split is decided here from
+	// the gift balance actually present. Decrement it before the refund so the
+	// users.quota / gift_quota invariant is evaluated against the final balance.
+	giftUsed, err = s.deductGift(tx, actual)
+	if err != nil {
+		return 0, 0, err
 	}
-	if res.RowsAffected == 1 {
-		return actual, nil
-	}
-
-	// Insufficient balance: lock the row, read what is left, drain it to
-	// exactly zero, and report the charge actually collected.
-	var user model.User
-	if err := lockForUpdate(tx).Select("id", "quota").
-		Where("id = ?", s.buyerUserID).First(&user).Error; err != nil {
-		return 0, fmt.Errorf("marketplace: settle shortfall: %w", err)
-	}
-	drained := 0
-	if user.Quota > 0 {
+	refund := s.preConsumed - actual
+	if refund > 0 {
 		res := tx.Model(&model.User{}).
-			Where("id = ? AND quota >= ?", s.buyerUserID, user.Quota).
-			Update("quota", gorm.Expr("quota - ?", user.Quota))
+			Where("id = ?", s.buyerUserID).
+			Update("quota", gorm.Expr("quota + ?", int64(refund)))
 		if res.Error != nil {
-			return 0, fmt.Errorf("marketplace: settle shortfall drain: %w", res.Error)
+			return 0, 0, fmt.Errorf("marketplace: settle refund difference: %w", res.Error)
 		}
-		if res.RowsAffected == 1 {
-			drained = user.Quota
+		if res.RowsAffected != 1 {
+			return 0, 0, fmt.Errorf("marketplace: settle refund difference: user %d not found", s.buyerUserID)
 		}
 	}
-	charged := s.preConsumed + Micro(drained)
-	common.SysError(common.LogText(
-		"marketplace: settle top-up shortfall (userId=%d, need=%d, drained=%d)",
-		s.buyerUserID, int64(delta), drained))
-	return charged, nil
+	return actual, giftUsed, nil
+}
+
+// deductGift subtracts min(actual, gift_quota) from users.gift_quota and
+// returns the amount actually taken. The conditional UPDATE is the race guard:
+// if a concurrent settlement already consumed the gift, no gift is booked for
+// this request (the charge stays paid, which can only reduce cash-out risk).
+func (s *BillingSession) deductGift(tx *gorm.DB, actual Micro) (Micro, error) {
+	if actual <= 0 || s.paidOnly {
+		// A seller channel settles entirely against paid balance; gift was never
+		// part of its freeze and must stay untouched.
+		return 0, nil
+	}
+	var gift int64
+	if err := tx.Model(&model.User{}).Where("id = ?", s.buyerUserID).
+		Select("gift_quota").Scan(&gift).Error; err != nil {
+		return 0, fmt.Errorf("marketplace: settle read gift quota: %w", err)
+	}
+	giftUsed := Micro(min(int64(actual), max(gift, 0)))
+	if giftUsed <= 0 {
+		return 0, nil
+	}
+	res := tx.Model(&model.User{}).
+		Where("id = ? AND gift_quota >= ?", s.buyerUserID, int64(giftUsed)).
+		Update("gift_quota", gorm.Expr("gift_quota - ?", int64(giftUsed)))
+	if res.Error != nil {
+		return 0, fmt.Errorf("marketplace: settle deduct gift quota: %w", res.Error)
+	}
+	if res.RowsAffected != 1 {
+		common.SysError(common.LogText(
+			"marketplace: settle gift race (userId=%d, wanted=%d); booking the charge as paid",
+			s.buyerUserID, int64(giftUsed)))
+		return 0, nil
+	}
+	return giftUsed, nil
 }
 
 // Refund returns the whole pre-freeze to the buyer's users.quota on the
@@ -261,7 +309,7 @@ func (s *BillingSession) Refund(c *gin.Context) {
 		_ = tx.Rollback().Error
 		return
 	}
-	_, err := s.settleInTx(tx, 0)
+	_, _, err := s.settleInTx(tx, 0)
 	if err == nil {
 		err = tx.Commit().Error
 	} else {
@@ -335,7 +383,7 @@ func (s *BillingSession) reserve(targetQuota int) error {
 	if int64(delta) > int64(math.MaxInt) {
 		return fmt.Errorf("marketplace: reserve delta %d out of int range", int64(delta))
 	}
-	ok, err := model.TryReserveUserQuota(s.buyerUserID, int(delta))
+	ok, err := reserveBuyerQuota(s.buyerUserID, int(delta), s.paidOnly)
 	if err != nil {
 		return fmt.Errorf("marketplace: reserve top-up: %w", err)
 	}
@@ -383,6 +431,18 @@ func PreFreezeQuote(db *gorm.DB, cal *Calendar, vendor, modelName string, multip
 		SearchCount:      searchCap,
 		FetchCount:       fetchCap,
 	})
+}
+
+// channelAllowsGift reports whether a listing's channel is an official
+// (platform-registered) channel, where gifted balance (redemption codes,
+// invitation transfers, admin grants) may be spent. Plan and seller-defined
+// third-party channels are paid-only. An unknown channel fails closed.
+func channelAllowsGift(db *gorm.DB, vendor string) bool {
+	if db == nil {
+		return false
+	}
+	ch, ok := ChannelPoolBySlug(db, vendor)
+	return ok && ch.Kind == ChannelKindOfficial
 }
 
 // pricingContext resolves the official price owner and the channel price

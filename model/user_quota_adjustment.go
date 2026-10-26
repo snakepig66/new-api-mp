@@ -56,10 +56,28 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuo
 		if err != nil {
 			return ErrWalletQuotaLimitExceeded
 		}
+		// Manual grants are treated as gifted balance by default, so an admin
+		// mistake cannot create withdrawable marketplace income. Reductions take
+		// the gift part first and never leave gift_quota above quota.
+		gift := user.GiftQuota
+		switch mode {
+		case "add":
+			gift += value
+		case "subtract":
+			gift = max(gift-value, 0)
+		case "override":
+			if after >= user.Quota {
+				gift += after - user.Quota
+			}
+		}
+		gift = min(max(gift, 0), after)
 		// An unchanged override is a successful operation, including on MySQL
 		// configurations that count only changed rows in RowsAffected.
-		if after != user.Quota {
-			result := tx.Model(&User{}).Where("id = ?", userID).Update("quota", after)
+		if after != user.Quota || gift != user.GiftQuota {
+			result := tx.Model(&User{}).Where("id = ?", userID).Updates(map[string]any{
+				"quota":      after,
+				"gift_quota": gift,
+			})
 			if result.Error != nil {
 				return result.Error
 			}

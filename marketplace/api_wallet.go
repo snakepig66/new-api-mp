@@ -61,6 +61,13 @@ const (
 type walletSummary struct {
 	// BalanceMicro is the buyer's users.quota (quota 1:1 with 微元).
 	BalanceMicro int64 `json:"balance_micro"`
+	// GiftQuotaMicro is the gifted part of the balance (redemption codes,
+	// invitation transfers, admin grants). It can only be spent on official
+	// channels.
+	GiftQuotaMicro int64 `json:"gift_quota_micro"`
+	// PaidQuotaMicro is BalanceMicro - GiftQuotaMicro; the part spendable
+	// everywhere, including seller channels.
+	PaidQuotaMicro int64 `json:"paid_quota_micro"`
 	// MonthSpendMicro is what the buyer was charged this month (Asia/Shanghai
 	// month): the absolute buyer_debit + tool_debit of the buyer's ledger rows.
 	MonthSpendMicro int64 `json:"month_spend_micro"`
@@ -153,10 +160,20 @@ func buyerLedgerEntryTypes() []string {
 // It is separated from the handler so tests can pin the month boundary.
 func walletSummaryAt(db *gorm.DB, userID int64, now time.Time) (walletSummary, error) {
 	var summary walletSummary
-	if err := db.Table("users").Select("COALESCE(quota, 0)").
-		Where("id = ?", userID).Scan(&summary.BalanceMicro).Error; err != nil {
+	var balances struct {
+		Quota int64
+		Gift  int64
+	}
+	if err := db.Table("users").
+		Select("COALESCE(quota, 0) AS quota, COALESCE(gift_quota, 0) AS gift").
+		Where("id = ?", userID).Scan(&balances).Error; err != nil {
 		return walletSummary{}, err
 	}
+	summary.BalanceMicro = balances.Quota
+	// Gift is never above the total; clamp defensively so a legacy row with an
+	// inconsistent split cannot report a negative paid balance.
+	summary.GiftQuotaMicro = min(max(balances.Gift, 0), max(balances.Quota, 0))
+	summary.PaidQuotaMicro = summary.BalanceMicro - summary.GiftQuotaMicro
 	start, end, err := shanghaiMonthRange(now)
 	if err != nil {
 		return walletSummary{}, err

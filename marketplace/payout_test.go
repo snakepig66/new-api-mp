@@ -82,6 +82,54 @@ func TestAvailableBalanceExcludesBuyerSpend(t *testing.T) {
 	assert.Equal(t, Micro(wantCredit), sellerAvail, "buyer spending is booked to buyer:<id> only")
 }
 
+// TestAvailableBalanceExcludesGiftFundedIncome pins the gift cash-out guard:
+// seller credit from a request that spent gifted balance stays in the ledger
+// but is never withdrawable, because the platform never received real money
+// for it.
+func TestAvailableBalanceExcludesGiftFundedIncome(t *testing.T) {
+	db := newTestDB(t)
+	migrateAll(t, db)
+
+	const seller = int64(10011)
+	newPayoutSeller(t, db, seller, 100_000_000) // paid-funded income, withdrawable
+
+	// Gift-funded income: the request used 40 元 of gift balance.
+	const giftCredit = int64(60_000_000)
+	require.NoError(t, db.Create(&LedgerEntry{
+		RequestID:   "payout-gift-1",
+		EntryType:   EntrySellerCredit,
+		Account:     SellerAccount(seller),
+		AmountMicro: giftCredit,
+		Status:      LedgerAvailable,
+		CreatedAt:   payoutTestNow,
+	}).Error)
+	require.NoError(t, db.Create(&Request{
+		RequestID:      "payout-gift-1",
+		BuyerUserID:    10012,
+		BuyerTokenID:   1,
+		SellerID:       seller,
+		ListingID:      1,
+		Model:          "deepseek-flash",
+		Tier:           TierFlat,
+		Status:         RequestSuccess,
+		GiftDebitMicro: 40_000_000,
+		CreatedAt:      payoutTestNow,
+	}).Error)
+
+	bal, err := AvailableBalance(db, seller)
+	require.NoError(t, err)
+	assert.Equal(t, Micro(100_000_000), bal, "only paid-funded seller credit is withdrawable")
+
+	// A payout larger than the paid-funded part is refused even though the
+	// ledger holds 160 元 in total.
+	_, err = RequestPayout(db, seller, 110_000_000, "gift-funded-over", payoutTestNow)
+	assert.ErrorIs(t, err, ErrPayoutInsufficient)
+
+	// Up to the paid-funded amount succeeds.
+	_, err = RequestPayout(db, seller, 100_000_000, "gift-funded-ok", payoutTestNow)
+	require.NoError(t, err)
+}
+
 func TestPayoutRequestBasic(t *testing.T) {
 	db := newTestDB(t)
 	migrateAll(t, db)

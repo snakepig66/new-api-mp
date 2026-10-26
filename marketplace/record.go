@@ -197,7 +197,7 @@ func SettleRelay(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage
 	}
 
 	status := RequestSuccess
-	var total Micro
+	var total, platformCapped Micro
 	switch {
 	case failed:
 		status = RequestFailed
@@ -210,6 +210,22 @@ func SettleRelay(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage
 		s.addHop(HopEventError, "settle_quote_error")
 	default:
 		total = quote.TotalDebit
+		// §3.7 settlement cap: a request never costs more than the amount frozen
+		// before it started. The excess is borne by the platform, never charged
+		// to the buyer, and is recorded for monitoring (mp_requests.capped_micro
+		// plus one retry-chain event). Scale the token/tool split so the record
+		// and the ledger still add up exactly to the charged amount.
+		if frozen := s.currentPreConsumed(); frozen > 0 && total > frozen {
+			platformCapped = total - frozen
+			tokenDebit, toolDebit := scaleDebits(frozen, total, quote.TokenDebit, quote.ToolDebit)
+			quote.TokenDebit, quote.ToolDebit, quote.TotalDebit = tokenDebit, toolDebit, frozen
+			total = frozen
+			s.addHop(HopEventSettleCapped, fmt.Sprintf("actual=%d capped=%d",
+				int64(frozen+platformCapped), int64(frozen)))
+			common.SysLog(common.LogText(
+				"marketplace: settle capped at pre-freeze (request %s, actual=%d capped=%d platform_bears=%d)",
+				s.RequestID(), int64(frozen+platformCapped), int64(frozen), int64(platformCapped)))
+		}
 	}
 
 	// H3: the pre-freeze reconciliation (users.quota), the ledger rows and the
@@ -220,7 +236,7 @@ func SettleRelay(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage
 	charged := total
 	if db != nil {
 		var settleErr error
-		charged, settleErr = s.settleAtomic(db, u, searchCount, fetchCount, quote, total, status, listing)
+		charged, settleErr = s.settleAtomic(db, u, searchCount, fetchCount, quote, total, platformCapped, status, listing)
 		if settleErr != nil {
 			common.SysError(common.LogText("marketplace: settle transaction (request %s): %s", s.RequestID(), settleErr.Error()))
 			// The transaction rolled back. Leave the upstream seam to settle the
@@ -251,6 +267,18 @@ func SettleRelay(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage
 	return v
 }
 
+// currentPreConsumed returns the amount still frozen by the request's active
+// billing session (0 when no session is open). It is the settlement cap.
+func (s *RelaySession) currentPreConsumed() Micro {
+	s.mu.Lock()
+	billing := s.billing
+	s.mu.Unlock()
+	if billing == nil {
+		return 0
+	}
+	return Micro(billing.GetPreConsumedQuota())
+}
+
 // settleAtomic is the single-transaction settlement of H3: settle the
 // pre-freeze (SettleAtomic), write the mp_requests row and post the ledger
 // rows, all against tx. It returns the amount actually collected: charged == 0
@@ -258,7 +286,7 @@ func SettleRelay(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage
 // request is recorded as failed), while 0 < charged < total means the buyer's
 // balance covered only part of the settle top-up — the ledger books charged
 // and the shortfall is recorded in the retry chain.
-func (s *RelaySession) settleAtomic(db *gorm.DB, u marketplaceUsage, searchCount, fetchCount int64, quote QuoteResult, total Micro, status string, listing Listing) (Micro, error) {
+func (s *RelaySession) settleAtomic(db *gorm.DB, u marketplaceUsage, searchCount, fetchCount int64, quote QuoteResult, total, platformCapped Micro, status string, listing Listing) (Micro, error) {
 	charged := total
 	err := db.Transaction(func(tx *gorm.DB) error {
 		if status != RequestSuccess || total <= 0 {
@@ -270,27 +298,33 @@ func (s *RelaySession) settleAtomic(db *gorm.DB, u marketplaceUsage, searchCount
 					return err
 				}
 			}
-			return s.insertRecord(tx, u, searchCount, fetchCount, quote, 0, 0, 0, RequestFailed)
+			return s.insertRecord(tx, u, searchCount, fetchCount, quote, 0, 0, 0, 0, 0, RequestFailed)
 		}
+		var giftUsed Micro
 		if s.billing != nil {
 			c, err := s.billing.SettleAtomic(tx, total)
 			if err != nil {
 				return err
 			}
 			charged = c
+			giftUsed = s.billing.SettledGift()
 		}
 		if charged <= 0 {
 			// Nothing could be collected: SettleAtomic already refunded the whole
 			// pre-freeze, so this request is a failure (§3.7).
 			s.addHop(HopEventSettleShortfall, fmt.Sprintf("actual=%d charged=0", int64(total)))
-			return s.insertRecord(tx, u, searchCount, fetchCount, quote, 0, 0, 0, RequestFailed)
+			return s.insertRecord(tx, u, searchCount, fetchCount, quote, 0, 0, 0, 0, platformCapped, RequestFailed)
+		}
+		if giftUsed > charged {
+			// Defensive: a gifted portion can never exceed the booked charge.
+			giftUsed = charged
 		}
 		tokenDebit, toolDebit := quote.TokenDebit, quote.ToolDebit
 		if charged < total {
 			s.addHop(HopEventSettleShortfall, fmt.Sprintf("actual=%d charged=%d", int64(total), int64(charged)))
 			tokenDebit, toolDebit = scaleDebits(charged, total, tokenDebit, toolDebit)
 		}
-		if err := s.insertRecord(tx, u, searchCount, fetchCount, quote, tokenDebit, toolDebit, charged, RequestSuccess); err != nil {
+		if err := s.insertRecord(tx, u, searchCount, fetchCount, quote, tokenDebit, toolDebit, charged, giftUsed, platformCapped, RequestSuccess); err != nil {
 			return err
 		}
 		settlement := Settlement{
@@ -382,7 +416,7 @@ func (s *RelaySession) writeRecordOnce(db *gorm.DB, u marketplaceUsage, searchCo
 		return
 	}
 	s.mu.Unlock()
-	if err := s.insertRecord(db, u, searchCount, fetchCount, quote, quote.TokenDebit, quote.ToolDebit, total, status); err != nil {
+	if err := s.insertRecord(db, u, searchCount, fetchCount, quote, quote.TokenDebit, quote.ToolDebit, total, 0, 0, status); err != nil {
 		common.SysError(common.LogText("marketplace: write request record (request %s): %s", s.RequestID(), err.Error()))
 		return
 	}
@@ -394,7 +428,7 @@ func (s *RelaySession) writeRecordOnce(db *gorm.DB, u marketplaceUsage, searchCo
 // insertRecord writes the request's mp_requests row through db (which may be a
 // transaction). Conflict with the request_id unique index is ignored: the
 // first writer wins.
-func (s *RelaySession) insertRecord(db *gorm.DB, u marketplaceUsage, searchCount, fetchCount int64, quote QuoteResult, tokenDebit, toolDebit, total Micro, status string) error {
+func (s *RelaySession) insertRecord(db *gorm.DB, u marketplaceUsage, searchCount, fetchCount int64, quote QuoteResult, tokenDebit, toolDebit, total, giftUsed, platformCapped Micro, status string) error {
 	fee, credit, err := SplitPlatformFee(total)
 	if err != nil {
 		fee, credit = 0, 0
@@ -446,6 +480,8 @@ func (s *RelaySession) insertRecord(db *gorm.DB, u marketplaceUsage, searchCount
 		TokenDebitMicro:   int64(tokenDebit),
 		ToolDebitMicro:    int64(toolDebit),
 		TotalDebitMicro:   int64(total),
+		GiftDebitMicro:    int64(giftUsed),
+		CappedMicro:       int64(platformCapped),
 		PlatformFeeMicro:  int64(fee),
 		SellerCreditMicro: int64(credit),
 		OfficialCostMicro: int64(official),

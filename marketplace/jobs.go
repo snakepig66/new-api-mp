@@ -217,7 +217,11 @@ func patrolLiveListings(db *gorm.DB, now time.Time) error {
 // automatically; a ban requires an operator decision in the admin console
 // (MODEL-CHANNEL-POOL §4, P0).
 func patrolOneListing(db *gorm.DB, limiter *VerifyLimiter, l *Listing) error {
-	return patrolOneListingWithClient(db, limiter, EgressHTTPClient(), l)
+	// Verification/patrol traffic uses the egress-verify client: dial-time
+	// public-IP validation without requiring the relay whitelist (a listing is
+	// checked before it is approved into that whitelist). Redirects are never
+	// followed.
+	return patrolOneListingWithClient(db, limiter, EgressVerifyHTTPClient(), l)
 }
 
 // patrolOneListingWithClient is patrolOneListing with the egress client
@@ -244,17 +248,12 @@ func patrolOneListingWithClient(db *gorm.DB, limiter *VerifyLimiter, client *htt
 	// model then gets its own real max_tokens=1 call.
 	base := VendorOpenAIBase(vendor)
 	keyRes := VerifyListingKeyWithModel(ctx, client, vendor, apiKey, "")
-	firstModel := ""
-	firstUpstream := ""
 	passed := 0
 	modelResults := make([]ModelVerifyResult, 0, len(l.Models))
 	for _, m := range l.Models {
 		cm, mapped := ChannelModelFor(db, l.Vendor, m)
 		if !mapped {
 			continue
-		}
-		if firstModel == "" {
-			firstModel, firstUpstream = m, cm.UpstreamModel
 		}
 		mr := ModelVerifyResult{Model: m, UpstreamModel: cm.UpstreamModel}
 		switch {
@@ -285,55 +284,106 @@ func patrolOneListingWithClient(db *gorm.DB, limiter *VerifyLimiter, client *htt
 			res.FailReason = "no listed model could be called"
 		}
 	}
-	modelName, probeModel := firstModel, firstUpstream
-	// Fingerprint spot check (only when the platform holds a key for the
-	// origin vendor). A mismatch is not a key failure; it is counted below.
-	fingerprintChecked := false
-	fingerprintOK := true
-	fingerprintRatio := 0.0
+	// Fail-closed fingerprint comparison: every callable listed model must
+	// match the platform's official endpoint. A comparison that did not
+	// complete (no platform key, official error, missing usage, tiny prompt)
+	// is not health evidence, so the probe is never OK and the listing is
+	// paused; a completed mismatch is written as not-OK and counts toward the
+	// mismatch streak below.
+	fingerprintConfigured := PlatformFingerprintConfigured()
+	fingerprints := make([]FingerprintModelResult, 0, len(modelResults))
+	fingerprintIncomplete := false
+	fingerprintMismatch := false
 	fingerprintReason := ""
-	if res.OK && modelName != "" {
-		if model, found := ModelPoolByName(db, modelName); found {
-			if officialKey, hasKey := PlatformKeyForVendor(model.OriginVendor); hasKey {
-				if officialVendor, foundVendor := lookupVendorForDB(db, model.OriginVendor); foundVendor {
-					officialUpstream := model.Name
-					if cm, foundCM := ChannelModelFor(db, model.OriginVendor, model.Name); foundCM {
-						officialUpstream = cm.UpstreamModel
+	if res.OK && fingerprintConfigured {
+		for _, mr := range modelResults {
+			if !mr.OK {
+				continue
+			}
+			fr := FingerprintModelResult{Model: mr.Model, UpstreamModel: mr.UpstreamModel}
+			model, found := ModelPoolByName(db, mr.Model)
+			officialKey, hasKey := "", false
+			if found {
+				officialKey, hasKey = PlatformKeyForVendor(model.OriginVendor)
+			}
+			switch {
+			case !found:
+				fr.FailReason = "model is not in the platform pool; no official reference"
+			case !hasKey:
+				fr.FailReason = "no platform key for origin vendor " + model.OriginVendor
+			default:
+				officialVendor, foundVendor := lookupVendorForDB(db, model.OriginVendor)
+				if !foundVendor {
+					fr.FailReason = "origin vendor " + model.OriginVendor + " is not whitelisted"
+					break
+				}
+				officialUpstream := model.Name
+				if cm, foundCM := ChannelModelFor(db, model.OriginVendor, model.Name); foundCM {
+					officialUpstream = cm.UpstreamModel
+				}
+				prompt := model.VerifyPrompt
+				if strings.TrimSpace(prompt) == "" {
+					prompt = defaultFingerprintPrompt
+				}
+				fp := CompareFingerprint(ctx, client,
+					officialVendor, officialKey, officialUpstream,
+					vendor, apiKey, mr.UpstreamModel, prompt)
+				fr.Checked = fp.Checked
+				fr.Matched = fp.Passed()
+				fr.Ratio = fp.Ratio
+				fr.FailReason = fp.FailReason
+			}
+			if !fr.Checked {
+				fingerprintIncomplete = true
+				if fingerprintReason == "" {
+					reason := fr.FailReason
+					if reason == "" {
+						reason = "comparison did not complete"
 					}
-					prompt := model.VerifyPrompt
-					if strings.TrimSpace(prompt) == "" {
-						prompt = defaultFingerprintPrompt
+					fingerprintReason = mr.Model + "：" + reason
+				}
+			} else if !fr.Matched {
+				fingerprintMismatch = true
+				if fingerprintReason == "" {
+					reason := fr.FailReason
+					if reason == "" {
+						reason = "fingerprint mismatch"
 					}
-					fp := CompareFingerprint(ctx, client,
-						officialVendor, officialKey, officialUpstream,
-						vendor, apiKey, probeModel, prompt)
-					// Only a completed comparison is evidence. Failures
-					// (billing, 429, network, tiny prompt) leave Checked false
-					// so they neither write fingerprint_ok nor extend a streak.
-					fingerprintChecked = fp.Checked
-					fingerprintOK = fp.WithinTolerance
-					fingerprintRatio = fp.Ratio
-					fingerprintReason = fp.FailReason
+					fingerprintReason = mr.Model + "：" + reason
 				}
 			}
+			fingerprints = append(fingerprints, fr)
 		}
 	}
 	limiter.Release()
 
+	fingerprintChecked := len(fingerprints) > 0
+	fingerprintOK := len(fingerprints) > 0
+	for _, fr := range fingerprints {
+		fingerprintChecked = fingerprintChecked && fr.Checked
+		fingerprintOK = fingerprintOK && fr.Matched
+	}
+	probeOK := res.OK
+	if fingerprintIncomplete || fingerprintMismatch {
+		probeOK = false
+	}
 	detailMap := map[string]any{
-		"key_valid":           res.KeyValid,
-		"models":              len(res.Models),
-		"has_balance":         res.BalanceMicro != nil,
-		"prompt_cache":        res.PromptCacheSupport,
-		"fail_reason":         res.FailReason,
-		"fingerprint_checked": fingerprintChecked,
-		"model_results":       modelResults,
+		"key_valid":            res.KeyValid,
+		"models":               len(res.Models),
+		"has_balance":          res.BalanceMicro != nil,
+		"prompt_cache":         res.PromptCacheSupport,
+		"fail_reason":          res.FailReason,
+		"fingerprint_required": fingerprintConfigured,
+		"fingerprint_checked":  fingerprintChecked,
+		"model_results":        modelResults,
+	}
+	if len(fingerprints) > 0 {
+		detailMap["fingerprints"] = fingerprints
 	}
 	if fingerprintChecked {
 		detailMap["fingerprint_ok"] = fingerprintOK
-		detailMap["fingerprint_ratio"] = fingerprintRatio
-		detailMap["fingerprint_reason"] = fingerprintReason
-	} else if fingerprintReason != "" {
+	}
+	if fingerprintReason != "" {
 		detailMap["fingerprint_reason"] = fingerprintReason
 	}
 	detail, err := common.Marshal(detailMap)
@@ -343,7 +393,7 @@ func patrolOneListingWithClient(db *gorm.DB, limiter *VerifyLimiter, client *htt
 	probe := Probe{
 		ListingID: l.ID,
 		Type:      ProbeTypePatrol,
-		OK:        res.OK,
+		OK:        probeOK,
 		LatencyMs: res.LatencyMs,
 		Detail:    string(detail),
 	}
@@ -354,7 +404,13 @@ func patrolOneListingWithClient(db *gorm.DB, limiter *VerifyLimiter, client *htt
 		// §3.5 巡检失败 → 自动暂停. reason carries semantics only (§2.3).
 		return AutoPauseListing(db, l.ID, "patrol failed: "+res.FailReason)
 	}
-	if fingerprintChecked && !fingerprintOK {
+	if fingerprintIncomplete {
+		// Without a completed official comparison the listing cannot be
+		// certified healthy (fail-closed); a transient official failure thus
+		// pauses it until the next verification succeeds.
+		return AutoPauseListing(db, l.ID, "patrol failed: fingerprint comparison incomplete: "+fingerprintReason)
+	}
+	if fingerprintMismatch {
 		consecutive, err := consecutiveFingerprintMismatches(db, l.ID)
 		if err != nil {
 			return err
@@ -369,8 +425,8 @@ func patrolOneListingWithClient(db *gorm.DB, limiter *VerifyLimiter, client *htt
 				return err
 			}
 			common.SysError(common.LogText(
-				"marketplace: fingerprint mismatch (3 consecutive): listing %d channel %s model %s; listing kept paused, channel-model NOT banned (manual review required)",
-				l.ID, l.Vendor, modelName))
+				"marketplace: fingerprint mismatch (3 consecutive): listing %d channel %s (%s); listing kept paused, channel-model NOT banned (manual review required)",
+				l.ID, l.Vendor, fingerprintReason))
 		case consecutive >= 2:
 			if err := AutoPauseListing(db, l.ID, "fingerprint mismatch (2 consecutive)"); err != nil &&
 				!errors.Is(err, ErrInvalidTransition) {

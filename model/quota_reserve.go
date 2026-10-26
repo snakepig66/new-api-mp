@@ -102,6 +102,16 @@ func cacheApplyTokenQuotaDelta(id int, key string, delta int64) (cacheQuotaResul
 	return quotaResultFromLua(result, err)
 }
 
+// clampUserGiftQuota restores the gift_quota <= quota invariant after a quota
+// deduction made outside the marketplace gift split (ordinary relay usage,
+// task billing, batch flushes). Gift is the non-withdrawable part, so it is
+// reduced first when the total balance drops below it.
+func clampUserGiftQuota(id int) error {
+	return DB.Model(&User{}).
+		Where("id = ? AND gift_quota > quota", id).
+		Update("gift_quota", gorm.Expr("quota")).Error
+}
+
 // persistUserQuotaDelta 把已在缓存侧预扣成功的增量落库；批量模式下入队，
 // 直写模式下要求行存在（用户已删除时报错，交由调用方补偿缓存）。
 func persistUserQuotaDelta(id int, delta int) error {
@@ -115,6 +125,9 @@ func persistUserQuotaDelta(id int, delta int) error {
 	}
 	if result.RowsAffected != 1 {
 		return gorm.ErrRecordNotFound
+	}
+	if delta < 0 {
+		return clampUserGiftQuota(id)
 	}
 	return nil
 }
@@ -143,6 +156,16 @@ func persistTokenQuotaDelta(id int, delta int) error {
 func reserveUserQuotaDB(id int, quota int) (bool, error) {
 	result := DB.Model(&User{}).
 		Where("id = ? AND quota >= ?", id, quota).
+		Update("quota", gorm.Expr("quota - ?", quota))
+	return result.RowsAffected == 1, result.Error
+}
+
+// reserveUserPaidQuotaDB atomically deducts quota only when the paid part
+// (quota - gift_quota) still covers the amount. Gift and paid share the same
+// users.quota column, so the predicate and the deduction must be one UPDATE.
+func reserveUserPaidQuotaDB(id int, quota int) (bool, error) {
+	result := DB.Model(&User{}).
+		Where("id = ? AND quota - gift_quota >= ?", id, quota).
 		Update("quota", gorm.Expr("quota - ?", quota))
 	return result.RowsAffected == 1, result.Error
 }
@@ -193,6 +216,28 @@ func TryReserveUserQuota(id int, quota int) (bool, error) {
 			common.SysError(common.LogText("failed to compensate reserved user quota: result=%d error=%v", compensated, compensateErr))
 		}
 		return false, err
+	}
+	return true, nil
+}
+
+// TryReserveUserPaidQuota atomically checks and deducts only the paid part of
+// the wallet (quota - gift_quota). It is used by marketplace seller channels,
+// where gifted balance must not be spent. The Redis quota cache tracks the
+// total only, so the paid check is authoritative in the database and the cache
+// is decremented afterwards on a best-effort basis.
+func TryReserveUserPaidQuota(id int, quota int) (bool, error) {
+	if quota < 0 {
+		return false, errors.New("quota cannot be negative")
+	}
+	if quota == 0 {
+		return true, nil
+	}
+	ok, err := reserveUserPaidQuotaDB(id, quota)
+	if err != nil || !ok {
+		return ok, err
+	}
+	if err := cacheDecrUserQuota(id, int64(quota)); err != nil {
+		common.SysLog(common.LogText("failed to sync paid quota reserve to user quota cache: %s", err.Error()))
 	}
 	return true, nil
 }

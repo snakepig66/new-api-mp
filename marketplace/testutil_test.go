@@ -32,6 +32,24 @@ func uniqueTestKey(prefix string) string {
 		strconv.FormatInt(time.Now().UnixNano(), 36)
 }
 
+// unsetPlatformKeysForTest removes MP_PLATFORM_KEYS for the duration of one
+// test and restores the previous state afterwards. t.Setenv cannot express
+// "unset", and the verification path distinguishes unset (fingerprinting not
+// part of the deployment) from defined-but-empty (configured but unusable,
+// which fails closed).
+func unsetPlatformKeysForTest(t *testing.T) {
+	t.Helper()
+	old, defined := os.LookupEnv(PlatformKeysEnv)
+	require.NoError(t, os.Unsetenv(PlatformKeysEnv))
+	t.Cleanup(func() {
+		if defined {
+			_ = os.Setenv(PlatformKeysEnv, old)
+			return
+		}
+		_ = os.Unsetenv(PlatformKeysEnv)
+	})
+}
+
 // testDriver is the dialect the current test binary runs against. It is
 // decided once per process from MP_TEST_MYSQL_DSN / MP_TEST_POSTGRES_DSN and
 // defaults to sqlite, so the default `go test ./marketplace/...` run is
@@ -83,6 +101,11 @@ func currentTestDriver() testDriver {
 // the expected behavior under real engines.
 func newTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	// Platform fingerprint keys are deployment secrets. Every test starts with
+	// the variable unset so a developer's MP_PLATFORM_KEYS cannot silently
+	// switch verification into fingerprint-required mode; tests that exercise
+	// the official comparison define it with t.Setenv afterwards.
+	unsetPlatformKeysForTest(t)
 	switch currentTestDriver() {
 	case driverMySQL:
 		return newMySQLTestDB(t)

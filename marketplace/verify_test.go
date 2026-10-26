@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -85,7 +86,7 @@ func allGreenHandler() *vendorHandler {
 		balanceStatus: http.StatusOK,
 		balanceBody:   `{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"12.34"}]}`,
 		chatStatus:    http.StatusOK,
-		chatBody:      `{"choices":[{"message":{"content":"pong"}}],"usage":{"prompt_cache_hit_tokens":8,"prompt_cache_miss_tokens":2,"total_tokens":10}}`,
+		chatBody:      `{"model":"deepseek-flash","choices":[{"message":{"content":"pong"}}],"usage":{"prompt_tokens":20,"prompt_cache_hit_tokens":8,"prompt_cache_miss_tokens":2,"total_tokens":30}}`,
 	}
 }
 
@@ -147,14 +148,25 @@ func TestVerifyListingKeyPromptCacheUnsupported(t *testing.T) {
 	}
 
 	t.Run("usage lacks cache fields", func(t *testing.T) {
-		res := run(t, http.StatusOK, `{"usage":{"prompt_tokens":5,"total_tokens":6}}`)
+		res := run(t, http.StatusOK, `{"model":"deepseek-flash","choices":[{"message":{"content":"pong"}}],"usage":{"prompt_tokens":5,"total_tokens":6}}`)
 		assert.False(t, res.PromptCacheSupport)
 		assert.True(t, res.OK, "cache support is informational and never gates OK")
 	})
-	t.Run("usage missing entirely", func(t *testing.T) {
-		res := run(t, http.StatusOK, `{"choices":[]}`)
+	t.Run("usage missing entirely is not callable", func(t *testing.T) {
+		res := run(t, http.StatusOK, `{"model":"deepseek-flash","choices":[{"message":{"content":"pong"}}]}`)
 		assert.False(t, res.PromptCacheSupport)
-		assert.True(t, res.OK)
+		assert.False(t, res.OK, "a chat completion without usage is not a valid served answer")
+		assert.Contains(t, res.FailReason, "usage")
+	})
+	t.Run("malformed body is not callable", func(t *testing.T) {
+		res := run(t, http.StatusOK, `not json at all`)
+		assert.False(t, res.OK)
+		assert.Contains(t, res.FailReason, "解析")
+	})
+	t.Run("missing model id is not callable", func(t *testing.T) {
+		res := run(t, http.StatusOK, `{"choices":[{"message":{"content":"pong"}}],"usage":{"prompt_tokens":5}}`)
+		assert.False(t, res.OK, "the returned model id is a prerequisite for fingerprinting")
+		assert.Contains(t, res.FailReason, "model")
 	})
 	t.Run("probe request fails", func(t *testing.T) {
 		res := run(t, http.StatusInternalServerError, `{"error":"boom"}`)
@@ -293,6 +305,9 @@ func (rt rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 // whitelisted vendor's BaseURL to it.
 func newVerifyListingFixture(t *testing.T, h http.Handler) (*gorm.DB, Listing, *http.Client) {
 	t.Helper()
+	// The official-token cache is process-wide; a previous test's cached count
+	// must never short-circuit this test's official call.
+	resetFingerprintCacheForTest()
 	db := newListingTestDB(t)
 	listing := createTestListing(t, db, 10023, verifyTestKey)
 	srv := httptest.NewServer(h)
@@ -462,4 +477,241 @@ func TestVerifyListingRejects(t *testing.T) {
 	// Unknown listing id.
 	_, err = VerifyListing(context.Background(), db, client, limiter, 999999)
 	assert.ErrorIs(t, err, ErrListingNotFound)
+}
+
+// verifyOfficialKey is the platform-owned DeepSeek key used by the
+// fail-closed fingerprint tests.
+const verifyOfficialKey = "sk-verify-platform-official"
+
+// fingerprintVerifyHandler serves one mock upstream for both the seller key
+// and the platform official key. Token counts differ by bearer token so the
+// same URL exercises match, mismatch and official-failure paths, and
+// officialFailModel can fail one model's official comparison only.
+type fingerprintVerifyHandler struct {
+	sellerKey         string
+	officialKey       string
+	sellerTokens      int64
+	officialTokens    int64
+	officialStatus    int
+	officialFailModel string
+}
+
+func (h *fingerprintVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	switch r.URL.Path {
+	case "/models":
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"deepseek-flash"},{"id":"deepseek-v4-pro"}]}`))
+	case "/user/balance":
+		_, _ = w.Write([]byte(`{"balance_infos":[{"currency":"CNY","total_balance":"5.00"}]}`))
+	case "/chat/completions":
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = common.DecodeJson(r.Body, &body)
+		official := r.Header.Get("Authorization") == "Bearer "+h.officialKey
+		if official {
+			fail := h.officialStatus != 0 && h.officialStatus != http.StatusOK
+			if h.officialFailModel != "" && body.Model == h.officialFailModel {
+				fail = true
+			}
+			if fail {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"error":"official upstream unavailable"}`))
+				return
+			}
+		}
+		tokens := h.sellerTokens
+		if official {
+			tokens = h.officialTokens
+		}
+		_, _ = fmt.Fprintf(w,
+			`{"model":%q,"choices":[{"message":{"content":"x"}}],"usage":{"prompt_tokens":%d,"prompt_cache_hit_tokens":1,"prompt_cache_miss_tokens":1}}`,
+			body.Model, tokens)
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+// TestVerifyListingTransportErrorFails proves a probe that never reaches the
+// vendor cannot pass verification (fail-closed, not unchecked=pass).
+func TestVerifyListingTransportErrorFails(t *testing.T) {
+	db := newListingTestDB(t)
+	listing := createTestListing(t, db, 10023, verifyTestKey)
+	limiter := NewVerifyLimiter(VerifyMaxConcurrent, VerifyPerMinute)
+
+	res, err := VerifyListing(context.Background(), db, &http.Client{Transport: failingTransport{}}, limiter, listing.ID)
+	require.NoError(t, err)
+	assert.False(t, res.OK)
+	assert.NotEmpty(t, res.FailReason)
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingDraft, row.Status)
+}
+
+// TestVerifyListingMissingUsageFails proves an HTTP 200 chat body without
+// usage is not a served model.
+func TestVerifyListingMissingUsageFails(t *testing.T) {
+	h := allGreenHandler()
+	h.chatBody = `{"model":"deepseek-flash","choices":[{"message":{"content":"pong"}}]}`
+	db, listing, client := newVerifyListingFixture(t, h)
+	limiter := NewVerifyLimiter(VerifyMaxConcurrent, VerifyPerMinute)
+
+	res, err := VerifyListing(context.Background(), db, client, limiter, listing.ID)
+	require.NoError(t, err)
+	assert.False(t, res.OK)
+	assert.NotEmpty(t, res.FailReason)
+	for _, mr := range res.ModelResults {
+		assert.False(t, mr.OK)
+	}
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingDraft, row.Status)
+}
+
+// TestVerifyListingMissingPlatformKeyFails proves official fingerprinting is
+// fail-closed: once any platform key is configured, a model whose origin
+// vendor has no platform key cannot be certified.
+func TestVerifyListingMissingPlatformKeyFails(t *testing.T) {
+	db, listing, client := newVerifyListingFixture(t, allGreenHandler())
+	t.Setenv(PlatformKeysEnv, `{"zhipu":"sk-only-zhipu"}`)
+	limiter := NewVerifyLimiter(VerifyMaxConcurrent, VerifyPerMinute)
+
+	res, err := VerifyListing(context.Background(), db, client, limiter, listing.ID)
+	require.NoError(t, err)
+	assert.False(t, res.OK, "no official reference must never pass verification")
+	assert.Contains(t, res.FailReason, "fingerprint")
+	assert.Contains(t, res.FailReason, "deepseek")
+	require.Len(t, res.Fingerprints, 2)
+	for _, fr := range res.Fingerprints {
+		assert.False(t, fr.Checked)
+		assert.False(t, fr.Matched)
+		assert.NotEmpty(t, fr.FailReason)
+	}
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingDraft, row.Status)
+
+	probes := listVerifyProbes(t, db, listing.ID)
+	require.Len(t, probes, 1)
+	assert.False(t, probes[0].OK)
+	var detail map[string]any
+	require.NoError(t, common.Unmarshal([]byte(probes[0].Detail), &detail))
+	assert.Equal(t, true, detail["fingerprint_required"])
+	fingerprints, ok := detail["fingerprints"].([]any)
+	require.True(t, ok)
+	require.Len(t, fingerprints, 2)
+}
+
+// TestVerifyListingEmptyPlatformKeysFails covers a defined-but-empty
+// MP_PLATFORM_KEYS: the deployment declares official credentials but supplies
+// none, so there is no official reference and verification fails closed.
+func TestVerifyListingEmptyPlatformKeysFails(t *testing.T) {
+	db, listing, client := newVerifyListingFixture(t, allGreenHandler())
+	t.Setenv(PlatformKeysEnv, "")
+	limiter := NewVerifyLimiter(VerifyMaxConcurrent, VerifyPerMinute)
+
+	res, err := VerifyListing(context.Background(), db, client, limiter, listing.ID)
+	require.NoError(t, err)
+	assert.False(t, res.OK)
+	assert.Contains(t, res.FailReason, "fingerprint")
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingDraft, row.Status)
+}
+
+// TestVerifyListingFingerprintMismatchFails covers a callable model whose
+// tokenizer does not match the official one: callability alone is not enough.
+func TestVerifyListingFingerprintMismatchFails(t *testing.T) {
+	h := &fingerprintVerifyHandler{
+		sellerKey: verifyTestKey, officialKey: verifyOfficialKey,
+		sellerTokens: 500, officialTokens: 100,
+	}
+	db, listing, client := newVerifyListingFixture(t, h)
+	t.Setenv(PlatformKeysEnv, `{"deepseek":"`+verifyOfficialKey+`"}`)
+	limiter := NewVerifyLimiter(VerifyMaxConcurrent, VerifyPerMinute)
+
+	res, err := VerifyListing(context.Background(), db, client, limiter, listing.ID)
+	require.NoError(t, err)
+	assert.False(t, res.OK, "a fingerprint mismatch must not pass")
+	assert.Contains(t, res.FailReason, "fingerprint")
+	require.Len(t, res.Fingerprints, 2)
+	for _, fr := range res.Fingerprints {
+		assert.True(t, fr.Checked)
+		assert.False(t, fr.Matched)
+		assert.NotEmpty(t, fr.FailReason)
+	}
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingDraft, row.Status)
+}
+
+// TestVerifyListingFingerprintIncompleteFails covers a failed official call:
+// without a completed comparison the listing stays in draft.
+func TestVerifyListingFingerprintIncompleteFails(t *testing.T) {
+	h := &fingerprintVerifyHandler{
+		sellerKey: verifyTestKey, officialKey: verifyOfficialKey,
+		sellerTokens: 100, officialTokens: 100, officialStatus: http.StatusInternalServerError,
+	}
+	db, listing, client := newVerifyListingFixture(t, h)
+	t.Setenv(PlatformKeysEnv, `{"deepseek":"`+verifyOfficialKey+`"}`)
+	limiter := NewVerifyLimiter(VerifyMaxConcurrent, VerifyPerMinute)
+
+	res, err := VerifyListing(context.Background(), db, client, limiter, listing.ID)
+	require.NoError(t, err)
+	assert.False(t, res.OK)
+	assert.Contains(t, res.FailReason, "fingerprint")
+	for _, fr := range res.Fingerprints {
+		assert.False(t, fr.Checked)
+		assert.False(t, fr.Matched)
+	}
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingDraft, row.Status)
+}
+
+// TestVerifyListingFingerprintOneModelFails proves a single uncertified model
+// blocks the whole listing: every participating key×model needs BOTH a
+// successful call and a matching fingerprint.
+func TestVerifyListingFingerprintOneModelFails(t *testing.T) {
+	h := &fingerprintVerifyHandler{
+		sellerKey: verifyTestKey, officialKey: verifyOfficialKey,
+		sellerTokens: 100, officialTokens: 100, officialFailModel: "deepseek-v4-pro",
+	}
+	db, listing, client := newVerifyListingFixture(t, h)
+	t.Setenv(PlatformKeysEnv, `{"deepseek":"`+verifyOfficialKey+`"}`)
+	limiter := NewVerifyLimiter(VerifyMaxConcurrent, VerifyPerMinute)
+
+	res, err := VerifyListing(context.Background(), db, client, limiter, listing.ID)
+	require.NoError(t, err)
+	assert.False(t, res.OK)
+	require.Len(t, res.Fingerprints, 2)
+	assert.True(t, res.Fingerprints[0].Matched, "the first model's comparison passed")
+	assert.False(t, res.Fingerprints[1].Matched, "one failing model blocks the listing")
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingDraft, row.Status)
+}
+
+// TestVerifyListingFingerprintMatchPasses is the all-green fail-closed path:
+// both models are callable and both tokenizer comparisons match.
+func TestVerifyListingFingerprintMatchPasses(t *testing.T) {
+	h := &fingerprintVerifyHandler{
+		sellerKey: verifyTestKey, officialKey: verifyOfficialKey,
+		sellerTokens: 100, officialTokens: 100,
+	}
+	db, listing, client := newVerifyListingFixture(t, h)
+	t.Setenv(PlatformKeysEnv, `{"deepseek":"`+verifyOfficialKey+`"}`)
+	limiter := NewVerifyLimiter(VerifyMaxConcurrent, VerifyPerMinute)
+
+	res, err := VerifyListing(context.Background(), db, client, limiter, listing.ID)
+	require.NoError(t, err)
+	require.True(t, res.OK, "fail reason: %s", res.FailReason)
+	require.Len(t, res.Fingerprints, 2)
+	for _, fr := range res.Fingerprints {
+		assert.True(t, fr.Checked)
+		assert.True(t, fr.Matched)
+	}
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingCanary, row.Status, "verification promotes draft → verifying → canary")
 }

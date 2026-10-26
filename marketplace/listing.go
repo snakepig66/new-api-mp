@@ -44,6 +44,10 @@ var (
 	// explicitly accepts that the plan terms allow sharing (§4). The check is
 	// on the request body, not on a stored flag.
 	ErrPlanTermsRequired = errors.New("marketplace: plan channel requires accepting the plan terms")
+	// ErrVerificationRequired refuses a transition that would promote a
+	// listing without a completed, passing verification in this state cycle
+	// (fail-closed: an unverified or failed listing can never serve).
+	ErrVerificationRequired = errors.New("marketplace: a passing verification is required before this transition")
 )
 
 // DuplicateKeyError distinguishes the two ways a key fingerprint can already
@@ -458,8 +462,13 @@ func transitionListingFrom(db *gorm.DB, id int64, froms []string, to string) err
 
 // TransitionListing moves one listing from status `from` to status `to`; the
 // named wrappers below encode the legal edges of the §3.5 state machine
-// (draft → verifying → canary → live ⇄ paused → banned).
+// (draft → verifying → canary → live ⇄ paused → banned). A generic caller may
+// not move anything straight into live: live is reachable only from canary,
+// the state a passing verification plus the gray-traffic period produces.
 func TransitionListing(db *gorm.DB, id int64, from, to string) error {
+	if to == ListingLive && from != ListingCanary {
+		return fmt.Errorf("%w: %s -> live requires a verified canary", ErrInvalidTransition, from)
+	}
 	return transitionListingFrom(db, id, []string{from}, to)
 }
 
@@ -469,8 +478,48 @@ func StartVerification(db *gorm.DB, id int64) error {
 }
 
 // PassVerification moves verifying → canary (key verified, 10% gray traffic).
+// It refuses unless the listing has models and the newest type="verify" probe
+// passed: the callability and fingerprint checks are evaluated fail-closed in
+// VerifyListing, and its verdict is the only evidence that may promote a
+// listing. A caller cannot skip the probe by calling the transition directly.
 func PassVerification(db *gorm.DB, id int64) error {
-	return TransitionListing(db, id, ListingVerifying, ListingCanary)
+	return db.Transaction(func(tx *gorm.DB) error {
+		var row Listing
+		if err := lockForUpdate(tx).Where("id = ?", id).First(&row).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrListingNotFound
+			}
+			return err
+		}
+		if row.Status != ListingVerifying {
+			return fmt.Errorf("%w: %s -> canary", ErrInvalidTransition, row.Status)
+		}
+		if len(row.Models) == 0 {
+			return fmt.Errorf("%w: listing has no verified models", ErrVerificationRequired)
+		}
+		var probe Probe
+		err := tx.Where("listing_id = ? AND type = ?", id, ProbeTypeVerify).
+			Order("id DESC").Take(&probe).Error
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrVerificationRequired
+			}
+			return err
+		}
+		if !probe.OK {
+			return fmt.Errorf("%w: the latest verification failed", ErrVerificationRequired)
+		}
+		res := tx.Model(&Listing{}).
+			Where("id = ? AND status = ?", id, ListingVerifying).
+			Update("status", ListingCanary)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return fmt.Errorf("%w: verifying -> canary", ErrInvalidTransition)
+		}
+		return nil
+	})
 }
 
 // GoLive moves canary → live (§3.5: ≥98% success over 24h, decided by jobs).
@@ -483,16 +532,49 @@ func PauseListing(db *gorm.DB, id int64) error {
 	return TransitionListing(db, id, ListingLive, ListingPaused)
 }
 
-// ResumeListing moves paused → live. It is the platform-side edge: it does
-// not ask who paused the listing, so only jobs/admin paths may use it.
+// ResumeListing moves paused → draft. A pause (patrol failure, operator
+// action, migration) invalidates the evidence a listing was serving on, so a
+// resume must run the complete verification again: draft → verifying →
+// canary. It deliberately never restores live directly. It is the
+// platform-side edge and does not ask who paused the listing, so only
+// jobs/admin paths may use it.
 func ResumeListing(db *gorm.DB, id int64) error {
-	return TransitionListing(db, id, ListingPaused, ListingLive)
+	return db.Transaction(func(tx *gorm.DB) error {
+		var row Listing
+		if err := lockForUpdate(tx).Where("id = ?", id).First(&row).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrListingNotFound
+			}
+			return err
+		}
+		if row.Status != ListingPaused {
+			return fmt.Errorf("%w: %s -> draft", ErrInvalidTransition, row.Status)
+		}
+		res := tx.Model(&Listing{}).
+			Where("id = ? AND status = ?", id, ListingPaused).
+			Updates(map[string]any{
+				"status":          ListingDraft,
+				"pause_reason":    "",
+				"resume_at":       nil,
+				"previous_status": "",
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return fmt.Errorf("%w: paused -> draft", ErrInvalidTransition)
+		}
+		return nil
+	})
 }
 
 // ResumeSellerListing is the seller-facing resume edge: it refuses a listing
-// the platform paused (non-empty pause_reason or a pending resume_at). A
-// system pause is only lifted by the job or an administrator, so a seller
-// cannot undo a patrol/migration/fingerprint pause and resume selling.
+// the platform paused (non-empty pause_reason or a pending resume_at), and it
+// refuses a listing whose latest verification failed. A seller-initiated
+// pause of a certified listing is a pause-lift, not a promotion: the listing
+// was live immediately before the pause. Admin/system paths that resume a
+// non-certified listing go through ResumeListing (paused → draft), which
+// requires a complete re-verification.
 func ResumeSellerListing(db *gorm.DB, id int64) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		var row Listing
@@ -507,6 +589,19 @@ func ResumeSellerListing(db *gorm.DB, id int64) error {
 		}
 		if strings.TrimSpace(row.PauseReason) != "" || row.ResumeAt != nil {
 			return ErrListingSystemPaused
+		}
+		// A seller pause never restores a listing whose last recorded
+		// verification failed: that would put an uncertified key back in
+		// front of buyers. (A fresh full verification remains the only way to
+		// re-certify; this check is a floor, not a substitute for it.)
+		var latest Probe
+		err := tx.Where("listing_id = ? AND type = ?", id, ProbeTypeVerify).
+			Order("id DESC").Take(&latest).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if err == nil && !latest.OK {
+			return fmt.Errorf("%w: the latest verification failed", ErrVerificationRequired)
 		}
 		res := tx.Model(&Listing{}).
 			Where("id = ? AND status = ? AND (pause_reason IS NULL OR pause_reason = '')", id, ListingPaused).

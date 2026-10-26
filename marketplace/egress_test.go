@@ -3,9 +3,12 @@ package marketplace
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,17 +23,22 @@ import (
 func preserveEgressDomains(t *testing.T) {
 	t.Helper()
 	egressMu.RLock()
-	orig := egressDomains
+	origDomains := slices.Clone(egressDomains)
+	origSellerHosts := slices.Clone(egressSellerHosts)
+	origPatterns := slices.Clone(egressPatterns)
 	egressMu.RUnlock()
 	t.Cleanup(func() {
 		egressMu.Lock()
-		egressDomains = orig
+		egressDomains = origDomains
+		egressSellerHosts = origSellerHosts
+		egressPatterns = origPatterns
 		egressMu.Unlock()
 	})
 }
 
 func TestCheckEgressHost(t *testing.T) {
 	preserveEgressDomains(t)
+	SetEgressSellerHosts(nil)
 
 	cases := []struct {
 		name    string
@@ -67,6 +75,72 @@ func TestCheckEgressHost(t *testing.T) {
 	}
 }
 
+// TestCheckEgressHostSellerExactMatch locks the two-level whitelist: seller
+// custom-channel hosts match exactly, platform-configured domains keep the
+// dot-boundary suffix rule.
+func TestCheckEgressHostSellerExactMatch(t *testing.T) {
+	preserveEgressDomains(t)
+
+	SetEgressDomains(nil)
+	SetEgressSellerHosts([]string{" Seller-Upstream.Example.com "})
+	assert.NoError(t, CheckEgressHost("seller-upstream.example.com"))
+	assert.ErrorIs(t, CheckEgressHost("api.seller-upstream.example.com"), ErrEgressDenied,
+		"a seller host must never allow its subdomains")
+	assert.ErrorIs(t, CheckEgressHost("seller-upstream.example.com.evil.com"), ErrEgressDenied)
+
+	// Official/platform domains still allow documented subdomains.
+	SetEgressDomains([]string{"deepseek.com"})
+	assert.NoError(t, CheckEgressHost("api.deepseek.com"))
+	assert.NoError(t, CheckEgressHost("a.b.deepseek.com"))
+	assert.ErrorIs(t, CheckEgressHost("evil-deepseek.com"), ErrEgressDenied)
+}
+
+// TestSellerHostJoinsRelayWhitelistOnlyWhenListingLive drives the registry
+// refresh against a real pool row: a draft custom channel stays out of the
+// relay whitelist, canary/live admits its exact host, and a pause removes it.
+func TestSellerHostJoinsRelayWhitelistOnlyWhenListingLive(t *testing.T) {
+	preserveEgressDomains(t)
+	f := newSellerAPIFixture(t)
+	resetVendorRegistryForTest()
+	t.Cleanup(resetVendorRegistryForTest)
+
+	listing, err := CreateListing(f.db, CreateListingInput{
+		SellerID:        f.sellerID,
+		APIKey:          uniqueTestKey("sk-egress-whitelist"),
+		CustomBaseURL:   "https://seller-upstream.example.com",
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 500,
+	})
+	require.NoError(t, err)
+
+	refreshVendorRegistry(true)
+	assert.ErrorIs(t, CheckEgressHost("seller-upstream.example.com"), ErrEgressDenied,
+		"a draft listing must not admit the seller host")
+
+	for _, status := range []string{ListingCanary, ListingLive} {
+		require.NoError(t, f.db.Model(&Listing{}).Where("id = ?", listing.ID).
+			Update("status", status).Error)
+		refreshVendorRegistry(true)
+		assert.NoError(t, CheckEgressHost("seller-upstream.example.com"), status)
+		assert.ErrorIs(t, CheckEgressHost("api.seller-upstream.example.com"), ErrEgressDenied,
+			"the admitted seller host is exact, not a suffix")
+	}
+
+	require.NoError(t, f.db.Model(&Listing{}).Where("id = ?", listing.ID).
+		Update("status", ListingPaused).Error)
+	refreshVendorRegistry(true)
+	assert.ErrorIs(t, CheckEgressHost("seller-upstream.example.com"), ErrEgressDenied,
+		"a paused listing removes the host from the relay whitelist")
+}
+
+func TestCheckEgressHostSellerExactMatchRejectsIPLiteral(t *testing.T) {
+	preserveEgressDomains(t)
+	SetEgressDomains(nil)
+	SetEgressSellerHosts([]string{"127.0.0.1"})
+	assert.ErrorIs(t, CheckEgressHost("127.0.0.1"), ErrEgressDenied,
+		"an IP literal is never a whitelisted domain, even in the seller list")
+}
+
 func TestValidateEgressIP(t *testing.T) {
 	// Every non-public range from §3.11 must be refused.
 	denied := []string{
@@ -82,14 +156,17 @@ func TestValidateEgressIP(t *testing.T) {
 
 		// L2 additions: ranges netip does not classify by itself.
 		"0.1.2.3", "0.255.255.255", // 0.0.0.0/8 "this network"
-		"192.0.0.1",        // 192.0.0.0/24 IETF protocol assignments
-		"192.0.2.1",        // 192.0.2.0/24 TEST-NET-1 documentation
-		"192.0.2.255",      // TEST-NET-1 upper edge
-		"240.1.1.1",        // 240.0.0.0/4 reserved
-		"255.255.255.255",  // limited broadcast, inside 240.0.0.0/4
-		"64:ff9b::8.8.8.8", // NAT64 64:ff9b::/96 embeds a public IPv4
-		"2002::1",          // 6to4 2002::/16
-		"2002:c0a8:0101::", // 6to4 embedding 192.168.1.1
+		"192.0.0.1",          // 192.0.0.0/24 IETF protocol assignments
+		"192.0.2.1",          // 192.0.2.0/24 TEST-NET-1 documentation
+		"192.0.2.255",        // TEST-NET-1 upper edge
+		"240.1.1.1",          // 240.0.0.0/4 reserved
+		"255.255.255.255",    // limited broadcast, inside 240.0.0.0/4
+		"64:ff9b::8.8.8.8",   // NAT64 64:ff9b::/96 embeds a public IPv4
+		"64:ff9b:1::8.8.8.8", // local-use NAT64 RFC 8215
+		"fec0::1",            // deprecated IPv6 site-local
+		"::8.8.8.8",          // deprecated IPv4-compatible form
+		"2002::1",            // 6to4 2002::/16
+		"2002:c0a8:0101::",   // 6to4 embedding 192.168.1.1
 
 		// IPv4-mapped forms must be judged as the embedded IPv4 address.
 		"::ffff:192.0.2.1",
@@ -190,6 +267,64 @@ func TestEgressHTTPClientTimeouts(t *testing.T) {
 	assert.Equal(t, 30*time.Second, transport.ResponseHeaderTimeout)
 	assert.NotNil(t, transport.DialContext, "every dial must go through the egress guard")
 	assert.Nil(t, transport.Proxy, "proxies stay disabled: a proxy would bypass IP validation")
+}
+
+// redirectTransport answers every request with a 301 to a different host and
+// counts the requests it served, so a test can prove that no redirect was
+// followed without any network access.
+type redirectTransport struct{ hits *atomic.Int32 }
+
+func (rt redirectTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	rt.hits.Add(1)
+	return &http.Response{
+		StatusCode: http.StatusMovedPermanently,
+		Header:     http.Header{"Location": []string{"https://elsewhere.example.com/x"}},
+		Body:       io.NopCloser(strings.NewReader("")),
+	}, nil
+}
+
+func TestEgressClientsDoNotFollowRedirects(t *testing.T) {
+	for name, client := range map[string]*http.Client{
+		"egress client": EgressHTTPClient(),
+		"verify client": EgressVerifyHTTPClient(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var hits atomic.Int32
+			client.Transport = redirectTransport{hits: &hits}
+			resp, err := client.Get("https://api.deepseek.com/probe")
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = resp.Body.Close() })
+			assert.Equal(t, http.StatusMovedPermanently, resp.StatusCode,
+				"the 3xx must be returned to the caller, not followed")
+			assert.Equal(t, int32(1), hits.Load(), "exactly one request — no redirect follow")
+		})
+	}
+}
+
+func TestEgressVerifyDialSkipsWhitelistButValidatesIPs(t *testing.T) {
+	preserveEgressDomains(t)
+	SetEgressDomains(nil) // fail-closed whitelist: nothing is a member
+
+	// The verify client reaches hosts that are not whitelisted (§3: 审核通过
+	// 前只有验证客户端可以访问它), but every resolved IP must still be public.
+	lookup := func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("8.8.8.8")}, nil
+	}
+	var dialed []string
+	conn, err := dialCheckedPolicy(context.Background(), "tcp", "seller-submitted.example:443",
+		lookup, pipeDialer(&dialed, nil), false)
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+	t.Cleanup(func() { _ = conn.Close() })
+	assert.Equal(t, []string{"8.8.8.8:443"}, dialed)
+
+	// A non-public IP is refused even without the whitelist membership check.
+	badLookup := func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("10.0.0.5")}, nil
+	}
+	_, err = dialCheckedPolicy(context.Background(), "tcp", "seller-submitted.example:443",
+		badLookup, pipeDialer(&dialed, nil), false)
+	assert.ErrorIs(t, err, ErrEgressDenied)
 }
 
 // pipeDialer returns a dial func that records every address it is asked to

@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 )
 
@@ -161,7 +162,7 @@ func TestJobsPatrol(t *testing.T) {
 		balanceStatus: http.StatusOK,
 		balanceBody:   `{"balance_infos":[{"currency":"CNY","total_balance":"5.00"}]}`,
 		chatStatus:    http.StatusOK,
-		chatBody:      `{"usage":{"prompt_cache_hit_tokens":1,"prompt_cache_miss_tokens":1}}`,
+		chatBody:      `{"model":"deepseek-flash","choices":[{"message":{"content":"pong"}}],"usage":{"prompt_tokens":5,"prompt_cache_hit_tokens":1,"prompt_cache_miss_tokens":1}}`,
 	}
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
@@ -231,16 +232,29 @@ func (h *fingerprintPatrolHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	case "/user/balance":
 		_, _ = w.Write([]byte(`{"balance_infos":[{"currency":"CNY","total_balance":"5.00"}]}`))
 	case "/chat/completions":
+		var body struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = common.DecodeJson(r.Body, &body)
+		// The callability probe sends "ping"; the fingerprint sends the long
+		// verify prompt. candidateNoUsage must only break the fingerprint, so
+		// the probe still sees a valid chat completion.
+		probe := len(body.Messages) > 0 && body.Messages[0].Content == "ping"
 		tokens := h.candidateTokens
 		official := r.Header.Get("Authorization") == "Bearer "+h.officialKey
 		if official {
 			tokens = h.officialTokens
-		} else if h.candidateNoUsage {
-			_, _ = w.Write([]byte(`{"choices":[]}`))
+		}
+		if !probe && !official && h.candidateNoUsage {
+			// Valid JSON with non-empty usage but no prompt_tokens: callable,
+			// yet the fingerprint comparison cannot run.
+			_, _ = w.Write([]byte(`{"model":"deepseek-flash","choices":[{"message":{"content":"x"}}],"usage":{"completion_tokens":1}}`))
 			return
 		}
 		_, _ = fmt.Fprintf(w,
-			`{"choices":[{"message":{"content":"x"}}],"usage":{"prompt_tokens":%d,"prompt_cache_hit_tokens":1,"prompt_cache_miss_tokens":1}}`,
+			`{"model":"deepseek-flash","choices":[{"message":{"content":"x"}}],"usage":{"prompt_tokens":%d,"prompt_cache_hit_tokens":1,"prompt_cache_miss_tokens":1}}`,
 			tokens)
 	default:
 		http.NotFound(w, r)
@@ -252,6 +266,9 @@ func (h *fingerprintPatrolHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 // it plus an httptest client that redirects every probe to h.
 func newFingerprintPatrolListing(t *testing.T, db *gorm.DB, h *fingerprintPatrolHandler) (Listing, *http.Client) {
 	t.Helper()
+	// The official-token cache is process-wide and keyed by vendor + model +
+	// prompt; keep one test's official count from leaking into the next.
+	resetFingerprintCacheForTest()
 	l, err := CreateListing(db, CreateListingInput{
 		SellerID:        10023,
 		VendorID:        SeedVendorDeepSeek,
@@ -291,10 +308,10 @@ func lastFingerprintPatrolProbe(t *testing.T, db *gorm.DB, listingID int64) Prob
 	return p
 }
 
-// A comparison that never actually ran (missing usage, billing error, 429,
-// network failure) must be recorded as unchecked and must not extend the
-// mismatch streak. This test runs the patrol twice: the first comparison is
-// unusable, the second is a real mismatch, and the streak stays at one.
+// An incomplete comparison (missing usage, billing error, 429, network
+// failure) is not health evidence: the patrol must not write an OK probe and,
+// because the listing cannot be certified, it is paused. It is also not a
+// mismatch, so it never extends the mismatch streak.
 func TestJobsFingerprintUncheckedDoesNotCount(t *testing.T) {
 	db := newListingTestDB(t)
 	const officialKey = "sk-platform-fingerprint"
@@ -313,22 +330,30 @@ func TestJobsFingerprintUncheckedDoesNotCount(t *testing.T) {
 	limiter := NewVerifyLimiter(VerifyMaxConcurrent, VerifyPerMinute)
 
 	require.NoError(t, patrolOneListingWithClient(db, limiter, client, &listing))
-	probe := lastPatrolProbe(t, db, listing.ID)
+	probe := lastFingerprintPatrolProbe(t, db, listing.ID)
+	assert.False(t, probe.OK, "an incomplete comparison must not be marked healthy")
 	assert.Contains(t, probe.Detail, `"fingerprint_checked":false`)
 	assert.NotContains(t, probe.Detail, `"fingerprint_ok"`,
-		"fingerprint_ok is written only for a real comparison")
+		"fingerprint_ok is written only for a fully checked comparison")
+	assert.Contains(t, probe.Detail, `"fingerprints"`)
 	row, err := GetListing(db, listing.ID)
 	require.NoError(t, err)
-	assert.Equal(t, ListingLive, row.Status)
+	assert.Equal(t, ListingPaused, row.Status, "fail-closed patrol pauses an uncertified listing")
+	consecutive, err := consecutiveFingerprintMismatches(db, listing.ID)
+	require.NoError(t, err)
+	assert.Zero(t, consecutive, "the failed comparison is not a mismatch")
 
-	// A real mismatch now: the unchecked run must not count, so the streak is
-	// exactly one and the listing stays live.
+	// A real mismatch now, on a live listing: it is written as checked+failed
+	// and counted, so the streak is exactly one and the listing stays live.
 	h.candidateNoUsage = false
+	require.NoError(t, db.Model(&Listing{}).Where("id = ?", listing.ID).
+		Updates(map[string]any{"status": ListingLive, "pause_reason": "", "resume_at": nil}).Error)
 	require.NoError(t, patrolOneListingWithClient(db, limiter, client, &listing))
 	probe = lastPatrolProbe(t, db, listing.ID)
+	assert.False(t, probe.OK)
 	assert.Contains(t, probe.Detail, `"fingerprint_checked":true`)
 	assert.Contains(t, probe.Detail, `"fingerprint_ok":false`)
-	consecutive, err := consecutiveFingerprintMismatches(db, listing.ID)
+	consecutive, err = consecutiveFingerprintMismatches(db, listing.ID)
 	require.NoError(t, err)
 	assert.Equal(t, 1, consecutive, "the failed comparison was skipped, not counted")
 	row, err = GetListing(db, listing.ID)

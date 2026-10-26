@@ -9,8 +9,12 @@ package marketplace
 // platform key), and usage.prompt_tokens is compared. A ratio within 5% of
 // 1.0 (or an absolute difference of at most 3 tokens) means both upstreams
 // tokenize the text the same way, i.e. the candidate really serves the same
-// model. A comparison that could not actually run is reported as
-// Checked=false and never counts as a mismatch.
+// model.
+//
+// The comparison is fail-closed: a result that is not Checked (transport
+// error, non-200, missing usage, prompt too short) is NOT a pass. Callers
+// must use Passed(), which requires a completed comparison inside the
+// tolerance; a missing official reference therefore blocks certification.
 //
 // Keys used here never leave memory: PlatformKeyForVendor parses the
 // MP_PLATFORM_KEYS environment variable on demand, stores nothing, logs
@@ -50,7 +54,8 @@ const fingerprintAbsoluteTolerance = 3
 
 // fingerprintMinPromptTokens is the smallest official prompt-token count that
 // can be judged. Below it the sample is too small for either tolerance to be
-// meaningful, so the comparison is reported as unchecked, not as a mismatch.
+// meaningful, so the comparison is reported as incomplete (Checked=false) and
+// fails closed: it can never certify a model.
 const fingerprintMinPromptTokens = 20
 
 // defaultFingerprintPrompt is used when a model pool row has no verify prompt.
@@ -189,6 +194,16 @@ func PlatformKeyForVendor(vendor string) (string, bool) {
 	return "", false
 }
 
+// PlatformFingerprintConfigured reports whether the deployment declares
+// platform vendor keys. A defined-but-empty/invalid MP_PLATFORM_KEYS counts as
+// configured-but-unusable: verification then fails closed model by model
+// instead of silently disabling the official reference. Only a completely
+// unset variable disables fingerprinting for the deployment.
+func PlatformFingerprintConfigured() bool {
+	_, defined := os.LookupEnv(PlatformKeysEnv)
+	return defined
+}
+
 // FingerprintResult is one tokenizer comparison.
 type FingerprintResult struct {
 	PromptTokensOfficial  int64
@@ -196,14 +211,35 @@ type FingerprintResult struct {
 	Ratio                 float64 // candidate/official, 1.0 = identical
 	// Checked reports whether both sides returned usable prompt_tokens and a
 	// comparison actually happened. Transport errors, non-200 responses,
-	// missing usage and prompts too small to judge all leave it false; such a
-	// result must never count towards a mismatch streak.
+	// missing usage and prompts too small to judge all leave it false. A
+	// false Checked is a verification FAILURE (fail-closed), never an
+	// implicit pass; use Passed() instead of reading this field directly.
 	Checked bool
 	// Comparable is a synonym for Checked kept for callers that spell the
 	// "was this result a real comparison?" question that way.
 	Comparable      bool
 	WithinTolerance bool   // |ratio-1| <= 0.05 or |candidate-official| <= 3
 	FailReason      string // short English; never contains a key or upstream body
+}
+
+// Passed is the only correct reading of a comparison: the comparison must
+// have completed AND landed inside the tokenizer tolerance. Everything else
+// (error, missing usage, too-short prompt, mismatch) is a failure.
+func (r FingerprintResult) Passed() bool {
+	return r.Checked && r.WithinTolerance
+}
+
+// FingerprintModelResult is one key×model fingerprint outcome recorded inside
+// a verify/patrol probe (mp_probes.detail, no schema change). Checked=false
+// is a failure, not "unknown": a probe only certifies a model when the
+// comparison completed and Matched is true.
+type FingerprintModelResult struct {
+	Model         string  `json:"model"`
+	UpstreamModel string  `json:"upstream_model"`
+	Checked       bool    `json:"checked"`
+	Matched       bool    `json:"matched"`
+	Ratio         float64 `json:"ratio,omitempty"`
+	FailReason    string  `json:"fail_reason,omitempty"`
 }
 
 // CompareFingerprint sends the same prompt to the official and candidate
@@ -213,19 +249,25 @@ type FingerprintResult struct {
 // prompt hash, so the patrol job does not hit the official endpoint once per
 // listing. The candidate is always called; cache hits and failures never carry
 // keys or upstream bodies. It always spends at most one candidate completion
-// (max_tokens=1, temperature=0); failures are reported in FailReason.
+// (max_tokens=1, temperature=0); failures are reported in FailReason. Only a
+// result whose Passed() is true may certify a model; an incomplete comparison
+// is a failure.
 func CompareFingerprint(ctx context.Context, client *http.Client,
 	official Vendor, officialKey, officialUpstreamModel string,
 	candidate Vendor, candidateKey, candidateUpstreamModel string,
 	prompt string) FingerprintResult {
+	var res FingerprintResult
 	if fingerprintHTTPClient != nil {
 		client = fingerprintHTTPClient
 	}
 	if client == nil {
-		client = http.DefaultClient
+		// Fail closed: the marketplace egress clients refuse redirects and
+		// validate dial-time IPs, while http.DefaultClient does neither. An
+		// injected client is therefore mandatory and its absence is a failed
+		// comparison, never a fallback to the default transport.
+		res.FailReason = "no http client injected for fingerprint comparison"
+		return res
 	}
-
-	var res FingerprintResult
 	now := fingerprintCacheNow()
 	cacheKey := fingerprintCacheKey(official.ID, officialUpstreamModel, prompt)
 	officialTokens, cached := fingerprintCacheGet(cacheKey, now)
@@ -256,7 +298,8 @@ func CompareFingerprint(ctx context.Context, client *http.Client,
 	}
 	if officialTokens < fingerprintMinPromptTokens {
 		// Too few tokens to judge: a single tokenizer quirk would look like a
-		// huge relative drift. Report unchecked, never a failure (P0).
+		// huge relative drift. The comparison did not complete, so it fails
+		// closed rather than counting as a pass.
 		res.FailReason = "prompt too short to compare"
 		return res
 	}
@@ -270,6 +313,9 @@ func CompareFingerprint(ctx context.Context, client *http.Client,
 	res.Comparable = true
 	res.WithinTolerance = math.Abs(ratio-1) <= fingerprintTolerance+1e-9 ||
 		diff <= fingerprintAbsoluteTolerance
+	if !res.WithinTolerance {
+		res.FailReason = "prompt token mismatch"
+	}
 	return res
 }
 
@@ -337,7 +383,11 @@ func fingerprintPromptTokens(ctx context.Context, client *http.Client,
 func VerifyChannelKey(ctx context.Context, client *http.Client, channel Vendor, apiKey string) VerifyResult {
 	var res VerifyResult
 	if client == nil {
-		client = http.DefaultClient
+		// Same fail-closed rule as CompareFingerprint: never fall back to
+		// http.DefaultClient, which follows redirects and skips the egress
+		// guard.
+		res.FailReason = "no http client injected for channel verification"
+		return res
 	}
 	base := VendorOpenAIBase(channel)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/models", nil)
