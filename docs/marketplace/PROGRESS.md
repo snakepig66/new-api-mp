@@ -823,3 +823,96 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 - `GetSelfUserById` 未投影 `gift_quota`（钱包 API 已返回）。
 - `mp_requests` 记录 API 未暴露 `gift_debit_micro` / `capped_micro`。
 - `controller` 下两个既有测试失败与本次无关：`TestManageUserQuotaMiddlewareKeepsOneOperationPerRequest` 因 `ACCESS_TOKEN_LEGACY_RETIRED` 环境/日期问题 401；`TestDeleteRedemptionBatch` 的审计日志断言失败。
+
+---
+
+## P1 中继正确性（2026-10-27）
+
+开发方式：主智能体监工、五个子智能体分组实现（请求改写+URL+适配器 / 选择器+错误分类 / 响应头白名单 / 计费口径+Responses绑定+重试超时 / 集成测试），主智能体验收、整改并复跑全部门禁。
+
+### 做了什么
+
+**组 1 — 直通模式改写请求体 + 按端点拼接 URL + anthropic_messages 交给 claude 适配器**：
+- `relayhook.go` 新增 `rewritePassthroughJSON`：直通模式也改写请求体（model → 上游模型名、`stream_options.include_usage=true`、`max_tokens`/`max_output_tokens` 按余额截断、OpenAI 官方渠道强制 `store=false`、`user`/`metadata.user` 换 HMAC 假名）；改写失败拒绝请求（400/503）。
+- `listing.go` 删除 `allIdentity` 渠道级开关，改为 per-model 直通决策（`ApplyRelayChannelKey` 按请求 model 覆盖 `PassThroughBodyEnabled`）。
+- `relay/constant/relay_mode.go` 新增 `EndpointKind`（`openai_chat`/`openai_responses`/`anthropic_messages`）和 `BuildEndpointURL`（base + 协议固定路径，不再依赖 `RequestURLPath` 和 strip 开关）。
+- `modelpool.go` 新增 `ChannelEndpointBases`（三种端点 base，回退旧 `openai`/`anthropic`）。
+- 三个 adaptor（OpenAI/Claude/DeepSeek）的 `GetRequestURL` 改为按端点拼接固定路径。
+- `relay/constant/relay_mode.go` 新增 `RelayModeClaude` 并映射 `/v1/messages`；`relay/claude_handler.go` 调用 `marketplace.ForceClaudeAdaptor` 强制 `info.ApiType = APITypeAnthropic`。
+- `relay/channel/claude/adaptor.go` 设置 `anthropic-version`（buyer 值优先，默认 2023-06-01）；`anthropic-beta` 白名单过滤（1M context 与价目表联动：`mp_models.context_length >= 1,000,000` 才允许 `context-1m-2025-08-07`）。
+
+**组 2 — 选择器按端点过滤 + 按厂商错误码分类**：
+- `selector.go` `SelectInput` 新增 `EndpointKind`；`loadVerifiedChannels` 按 `ChannelEndpointBases.ServesEndpoint` 过滤；同价平局改用注入随机源的随机抽取（不再 ID 排序）。
+- `relayhook.go` 新增 `endpointKindForPath`（chat/responses/messages）；`BeginDistribute`/`ReselectChannel` 带上 endpoint，换家不跨协议。
+- `relayhook.go` 新增 `classifyRelayError`：结构化 code/type 优先于 HTTP 状态；四类分类（鉴权失效/余额耗尽/限流/内容审核或买家错误）；厂商错误码表（OpenAI `invalid_api_key`/`insufficient_quota`、Anthropic `authentication_error`/`permission_error`、智谱 `1113`、DeepSeek `insufficient_balance`）。
+- `shouldAutoPauseOnError` 只对 auth/balance 返回 true；403 不再一律暂停（`permission_error` 不暂停，`invalid_api_key` 暂停）；content moderation/buyer error 不暂停。
+
+**组 3 — 响应头白名单 + 响应体身份字段清理 + upstream model 记录**：
+- `service/http.go` `ShouldCopyUpstreamHeader` 改为白名单（`Content-Type`/`Cache-Control`/`ETag`/`Last-Modified`/Codex headers），删除 `organization`/`x-ratelimit-*`/`set-cookie`/`server`/`via`。
+- `responserewrite.go` 删除 `system_fingerprint`；保留 `id`（Responses API 的 `previous_response_id` 需要）。
+- `models.go` `Request` 新增 `UpstreamModel` + `ModelFingerprintAnomaly`；`record.go` 写入。
+- model 改写限制为精确匹配或纯日期后缀（`-2024-01-01`），其他记为指纹异常。
+
+**组 4a — 按端点决定计费口径**：
+- `record.go` `extractMarketplaceUsage` 改为端点和语义感知的调度器；三种协议各自的提取器（chat/responses/messages）。
+- 缓存字段归一化：`cached_tokens`/`cache_read`/`cache_creation`/`prompt_cache_hit_tokens`。
+- 端点感知的零输出失败规则。
+
+**组 4b — Responses 状态绑定 + 重试与超时**：
+- `models.go` 新增 `ResponseBinding` 表（`response_id` → channel+endpoint+key+backend_type，TTL 对齐上游保留期：Responses 30 天、Messages 1 小时）。
+- `relayhook.go` `BeginDistribute` 解析 `previous_response_id`，命中绑定后走 `resumeBoundListing`（校验 listing 状态/模型/端点/key 指纹/backend 家族）；未命中、绑定暂停、key 变更均返回 503，不静默改派。
+- thinking signature 只能改派到同类后端（`thinkingSignatureCompatible`）。
+- 重试规则：`isTransientUpstreamError` 保留 408/504/524/5xx，新增 400+`channel_incompatible`/`model_not_supported`；`controller/relay.go` 重试循环检查 `c.Writer.Written()`，已写首包不再换家。
+- 换家按差额调整冻结：`Reserve(newTotal)`（上涨）或 `RefundDelta(frozen-newTotal)`（下降），不再 refund-all + re-freeze。
+- 超时按端点/模型：`RelayHeaderTimeoutForEndpoint`/`RelayFirstByteTimeoutForEndpoint`，推理类模型（o1/o3/o4、deepseek-r1、reasoning、-thinking）放宽到 120s/60s。
+- 流式请求定期续租并发名额（`SlotManager.Renew`，30s 节流）。
+
+**组 5 — 集成测试**：
+- `relay_integration_test.go` 注册 `/v1/messages` 和 `/v1/responses` 路由；添加 Anthropic messages 和 OpenAI responses 的 mock upstream（SSE 流和非流式）。
+- chat：别名改写、user/metadata 假名、store=false、缓存读计费。
+- messages：非流式（缓存字段计费）、流式、thinking+signature、anthropic-version+beta 白名单、tool_use。
+- responses：非流式、流式、previous_response_id 绑定、绑定 key 不可用 503、function_call。
+- 缓存字段：三种格式都覆盖（cache_read/cache_write 分别按价目表计费）。
+
+**流终止修复**（组 5 发现的真实 bug）：
+- `relay/helper/stream_scanner.go` EOF 竞态：扫描循环结束后不再无条件 `SetEndReason(EOF)`；EOF 兜底延迟到 `cleanup()`（所有 goroutine 汇合后），仅在 `EndReason == None` 时才设置。
+- `relay/channel/claude/relay-claude.go` Messages 流：`message_stop` 时 `SetEndReason(Done)`，不再依赖 `[DONE]`（真实 Anthropic 协议没有）。
+- 修复前：完整 Responses/Messages 流可能被判为截断并全额退款；修复后：正常完成路径为 `done`，真截断仍为 `eof`。
+
+### 取舍与整改记录
+
+- **MP_PLATFORM_KEYS 完全未设置时不阻断验证**（P0 遗留）：避免没有官方凭据的部署无法上架。
+- **官方渠道判定用 `kind == official`**（P0 遗留）：而非「channel 未被任何 mp_listings 关联」。
+- **同价随机只作用于最终平局**（有效价、原始倍率、探针延迟全部相同）：延迟仍是硬排序键，避免把既有确定性延迟测试变成概率测试。
+- **完全空的 protocols 行按「不限制」处理**：避免旧渠道静默失去全部流量。
+- **403 仅凭状态不再暂停**：`permission_error`/`invalid_request_error` 且无鉴权关键词时不暂停；403 + `invalid_api_key` 仍暂停。
+- **`previous_response_id` 必须命中绑定**：未命中（过期或来自市场外）也返回 503，不降级为普通选择。
+- **绑定恢复校验 listing 仍 live/canary、仍服务该模型、端点一致、key 指纹未变**：任一不满足即返回固定文案 503。
+- **带 `previous_response_id` 的请求只允许原地重试**：不允许换供应商。
+- **thinking 签名的「同类后端」按协议家族判定**：`/v1/messages` → anthropic，其余 → openai。
+- **差额冻结调整**：上涨走既有 `Reserve(target)`；下降走新增 `RefundDelta`。
+- **超时改为请求级定时器**：共享 `http.Transport.ResponseHeaderTimeout` 无法按模型变化，故设为 0 并在 `firstByteTransport` 内按请求执行。
+- **Key 级重试**：市场当前一个 listing 一个 key，无法真正「同渠道换 Key」；`keyRetries` 用于原地重试，`channelRetries` 用于换家，为未来多 Key 预留。
+- **Responses 流 mock 增加 `[DONE]`**：真实 OpenAI Responses 协议没有该终止符，组 5 为消除 scanner 竞态临时添加；流终止修复后已移除。
+
+### 测试结果
+
+- `go build ./...` ✅
+- `go test ./marketplace/... -count=1` ✅（90.359s）
+- `go test ./relay/... -count=1` ✅（除两个既有 flake/问题外全绿）
+- 基线 flake：`TestRelayIT_*` 偶发 localhost dial timeout；`TestUpstreamGetBody_HTTP2RetryAfterGracefulGoAway_PassThrough` 单独运行通过；`TestAdaptorMasksDialedHostsInDialFailure` 单独运行也失败（既有问题，与本次无关）。
+
+**数据库矩阵**：只验证了 SQLite；MySQL/PostgreSQL 未实测（环境未设置 `MP_TEST_MYSQL_DSN` / `MP_TEST_POSTGRES_DSN`）。新增表 `mp_response_bindings` 为纯新增、无既有列变更；新增列均带非空默认值。
+
+### 发现但未处理的相邻问题
+
+- `ResponseBinding` 未按买家隔离（严格按方案字段）：持有不可猜测的 response id 的调用方会强制命中原 listing；如需防串用建议后续增加 `buyer_user_id`。
+- 槽位续租只在有响应字节写出时触发；非流式上游若超过 10 分钟无任何写出，仍可能丢失槽位保护。
+- 绑定依赖响应体中 `resp_`/`msg_` id 的可解析性；若上游改写响应封装或不返回该前缀，后续 `previous_response_id` 会被严格规则拒绝。
+- 过期绑定采用查询时惰性删除（最简方案），未接入 `jobs.go` 巡检。
+- Claude 流在 `message_stop` 后不会主动停止 scanner，只依赖上游断开；若上游保留连接，请求会等到 streaming timeout（既有行为）。
+- `isMarketplaceRelayPath` 接受 `/v1/completions`，但 `endpointKindForPath` 对其返回空，因此 completions 请求不做协议过滤。
+- `ChannelPoolAsVendor` 只投影 chat/legacy openai 与 messages/legacy anthropic，Responses 专用 base 在该投影中被丢弃（选择器不依赖它）。
+- `finishAttempt` 仍按原始 `StatusCode == 429` 判断半开探针回收；若厂商用非 429 状态返回 `rate_limit_exceeded`，会记录熔断但走非 429 回收分支（当前无害，但语义不完全一致）。
+- `ConvergeOutwardError` 会把 403 的内容/权限错误收敛成 503，与「内容审核原样返回」只对 400 成立。
+- 运营配置的 `ShouldDisableByStatusCode` 对 marketplace listing 不再生效（按任务要求），运营侧行为会变化；`AutomaticDisableKeywords` 仍生效。
