@@ -464,6 +464,38 @@ func TestVerifyListingOnlyListsCallableModels(t *testing.T) {
 	require.Len(t, results, 2)
 }
 
+// TestVerifyListingMirrorsReducedModels proves verification's model narrowing
+// is mirrored: the callable model stays enabled and verified in the shadow
+// table, the dropped one is disabled, and the channel lands in canary.
+func TestVerifyListingMirrorsReducedModels(t *testing.T) {
+	h := rejectingModelHandler{inner: allGreenHandler(), badModel: "deepseek-v4-pro", badStatus: http.StatusNotFound}
+	db, listing, client := newVerifyListingFixture(t, h)
+	limiter := NewVerifyLimiter(VerifyMaxConcurrent, VerifyPerMinute)
+
+	res, err := VerifyListing(context.Background(), db, client, limiter, listing.ID)
+	require.NoError(t, err)
+	require.True(t, res.OK)
+
+	var channel SellerChannel
+	require.NoError(t, db.Where("id = ?", listing.ID).Take(&channel).Error)
+	assert.Equal(t, ListingCanary, channel.Status)
+	var key ChannelKey
+	require.NoError(t, db.Where("channel_id = ?", listing.ID).Take(&key).Error)
+	assert.Equal(t, ChannelKeyNormal, key.Status)
+
+	var models []SellerChannelModel
+	require.NoError(t, db.Where("channel_id = ?", listing.ID).Order("model ASC").Find(&models).Error)
+	require.Len(t, models, 2, "both original models keep a historical shadow row")
+	byModel := make(map[string]SellerChannelModel, len(models))
+	for _, row := range models {
+		byModel[row.Model] = row
+	}
+	assert.True(t, byModel["deepseek-flash"].Enabled)
+	assert.True(t, byModel["deepseek-flash"].VerifiedOpenAIChat)
+	assert.False(t, byModel["deepseek-v4-pro"].Enabled, "a dropped model is disabled, not deleted")
+	assert.False(t, byModel["deepseek-v4-pro"].VerifiedOpenAIChat)
+}
+
 func TestVerifyListingRejects(t *testing.T) {
 	db, listing, client := newVerifyListingFixture(t, allGreenHandler())
 	limiter := NewVerifyLimiter(VerifyMaxConcurrent, VerifyPerMinute)

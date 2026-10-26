@@ -594,6 +594,42 @@ func mustDecrypt(t *testing.T, row Listing) string {
 	return plain
 }
 
+// TestListingWritesMirrorShadow proves the listing write paths (a multiplier
+// edit and a key replacement) copy their result into the P3 shadow tables; the
+// mirror is idempotent and never becomes the authoritative source.
+func TestListingWritesMirrorShadow(t *testing.T) {
+	db := newListingTestDB(t)
+	listing := createTestListing(t, db, 10023, uniqueTestKey("sk-mirror-write"))
+
+	require.NoError(t, UpdateMultiplier(db, listing.ID, 750, time.Now()))
+	var channel SellerChannel
+	require.NoError(t, db.Where("id = ?", listing.ID).Take(&channel).Error)
+	assert.Equal(t, int64(2), channel.Version)
+	assert.Equal(t, ListingDraft, channel.Status)
+	var models []SellerChannelModel
+	require.NoError(t, db.Where("channel_id = ?", listing.ID).Find(&models).Error)
+	require.Len(t, models, 2)
+	for _, row := range models {
+		assert.Equal(t, int64(750), row.MultiplierMilli)
+	}
+
+	newKey := uniqueTestKey("sk-mirror-write-replaced")
+	require.NoError(t, ReplaceKey(db, listing.ID, newKey))
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	require.NoError(t, db.Where("id = ?", listing.ID).Take(&channel).Error)
+	assert.Equal(t, ListingVerifying, channel.Status, "the mirror follows the key-change transition")
+	var key ChannelKey
+	require.NoError(t, db.Where("channel_id = ?", listing.ID).Take(&key).Error)
+	assert.Equal(t, row.KeyFingerprint, key.KeyFingerprint)
+	assert.Equal(t, row.KeyCiphertext, key.KeyCiphertext)
+
+	require.NoError(t, MirrorListingUpdate(db, listing.ID))
+	var keys int64
+	require.NoError(t, db.Model(&ChannelKey{}).Where("channel_id = ?", listing.ID).Count(&keys).Error)
+	assert.EqualValues(t, 1, keys, "a repeated mirror must not add a second key")
+}
+
 func TestHoursValidation(t *testing.T) {
 	assert.NoError(t, ValidateHours(""), "empty = all day")
 	assert.NoError(t, ValidateHours("  "))

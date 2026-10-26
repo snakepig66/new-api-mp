@@ -207,6 +207,226 @@ func TestBackfillSellerChannelsIdempotentAndBatched(t *testing.T) {
 	assert.Equal(t, int64(total*3), countRows(&ChannelEndpoint{}))
 }
 
+// TestMirrorListingUpdateTracksListingWrites drives the legacy write paths
+// (multiplier, key replacement, state transitions) and asserts the shadow
+// tables follow: status/version/multiplier/key material/verified flags. It also
+// re-runs the mirror to prove the writes are idempotent (no new rows).
+func TestMirrorListingUpdateTracksListingWrites(t *testing.T) {
+	db := newListingTestDB(t)
+	listing := createTestListing(t, db, 10023, uniqueTestKey("sk-mirror"))
+
+	shadow := func() (SellerChannel, ChannelKey, []SellerChannelModel, []ChannelEndpoint) {
+		t.Helper()
+		var channel SellerChannel
+		require.NoError(t, db.Where("id = ?", listing.ID).Take(&channel).Error)
+		var key ChannelKey
+		require.NoError(t, db.Where("channel_id = ?", listing.ID).Take(&key).Error)
+		var models []SellerChannelModel
+		require.NoError(t, db.Where("channel_id = ?", listing.ID).Order("model ASC").Find(&models).Error)
+		var endpoints []ChannelEndpoint
+		require.NoError(t, db.Where("channel_id = ?", listing.ID).Find(&endpoints).Error)
+		return channel, key, models, endpoints
+	}
+
+	channel, key, models, endpoints := shadow()
+	assert.Equal(t, ListingDraft, channel.Status)
+	assert.Equal(t, ChannelKeyNormal, key.Status)
+	require.Len(t, models, 2)
+	require.Len(t, endpoints, 3)
+	for _, row := range models {
+		assert.False(t, row.VerifiedOpenAIChat)
+	}
+	originalKeyID := key.ID
+
+	// Multiplier edit: the per-model rows follow and the version is copied.
+	require.NoError(t, UpdateMultiplier(db, listing.ID, 450, time.Now()))
+	channel, key, models, _ = shadow()
+	assert.Equal(t, int64(2), channel.Version)
+	for _, row := range models {
+		assert.Equal(t, int64(450), row.MultiplierMilli)
+	}
+	assert.Equal(t, ChannelKeyNormal, key.Status)
+
+	// Key replacement: the shadow key is updated in place, not duplicated.
+	replacement := uniqueTestKey("sk-mirror-replaced")
+	require.NoError(t, ReplaceKey(db, listing.ID, replacement))
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	channel, key, _, _ = shadow()
+	assert.Equal(t, ListingVerifying, channel.Status)
+	assert.Equal(t, originalKeyID, key.ID, "the shadow key keeps its id across a key swap")
+	assert.Equal(t, row.KeyFingerprint, key.KeyFingerprint)
+	assert.Equal(t, row.KeyCiphertext, key.KeyCiphertext)
+
+	// A passing verification promotes to canary: every verified flag follows.
+	require.NoError(t, db.Create(&Probe{ListingID: listing.ID, Type: ProbeTypeVerify, OK: true}).Error)
+	require.NoError(t, PassVerification(db, listing.ID))
+	channel, key, models, endpoints = shadow()
+	assert.Equal(t, ListingCanary, channel.Status)
+	assert.Equal(t, ChannelKeyNormal, key.Status)
+	for _, m := range models {
+		assert.True(t, m.Enabled)
+		assert.True(t, m.VerifiedOpenAIChat)
+		assert.True(t, m.VerifiedOpenAIResponses)
+		assert.True(t, m.VerifiedAnthropicMessages)
+	}
+	for _, ep := range endpoints {
+		assert.True(t, ep.Verified)
+		require.NotNil(t, ep.VerifiedAt)
+	}
+
+	require.NoError(t, GoLive(db, listing.ID))
+	channel, _, _, _ = shadow()
+	assert.Equal(t, ListingLive, channel.Status)
+
+	// A pause cools the key down; a ban fails it and clears every verified flag.
+	require.NoError(t, PauseListing(db, listing.ID))
+	channel, key, _, _ = shadow()
+	assert.Equal(t, ListingPaused, channel.Status)
+	assert.Equal(t, ChannelKeyCooling, key.Status)
+
+	require.NoError(t, BanListing(db, listing.ID))
+	channel, key, models, endpoints = shadow()
+	assert.Equal(t, ListingBanned, channel.Status)
+	assert.Equal(t, ChannelKeyFailed, key.Status)
+	for _, m := range models {
+		assert.False(t, m.VerifiedOpenAIChat)
+		assert.False(t, m.VerifiedOpenAIResponses)
+		assert.False(t, m.VerifiedAnthropicMessages)
+	}
+	for _, ep := range endpoints {
+		assert.False(t, ep.Verified)
+		assert.Nil(t, ep.VerifiedAt)
+	}
+
+	// Idempotency: a repeated mirror writes the same state and appends nothing.
+	require.NoError(t, MirrorListingUpdate(db, listing.ID))
+	require.NoError(t, MirrorListingUpdate(db, listing.ID))
+	var keyCount, modelCount, endpointCount int64
+	require.NoError(t, db.Model(&ChannelKey{}).Where("channel_id = ?", listing.ID).Count(&keyCount).Error)
+	require.NoError(t, db.Model(&SellerChannelModel{}).Where("channel_id = ?", listing.ID).Count(&modelCount).Error)
+	require.NoError(t, db.Model(&ChannelEndpoint{}).Where("channel_id = ?", listing.ID).Count(&endpointCount).Error)
+	assert.EqualValues(t, 1, keyCount)
+	assert.EqualValues(t, 2, modelCount)
+	assert.EqualValues(t, 3, endpointCount)
+}
+
+// TestMirrorListingUpdateCreatesMissingShadow proves mirroring repairs a
+// legacy listing that was never backfilled: the first run creates the seller
+// channel, key, models and endpoints.
+func TestMirrorListingUpdateCreatesMissingShadow(t *testing.T) {
+	db := newListingTestDB(t)
+	listing, _ := legacyListingFixture(t, db, 42,
+		[]string{"deepseek-flash", "deepseek-v4-pro"}, ListingLive, 400)
+
+	require.NoError(t, MirrorListingUpdate(db, listing.ID))
+
+	var channel SellerChannel
+	require.NoError(t, db.Where("id = ?", listing.ID).Take(&channel).Error)
+	assert.Equal(t, ListingLive, channel.Status)
+	assert.Equal(t, listing.Version, channel.Version)
+	var key ChannelKey
+	require.NoError(t, db.Where("channel_id = ?", listing.ID).Take(&key).Error)
+	assert.Equal(t, listing.KeyFingerprint, key.KeyFingerprint)
+	var models []SellerChannelModel
+	require.NoError(t, db.Where("channel_id = ?", listing.ID).Find(&models).Error)
+	require.Len(t, models, 2)
+	for _, row := range models {
+		assert.Equal(t, int64(400), row.MultiplierMilli)
+		assert.True(t, row.Enabled)
+		assert.True(t, row.VerifiedOpenAIChat)
+	}
+	var endpoints int64
+	require.NoError(t, db.Model(&ChannelEndpoint{}).Where("channel_id = ?", listing.ID).Count(&endpoints).Error)
+	assert.EqualValues(t, 3, endpoints)
+}
+
+// TestMirrorListingDeleteSoftDeletesKey proves removal keeps historical key ids
+// resolvable while disabling the channel and its models, and that a repeat run
+// is a no-op.
+func TestMirrorListingDeleteSoftDeletesKey(t *testing.T) {
+	db := newListingTestDB(t)
+	listing := createTestListing(t, db, 10023, uniqueTestKey("sk-mirror-delete"))
+
+	require.NoError(t, MirrorListingDelete(db, listing.ID))
+	require.NoError(t, MirrorListingDelete(db, listing.ID), "a repeated delete must be idempotent")
+
+	var active int64
+	require.NoError(t, db.Model(&ChannelKey{}).Where("channel_id = ?", listing.ID).Count(&active).Error)
+	assert.Zero(t, active, "the active key list is empty")
+	var deleted ChannelKey
+	require.NoError(t, db.Unscoped().Where("channel_id = ?", listing.ID).Take(&deleted).Error)
+	assert.True(t, deleted.DeletedAt.Valid, "the key row stays as a soft-deleted historical record")
+
+	var models []SellerChannelModel
+	require.NoError(t, db.Where("channel_id = ?", listing.ID).Find(&models).Error)
+	require.NotEmpty(t, models)
+	for _, row := range models {
+		assert.False(t, row.Enabled)
+	}
+	var channel SellerChannel
+	require.NoError(t, db.Where("id = ?", listing.ID).Take(&channel).Error)
+	assert.Equal(t, sellerChannelStatusDeleted, channel.Status)
+
+	// The legacy listing still exists, so a later mirror brings the shadow back
+	// rather than creating a duplicate key row.
+	require.NoError(t, MirrorListingUpdate(db, listing.ID))
+	require.NoError(t, db.Model(&ChannelKey{}).Where("channel_id = ?", listing.ID).Count(&active).Error)
+	assert.EqualValues(t, 1, active, "the soft-deleted key is revived in place")
+	var revived ChannelKey
+	require.NoError(t, db.Where("channel_id = ?", listing.ID).Take(&revived).Error)
+	assert.Equal(t, deleted.ID, revived.ID)
+	require.NoError(t, db.Where("id = ?", listing.ID).Take(&channel).Error)
+	assert.Equal(t, ListingDraft, channel.Status, "the shadow status follows the live legacy row again")
+}
+
+// TestCheckSellerChannelConsistencyDetectsAndRepairs proves the P5
+// reconciliation reports the listing id plus each mismatch (status, multiplier,
+// key fingerprint) and that a mirror run repairs them; an orphan shadow channel
+// is reported too.
+func TestCheckSellerChannelConsistencyDetectsAndRepairs(t *testing.T) {
+	db := newListingTestDB(t)
+	listing := createTestListing(t, db, 10023, uniqueTestKey("sk-consistency"))
+	other := createTestListing(t, db, 10024, uniqueTestKey("sk-consistency-other"))
+
+	issues, err := CheckSellerChannelConsistency(db)
+	require.NoError(t, err)
+	assert.Empty(t, issues)
+
+	require.NoError(t, db.Model(&SellerChannel{}).Where("id = ?", listing.ID).
+		Update("status", ListingLive).Error)
+	require.NoError(t, db.Model(&SellerChannelModel{}).
+		Where("channel_id = ? AND model = ?", listing.ID, "deepseek-flash").
+		Update("multiplier_milli", 999).Error)
+	require.NoError(t, db.Model(&ChannelKey{}).Where("channel_id = ?", listing.ID).
+		Update("key_fingerprint", "tampered-fingerprint").Error)
+
+	issues, err = CheckSellerChannelConsistency(db)
+	require.NoError(t, err)
+	report := strings.Join(issues, "\n")
+	assert.Contains(t, report, fmt.Sprintf("listing %d: status mismatch", listing.ID))
+	assert.Contains(t, report, fmt.Sprintf("listing %d: model \"deepseek-flash\" multiplier mismatch", listing.ID))
+	assert.Contains(t, report, fmt.Sprintf("listing %d: key fingerprint mismatch", listing.ID))
+	assert.NotContains(t, report, fmt.Sprintf("listing %d:", other.ID), "a consistent listing is not reported")
+
+	require.NoError(t, MirrorListingUpdate(db, listing.ID))
+	issues, err = CheckSellerChannelConsistency(db)
+	require.NoError(t, err)
+	assert.Empty(t, issues, "mirroring repairs the shadow mismatch")
+
+	// An orphan shadow channel has no authoritative listing.
+	require.NoError(t, db.Create(&SellerChannel{
+		ID:          99999,
+		SellerID:    7,
+		KeyStrategy: KeyStrategyWeightedRoundRobin,
+		Status:      ListingDraft,
+	}).Error)
+	issues, err = CheckSellerChannelConsistency(db)
+	require.NoError(t, err)
+	require.Len(t, issues, 1)
+	assert.Contains(t, issues[0], "seller channel 99999: no legacy listing")
+}
+
 // TestBackfillSellerChannelsEmptyModels keeps an empty model list from
 // producing model rows, and proves a non-served status leaves the verified
 // flags cleared.

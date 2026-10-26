@@ -704,6 +704,9 @@ func setListingModelsForVerification(db *gorm.DB, id int64, models []string) err
 	if res.RowsAffected != 1 {
 		return fmt.Errorf("%w: verifying -> verifying (models)", ErrInvalidTransition)
 	}
+	// P3b: the narrowed model list is authoritative; mirror it (disabling the
+	// dropped shadow rows) without ever failing verification on a mirror error.
+	mirrorListingUpdateLogged(db, id)
 	return nil
 }
 
@@ -715,7 +718,7 @@ func setListingModelsForVerification(db *gorm.DB, id int64, models []string) err
 // transition won and the revert reports ErrInvalidTransition instead of
 // clobbering the newer state.
 func revertVerificationToDraft(db *gorm.DB, id int64) error {
-	return db.Transaction(func(tx *gorm.DB) error {
+	err := db.Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&Listing{}).
 			Where("id = ? AND status = ?", id, ListingVerifying).
 			Update("status", ListingDraft)
@@ -727,4 +730,9 @@ func revertVerificationToDraft(db *gorm.DB, id int64) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	mirrorListingUpdateLogged(db, id)
+	return nil
 }

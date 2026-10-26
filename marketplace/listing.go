@@ -489,7 +489,7 @@ func isDuplicateKeyError(err error) bool {
 // is not in an allowed from-state (ErrInvalidTransition). A missing listing
 // yields ErrListingNotFound.
 func transitionListingFrom(db *gorm.DB, id int64, froms []string, to string) error {
-	return db.Transaction(func(tx *gorm.DB) error {
+	err := db.Transaction(func(tx *gorm.DB) error {
 		var row Listing
 		if err := lockForUpdate(tx).Where("id = ?", id).First(&row).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -508,6 +508,13 @@ func transitionListingFrom(db *gorm.DB, id int64, froms []string, to string) err
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// P3b: the legacy row is authoritative and has committed; mirroring is a
+	// best-effort side effect that never fails the transition.
+	mirrorListingUpdateLogged(db, id)
+	return nil
 }
 
 // TransitionListing moves one listing from status `from` to status `to`; the
@@ -542,7 +549,7 @@ func RejectListing(db *gorm.DB, id int64) error {
 // VerifyListing, and its verdict is the only evidence that may promote a
 // listing. A caller cannot skip the probe by calling the transition directly.
 func PassVerification(db *gorm.DB, id int64) error {
-	return db.Transaction(func(tx *gorm.DB) error {
+	err := db.Transaction(func(tx *gorm.DB) error {
 		var row Listing
 		if err := lockForUpdate(tx).Where("id = ?", id).First(&row).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -579,6 +586,11 @@ func PassVerification(db *gorm.DB, id int64) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	mirrorListingUpdateLogged(db, id)
+	return nil
 }
 
 // GoLive moves canary → live (§3.5: ≥98% success over 24h, decided by jobs).
@@ -598,7 +610,7 @@ func PauseListing(db *gorm.DB, id int64) error {
 // platform-side edge and does not ask who paused the listing, so only
 // jobs/admin paths may use it.
 func ResumeListing(db *gorm.DB, id int64) error {
-	return db.Transaction(func(tx *gorm.DB) error {
+	err := db.Transaction(func(tx *gorm.DB) error {
 		var row Listing
 		if err := lockForUpdate(tx).Where("id = ?", id).First(&row).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -625,6 +637,11 @@ func ResumeListing(db *gorm.DB, id int64) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	mirrorListingUpdateLogged(db, id)
+	return nil
 }
 
 // ResumeSellerListing is the seller-facing resume edge: it refuses a listing
@@ -635,7 +652,7 @@ func ResumeListing(db *gorm.DB, id int64) error {
 // non-certified listing go through ResumeListing (paused → draft), which
 // requires a complete re-verification.
 func ResumeSellerListing(db *gorm.DB, id int64) error {
-	return db.Transaction(func(tx *gorm.DB) error {
+	err := db.Transaction(func(tx *gorm.DB) error {
 		var row Listing
 		if err := lockForUpdate(tx).Where("id = ?", id).First(&row).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -678,6 +695,11 @@ func ResumeSellerListing(db *gorm.DB, id int64) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	mirrorListingUpdateLogged(db, id)
+	return nil
 }
 
 // validateChannelAPIKey applies a pool channel's deny prefixes and key_pattern
@@ -779,7 +801,7 @@ func UpdateMultiplier(db *gorm.DB, id int64, milli int64, now time.Time) error {
 	if milli < 1 || milli > 1000 {
 		return fmt.Errorf("marketplace: multiplier must be 1..1000 milli, got %d", milli)
 	}
-	return db.Transaction(func(tx *gorm.DB) error {
+	err := db.Transaction(func(tx *gorm.DB) error {
 		var row Listing
 		if err := lockForUpdate(tx).Where("id = ?", id).First(&row).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -805,6 +827,11 @@ func UpdateMultiplier(db *gorm.DB, id int64, milli int64, now time.Time) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	mirrorListingUpdateLogged(db, id)
+	return nil
 }
 
 // ReplaceKey swaps in a new API key (§3.5): the new key is encrypted and
@@ -879,6 +906,7 @@ func ReplaceKey(db *gorm.DB, id int64, newAPIKey string) error {
 		}
 		return err
 	}
+	mirrorListingUpdateLogged(db, id)
 	return nil
 }
 

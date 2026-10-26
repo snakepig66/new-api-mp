@@ -221,6 +221,9 @@ func SuspendPlanListing(db *gorm.DB, listingID int64, now time.Time) (bool, erro
 	if res.Error != nil {
 		return false, fmt.Errorf("marketplace: suspend plan listing %d: %w", listingID, res.Error)
 	}
+	if res.RowsAffected > 0 {
+		mirrorListingUpdateLogged(db, listingID)
+	}
 	return res.RowsAffected > 0, nil
 }
 
@@ -255,6 +258,16 @@ func SuspendPlanListings(db *gorm.DB, channelSlug string, now time.Time) (int64,
 	if !ok {
 		return 0, fmt.Errorf("marketplace: suspend plan listings: channel %q has an invalid quota_window", slug)
 	}
+	// Capture the rows this run may pause so their shadow entries can be
+	// mirrored after the update commits. A candidate that lost a concurrent
+	// race is mirrored in whatever state it ended in, which is still correct.
+	var candidateIDs []int64
+	if err := db.Model(&Listing{}).
+		Where("vendor = ? AND status IN ?", slug, []string{ListingLive, ListingCanary}).
+		Where("pause_reason IS NULL OR pause_reason <> ?", PauseReasonPlanQuotaExhausted).
+		Pluck("id", &candidateIDs).Error; err != nil {
+		return 0, fmt.Errorf("marketplace: suspend plan listings: %w", err)
+	}
 	res := db.Model(&Listing{}).
 		Where("vendor = ? AND status IN ?", slug, []string{ListingLive, ListingCanary}).
 		Where("pause_reason IS NULL OR pause_reason <> ?", PauseReasonPlanQuotaExhausted).
@@ -267,6 +280,11 @@ func SuspendPlanListings(db *gorm.DB, channelSlug string, now time.Time) (int64,
 		})
 	if res.Error != nil {
 		return 0, fmt.Errorf("marketplace: suspend plan listings: %w", res.Error)
+	}
+	if res.RowsAffected > 0 {
+		for _, id := range candidateIDs {
+			mirrorListingUpdateLogged(db, id)
+		}
 	}
 	return res.RowsAffected, nil
 }
@@ -310,6 +328,9 @@ func ResumePlanListings(db *gorm.DB, now time.Time) (int64, error) {
 			})
 		if res.Error != nil {
 			return resumed, fmt.Errorf("marketplace: resume plan listing %d: %w", l.ID, res.Error)
+		}
+		if res.RowsAffected > 0 {
+			mirrorListingUpdateLogged(db, l.ID)
 		}
 		resumed += res.RowsAffected
 	}

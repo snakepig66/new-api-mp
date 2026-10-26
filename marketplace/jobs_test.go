@@ -117,6 +117,9 @@ func TestJobsCanaryPromote(t *testing.T) {
 	row, err := GetListing(db, good.ID)
 	require.NoError(t, err)
 	assert.Equal(t, ListingLive, row.Status, "mature + >=98% + >=20 samples promotes")
+	var shadow SellerChannel
+	require.NoError(t, db.Where("id = ?", good.ID).Take(&shadow).Error)
+	assert.Equal(t, ListingLive, shadow.Status, "the canary promotion is mirrored to the shadow channel")
 
 	for _, l := range []Listing{lowSample, lowRate, young} {
 		row, err := GetListing(db, l.ID)
@@ -188,6 +191,9 @@ func TestJobsPatrol(t *testing.T) {
 	row, err = GetListing(db, failing.ID)
 	require.NoError(t, err)
 	assert.Equal(t, ListingPaused, row.Status)
+	var shadow SellerChannel
+	require.NoError(t, db.Where("id = ?", failing.ID).Take(&shadow).Error)
+	assert.Equal(t, ListingPaused, shadow.Status, "the patrol auto-pause is mirrored to the shadow channel")
 	probes = listVerifyProbes(t, db, failing.ID)
 	require.Len(t, probes, 2)
 	for _, p := range probes {
