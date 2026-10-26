@@ -8,6 +8,7 @@ import type {
   InputHTMLAttributes,
   ReactNode,
   SelectHTMLAttributes,
+  TextareaHTMLAttributes,
 } from 'react'
 
 import { copy } from '@/copy'
@@ -176,6 +177,28 @@ export function TextInput({
       invalid={invalid}
       mono={mono}
       className={cn('h-12 text-[15px]', className)}
+      {...props}
+    />
+  )
+}
+
+/** Multi-line field on the same soft bed as TextInput. */
+export function TextArea({
+  invalid = false,
+  className,
+  ...props
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & { invalid?: boolean }) {
+  return (
+    <textarea
+      aria-invalid={invalid || undefined}
+      className={cn(
+        'w-full resize-y rounded-md border border-transparent bg-bg-soft px-4 py-3 text-[15px] leading-6 text-ink transition-colors',
+        'placeholder:text-ink-3',
+        'focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft',
+        'disabled:cursor-not-allowed disabled:bg-bg-soft disabled:text-ink-3',
+        'aria-[invalid=true]:border-danger aria-[invalid=true]:focus:ring-danger/10',
+        className,
+      )}
       {...props}
     />
   )

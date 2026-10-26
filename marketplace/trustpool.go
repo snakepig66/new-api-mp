@@ -38,6 +38,108 @@ import (
 // The message never contains an API key.
 var ErrTrustPoolBlocked = errors.New("marketplace: upstream address is blocked")
 
+// Trust-pool source values (P5). "seed" is reserved for SeedTrustPool: the
+// operator console may write manual/probe rows but can never mint a seeded row,
+// so official rows stay owned by the code.
+const (
+	TrustSourceSeed   = "seed"
+	TrustSourceManual = "manual"
+	TrustSourceProbe  = "probe"
+)
+
+// TrustPoolSeedValidity bounds a newly seeded trusted row. Every trusted row
+// must carry an expiry (P5 governance) so the official pool is reviewed
+// periodically instead of trusted forever. Existing rows created before this
+// bound are left untouched; SeedTrustPool only fills in a missing expiry.
+const TrustPoolSeedValidity = 90 * 24 * time.Hour
+
+// Trust-pool write validation errors. The admin API maps them to 400/409; the
+// text never echoes key material.
+var (
+	ErrTrustPoolAddressRequired  = errors.New("exactly one of host or host_pattern is required")
+	ErrTrustPoolAddressAmbiguous = errors.New("host and host_pattern are mutually exclusive")
+	ErrTrustPoolHostInvalid      = errors.New("host is not a valid hostname")
+	ErrTrustPoolPatternInvalid   = errors.New("host_pattern is not a valid regular expression")
+	ErrTrustPoolKindInvalid      = errors.New("kind must be official, third_party or plan")
+	ErrTrustPoolTrustInvalid     = errors.New("trust must be trusted, watch or blocked")
+	ErrTrustPoolOfficialSource   = errors.New("official rows can only come from the built-in seed data")
+	ErrTrustPoolTrustedExpiry    = errors.New("a trusted row requires expires_at")
+	ErrTrustPoolBlockedNotes     = errors.New("a blocked row requires notes (the refusal reason)")
+	ErrTrustPoolSourceReserved   = errors.New("source seed is reserved for the built-in trust pool")
+	ErrTrustPoolSourceImmutable  = errors.New("source cannot be changed")
+	ErrTrustPoolSeedLocked       = errors.New("seed rows are managed by the code and cannot be deleted")
+)
+
+// NormalizeTrustPoolAddress validates the host/host_pattern pair and returns
+// the canonical values stored in the pool. Exactly one side must be non-empty:
+// an exact host row wins over a pattern row in MatchTrustPoolDB, so a row that
+// carries both would be ambiguous. A host is lowercased and stripped of its
+// port; a pattern is anchored by the matcher, so it must compile as a regex.
+func NormalizeTrustPoolAddress(host, hostPattern string) (string, string, error) {
+	host = strings.TrimSpace(host)
+	hostPattern = strings.TrimSpace(hostPattern)
+	if (host == "") == (hostPattern == "") {
+		if host == "" {
+			return "", "", ErrTrustPoolAddressRequired
+		}
+		return "", "", ErrTrustPoolAddressAmbiguous
+	}
+	if host != "" {
+		// The field is a bare host, not a URL: reject a scheme or any path
+		// separator before normalization (SplitHostPort would otherwise treat
+		// "https://host/path" as host "https").
+		if strings.ContainsAny(host, "/\\?#@") {
+			return "", "", ErrTrustPoolHostInvalid
+		}
+		normalized := normalizeEgressHost(host)
+		if normalized == "" || len(normalized) > 255 || strings.ContainsAny(normalized, "/\\?#@ ") {
+			return "", "", ErrTrustPoolHostInvalid
+		}
+		return normalized, "", nil
+	}
+	if len(hostPattern) > 512 {
+		return "", "", ErrTrustPoolPatternInvalid
+	}
+	if _, err := regexp.Compile("^(?:" + hostPattern + ")$"); err != nil {
+		return "", "", ErrTrustPoolPatternInvalid
+	}
+	return "", hostPattern, nil
+}
+
+// ValidateTrustPoolGovernance enforces the P5 invariants on an operator write:
+//
+//   - kind is one of official / third_party / plan;
+//   - trust is one of trusted / watch / blocked;
+//   - a trusted row carries an expiry, so the certification is reviewed;
+//   - a blocked row explains itself in notes;
+//   - an official row may only be a seeded row. The API never accepts
+//     source="seed", so this guard makes official rows unreachable from the
+//     console while still accepting edits to the seeded rows themselves.
+func ValidateTrustPoolGovernance(row TrustPool) error {
+	switch row.Kind {
+	case TrustKindOfficial, TrustKindThirdParty, TrustKindPlan:
+	default:
+		return ErrTrustPoolKindInvalid
+	}
+	switch row.Trust {
+	case TrustTrusted:
+		if row.ExpiresAt == nil {
+			return ErrTrustPoolTrustedExpiry
+		}
+	case TrustWatch:
+	case TrustBlocked:
+		if strings.TrimSpace(row.Notes) == "" {
+			return ErrTrustPoolBlockedNotes
+		}
+	default:
+		return ErrTrustPoolTrustInvalid
+	}
+	if row.Kind == TrustKindOfficial && row.Source != TrustSourceSeed {
+		return ErrTrustPoolOfficialSource
+	}
+	return nil
+}
+
 // MatchTrustPool looks the address up in the process-wide relay database. It
 // is the convenience form for callers that run inside the initialized
 // marketplace; MatchTrustPoolDB is the explicit-handle form used by listing and
@@ -387,6 +489,13 @@ func SeedTrustPool(db *gorm.DB) error {
 			continue
 		}
 		row := seed
+		// P5 governance: a trusted row must carry an expiry. The seeder applies
+		// the same rule so the built-in official rows are reviewed, and an
+		// existing operator-set expiry is never overwritten.
+		if row.Trust == TrustTrusted && row.ExpiresAt == nil {
+			expires := time.Now().Add(TrustPoolSeedValidity)
+			row.ExpiresAt = &expires
+		}
 		if err := db.Create(&row).Error; err != nil {
 			return fmt.Errorf("marketplace: seed trust pool: %w", err)
 		}

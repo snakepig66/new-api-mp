@@ -239,3 +239,36 @@ func TestSeedTrustPoolIdempotent(t *testing.T) {
 	_, _, err = CheckTrustPoolDB(db, "dashscope.aliyuncs.com", "/compatible-mode/v1", "sk-sp-plan-key")
 	assert.ErrorIs(t, err, ErrTrustPoolBlocked)
 }
+
+// TestNormalizeTrustPoolAddress covers the input canonicalization the admin API
+// applies before storing a row. The governance enum/expiry/notes branches are
+// covered end-to-end by TestAdminTrustPoolCRUDAndGovernance in api_admin_test.go.
+func TestNormalizeTrustPoolAddress(t *testing.T) {
+	cases := []struct {
+		name        string
+		host        string
+		pattern     string
+		wantHost    string
+		wantPattern string
+		wantErr     error
+	}{
+		{name: "host is lowercased and port stripped", host: " API.Example.COM:443 ", wantHost: "api.example.com"},
+		{name: "pattern is stored verbatim", pattern: `^[a-z]+\.example$`, wantPattern: `^[a-z]+\.example$`},
+		{name: "neither", wantErr: ErrTrustPoolAddressRequired},
+		{name: "both", host: "a.example", pattern: "^a\\.", wantErr: ErrTrustPoolAddressAmbiguous},
+		{name: "pattern does not compile", pattern: "[", wantErr: ErrTrustPoolPatternInvalid},
+		{name: "host is a URL", host: "https://api.example.com/v1", wantErr: ErrTrustPoolHostInvalid},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			host, pattern, err := NormalizeTrustPoolAddress(tc.host, tc.pattern)
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantHost, host)
+			assert.Equal(t, tc.wantPattern, pattern)
+		})
+	}
+}

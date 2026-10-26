@@ -55,10 +55,13 @@ import { Route as ConsoleListingsIndexRouteImport } from './routes/console/listi
 import { Route as ConsoleListingsIdRouteImport } from './routes/console/listings/$id'
 import { Route as ConsoleListingsNewRouteImport } from './routes/console/listings/new'
 import { Route as ConsoleOpsIndexRouteImport } from './routes/console/ops/index'
+import { Route as ConsoleOpsMetricsRouteImport } from './routes/console/ops/metrics'
 import { Route as ConsoleOpsModelsRouteImport } from './routes/console/ops/models'
 import { Route as ConsoleOpsPricingRouteImport } from './routes/console/ops/pricing'
 import { Route as ConsoleOpsReviewRouteImport } from './routes/console/ops/review'
 import { Route as ConsoleOpsToolsRouteImport } from './routes/console/ops/tools'
+import { Route as ConsoleOpsTraceRouteImport } from './routes/console/ops/trace'
+import { Route as ConsoleOpsTrustPoolRouteImport } from './routes/console/ops/trust-pool'
 import { Route as ConsoleOpsPricingIndexRouteImport } from './routes/console/ops/pricing/index'
 import { Route as ConsoleOpsPricingPerCallRouteImport } from './routes/console/ops/pricing/per-call'
 import { Route as ConsoleOpsReviewIndexRouteImport } from './routes/console/ops/review/index'
@@ -296,6 +299,11 @@ const ConsoleOpsIndexRoute = ConsoleOpsIndexRouteImport.update({
   path: '/',
   getParentRoute: () => ConsoleOpsRoute,
 } as any)
+const ConsoleOpsMetricsRoute = ConsoleOpsMetricsRouteImport.update({
+  id: '/metrics',
+  path: '/metrics',
+  getParentRoute: () => ConsoleOpsRoute,
+} as any)
 const ConsoleOpsModelsRoute = ConsoleOpsModelsRouteImport.update({
   id: '/models',
   path: '/models',
@@ -314,6 +322,16 @@ const ConsoleOpsReviewRoute = ConsoleOpsReviewRouteImport.update({
 const ConsoleOpsToolsRoute = ConsoleOpsToolsRouteImport.update({
   id: '/tools',
   path: '/tools',
+  getParentRoute: () => ConsoleOpsRoute,
+} as any)
+const ConsoleOpsTraceRoute = ConsoleOpsTraceRouteImport.update({
+  id: '/trace',
+  path: '/trace',
+  getParentRoute: () => ConsoleOpsRoute,
+} as any)
+const ConsoleOpsTrustPoolRoute = ConsoleOpsTrustPoolRouteImport.update({
+  id: '/trust-pool',
+  path: '/trust-pool',
   getParentRoute: () => ConsoleOpsRoute,
 } as any)
 const ConsoleOpsPricingIndexRoute = ConsoleOpsPricingIndexRouteImport.update({
@@ -391,10 +409,13 @@ export interface FileRoutesByFullPath {
   '/console/keys/$id': typeof ConsoleKeysIdRoute
   '/console/listings/$id': typeof ConsoleListingsIdRoute
   '/console/listings/new': typeof ConsoleListingsNewRoute
+  '/console/ops/metrics': typeof ConsoleOpsMetricsRoute
   '/console/ops/models': typeof ConsoleOpsModelsRoute
   '/console/ops/pricing': typeof ConsoleOpsPricingRouteWithChildren
   '/console/ops/review': typeof ConsoleOpsReviewRouteWithChildren
   '/console/ops/tools': typeof ConsoleOpsToolsRouteWithChildren
+  '/console/ops/trace': typeof ConsoleOpsTraceRoute
+  '/console/ops/trust-pool': typeof ConsoleOpsTrustPoolRoute
   '/console/earnings/': typeof ConsoleEarningsIndexRoute
   '/console/keys/': typeof ConsoleKeysIndexRoute
   '/console/listings/': typeof ConsoleListingsIndexRoute
@@ -443,7 +464,10 @@ export interface FileRoutesByTo {
   '/console/keys/$id': typeof ConsoleKeysIdRoute
   '/console/listings/$id': typeof ConsoleListingsIdRoute
   '/console/listings/new': typeof ConsoleListingsNewRoute
+  '/console/ops/metrics': typeof ConsoleOpsMetricsRoute
   '/console/ops/models': typeof ConsoleOpsModelsRoute
+  '/console/ops/trace': typeof ConsoleOpsTraceRoute
+  '/console/ops/trust-pool': typeof ConsoleOpsTrustPoolRoute
   '/console/earnings': typeof ConsoleEarningsIndexRoute
   '/console/keys': typeof ConsoleKeysIndexRoute
   '/console/listings': typeof ConsoleListingsIndexRoute
@@ -499,10 +523,13 @@ export interface FileRoutesById {
   '/console/keys/$id': typeof ConsoleKeysIdRoute
   '/console/listings/$id': typeof ConsoleListingsIdRoute
   '/console/listings/new': typeof ConsoleListingsNewRoute
+  '/console/ops/metrics': typeof ConsoleOpsMetricsRoute
   '/console/ops/models': typeof ConsoleOpsModelsRoute
   '/console/ops/pricing': typeof ConsoleOpsPricingRouteWithChildren
   '/console/ops/review': typeof ConsoleOpsReviewRouteWithChildren
   '/console/ops/tools': typeof ConsoleOpsToolsRouteWithChildren
+  '/console/ops/trace': typeof ConsoleOpsTraceRoute
+  '/console/ops/trust-pool': typeof ConsoleOpsTrustPoolRoute
   '/console/earnings/': typeof ConsoleEarningsIndexRoute
   '/console/keys/': typeof ConsoleKeysIndexRoute
   '/console/listings/': typeof ConsoleListingsIndexRoute
@@ -559,10 +586,13 @@ export interface FileRouteTypes {
     | '/console/keys/$id'
     | '/console/listings/$id'
     | '/console/listings/new'
+    | '/console/ops/metrics'
     | '/console/ops/models'
     | '/console/ops/pricing'
     | '/console/ops/review'
     | '/console/ops/tools'
+    | '/console/ops/trace'
+    | '/console/ops/trust-pool'
     | '/console/earnings/'
     | '/console/keys/'
     | '/console/listings/'
@@ -611,7 +641,10 @@ export interface FileRouteTypes {
     | '/console/keys/$id'
     | '/console/listings/$id'
     | '/console/listings/new'
+    | '/console/ops/metrics'
     | '/console/ops/models'
+    | '/console/ops/trace'
+    | '/console/ops/trust-pool'
     | '/console/earnings'
     | '/console/keys'
     | '/console/listings'
@@ -666,10 +699,13 @@ export interface FileRouteTypes {
     | '/console/keys/$id'
     | '/console/listings/$id'
     | '/console/listings/new'
+    | '/console/ops/metrics'
     | '/console/ops/models'
     | '/console/ops/pricing'
     | '/console/ops/review'
     | '/console/ops/tools'
+    | '/console/ops/trace'
+    | '/console/ops/trust-pool'
     | '/console/earnings/'
     | '/console/keys/'
     | '/console/listings/'
@@ -1026,6 +1062,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleOpsIndexRouteImport
       parentRoute: typeof ConsoleOpsRoute
     }
+    '/console/ops/metrics': {
+      id: '/console/ops/metrics'
+      path: '/metrics'
+      fullPath: '/console/ops/metrics'
+      preLoaderRoute: typeof ConsoleOpsMetricsRouteImport
+      parentRoute: typeof ConsoleOpsRoute
+    }
     '/console/ops/models': {
       id: '/console/ops/models'
       path: '/models'
@@ -1052,6 +1095,20 @@ declare module '@tanstack/react-router' {
       path: '/tools'
       fullPath: '/console/ops/tools'
       preLoaderRoute: typeof ConsoleOpsToolsRouteImport
+      parentRoute: typeof ConsoleOpsRoute
+    }
+    '/console/ops/trace': {
+      id: '/console/ops/trace'
+      path: '/trace'
+      fullPath: '/console/ops/trace'
+      preLoaderRoute: typeof ConsoleOpsTraceRouteImport
+      parentRoute: typeof ConsoleOpsRoute
+    }
+    '/console/ops/trust-pool': {
+      id: '/console/ops/trust-pool'
+      path: '/trust-pool'
+      fullPath: '/console/ops/trust-pool'
+      preLoaderRoute: typeof ConsoleOpsTrustPoolRouteImport
       parentRoute: typeof ConsoleOpsRoute
     }
     '/console/ops/pricing/': {
@@ -1196,18 +1253,24 @@ const ConsoleOpsToolsRouteWithChildren = ConsoleOpsToolsRoute._addFileChildren(
 )
 
 interface ConsoleOpsRouteChildren {
+  ConsoleOpsMetricsRoute: typeof ConsoleOpsMetricsRoute
   ConsoleOpsModelsRoute: typeof ConsoleOpsModelsRoute
   ConsoleOpsPricingRoute: typeof ConsoleOpsPricingRouteWithChildren
   ConsoleOpsReviewRoute: typeof ConsoleOpsReviewRouteWithChildren
   ConsoleOpsToolsRoute: typeof ConsoleOpsToolsRouteWithChildren
+  ConsoleOpsTraceRoute: typeof ConsoleOpsTraceRoute
+  ConsoleOpsTrustPoolRoute: typeof ConsoleOpsTrustPoolRoute
   ConsoleOpsIndexRoute: typeof ConsoleOpsIndexRoute
 }
 
 const ConsoleOpsRouteChildren: ConsoleOpsRouteChildren = {
+  ConsoleOpsMetricsRoute: ConsoleOpsMetricsRoute,
   ConsoleOpsModelsRoute: ConsoleOpsModelsRoute,
   ConsoleOpsPricingRoute: ConsoleOpsPricingRouteWithChildren,
   ConsoleOpsReviewRoute: ConsoleOpsReviewRouteWithChildren,
   ConsoleOpsToolsRoute: ConsoleOpsToolsRouteWithChildren,
+  ConsoleOpsTraceRoute: ConsoleOpsTraceRoute,
+  ConsoleOpsTrustPoolRoute: ConsoleOpsTrustPoolRoute,
   ConsoleOpsIndexRoute: ConsoleOpsIndexRoute,
 }
 

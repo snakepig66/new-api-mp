@@ -18,7 +18,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +63,8 @@ func registerAdminRootRoutes(g *gin.RouterGroup) {
 	g.POST("/admin/listings/:id/reject", adminRejectListing)
 	g.POST("/admin/listings/:id/ban", adminBanListing)
 	g.POST("/admin/listings/:id/unban", adminUnbanListing)
+	// 全链路排查 (P5): one request id → request, retry chain, ledger, probes.
+	g.GET("/admin/requests/:request_id", adminRequestTrace)
 	g.GET("/admin/payouts", adminListPayouts)
 	g.POST("/admin/payouts/:id/approve", adminApprovePayout)
 	g.POST("/admin/payouts/:id/reject", adminRejectPayout)
@@ -81,6 +86,16 @@ func registerAdminRootRoutes(g *gin.RouterGroup) {
 	g.GET("/admin/pool/channel-models", adminPoolListChannelModels)
 	g.PUT("/admin/pool/channel-models", adminPoolPutChannelModel)
 	g.DELETE("/admin/pool/channel-models", adminPoolDeleteChannelModel)
+	// 认证池 (P5): operator CRUD over mp_trust_pool plus the governance gate
+	// and the append-only audit trail.
+	g.GET("/admin/trust-pool", adminTrustPoolList)
+	g.GET("/admin/trust-pool/:id", adminTrustPoolGet)
+	g.POST("/admin/trust-pool", adminTrustPoolCreate)
+	g.PUT("/admin/trust-pool/:id", adminTrustPoolUpdate)
+	g.DELETE("/admin/trust-pool/:id", adminTrustPoolDelete)
+	// 派生指标 (P5): mp_ops_metrics with metric_name / since / dimensions
+	// filters.
+	g.GET("/admin/metrics", adminListOpsMetrics)
 }
 
 // adminRequireRoot is the L5 defense-in-depth gate for 提现审批 / 冲正 /
@@ -610,8 +625,32 @@ type adminPendingListing struct {
 	SellerRealNameStatus string    `json:"seller_real_name_status"`
 }
 
+// adminPendingHostGroup is one host bucket of the review queue. Host is the
+// hostname of the seller-supplied upstream, or "" for a platform channel that
+// has no seller-defined address. Listings keep the queue's newest-first order.
+type adminPendingHostGroup struct {
+	Host     string                `json:"host"`
+	Count    int                   `json:"count"`
+	Listings []adminPendingListing `json:"listings"`
+}
+
+// pendingListingHost extracts the hostname used to group the review queue from
+// a stored custom_base_url. A malformed or empty URL groups under "".
+func pendingListingHost(baseURL string) string {
+	trimmed := strings.TrimSpace(baseURL)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(parsed.Hostname())
+}
+
 // adminListPendingListings serves GET /admin/listings/pending — every
-// pending_review listing, newest first. The real-name status of each seller is
+// pending_review listing, grouped by the host of its seller-defined upstream,
+// newest first inside each group. The real-name status of each seller is
 // joined in so the operator can see whether the account is verified; seller
 // relation/overlap ranking is out of scope for this phase.
 func adminListPendingListings(c *gin.Context) {
@@ -630,9 +669,9 @@ func adminListPendingListings(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query pending listings"))
 		return
 	}
-	out := make([]adminPendingListing, 0, len(rows))
+	groups := make([]adminPendingHostGroup, 0)
 	if len(rows) == 0 {
-		common.ApiSuccess(c, out)
+		common.ApiSuccess(c, groups)
 		return
 	}
 	sellerIDs := make([]int64, 0, len(rows))
@@ -649,6 +688,7 @@ func adminListPendingListings(c *gin.Context) {
 	for _, s := range sellers {
 		realName[s.UserID] = s.RealNameStatus
 	}
+	groupAt := make(map[string]int, len(rows))
 	for i := range rows {
 		item := adminPendingListing{
 			ID:                   rows[i].ID,
@@ -658,14 +698,31 @@ func adminListPendingListings(c *gin.Context) {
 			CreatedAt:            rows[i].CreatedAt,
 			SellerRealNameStatus: realName[rows[i].SellerID],
 		}
+		host := ""
 		if isCustomChannelSlug(rows[i].Vendor) {
 			if vendor, ok := lookupVendorForDB(db, rows[i].Vendor); ok {
 				item.CustomBaseURL = VendorOpenAIBase(vendor)
+				host = pendingListingHost(item.CustomBaseURL)
 			}
 		}
-		out = append(out, item)
+		pos, ok := groupAt[host]
+		if !ok {
+			groups = append(groups, adminPendingHostGroup{Host: host, Listings: make([]adminPendingListing, 0)})
+			pos = len(groups) - 1
+			groupAt[host] = pos
+		}
+		groups[pos].Listings = append(groups[pos].Listings, item)
+		groups[pos].Count++
 	}
-	common.ApiSuccess(c, out)
+	// Busiest host first so the operator sees the pile that needs attention;
+	// host asc breaks a tie deterministically.
+	slices.SortStableFunc(groups, func(a, b adminPendingHostGroup) int {
+		if a.Count != b.Count {
+			return b.Count - a.Count
+		}
+		return strings.Compare(a.Host, b.Host)
+	})
+	common.ApiSuccess(c, groups)
 }
 
 // recordListingReview writes one operator decision to mp_probes. A failure is
@@ -787,6 +844,202 @@ func adminRejectListing(c *gin.Context) {
 	reviewerID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
 	recordListingReview(db, id, reviewerID, "reject", req.Notes, ListingPendingReview, next)
 	common.ApiSuccess(c, gin.H{"id": id, "status": next})
+}
+
+// ---------------------------------------------------------------------------
+// 全链路排查 (P5): 给定 request_id, 返回请求 → 选择/每一跳 → 结算 → 验真/巡检
+// 的完整视图. Root-only: the trace crosses buyer, seller and ledger accounts,
+// so it is an operator (L5) view, not a customer record API.
+// ---------------------------------------------------------------------------
+
+// adminTraceProbeLimit caps the per-listing verify/patrol/review history shown
+// with one request. A busy listing can accumulate thousands of probes; the
+// trace only needs the recent evidence around the request.
+const adminTraceProbeLimit = 20
+
+// adminRequestTraceView is the full mp_requests row in snake_case for the
+// console. The retry_chain JSON text is returned separately as parsed hops.
+type adminRequestTraceView struct {
+	ID                      int64     `json:"id"`
+	RequestID               string    `json:"request_id"`
+	BuyerUserID             int64     `json:"buyer_user_id"`
+	BuyerTokenID            int64     `json:"buyer_token_id"`
+	SellerID                int64     `json:"seller_id"`
+	ListingID               int64     `json:"listing_id"`
+	Model                   string    `json:"model"`
+	UpstreamModel           string    `json:"upstream_model"`
+	ModelFingerprintAnomaly bool      `json:"model_fingerprint_anomaly"`
+	Tier                    string    `json:"tier"`
+	PriceVersion            int64     `json:"price_version"`
+	MultiplierMilli         int64     `json:"multiplier_milli"`
+	InputTokens             int64     `json:"input_tokens"`
+	OutputTokens            int64     `json:"output_tokens"`
+	CacheReadTokens         int64     `json:"cache_read_tokens"`
+	CacheWriteTokens        int64     `json:"cache_write_tokens"`
+	SearchCount             int64     `json:"search_count"`
+	FetchCount              int64     `json:"fetch_count"`
+	TokenDebitMicro         int64     `json:"token_debit_micro"`
+	ToolDebitMicro          int64     `json:"tool_debit_micro"`
+	TotalDebitMicro         int64     `json:"total_debit_micro"`
+	GiftDebitMicro          int64     `json:"gift_debit_micro"`
+	CappedMicro             int64     `json:"capped_micro"`
+	PlatformFeeMicro        int64     `json:"platform_fee_micro"`
+	SellerCreditMicro       int64     `json:"seller_credit_micro"`
+	OfficialCostMicro       int64     `json:"official_cost_micro"`
+	UsageEstimated          bool      `json:"usage_estimated"`
+	Status                  string    `json:"status"`
+	LatencyMs               int64     `json:"latency_ms"`
+	CreatedAt               time.Time `json:"created_at"`
+}
+
+// adminLedgerTraceView is one mp_ledger row for the trace table.
+type adminLedgerTraceView struct {
+	ID              int64      `json:"id"`
+	RequestID       string     `json:"request_id"`
+	EntryType       string     `json:"entry_type"`
+	Account         string     `json:"account"`
+	ListingID       int64      `json:"listing_id"`
+	AmountMicro     int64      `json:"amount_micro"`
+	PriceVersion    int64      `json:"price_version"`
+	MultiplierMilli int64      `json:"multiplier_milli"`
+	Status          string     `json:"status"`
+	AvailableAt     *time.Time `json:"available_at"`
+	CreatedAt       time.Time  `json:"created_at"`
+}
+
+// adminProbeTraceView is one verification/patrol/review evidence row.
+type adminProbeTraceView struct {
+	ID        int64     `json:"id"`
+	ListingID int64     `json:"listing_id"`
+	Type      string    `json:"type"`
+	OK        bool      `json:"ok"`
+	LatencyMs int64     `json:"latency_ms"`
+	Detail    string    `json:"detail"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// adminRequestTrace is the GET /admin/requests/:request_id response.
+type adminRequestTraceResponse struct {
+	Request    adminRequestTraceView  `json:"request"`
+	RetryChain []RelayHop             `json:"retry_chain"`
+	Ledger     []adminLedgerTraceView `json:"ledger"`
+	Probes     []adminProbeTraceView  `json:"probes"`
+}
+
+func toAdminRequestTraceView(r *Request) adminRequestTraceView {
+	return adminRequestTraceView{
+		ID:                      r.ID,
+		RequestID:               r.RequestID,
+		BuyerUserID:             r.BuyerUserID,
+		BuyerTokenID:            r.BuyerTokenID,
+		SellerID:                r.SellerID,
+		ListingID:               r.ListingID,
+		Model:                   r.Model,
+		UpstreamModel:           r.UpstreamModel,
+		ModelFingerprintAnomaly: r.ModelFingerprintAnomaly,
+		Tier:                    r.Tier,
+		PriceVersion:            r.PriceVersion,
+		MultiplierMilli:         r.MultiplierMilli,
+		InputTokens:             r.InputTokens,
+		OutputTokens:            r.OutputTokens,
+		CacheReadTokens:         r.CacheReadTokens,
+		CacheWriteTokens:        r.CacheWriteTokens,
+		SearchCount:             r.SearchCount,
+		FetchCount:              r.FetchCount,
+		TokenDebitMicro:         r.TokenDebitMicro,
+		ToolDebitMicro:          r.ToolDebitMicro,
+		TotalDebitMicro:         r.TotalDebitMicro,
+		GiftDebitMicro:          r.GiftDebitMicro,
+		CappedMicro:             r.CappedMicro,
+		PlatformFeeMicro:        r.PlatformFeeMicro,
+		SellerCreditMicro:       r.SellerCreditMicro,
+		OfficialCostMicro:       r.OfficialCostMicro,
+		UsageEstimated:          r.UsageEstimated,
+		Status:                  r.Status,
+		LatencyMs:               r.LatencyMs,
+		CreatedAt:               r.CreatedAt,
+	}
+}
+
+// adminRequestTrace serves GET /admin/requests/:request_id.
+func adminRequestTrace(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	requestID := strings.TrimSpace(c.Param("request_id"))
+	if requestID == "" {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("request_id is required"))
+		return
+	}
+	var row Request
+	if err := db.Where("request_id = ?", requestID).Take(&row).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			common.ApiErrorStatus(c, http.StatusNotFound, errors.New("request not found"))
+			return
+		}
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query request"))
+		return
+	}
+	hops := make([]RelayHop, 0)
+	if strings.TrimSpace(row.RetryChain) != "" {
+		if err := common.Unmarshal([]byte(row.RetryChain), &hops); err != nil {
+			// A corrupt retry chain must not hide the rest of the trace.
+			hops = make([]RelayHop, 0)
+		}
+	}
+	var ledgerRows []LedgerEntry
+	if err := db.Where("request_id = ?", requestID).Order("id ASC").Find(&ledgerRows).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query ledger"))
+		return
+	}
+	ledger := make([]adminLedgerTraceView, 0, len(ledgerRows))
+	for i := range ledgerRows {
+		ledger = append(ledger, adminLedgerTraceView{
+			ID:              ledgerRows[i].ID,
+			RequestID:       ledgerRows[i].RequestID,
+			EntryType:       ledgerRows[i].EntryType,
+			Account:         ledgerRows[i].Account,
+			ListingID:       ledgerRows[i].ListingID,
+			AmountMicro:     ledgerRows[i].AmountMicro,
+			PriceVersion:    ledgerRows[i].PriceVersion,
+			MultiplierMilli: ledgerRows[i].MultiplierMilli,
+			Status:          ledgerRows[i].Status,
+			AvailableAt:     ledgerRows[i].AvailableAt,
+			CreatedAt:       ledgerRows[i].CreatedAt,
+		})
+	}
+	probes := make([]adminProbeTraceView, 0)
+	if row.ListingID > 0 {
+		var probeRows []Probe
+		if err := db.Where("listing_id = ? AND type IN ?", row.ListingID,
+			[]string{ProbeTypeVerify, ProbeTypePatrol, ProbeTypeReview}).
+			Order("created_at DESC").Order("id DESC").Limit(adminTraceProbeLimit).
+			Find(&probeRows).Error; err != nil {
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query probes"))
+			return
+		}
+		for i := range probeRows {
+			probes = append(probes, adminProbeTraceView{
+				ID:        probeRows[i].ID,
+				ListingID: probeRows[i].ListingID,
+				Type:      probeRows[i].Type,
+				OK:        probeRows[i].OK,
+				LatencyMs: probeRows[i].LatencyMs,
+				Detail:    probeRows[i].Detail,
+				CreatedAt: probeRows[i].CreatedAt,
+			})
+		}
+	}
+	common.ApiSuccess(c, adminRequestTraceResponse{
+		Request:    toAdminRequestTraceView(&row),
+		RetryChain: hops,
+		Ledger:     ledger,
+		Probes:     probes,
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -1718,4 +1971,704 @@ func adminPoolDeleteChannelModel(c *gin.Context) {
 		}
 	}
 	common.ApiSuccess(c, gin.H{"channel_slug": slug, "upstream_model": upstream})
+}
+
+// ---------------------------------------------------------------------------
+// 认证池 (P5): CRUD + 治理守卫 + 只追加审计.
+//
+// The operator console may only add manual/probe rows: source="seed" is
+// reserved for SeedTrustPool, so an official row can never be minted through
+// the API. Every successful write is recorded in mp_trust_pool_audit in the
+// same transaction, making the trail append-only. Deletion is a hard delete
+// (the audit row keeps the before snapshot); seeded rows are code-owned and
+// cannot be deleted.
+// ---------------------------------------------------------------------------
+
+// trustPoolEndpointValues is the closed set of endpoint kinds a trust-pool row
+// may declare.
+var trustPoolEndpointValues = []string{"openai_chat", "openai_responses", "anthropic_messages"}
+
+// trustPoolInputError marks a request that failed semantic validation inside a
+// transaction, so the handler can answer 400 instead of 500 without unwrapping
+// every sentinel.
+type trustPoolInputError struct{ err error }
+
+func (e trustPoolInputError) Error() string { return e.err.Error() }
+func (e trustPoolInputError) Unwrap() error { return e.err }
+
+// adminTrustPoolView is the console shape of one trust-pool row. JSON text
+// columns are decoded into real values; malformed data is returned verbatim so
+// an operator can see what is stored. No field carries key material.
+type adminTrustPoolView struct {
+	ID                      int64      `json:"id"`
+	Host                    string     `json:"host"`
+	HostPattern             string     `json:"host_pattern"`
+	PathPrefix              string     `json:"path_prefix"`
+	KeyPrefix               string     `json:"key_prefix"`
+	VendorSlug              string     `json:"vendor_slug"`
+	Kind                    string     `json:"kind"`
+	Trust                   string     `json:"trust"`
+	Endpoints               []string   `json:"endpoints"`
+	AllowedModels           any        `json:"allowed_models"`
+	OfficialPriceBookID     int64      `json:"official_price_book_id"`
+	QuotaWindowTemplate     any        `json:"quota_window_template"`
+	DenyKeyPrefixes         []string   `json:"deny_key_prefixes"`
+	DenyPaths               []string   `json:"deny_paths"`
+	ErrorCodeTable          any        `json:"error_code_table"`
+	DefaultHeaders          any        `json:"default_headers"`
+	AccountFingerprintRules any        `json:"account_fingerprint_rules"`
+	Source                  string     `json:"source"`
+	Notes                   string     `json:"notes"`
+	ExpiresAt               *time.Time `json:"expires_at"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
+}
+
+// parseTrustPoolJSON decodes one stored JSON text column. Empty stays nil;
+// malformed data is returned as its original text instead of being silently
+// dropped.
+func parseTrustPoolJSON(raw string) any {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	var value any
+	if err := common.Unmarshal([]byte(trimmed), &value); err != nil {
+		return raw
+	}
+	return value
+}
+
+func toAdminTrustPoolView(row TrustPool) adminTrustPoolView {
+	return adminTrustPoolView{
+		ID:                      row.ID,
+		Host:                    row.Host,
+		HostPattern:             row.HostPattern,
+		PathPrefix:              row.PathPrefix,
+		KeyPrefix:               row.KeyPrefix,
+		VendorSlug:              row.VendorSlug,
+		Kind:                    row.Kind,
+		Trust:                   row.Trust,
+		Endpoints:               parseStringList(row.Endpoints),
+		AllowedModels:           parseTrustPoolJSON(row.AllowedModels),
+		OfficialPriceBookID:     row.OfficialPriceBookID,
+		QuotaWindowTemplate:     parseTrustPoolJSON(row.QuotaWindowTemplate),
+		DenyKeyPrefixes:         parseStringList(row.DenyKeyPrefixes),
+		DenyPaths:               parseStringList(row.DenyPaths),
+		ErrorCodeTable:          parseTrustPoolJSON(row.ErrorCodeTable),
+		DefaultHeaders:          parseTrustPoolJSON(row.DefaultHeaders),
+		AccountFingerprintRules: parseTrustPoolJSON(row.AccountFingerprintRules),
+		Source:                  row.Source,
+		Notes:                   row.Notes,
+		ExpiresAt:               row.ExpiresAt,
+		CreatedAt:               row.CreatedAt,
+		UpdatedAt:               row.UpdatedAt,
+	}
+}
+
+// adminTrustPoolRequest is the POST/PUT body. Optional JSON columns are
+// flexJSON so an update that omits them preserves the stored value. expires_at
+// is a pointer: nil preserves on update, "" clears, RFC3339 sets.
+type adminTrustPoolRequest struct {
+	Host                    string   `json:"host"`
+	HostPattern             string   `json:"host_pattern"`
+	PathPrefix              string   `json:"path_prefix"`
+	KeyPrefix               string   `json:"key_prefix"`
+	VendorSlug              string   `json:"vendor_slug"`
+	Kind                    string   `json:"kind"`
+	Trust                   string   `json:"trust"`
+	Endpoints               flexJSON `json:"endpoints"`
+	AllowedModels           flexJSON `json:"allowed_models"`
+	OfficialPriceBookID     *int64   `json:"official_price_book_id"`
+	QuotaWindowTemplate     flexJSON `json:"quota_window_template"`
+	DenyKeyPrefixes         flexJSON `json:"deny_key_prefixes"`
+	DenyPaths               flexJSON `json:"deny_paths"`
+	ErrorCodeTable          flexJSON `json:"error_code_table"`
+	DefaultHeaders          flexJSON `json:"default_headers"`
+	AccountFingerprintRules flexJSON `json:"account_fingerprint_rules"`
+	Source                  string   `json:"source"`
+	Notes                   string   `json:"notes"`
+	ExpiresAt               *string  `json:"expires_at"`
+}
+
+// flexTrustPoolStrings converts a request JSON array into a normalized list.
+// nil means "not provided" (update keeps the stored value); an empty slice
+// means "clear it".
+func flexTrustPoolStrings(f flexJSON) ([]string, error) {
+	if !f.Set {
+		return nil, nil
+	}
+	list := make([]string, 0)
+	if len(f.Raw) == 0 {
+		return list, nil
+	}
+	var raw []string
+	if err := common.Unmarshal(f.Raw, &raw); err != nil {
+		return nil, errors.New("must be a JSON array of strings")
+	}
+	for _, item := range raw {
+		item = strings.TrimSpace(item)
+		if item == "" || slices.Contains(list, item) {
+			continue
+		}
+		list = append(list, item)
+	}
+	return list, nil
+}
+
+// trustPoolStringList serializes a list into its text column; an empty list is
+// stored as an empty string, matching the schema default.
+func trustPoolStringList(list []string) string {
+	if len(list) == 0 {
+		return ""
+	}
+	raw, err := common.Marshal(list)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+// flexTrustPoolJSON validates any JSON value and returns its compact text.
+func flexTrustPoolJSON(f flexJSON) (string, error) {
+	trimmed := bytes.TrimSpace(f.Raw)
+	if len(trimmed) == 0 {
+		return "", nil
+	}
+	var value any
+	if err := common.Unmarshal(trimmed, &value); err != nil {
+		return "", errors.New("must be valid JSON")
+	}
+	raw, err := common.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+// parseTrustPoolExpiresAt accepts an RFC3339 timestamp; empty clears it.
+func parseTrustPoolExpiresAt(raw string) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil, errors.New("expires_at must be RFC3339")
+	}
+	return &parsed, nil
+}
+
+// trustPoolFromAdminRequest validates one create/update request and returns
+// the row to store. existing is nil for create. Fields the console does not
+// edit are preserved on update.
+func trustPoolFromAdminRequest(req adminTrustPoolRequest, existing *TrustPool) (TrustPool, error) {
+	row := TrustPool{}
+	if existing != nil {
+		row = *existing
+	}
+	host, hostPattern, err := NormalizeTrustPoolAddress(req.Host, req.HostPattern)
+	if err != nil {
+		return row, err
+	}
+	row.Host, row.HostPattern = host, hostPattern
+	row.PathPrefix = normalizeTrustPath(req.PathPrefix)
+	if len(row.PathPrefix) > 512 {
+		return row, errors.New("path_prefix is too long")
+	}
+	row.KeyPrefix = strings.TrimSpace(req.KeyPrefix)
+	if len(row.KeyPrefix) > 128 {
+		return row, errors.New("key_prefix is too long")
+	}
+	row.VendorSlug = strings.TrimSpace(req.VendorSlug)
+	if len(row.VendorSlug) > 64 {
+		return row, errors.New("vendor_slug is too long")
+	}
+	row.Kind = strings.TrimSpace(req.Kind)
+	row.Trust = strings.TrimSpace(req.Trust)
+	row.Notes = strings.TrimSpace(req.Notes)
+
+	if req.Endpoints.Set {
+		endpoints, err := flexTrustPoolStrings(req.Endpoints)
+		if err != nil {
+			return row, errors.New("endpoints must be a JSON array of strings")
+		}
+		for _, endpoint := range endpoints {
+			if !slices.Contains(trustPoolEndpointValues, endpoint) {
+				return row, errors.New("endpoints must be openai_chat, openai_responses or anthropic_messages")
+			}
+		}
+		row.Endpoints = trustPoolStringList(endpoints)
+	}
+	if req.DenyKeyPrefixes.Set {
+		list, err := flexTrustPoolStrings(req.DenyKeyPrefixes)
+		if err != nil {
+			return row, errors.New("deny_key_prefixes must be a JSON array of strings")
+		}
+		row.DenyKeyPrefixes = trustPoolStringList(list)
+	}
+	if req.DenyPaths.Set {
+		list, err := flexTrustPoolStrings(req.DenyPaths)
+		if err != nil {
+			return row, errors.New("deny_paths must be a JSON array of strings")
+		}
+		normalized := make([]string, 0, len(list))
+		for _, item := range list {
+			item = normalizeTrustPath(item)
+			if item == "" || slices.Contains(normalized, item) {
+				continue
+			}
+			normalized = append(normalized, item)
+		}
+		row.DenyPaths = trustPoolStringList(normalized)
+	}
+	if req.OfficialPriceBookID != nil {
+		if *req.OfficialPriceBookID < 0 {
+			return row, errors.New("official_price_book_id must be >= 0")
+		}
+		row.OfficialPriceBookID = *req.OfficialPriceBookID
+	}
+	for _, field := range []struct {
+		name string
+		in   flexJSON
+		out  *string
+	}{
+		{name: "allowed_models", in: req.AllowedModels, out: &row.AllowedModels},
+		{name: "quota_window_template", in: req.QuotaWindowTemplate, out: &row.QuotaWindowTemplate},
+		{name: "error_code_table", in: req.ErrorCodeTable, out: &row.ErrorCodeTable},
+		{name: "default_headers", in: req.DefaultHeaders, out: &row.DefaultHeaders},
+		{name: "account_fingerprint_rules", in: req.AccountFingerprintRules, out: &row.AccountFingerprintRules},
+	} {
+		if !field.in.Set {
+			continue
+		}
+		value, err := flexTrustPoolJSON(field.in)
+		if err != nil {
+			return row, fmt.Errorf("%s must be valid JSON", field.name)
+		}
+		*field.out = value
+	}
+	if req.ExpiresAt != nil {
+		expiresAt, err := parseTrustPoolExpiresAt(*req.ExpiresAt)
+		if err != nil {
+			return row, err
+		}
+		row.ExpiresAt = expiresAt
+	}
+	source := strings.TrimSpace(req.Source)
+	if existing == nil {
+		if source == "" {
+			source = TrustSourceManual
+		}
+		switch source {
+		case TrustSourceManual, TrustSourceProbe:
+			row.Source = source
+		case TrustSourceSeed:
+			return row, ErrTrustPoolSourceReserved
+		default:
+			return row, errors.New("source must be manual or probe")
+		}
+	} else if source != "" && source != existing.Source {
+		return row, ErrTrustPoolSourceImmutable
+	}
+	if row.Source == "" {
+		row.Source = TrustSourceManual
+	}
+	if err := ValidateTrustPoolGovernance(row); err != nil {
+		return row, err
+	}
+	return row, nil
+}
+
+// recordTrustPoolAudit appends one audit row. It runs in the caller's
+// transaction so a committed change always has its trail.
+func recordTrustPoolAudit(tx *gorm.DB, actorID int64, action string, before, after *TrustPool) error {
+	snapshot := func(row *TrustPool) (string, error) {
+		if row == nil {
+			return "", nil
+		}
+		raw, err := common.Marshal(row)
+		if err != nil {
+			return "", err
+		}
+		return string(raw), nil
+	}
+	beforeJSON, err := snapshot(before)
+	if err != nil {
+		return err
+	}
+	afterJSON, err := snapshot(after)
+	if err != nil {
+		return err
+	}
+	notes := ""
+	poolID := int64(0)
+	switch {
+	case after != nil:
+		notes = after.Notes
+		poolID = after.ID
+	case before != nil:
+		notes = before.Notes
+		poolID = before.ID
+	}
+	return tx.Create(&TrustPoolAudit{
+		TrustPoolID: poolID,
+		ActorID:     actorID,
+		Action:      action,
+		Before:      beforeJSON,
+		After:       afterJSON,
+		Notes:       notes,
+		CreatedAt:   time.Now(),
+	}).Error
+}
+
+// adminTrustPoolPaging parses ?page=&page_size= (default 1 / 50, max 200).
+func adminTrustPoolPaging(c *gin.Context) (int, int, bool) {
+	page := 1
+	pageSize := 50
+	if raw := strings.TrimSpace(c.Query("page")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("page must be a positive integer"))
+			return 0, 0, false
+		}
+		page = parsed
+	}
+	if raw := strings.TrimSpace(c.Query("page_size")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 200 {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("page_size must be between 1 and 200"))
+			return 0, 0, false
+		}
+		pageSize = parsed
+	}
+	return page, pageSize, true
+}
+
+// adminTrustPoolList serves GET /admin/trust-pool?trust=&kind=&source=&page=&page_size=.
+// An unknown filter value is a 400: silently ignoring it would show the
+// operator a set they did not ask for.
+func adminTrustPoolList(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	trustFilter := strings.TrimSpace(c.Query("trust"))
+	kindFilter := strings.TrimSpace(c.Query("kind"))
+	sourceFilter := strings.TrimSpace(c.Query("source"))
+	if trustFilter != "" && trustFilter != TrustTrusted && trustFilter != TrustWatch && trustFilter != TrustBlocked {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("trust must be trusted, watch or blocked"))
+		return
+	}
+	if kindFilter != "" && kindFilter != TrustKindOfficial && kindFilter != TrustKindThirdParty && kindFilter != TrustKindPlan {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("kind must be official, third_party or plan"))
+		return
+	}
+	if sourceFilter != "" && sourceFilter != TrustSourceSeed && sourceFilter != TrustSourceManual && sourceFilter != TrustSourceProbe {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("source must be seed, manual or probe"))
+		return
+	}
+	page, pageSize, ok := adminTrustPoolPaging(c)
+	if !ok {
+		return
+	}
+	filtered := func() *gorm.DB {
+		q := db.Model(&TrustPool{})
+		if trustFilter != "" {
+			q = q.Where("trust = ?", trustFilter)
+		}
+		if kindFilter != "" {
+			q = q.Where("kind = ?", kindFilter)
+		}
+		if sourceFilter != "" {
+			q = q.Where("source = ?", sourceFilter)
+		}
+		return q
+	}
+	var total int64
+	if err := filtered().Count(&total).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query trust pool"))
+		return
+	}
+	var rows []TrustPool
+	if err := filtered().Order("id ASC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&rows).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query trust pool"))
+		return
+	}
+	items := make([]adminTrustPoolView, 0, len(rows))
+	for i := range rows {
+		items = append(items, toAdminTrustPoolView(rows[i]))
+	}
+	common.ApiSuccess(c, gin.H{"items": items, "total": total, "page": page, "page_size": pageSize})
+}
+
+// adminTrustPoolGet serves GET /admin/trust-pool/:id.
+func adminTrustPoolGet(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	id, ok := adminIDParam(c)
+	if !ok {
+		return
+	}
+	var row TrustPool
+	if err := db.Where("id = ?", id).Take(&row).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			common.ApiErrorStatus(c, http.StatusNotFound, errors.New("trust pool row not found"))
+			return
+		}
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query trust pool"))
+		return
+	}
+	common.ApiSuccess(c, toAdminTrustPoolView(row))
+}
+
+// adminTrustPoolCreate serves POST /admin/trust-pool.
+func adminTrustPoolCreate(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	var req adminTrustPoolRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	row, err := trustPoolFromAdminRequest(req, nil)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body: "+err.Error()))
+		return
+	}
+	actorID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&row).Error; err != nil {
+			return err
+		}
+		return recordTrustPoolAudit(tx, actorID, TrustPoolAuditCreate, nil, &row)
+	}); err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to create trust pool row"))
+		return
+	}
+	common.ApiSuccess(c, toAdminTrustPoolView(row))
+}
+
+// adminTrustPoolUpdate serves PUT /admin/trust-pool/:id. The source of an
+// existing row is immutable; seeded rows keep their official identity.
+func adminTrustPoolUpdate(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	id, ok := adminIDParam(c)
+	if !ok {
+		return
+	}
+	var req adminTrustPoolRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	actorID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	var updated TrustPool
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var before TrustPool
+		if err := tx.Where("id = ?", id).Take(&before).Error; err != nil {
+			return err
+		}
+		row, err := trustPoolFromAdminRequest(req, &before)
+		if err != nil {
+			return trustPoolInputError{err}
+		}
+		row.UpdatedAt = time.Now()
+		if err := tx.Save(&row).Error; err != nil {
+			return err
+		}
+		updated = row
+		return recordTrustPoolAudit(tx, actorID, TrustPoolAuditUpdate, &before, &row)
+	})
+	if err != nil {
+		var inputErr trustPoolInputError
+		switch {
+		case errors.As(err, &inputErr):
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body: "+inputErr.Error()))
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			common.ApiErrorStatus(c, http.StatusNotFound, errors.New("trust pool row not found"))
+		default:
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to update trust pool row"))
+		}
+		return
+	}
+	common.ApiSuccess(c, toAdminTrustPoolView(updated))
+}
+
+// adminTrustPoolDelete serves DELETE /admin/trust-pool/:id — a hard delete
+// backed by the audit row. Seeded rows are code-owned and cannot be deleted;
+// setting trust=blocked is the supported way to stop trusting one.
+func adminTrustPoolDelete(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	id, ok := adminIDParam(c)
+	if !ok {
+		return
+	}
+	actorID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	var deleted TrustPool
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("id = ?", id).Take(&deleted).Error; err != nil {
+			return err
+		}
+		if deleted.Source == TrustSourceSeed {
+			return ErrTrustPoolSeedLocked
+		}
+		if err := tx.Delete(&TrustPool{}, id).Error; err != nil {
+			return err
+		}
+		return recordTrustPoolAudit(tx, actorID, TrustPoolAuditDelete, &deleted, nil)
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			common.ApiErrorStatus(c, http.StatusNotFound, errors.New("trust pool row not found"))
+		case errors.Is(err, ErrTrustPoolSeedLocked):
+			common.ApiErrorStatus(c, http.StatusConflict, ErrTrustPoolSeedLocked)
+		default:
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to delete trust pool row"))
+		}
+		return
+	}
+	common.ApiSuccess(c, gin.H{"id": id})
+}
+
+// ---------------------------------------------------------------------------
+// 派生指标 (P5): 读取 mp_ops_metrics.
+//
+// The hourly job writes one row per metric per hour bucket. This endpoint is a
+// read-only operator view: metric_name and since narrow the query, dimensions
+// filters the result by exact key/value pairs of the row's JSON object.
+// ---------------------------------------------------------------------------
+
+// adminOpsMetricView is the console shape of one metric row. Dimensions is
+// decoded from its JSON text so the console does not double-decode.
+type adminOpsMetricView struct {
+	ID          int64     `json:"id"`
+	MetricName  string    `json:"metric_name"`
+	MetricValue float64   `json:"metric_value"`
+	Dimensions  any       `json:"dimensions"`
+	BucketTime  time.Time `json:"bucket_time"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// adminOpsMetricDimensions decodes a row's dimensions; an empty or malformed
+// value is returned verbatim instead of being silently dropped.
+func adminOpsMetricDimensions(raw string) any {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return map[string]any{}
+	}
+	var value any
+	if err := common.UnmarshalJsonStr(trimmed, &value); err != nil {
+		return raw
+	}
+	return value
+}
+
+// adminOpsMetricDimensionsMatch reports whether a row's dimensions contain
+// every filter key with the same (stringified) value. A number filter therefore
+// matches both JSON numbers and numeric strings.
+func adminOpsMetricDimensionsMatch(raw string, filter map[string]any) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	var dimensions map[string]any
+	if err := common.UnmarshalJsonStr(strings.TrimSpace(raw), &dimensions); err != nil {
+		return false
+	}
+	for key, want := range filter {
+		got, ok := dimensions[key]
+		if !ok || fmt.Sprint(got) != fmt.Sprint(want) {
+			return false
+		}
+	}
+	return true
+}
+
+// adminListOpsMetrics serves GET /admin/metrics?metric_name=&since=&dimensions=&limit=.
+// since is RFC3339 (default: the last 24 hours). dimensions is a JSON object of
+// exact key/value pairs. Rows come back newest bucket first.
+func adminListOpsMetrics(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	since := time.Now().Add(-24 * time.Hour)
+	if raw := strings.TrimSpace(c.Query("since")); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("since must be RFC3339"))
+			return
+		}
+		since = parsed
+	}
+	limit := 500
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 2000 {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("limit must be between 1 and 2000"))
+			return
+		}
+		limit = parsed
+	}
+	var dimensionFilter map[string]any
+	if raw := strings.TrimSpace(c.Query("dimensions")); raw != "" {
+		if err := common.UnmarshalJsonStr(raw, &dimensionFilter); err != nil || len(dimensionFilter) == 0 {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("dimensions must be a JSON object"))
+			return
+		}
+	}
+	query := db.Model(&OpsMetric{}).Where("bucket_time >= ?", since)
+	if metricName := strings.TrimSpace(c.Query("metric_name")); metricName != "" {
+		query = query.Where("metric_name = ?", metricName)
+	}
+	var rows []OpsMetric
+	if err := query.Order("bucket_time DESC").Order("metric_name ASC").
+		Limit(limit).Find(&rows).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query metrics"))
+		return
+	}
+	items := make([]adminOpsMetricView, 0, len(rows))
+	for i := range rows {
+		if !adminOpsMetricDimensionsMatch(rows[i].Dimensions, dimensionFilter) {
+			continue
+		}
+		items = append(items, adminOpsMetricView{
+			ID:          rows[i].ID,
+			MetricName:  rows[i].MetricName,
+			MetricValue: rows[i].MetricValue,
+			Dimensions:  adminOpsMetricDimensions(rows[i].Dimensions),
+			BucketTime:  rows[i].BucketTime,
+			CreatedAt:   rows[i].CreatedAt,
+		})
+	}
+	common.ApiSuccess(c, items)
 }

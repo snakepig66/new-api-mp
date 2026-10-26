@@ -81,6 +81,25 @@ func TestSlotManager(t *testing.T) {
 		}
 		assert.False(t, m.Acquire(1, 0, t0))
 	})
+
+	t.Run("stats snapshot counts slot lifecycle events", func(t *testing.T) {
+		m := NewSlotManager()
+		require.True(t, m.Acquire(1, 1, t0))
+		assert.False(t, m.Acquire(1, 1, t0), "a refused acquire is not counted")
+		require.True(t, m.Acquire(2, 1, t0))
+		m.Renew(1, t0.Add(time.Second))
+		m.Renew(3, t0) // nothing held: renew failure
+		m.Release(1)
+		m.Release(3) // nothing held: not a release
+
+		assert.Equal(t, map[string]int64{
+			"acquire":       2,
+			"renew":         1,
+			"renew_failure": 1,
+			"release":       1,
+			"in_flight":     1,
+		}, m.Stats())
+	})
 }
 
 func TestCircuitBreaker(t *testing.T) {

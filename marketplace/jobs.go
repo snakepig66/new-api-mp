@@ -38,6 +38,9 @@ const (
 	// jobPlanWindowInterval is the plan quota-window resume scan cadence
 	// (MODEL-CHANNEL-POOL §4: 窗口重置后自动恢复).
 	jobPlanWindowInterval = time.Minute
+	// jobOpsMetricsInterval is the derived-metrics aggregation cadence (P5):
+	// one run per hour bucket, matching opsMetricBucket.
+	jobOpsMetricsInterval = time.Hour
 
 	// canaryMaturity is how long a listing must have been in canary before it
 	// is eligible for promotion (§3.5 建单满 24h).
@@ -101,6 +104,33 @@ func StartJobs(db *gorm.DB, stop <-chan struct{}) {
 			common.SysLog(common.LogText("marketplace: plan-window-resume job: resumed %d listings", n))
 		}
 	})
+	// P5 derived metrics: aggregate the previous hour's request-derived metrics
+	// into mp_ops_metrics and snapshot the process-local slot counters. Both
+	// writes replace their bucket, so a repeated run is idempotent.
+	go runJobLoop("ops-metrics", jobOpsMetricsInterval, stop, func() {
+		now := time.Now()
+		if err := AggregateOpsMetrics(db, now.Add(-jobOpsMetricsInterval)); err != nil {
+			common.SysError(common.LogText("marketplace: ops-metrics aggregate job: %s", err.Error()))
+		}
+		if stats, ok := slotStats(); ok {
+			if err := SnapshotSlotMetrics(db, now, stats); err != nil {
+				common.SysError(common.LogText("marketplace: ops-metrics slot snapshot job: %s", err.Error()))
+			}
+		}
+	})
+}
+
+// slotStats returns the default selector's slot counters. The second return
+// is false while the process has no selector (the marketplace is disabled), so
+// the metrics job publishes nothing rather than a zero snapshot.
+func slotStats() (map[string]int64, bool) {
+	relayStateMu.Lock()
+	selector := defaultSelector
+	relayStateMu.Unlock()
+	if selector == nil || selector.Slots == nil {
+		return nil, false
+	}
+	return selector.Slots.Stats(), true
 }
 
 // runJobLoop runs fn on every tick of interval until stop is closed. Each

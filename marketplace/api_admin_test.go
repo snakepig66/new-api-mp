@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -345,7 +346,14 @@ func TestAdminPendingListingQueue(t *testing.T) {
 
 	w = f.do(t, http.MethodGet, "/api/marketplace/admin/listings/pending", nil, f.adminID)
 	require.Equal(t, http.StatusOK, w.Code)
-	items, ok = decodeAdminBody(t, w)["data"].([]any)
+	groups, ok := decodeAdminBody(t, w)["data"].([]any)
+	require.True(t, ok)
+	require.Len(t, groups, 1, "platform listings without a custom URL share the empty host bucket")
+	group, ok := groups[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "", group["host"])
+	assert.EqualValues(t, 2, group["count"])
+	items, ok = group["listings"].([]any)
 	require.True(t, ok)
 	require.Len(t, items, 2, "only pending_review listings are queued")
 	for _, item := range items {
@@ -364,6 +372,72 @@ func TestAdminPendingListingQueue(t *testing.T) {
 	second, ok := items[1].(map[string]any)
 	require.True(t, ok)
 	assert.EqualValues(t, older.ID, second["id"], "newest first")
+}
+
+// addCustomPendingListing points a pending listing at a seller-defined channel
+// with the given base URL and returns the updated listing. The channel row is
+// written directly: the review queue only reads the vendor slug and its base.
+func (f *adminAPIFixture) addCustomPendingListing(t *testing.T, baseURL string) Listing {
+	t.Helper()
+	listing := f.addAdminListing(t, ListingPendingReview)
+	slug := fmt.Sprintf("custom-%d-%x", f.sellerID, len(baseURL)+int(listing.ID))
+	protocols, err := common.Marshal(map[string]string{"openai": baseURL})
+	require.NoError(t, err)
+	require.NoError(t, f.db.Create(&ChannelPool{
+		Slug:      slug,
+		Name:      baseURL,
+		Kind:      ChannelKindThirdParty,
+		Protocols: string(protocols),
+		Adaptor:   VendorAdaptorOpenAI,
+		Status:    PoolStatusActive,
+	}).Error)
+	require.NoError(t, f.db.Model(&Listing{}).Where("id = ?", listing.ID).Update("vendor", slug).Error)
+	return listing
+}
+
+// TestAdminPendingListingQueueGroupsByHost covers the P5 host aggregation: one
+// bucket per seller-defined upstream host, busiest first, newest first inside
+// each bucket, and the custom address surfaced for the operator.
+func TestAdminPendingListingQueueGroupsByHost(t *testing.T) {
+	f := newAdminAPIFixture(t)
+	require.NoError(t, f.db.Create(&Seller{
+		UserID:           f.sellerID,
+		Status:           SellerStatusActive,
+		RealNameStatus:   SellerRealNameVerified,
+		AgreementVersion: CurrentSellerAgreementVersion,
+	}).Error)
+
+	alphaOne := f.addCustomPendingListing(t, "https://api.alpha.example/v1")
+	alphaTwo := f.addCustomPendingListing(t, "https://api.alpha.example/other")
+	beta := f.addCustomPendingListing(t, "https://beta.example/v1")
+	f.addAdminListing(t, ListingPendingReview) // platform channel, empty host
+	require.NoError(t, f.db.Model(&Listing{}).Where("id = ?", alphaOne.ID).
+		Update("created_at", time.Now().Add(-time.Hour)).Error)
+
+	w := f.do(t, http.MethodGet, "/api/marketplace/admin/listings/pending", nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	groups, ok := decodeAdminBody(t, w)["data"].([]any)
+	require.True(t, ok)
+	require.Len(t, groups, 3)
+
+	first := groups[0].(map[string]any)
+	assert.Equal(t, "api.alpha.example", first["host"])
+	assert.EqualValues(t, 2, first["count"])
+	alphaItems := first["listings"].([]any)
+	require.Len(t, alphaItems, 2)
+	assert.EqualValues(t, alphaTwo.ID, alphaItems[0].(map[string]any)["id"], "newest first")
+	assert.EqualValues(t, alphaOne.ID, alphaItems[1].(map[string]any)["id"])
+	for _, item := range alphaItems {
+		assert.Equal(t, "api.alpha.example", pendingListingHost(item.(map[string]any)["custom_base_url"].(string)))
+	}
+
+	second := groups[1].(map[string]any)
+	assert.Equal(t, "", second["host"], "the platform bucket ties on count and sorts first by host asc")
+	assert.EqualValues(t, 1, second["count"])
+
+	third := groups[2].(map[string]any)
+	assert.Equal(t, "beta.example", third["host"])
+	assert.EqualValues(t, beta.ID, third["listings"].([]any)[0].(map[string]any)["id"])
 }
 
 // TestAdminApproveListing covers approval: pending_review → verifying, the
@@ -502,6 +576,117 @@ func TestAdminListingReviewRootOnly(t *testing.T) {
 	row, err := GetListing(f.db, listing.ID)
 	require.NoError(t, err)
 	assert.Equal(t, ListingPendingReview, row.Status, "a refused review must not change the listing")
+}
+
+// ---------------------------------------------------------------------------
+// 全链路排查 (P5): request_id → 请求 / 重试链 / 账本 / 验真巡检
+// ---------------------------------------------------------------------------
+
+// TestAdminRequestTrace covers GET /admin/requests/:request_id: the full
+// request row, the parsed retry chain, every ledger row and recent
+// verify/patrol/review probes, plus the root-only gate and 404.
+func TestAdminRequestTrace(t *testing.T) {
+	f := newAdminAPIFixture(t)
+	listing := f.addAdminListing(t, ListingLive)
+
+	chain, err := common.Marshal([]RelayHop{
+		{Seq: 1, Event: "select", ListingID: listing.ID, Detail: "cheapest", At: "2026-10-01T00:00:00Z"},
+		{Seq: 2, Event: "success", ListingID: listing.ID, Detail: "200", At: "2026-10-01T00:00:01Z"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.db.Create(&Request{
+		RequestID:       "trace-req-1",
+		BuyerUserID:     f.buyerID,
+		BuyerTokenID:    7,
+		SellerID:        f.sellerID,
+		ListingID:       listing.ID,
+		Model:           "deepseek-flash",
+		UpstreamModel:   "deepseek-flash-0901",
+		Tier:            TierOffpeak,
+		PriceVersion:    1,
+		MultiplierMilli: 500,
+		InputTokens:     10,
+		OutputTokens:    20,
+		TotalDebitMicro: 1234,
+		Status:          RequestSuccess,
+		RetryChain:      string(chain),
+		LatencyMs:       321,
+		CreatedAt:       time.Now(),
+	}).Error)
+	require.NoError(t, f.db.Create(&LedgerEntry{
+		RequestID: "trace-req-1", EntryType: EntryBuyerDebit, Account: "buyer:1",
+		ListingID: listing.ID, AmountMicro: -1234, Status: LedgerAvailable, CreatedAt: time.Now(),
+	}).Error)
+	require.NoError(t, f.db.Create(&LedgerEntry{
+		RequestID: "trace-req-1", EntryType: EntrySellerCredit, Account: "seller:2",
+		ListingID: listing.ID, AmountMicro: 1000, Status: LedgerPending, CreatedAt: time.Now(),
+	}).Error)
+	for _, probeType := range []string{ProbeTypeVerify, ProbeTypePatrol, ProbeTypeReview, ProbeTypeReport} {
+		require.NoError(t, f.db.Create(&Probe{
+			ListingID: listing.ID, Type: probeType, OK: probeType != ProbeTypeReport,
+			Detail: "evidence " + probeType, CreatedAt: time.Now(),
+		}).Error)
+	}
+
+	w := f.do(t, http.MethodGet, "/api/marketplace/admin/requests/trace-req-1", nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	data, ok := decodeAdminBody(t, w)["data"].(map[string]any)
+	require.True(t, ok)
+
+	req, ok := data["request"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "trace-req-1", req["request_id"])
+	assert.EqualValues(t, f.buyerID, req["buyer_user_id"])
+	assert.EqualValues(t, f.sellerID, req["seller_id"])
+	assert.EqualValues(t, listing.ID, req["listing_id"])
+	assert.Equal(t, "deepseek-flash", req["model"])
+	assert.Equal(t, "deepseek-flash-0901", req["upstream_model"])
+	assert.Equal(t, RequestSuccess, req["status"])
+	assert.EqualValues(t, 321, req["latency_ms"])
+	assert.EqualValues(t, 1234, req["total_debit_micro"])
+
+	hops, ok := data["retry_chain"].([]any)
+	require.True(t, ok)
+	require.Len(t, hops, 2)
+	firstHop := hops[0].(map[string]any)
+	assert.EqualValues(t, 1, firstHop["seq"])
+	assert.Equal(t, "select", firstHop["event"])
+	assert.EqualValues(t, listing.ID, firstHop["listing_id"])
+
+	ledger, ok := data["ledger"].([]any)
+	require.True(t, ok)
+	require.Len(t, ledger, 2)
+	assert.Equal(t, EntryBuyerDebit, ledger[0].(map[string]any)["entry_type"])
+	assert.EqualValues(t, -1234, ledger[0].(map[string]any)["amount_micro"])
+	assert.Equal(t, EntrySellerCredit, ledger[1].(map[string]any)["entry_type"])
+	assert.Equal(t, LedgerPending, ledger[1].(map[string]any)["status"])
+
+	probes, ok := data["probes"].([]any)
+	require.True(t, ok)
+	require.Len(t, probes, 3, "report probes are not part of verification evidence")
+	for _, item := range probes {
+		assert.NotEqual(t, ProbeTypeReport, item.(map[string]any)["type"])
+	}
+
+	// A corrupt retry chain does not hide the rest of the trace.
+	require.NoError(t, f.db.Create(&Request{
+		RequestID: "trace-req-bad-chain", BuyerUserID: f.buyerID, SellerID: f.sellerID,
+		ListingID: listing.ID, Status: RequestFailed, RetryChain: "not-json", CreatedAt: time.Now(),
+	}).Error)
+	w = f.do(t, http.MethodGet, "/api/marketplace/admin/requests/trace-req-bad-chain", nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	data = decodeAdminBody(t, w)["data"].(map[string]any)
+	hops, ok = data["retry_chain"].([]any)
+	require.True(t, ok)
+	assert.Empty(t, hops)
+
+	// Unknown request → 404; non-root → 403; no session → 401.
+	w = f.do(t, http.MethodGet, "/api/marketplace/admin/requests/does-not-exist", nil, f.adminID)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	w = f.doRole(t, http.MethodGet, "/api/marketplace/admin/requests/trace-req-1", nil, f.adminID, common.RoleAdminUser)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	w = f.do(t, http.MethodGet, "/api/marketplace/admin/requests/trace-req-1", nil, 0)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 // TestAdminPayoutListAndNotFound covers the payout queue: the list endpoint
@@ -1186,4 +1371,230 @@ func TestAdminPoolChannelModelsAPI(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	w = f.do(t, http.MethodGet, path, nil, 0)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// TestAdminTrustPoolCRUDAndGovernance covers the P5 authentication-pool CRUD,
+// the governance gate and the append-only audit trail in one fixture: the
+// routes share a single state machine, so splitting them would only repeat the
+// seed setup.
+func TestAdminTrustPoolCRUDAndGovernance(t *testing.T) {
+	f := newAdminAPIFixture(t)
+	const path = "/api/marketplace/admin/trust-pool"
+
+	// The seed rows are listed with a parsed view and an expiry (P5 requires
+	// every trusted row to carry one).
+	w := f.do(t, http.MethodGet, path, nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	data := decodeAdminBody(t, w)["data"].(map[string]any)
+	items, ok := data["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, len(trustPoolSeeds))
+	assert.EqualValues(t, len(trustPoolSeeds), data["total"])
+	assert.EqualValues(t, 1, data["page"])
+	assert.EqualValues(t, 50, data["page_size"])
+	first := items[0].(map[string]any)
+	assert.Equal(t, "seed", first["source"])
+	assert.Equal(t, "official", first["kind"])
+	assert.IsType(t, []any{}, first["endpoints"])
+	assert.NotNil(t, first["expires_at"], "a seeded trusted row carries an expiry")
+
+	// Filters and pagination.
+	w = f.do(t, http.MethodGet, path+"?trust=trusted&kind=official&source=seed", nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	data = decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.EqualValues(t, len(trustPoolSeeds), data["total"])
+	for _, query := range []string{
+		"?trust=bogus", "?kind=bogus", "?source=bogus", "?page=0", "?page_size=201",
+	} {
+		w = f.do(t, http.MethodGet, path+query, nil, f.adminID)
+		assert.Equal(t, http.StatusBadRequest, w.Code, query)
+	}
+	w = f.do(t, http.MethodGet, path+"?page=2&page_size=3", nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	data = decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.Len(t, data["items"], 3)
+	assert.EqualValues(t, 2, data["page"])
+
+	// Detail of the first seed row.
+	seedID := int64(first["id"].(float64))
+	w = f.do(t, http.MethodGet, path+"/"+strconv.FormatInt(seedID, 10), nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	seed := decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.Equal(t, "api.deepseek.com", seed["host"])
+	assert.Equal(t, "seed", seed["source"])
+
+	// Create a manual watch row; source defaults to manual.
+	w = f.do(t, http.MethodPost, path, map[string]any{
+		"host": "api.manual.example", "kind": "third_party", "trust": "watch",
+		"endpoints": []string{"openai_chat"}, "deny_paths": []string{"/admin"},
+		"notes": "manual test row",
+	}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	created := decodeAdminBody(t, w)["data"].(map[string]any)
+	createdID := int64(created["id"].(float64))
+	assert.Equal(t, "manual", created["source"])
+	assert.Equal(t, "api.manual.example", created["host"])
+	assert.Equal(t, []any{"openai_chat"}, created["endpoints"])
+	assert.Equal(t, []any{"/admin"}, created["deny_paths"])
+
+	// The audit row was written in the same transaction.
+	var audits []TrustPoolAudit
+	require.NoError(t, f.db.Where("trust_pool_id = ?", createdID).Order("id ASC").Find(&audits).Error)
+	require.Len(t, audits, 1)
+	assert.Equal(t, TrustPoolAuditCreate, audits[0].Action)
+	assert.EqualValues(t, f.adminID, audits[0].ActorID)
+	assert.Empty(t, audits[0].Before)
+	assert.Contains(t, audits[0].After, "api.manual.example")
+	assert.Equal(t, "manual test row", audits[0].Notes)
+
+	// Governance and shape validation.
+	for _, body := range []map[string]any{
+		{"kind": "third_party", "trust": "watch"},                                              // address required
+		{"host": "a.example", "host_pattern": `^a\.`, "kind": "third_party", "trust": "watch"}, // both
+		{"host_pattern": "[", "kind": "third_party", "trust": "watch"},                         // invalid regex
+		{"host": "api.manual.example", "kind": "bogus", "trust": "watch"},
+		{"host": "api.manual.example", "kind": "third_party", "trust": "bogus"},
+		{"host": "api.manual.example", "kind": "third_party", "trust": "trusted"}, // expiry required
+		{"host": "api.manual.example", "kind": "third_party", "trust": "blocked"}, // notes required
+		{"host": "api.manual.example", "kind": "official", "trust": "watch"},      // official is seed-only
+		{"host": "api.manual.example", "kind": "third_party", "trust": "watch", "source": "seed"},
+		{"host": "api.manual.example", "kind": "third_party", "trust": "watch", "endpoints": []string{"bad"}},
+		{"host": "api.manual.example", "kind": "third_party", "trust": "watch", "path_prefix": "/" + strings.Repeat("a", 513)},
+	} {
+		w = f.do(t, http.MethodPost, path, body, f.adminID)
+		assert.Equal(t, http.StatusBadRequest, w.Code, "%v", body)
+	}
+	w = f.do(t, http.MethodPost, path, map[string]any{
+		"host": "api.expiring.example", "kind": "third_party", "trust": "trusted",
+		"expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+	}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	expiringID := int64(decodeAdminBody(t, w)["data"].(map[string]any)["id"].(float64))
+
+	// Update keeps the source and records the before/after snapshots.
+	w = f.do(t, http.MethodPut, path+"/"+strconv.FormatInt(createdID, 10), map[string]any{
+		"host": "api.manual.example", "kind": "third_party", "trust": "blocked",
+		"notes": "resold plan account", "deny_paths": []string{"/api/coding"},
+	}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	updated := decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.Equal(t, "blocked", updated["trust"])
+	assert.Equal(t, "manual", updated["source"])
+	require.NoError(t, f.db.Where("trust_pool_id = ?", createdID).Order("id ASC").Find(&audits).Error)
+	require.Len(t, audits, 2)
+	assert.Equal(t, TrustPoolAuditUpdate, audits[1].Action)
+	assert.Contains(t, audits[1].Before, `"trust":"watch"`)
+	assert.Contains(t, audits[1].After, `"trust":"blocked"`)
+	assert.Equal(t, "resold plan account", audits[1].Notes)
+
+	// A manual row cannot become official, and source is immutable.
+	w = f.do(t, http.MethodPut, path+"/"+strconv.FormatInt(createdID, 10), map[string]any{
+		"host": "api.manual.example", "kind": "official", "trust": "watch",
+	}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	w = f.do(t, http.MethodPut, path+"/"+strconv.FormatInt(createdID, 10), map[string]any{
+		"host": "api.manual.example", "kind": "third_party", "trust": "watch", "source": "probe",
+	}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// A seeded official row stays editable (source stays seed).
+	w = f.do(t, http.MethodPut, path+"/"+strconv.FormatInt(seedID, 10), map[string]any{
+		"host": "api.deepseek.com", "kind": "official", "trust": "trusted",
+		"endpoints":  []string{"openai_chat", "anthropic_messages"},
+		"expires_at": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+		"notes":      "reviewed",
+	}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	seedUpdated := decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.Equal(t, "seed", seedUpdated["source"])
+	assert.Equal(t, "official", seedUpdated["kind"])
+	assert.Equal(t, "reviewed", seedUpdated["notes"])
+
+	// Hard delete keeps the audit trail; seeded rows are code-owned (409).
+	w = f.do(t, http.MethodDelete, path+"/"+strconv.FormatInt(expiringID, 10), nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.EqualValues(t, len(trustPoolSeeds)+1, countRows(t, f.db, &TrustPool{}), "the seed rows and the manual row remain")
+	var deleteAudits []TrustPoolAudit
+	require.NoError(t, f.db.Where("trust_pool_id = ? AND action = ?", expiringID, TrustPoolAuditDelete).Find(&deleteAudits).Error)
+	require.Len(t, deleteAudits, 1)
+	assert.Contains(t, deleteAudits[0].Before, "api.expiring.example")
+	assert.Empty(t, deleteAudits[0].After)
+
+	w = f.do(t, http.MethodDelete, path+"/"+strconv.FormatInt(seedID, 10), nil, f.adminID)
+	assert.Equal(t, http.StatusConflict, w.Code)
+	w = f.do(t, http.MethodDelete, path+"/999999", nil, f.adminID)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	w = f.do(t, http.MethodGet, path+"/999999", nil, f.adminID)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	// Auth: missing session is 401; non-root is 403.
+	w = f.do(t, http.MethodGet, path, nil, 0)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	nonRoot := common.RoleAdminUser
+	w = f.doRole(t, http.MethodGet, path, nil, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	w = f.doRole(t, http.MethodPost, path, map[string]any{"host": "x.example"}, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// TestAdminOpsMetricsList covers the P5 derived-metrics read API: filters by
+// metric_name, since and dimensions, plus the root-only gate.
+func TestAdminOpsMetricsList(t *testing.T) {
+	f := newAdminAPIFixture(t)
+	now := time.Now()
+	rows := []OpsMetric{
+		{MetricName: MetricStreamCutRate, MetricValue: 0.25, Dimensions: `{"total":4,"hits":1}`, BucketTime: now.Add(-2 * time.Hour), CreatedAt: now},
+		{MetricName: Metric503Reason, MetricValue: 2, Dimensions: `{"reason":"plan_quota_exhausted"}`, BucketTime: now.Add(-3 * time.Hour), CreatedAt: now},
+		{MetricName: MetricPreFreezeDeviation, MetricValue: 1000, Dimensions: `{"capped_requests":1,"total":4}`, BucketTime: now.Add(-time.Hour), CreatedAt: now},
+	}
+	require.NoError(t, f.db.Create(&rows).Error)
+
+	path := "/api/marketplace/admin/metrics"
+	since := url.QueryEscape(now.Add(-24 * time.Hour).Format(time.RFC3339))
+
+	w := f.do(t, http.MethodGet, path+"?since="+since, nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	items, ok := decodeAdminBody(t, w)["data"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, 3)
+	first := items[0].(map[string]any)
+	assert.Equal(t, MetricPreFreezeDeviation, first["metric_name"], "newest bucket first")
+	assert.EqualValues(t, 1000, first["metric_value"])
+	assert.NotEmpty(t, first["bucket_time"])
+	dimensions, ok := first["dimensions"].(map[string]any)
+	require.True(t, ok)
+	assert.EqualValues(t, 1, dimensions["capped_requests"])
+
+	// metric_name narrows the list.
+	w = f.do(t, http.MethodGet, path+"?since="+since+"&metric_name="+MetricStreamCutRate, nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	items = decodeAdminBody(t, w)["data"].([]any)
+	require.Len(t, items, 1)
+	assert.Equal(t, MetricStreamCutRate, items[0].(map[string]any)["metric_name"])
+	assert.InDelta(t, 0.25, items[0].(map[string]any)["metric_value"], 1e-9)
+
+	// dimensions filters by exact key/value pairs.
+	dimFilter := url.QueryEscape(`{"reason":"plan_quota_exhausted"}`)
+	w = f.do(t, http.MethodGet, path+"?since="+since+"&dimensions="+dimFilter, nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	items = decodeAdminBody(t, w)["data"].([]any)
+	require.Len(t, items, 1)
+	assert.Equal(t, Metric503Reason, items[0].(map[string]any)["metric_name"])
+
+	// Invalid inputs are 400; the root gate rejects missing and non-root
+	// sessions.
+	for _, query := range []string{
+		"?since=yesterday",
+		"?dimensions=not-json",
+		"?dimensions={}",
+		"?limit=0",
+		"?limit=5000",
+	} {
+		w = f.do(t, http.MethodGet, path+query, nil, f.adminID)
+		assert.Equal(t, http.StatusBadRequest, w.Code, query)
+	}
+	w = f.do(t, http.MethodGet, path, nil, 0)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	w = f.doRole(t, http.MethodGet, path, nil, f.adminID, common.RoleAdminUser)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }

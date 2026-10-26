@@ -270,6 +270,263 @@ export function unbanAdminListing(id: number): Promise<unknown> {
 }
 
 // ---------------------------------------------------------------------------
+// 待审队列（P5，按 host 聚合）
+// ---------------------------------------------------------------------------
+
+export interface AdminPendingListing {
+  id: number
+  seller_id: number
+  vendor: string
+  custom_base_url: string
+  models: string[]
+  created_at: string
+  seller_real_name_status: string
+}
+
+export interface AdminPendingHostGroup {
+  host: string
+  count: number
+  listings: AdminPendingListing[]
+}
+
+export function normalizeAdminPendingListing(raw: unknown): AdminPendingListing {
+  const row = record(raw)
+  return {
+    id: int(pick(row, 'id', 'ID')),
+    seller_id: int(pick(row, 'seller_id', 'SellerID')),
+    vendor: text(pick(row, 'vendor', 'Vendor')),
+    custom_base_url: text(pick(row, 'custom_base_url', 'CustomBaseURL')),
+    models: stringList(pick(row, 'models', 'Models')),
+    created_at: text(pick(row, 'created_at', 'CreatedAt')),
+    seller_real_name_status: text(
+      pick(row, 'seller_real_name_status', 'SellerRealNameStatus'),
+    ),
+  }
+}
+
+export function normalizeAdminPendingHostGroup(raw: unknown): AdminPendingHostGroup {
+  const row = record(raw)
+  const listings = Array.isArray(row.listings)
+    ? row.listings.map(normalizeAdminPendingListing)
+    : []
+  return {
+    host: text(pick(row, 'host', 'Host')),
+    count: int(pick(row, 'count', 'Count')) || listings.length,
+    listings,
+  }
+}
+
+export const pendingListingsQuery = () =>
+  queryOptions({
+    queryKey: ['marketplace', 'admin', 'listings', 'pending-groups'],
+    queryFn: async (): Promise<AdminPendingHostGroup[]> => {
+      const rows = await api.get<unknown[]>(`${adminBase}/listings/pending`)
+      return (Array.isArray(rows) ? rows : []).map(normalizeAdminPendingHostGroup)
+    },
+    staleTime: 15_000,
+  })
+
+export type ListingRejectAction = 'draft' | 'ban'
+
+export function approveListing(id: number, notes?: string): Promise<unknown> {
+  const body = notes ? { notes } : undefined
+  return api.post<unknown>(`${adminBase}/listings/${id}/approve`, body)
+}
+
+export function rejectListing(
+  id: number,
+  action: ListingRejectAction,
+  notes?: string,
+): Promise<unknown> {
+  return api.post<unknown>(`${adminBase}/listings/${id}/reject`, {
+    action,
+    ...(notes ? { notes } : {}),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// 全链路排查（P5，按 request_id）
+// ---------------------------------------------------------------------------
+
+export interface AdminTraceRequest {
+  id: number
+  request_id: string
+  buyer_user_id: number
+  buyer_token_id: number
+  seller_id: number
+  listing_id: number
+  model: string
+  upstream_model: string
+  model_fingerprint_anomaly: boolean
+  tier: string
+  price_version: number
+  multiplier_milli: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  search_count: number
+  fetch_count: number
+  token_debit_micro: number | string
+  tool_debit_micro: number | string
+  total_debit_micro: number | string
+  gift_debit_micro: number | string
+  capped_micro: number | string
+  platform_fee_micro: number | string
+  seller_credit_micro: number | string
+  official_cost_micro: number | string
+  usage_estimated: boolean
+  status: string
+  latency_ms: number
+  created_at: string
+}
+
+export interface AdminTraceHop {
+  seq: number
+  event: string
+  listing_id: number
+  detail: string
+  at: string
+}
+
+export interface AdminTraceLedgerRow {
+  id: number
+  request_id: string
+  entry_type: string
+  account: string
+  listing_id: number
+  amount_micro: number | string
+  price_version: number
+  multiplier_milli: number
+  status: string
+  available_at: string | null
+  created_at: string
+}
+
+export interface AdminTraceProbeRow {
+  id: number
+  listing_id: number
+  type: string
+  ok: boolean
+  latency_ms: number
+  detail: string
+  created_at: string
+}
+
+export interface AdminRequestTrace {
+  request: AdminTraceRequest
+  retry_chain: AdminTraceHop[]
+  ledger: AdminTraceLedgerRow[]
+  probes: AdminTraceProbeRow[]
+}
+
+function nullableTime(value: unknown): string | null {
+  return value === undefined || value === null || value === '' ? null : text(value)
+}
+
+export function normalizeAdminTraceHop(raw: unknown): AdminTraceHop {
+  const row = record(raw)
+  return {
+    seq: int(pick(row, 'seq', 'Seq')),
+    event: text(pick(row, 'event', 'Event')),
+    listing_id: int(pick(row, 'listing_id', 'ListingID')),
+    detail: text(pick(row, 'detail', 'Detail')),
+    at: text(pick(row, 'at', 'At')),
+  }
+}
+
+export function normalizeAdminTraceLedgerRow(raw: unknown): AdminTraceLedgerRow {
+  const row = record(raw)
+  return {
+    id: int(pick(row, 'id', 'ID')),
+    request_id: text(pick(row, 'request_id', 'RequestID')),
+    entry_type: text(pick(row, 'entry_type', 'EntryType')),
+    account: text(pick(row, 'account', 'Account')),
+    listing_id: int(pick(row, 'listing_id', 'ListingID')),
+    amount_micro: micro(pick(row, 'amount_micro', 'AmountMicro')),
+    price_version: int(pick(row, 'price_version', 'PriceVersion')),
+    multiplier_milli: int(pick(row, 'multiplier_milli', 'MultiplierMilli')),
+    status: text(pick(row, 'status', 'Status')),
+    available_at: nullableTime(pick(row, 'available_at', 'AvailableAt')),
+    created_at: text(pick(row, 'created_at', 'CreatedAt')),
+  }
+}
+
+export function normalizeAdminTraceProbeRow(raw: unknown): AdminTraceProbeRow {
+  const row = record(raw)
+  return {
+    id: int(pick(row, 'id', 'ID')),
+    listing_id: int(pick(row, 'listing_id', 'ListingID')),
+    type: text(pick(row, 'type', 'Type')),
+    ok: bool(pick(row, 'ok', 'OK')),
+    latency_ms: int(pick(row, 'latency_ms', 'LatencyMs')),
+    detail: text(pick(row, 'detail', 'Detail')),
+    created_at: text(pick(row, 'created_at', 'CreatedAt')),
+  }
+}
+
+export function normalizeAdminRequestTrace(raw: unknown): AdminRequestTrace {
+  const row = record(raw)
+  const req = record(pick(row, 'request', 'Request'))
+  const chain = pick(row, 'retry_chain', 'RetryChain')
+  const ledger = pick(row, 'ledger', 'Ledger')
+  const probes = pick(row, 'probes', 'Probes')
+  return {
+    request: {
+      id: int(pick(req, 'id', 'ID')),
+      request_id: text(pick(req, 'request_id', 'RequestID')),
+      buyer_user_id: int(pick(req, 'buyer_user_id', 'BuyerUserID')),
+      buyer_token_id: int(pick(req, 'buyer_token_id', 'BuyerTokenID')),
+      seller_id: int(pick(req, 'seller_id', 'SellerID')),
+      listing_id: int(pick(req, 'listing_id', 'ListingID')),
+      model: text(pick(req, 'model', 'Model')),
+      upstream_model: text(pick(req, 'upstream_model', 'UpstreamModel')),
+      model_fingerprint_anomaly: bool(
+        pick(req, 'model_fingerprint_anomaly', 'ModelFingerprintAnomaly'),
+      ),
+      tier: text(pick(req, 'tier', 'Tier')),
+      price_version: int(pick(req, 'price_version', 'PriceVersion')),
+      multiplier_milli: int(pick(req, 'multiplier_milli', 'MultiplierMilli')),
+      input_tokens: int(pick(req, 'input_tokens', 'InputTokens')),
+      output_tokens: int(pick(req, 'output_tokens', 'OutputTokens')),
+      cache_read_tokens: int(pick(req, 'cache_read_tokens', 'CacheReadTokens')),
+      cache_write_tokens: int(pick(req, 'cache_write_tokens', 'CacheWriteTokens')),
+      search_count: int(pick(req, 'search_count', 'SearchCount')),
+      fetch_count: int(pick(req, 'fetch_count', 'FetchCount')),
+      token_debit_micro: micro(pick(req, 'token_debit_micro', 'TokenDebitMicro')),
+      tool_debit_micro: micro(pick(req, 'tool_debit_micro', 'ToolDebitMicro')),
+      total_debit_micro: micro(pick(req, 'total_debit_micro', 'TotalDebitMicro')),
+      gift_debit_micro: micro(pick(req, 'gift_debit_micro', 'GiftDebitMicro')),
+      capped_micro: micro(pick(req, 'capped_micro', 'CappedMicro')),
+      platform_fee_micro: micro(pick(req, 'platform_fee_micro', 'PlatformFeeMicro')),
+      seller_credit_micro: micro(pick(req, 'seller_credit_micro', 'SellerCreditMicro')),
+      official_cost_micro: micro(pick(req, 'official_cost_micro', 'OfficialCostMicro')),
+      usage_estimated: bool(pick(req, 'usage_estimated', 'UsageEstimated')),
+      status: text(pick(req, 'status', 'Status')),
+      latency_ms: int(pick(req, 'latency_ms', 'LatencyMs')),
+      created_at: text(pick(req, 'created_at', 'CreatedAt')),
+    },
+    retry_chain: (Array.isArray(chain) ? chain : []).map(normalizeAdminTraceHop),
+    ledger: (Array.isArray(ledger) ? ledger : []).map(normalizeAdminTraceLedgerRow),
+    probes: (Array.isArray(probes) ? probes : []).map(normalizeAdminTraceProbeRow),
+  }
+}
+
+export const requestTraceQuery = (requestId: string) => {
+  const trimmed = requestId.trim()
+  return queryOptions({
+    queryKey: ['marketplace', 'admin', 'request-trace', trimmed],
+    enabled: trimmed !== '',
+    queryFn: async (): Promise<AdminRequestTrace> =>
+      normalizeAdminRequestTrace(
+        await api.get<unknown>(`${adminBase}/requests/${encodeURIComponent(trimmed)}`),
+      ),
+    staleTime: 15_000,
+  })
+}
+
+
+// ---------------------------------------------------------------------------
 // 提现审批
 // ---------------------------------------------------------------------------
 
@@ -609,3 +866,254 @@ export function deleteAdminPoolChannelModel(
     query: { channel_slug: channelSlug, upstream_model: upstreamModel },
   })
 }
+
+// ---------------------------------------------------------------------------
+// 认证池（P5）
+// ---------------------------------------------------------------------------
+
+export type TrustPoolKind = 'official' | 'third_party' | 'plan'
+export type TrustPoolTrust = 'trusted' | 'watch' | 'blocked'
+export type TrustPoolSource = 'seed' | 'manual' | 'probe'
+export type TrustPoolEndpoint = 'openai_chat' | 'openai_responses' | 'anthropic_messages'
+
+export const TRUST_POOL_ENDPOINTS: readonly TrustPoolEndpoint[] = [
+  'openai_chat',
+  'openai_responses',
+  'anthropic_messages',
+]
+
+export interface AdminTrustPool {
+  id: number
+  host: string
+  host_pattern: string
+  path_prefix: string
+  key_prefix: string
+  vendor_slug: string
+  kind: string
+  trust: string
+  endpoints: string[]
+  allowed_models: unknown
+  official_price_book_id: number
+  quota_window_template: unknown
+  deny_key_prefixes: string[]
+  deny_paths: string[]
+  error_code_table: unknown
+  default_headers: unknown
+  account_fingerprint_rules: unknown
+  source: string
+  notes: string
+  expires_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AdminTrustPoolList {
+  items: AdminTrustPool[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface TrustPoolFilters {
+  trust?: string
+  kind?: string
+  source?: string
+  page?: number
+  page_size?: number
+}
+
+export interface TrustPoolInput {
+  host: string
+  host_pattern: string
+  path_prefix: string
+  key_prefix: string
+  vendor_slug: string
+  kind: TrustPoolKind
+  trust: TrustPoolTrust
+  endpoints: TrustPoolEndpoint[]
+  /** RFC3339; an empty string clears the expiry on update. */
+  expires_at: string
+  deny_key_prefixes: string[]
+  deny_paths: string[]
+  notes: string
+}
+
+/** JSON columns arrive already decoded; a raw string is parsed when possible. */
+function jsonValue(value: unknown): unknown {
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return null
+    try {
+      return JSON.parse(trimmed) as unknown
+    } catch {
+      return value
+    }
+  }
+  return value ?? null
+}
+
+export function normalizeAdminTrustPool(raw: unknown): AdminTrustPool {
+  const row = record(raw)
+  const expiresAt = pick(row, 'expires_at', 'ExpiresAt')
+  return {
+    id: int(pick(row, 'id', 'ID')),
+    host: text(pick(row, 'host', 'Host')),
+    host_pattern: text(pick(row, 'host_pattern', 'HostPattern')),
+    path_prefix: text(pick(row, 'path_prefix', 'PathPrefix')),
+    key_prefix: text(pick(row, 'key_prefix', 'KeyPrefix')),
+    vendor_slug: text(pick(row, 'vendor_slug', 'VendorSlug')),
+    kind: text(pick(row, 'kind', 'Kind')),
+    trust: text(pick(row, 'trust', 'Trust')),
+    endpoints: stringList(pick(row, 'endpoints', 'Endpoints')),
+    allowed_models: jsonValue(pick(row, 'allowed_models', 'AllowedModels')),
+    official_price_book_id: int(pick(row, 'official_price_book_id', 'OfficialPriceBookID')),
+    quota_window_template: jsonValue(
+      pick(row, 'quota_window_template', 'QuotaWindowTemplate'),
+    ),
+    deny_key_prefixes: stringList(pick(row, 'deny_key_prefixes', 'DenyKeyPrefixes')),
+    deny_paths: stringList(pick(row, 'deny_paths', 'DenyPaths')),
+    error_code_table: jsonValue(pick(row, 'error_code_table', 'ErrorCodeTable')),
+    default_headers: jsonValue(pick(row, 'default_headers', 'DefaultHeaders')),
+    account_fingerprint_rules: jsonValue(
+      pick(row, 'account_fingerprint_rules', 'AccountFingerprintRules'),
+    ),
+    source: text(pick(row, 'source', 'Source')),
+    notes: text(pick(row, 'notes', 'Notes')),
+    expires_at: expiresAt === undefined ? null : text(expiresAt) || null,
+    created_at: text(pick(row, 'created_at', 'CreatedAt')),
+    updated_at: text(pick(row, 'updated_at', 'UpdatedAt')),
+  }
+}
+
+export const trustPoolQuery = (filters: TrustPoolFilters = {}) => {
+  const page = filters.page ?? 1
+  const pageSize = filters.page_size ?? 50
+  return queryOptions({
+    queryKey: [
+      'marketplace',
+      'admin',
+      'trust-pool',
+      filters.trust ?? 'all',
+      filters.kind ?? 'all',
+      filters.source ?? 'all',
+      page,
+      pageSize,
+    ],
+    queryFn: async (): Promise<AdminTrustPoolList> => {
+      const raw = await api.get<unknown>(`${adminBase}/trust-pool`, {
+        query: {
+          trust: filters.trust || undefined,
+          kind: filters.kind || undefined,
+          source: filters.source || undefined,
+          page,
+          page_size: pageSize,
+        },
+      })
+      const envelope = record(raw)
+      const items = Array.isArray(raw) ? raw : envelope.items
+      return {
+        items: (Array.isArray(items) ? items : []).map(normalizeAdminTrustPool),
+        total: int(envelope.total),
+        page: int(envelope.page) || page,
+        page_size: int(envelope.page_size) || pageSize,
+      }
+    },
+    staleTime: 15_000,
+  })
+}
+
+export const trustPoolDetailQuery = (id: number) =>
+  queryOptions({
+    queryKey: ['marketplace', 'admin', 'trust-pool', 'detail', id],
+    enabled: id > 0,
+    queryFn: async (): Promise<AdminTrustPool> =>
+      normalizeAdminTrustPool(await api.get<unknown>(`${adminBase}/trust-pool/${id}`)),
+    staleTime: 15_000,
+  })
+
+export function createTrustPool(input: TrustPoolInput): Promise<AdminTrustPool> {
+  return api.post<unknown>(`${adminBase}/trust-pool`, input).then(normalizeAdminTrustPool)
+}
+
+export function updateTrustPool(id: number, input: TrustPoolInput): Promise<AdminTrustPool> {
+  return api
+    .put<unknown>(`${adminBase}/trust-pool/${id}`, input)
+    .then(normalizeAdminTrustPool)
+}
+
+export function deleteTrustPool(id: number): Promise<unknown> {
+  return api.delete<unknown>(`${adminBase}/trust-pool/${id}`)
+}
+
+// ---------------------------------------------------------------------------
+// 派生指标（P5）
+// ---------------------------------------------------------------------------
+
+export const OPS_METRIC_NAMES = [
+  'stream_cut_rate',
+  '503_reason',
+  'fingerprint_anomaly',
+  'subscription_signal',
+  'slot_usage',
+  'slot_renew_failure',
+  'pre_freeze_deviation',
+] as const
+
+export type OpsMetricName = (typeof OPS_METRIC_NAMES)[number]
+
+export type OpsMetricRange = '1h' | '24h' | '7d'
+
+export const OPS_METRIC_RANGES: readonly OpsMetricRange[] = ['1h', '24h', '7d']
+
+/** RFC3339 lower bound for a range, computed once per range change. */
+export function opsMetricSince(range: OpsMetricRange, now = Date.now()): string {
+  const hours = range === '1h' ? 1 : range === '7d' ? 24 * 7 : 24
+  return new Date(now - hours * 3_600_000).toISOString()
+}
+
+export interface AdminOpsMetric {
+  id: number
+  metric_name: string
+  metric_value: number
+  dimensions: Record<string, unknown>
+  bucket_time: string
+  created_at: string
+}
+
+export function normalizeAdminOpsMetric(raw: unknown): AdminOpsMetric {
+  const row = record(raw)
+  return {
+    id: int(pick(row, 'id', 'ID')),
+    metric_name: text(pick(row, 'metric_name', 'MetricName')),
+    metric_value: Number(pick(row, 'metric_value', 'MetricValue') ?? 0) || 0,
+    dimensions: objectValue(pick(row, 'dimensions', 'Dimensions')),
+    bucket_time: text(pick(row, 'bucket_time', 'BucketTime')),
+    created_at: text(pick(row, 'created_at', 'CreatedAt')),
+  }
+}
+
+export interface OpsMetricFilters {
+  metric_name?: OpsMetricName | ''
+  since: string
+}
+
+export const opsMetricsQuery = (filters: OpsMetricFilters) =>
+  queryOptions({
+    queryKey: [
+      'marketplace',
+      'admin',
+      'metrics',
+      filters.metric_name || 'all',
+      filters.since,
+    ],
+    queryFn: async (): Promise<AdminOpsMetric[]> => {
+      const rows = await api.get<unknown[]>(`${adminBase}/metrics`, {
+        query: {
+          metric_name: filters.metric_name || undefined,
+          since: filters.since,
+        },
+      })
+      return (Array.isArray(rows) ? rows : []).map(normalizeAdminOpsMetric)
+    },
+    staleTime: 15_000,
+  })

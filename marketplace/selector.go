@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gorm.io/gorm"
@@ -38,6 +39,14 @@ type SlotManager struct {
 	// the slice stays chronologically ordered because appends are
 	// chronological.
 	slots map[int64][]time.Time
+
+	// Process-lifetime counters (P5): acquiring and releasing slots, and
+	// renewing a slot that is no longer held (a renew failure). Atomic so
+	// Stats never contends on mu with a renewing stream.
+	acquireCount      atomic.Int64
+	renewCount        atomic.Int64
+	renewFailureCount atomic.Int64
+	releaseCount      atomic.Int64
 }
 
 // NewSlotManager builds an empty SlotManager.
@@ -59,6 +68,7 @@ func (m *SlotManager) Acquire(listingID int64, limit int, now time.Time) bool {
 		return false
 	}
 	m.slots[listingID] = append(m.slots[listingID], now)
+	m.acquireCount.Add(1)
 	return true
 }
 
@@ -77,10 +87,12 @@ func (m *SlotManager) Renew(listingID int64, now time.Time) {
 	defer m.mu.Unlock()
 	times := m.slots[listingID]
 	if len(times) == 0 {
+		m.renewFailureCount.Add(1)
 		return
 	}
 	times = append(times[1:], now)
 	m.slots[listingID] = times
+	m.renewCount.Add(1)
 }
 
 // Release returns one slot — the oldest outstanding one. Releasing a listing
@@ -94,6 +106,7 @@ func (m *SlotManager) Release(listingID int64) {
 		return
 	}
 	times = times[1:]
+	m.releaseCount.Add(1)
 	if len(times) == 0 {
 		delete(m.slots, listingID)
 		return
@@ -107,6 +120,26 @@ func (m *SlotManager) InFlight(listingID int64) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.slots[listingID])
+}
+
+// Stats returns a snapshot of the slot lifecycle counters (P5 名额占用和续租
+// 失败次数): acquire, renew, renew_failure and release are process-lifetime
+// totals, while in_flight is the number of slots held right now. It does not
+// sweep expired slots, like InFlight. Every key is always present.
+func (m *SlotManager) Stats() map[string]int64 {
+	m.mu.Lock()
+	inFlight := 0
+	for _, times := range m.slots {
+		inFlight += len(times)
+	}
+	m.mu.Unlock()
+	return map[string]int64{
+		"acquire":       m.acquireCount.Load(),
+		"renew":         m.renewCount.Load(),
+		"renew_failure": m.renewFailureCount.Load(),
+		"release":       m.releaseCount.Load(),
+		"in_flight":     int64(inFlight),
+	}
 }
 
 // sweepLocked drops slots acquired at least SlotTimeout before now. The

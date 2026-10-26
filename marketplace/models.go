@@ -392,3 +392,59 @@ type TrustPool struct {
 }
 
 func (TrustPool) TableName() string { return "mp_trust_pool" }
+
+// Trust pool audit actions (P5). The audit trail is append-only: rows are only
+// ever inserted, in the same transaction as the change they describe.
+const (
+	TrustPoolAuditCreate = "create"
+	TrustPoolAuditUpdate = "update"
+	TrustPoolAuditDelete = "delete"
+)
+
+// TrustPoolAudit is one operator change to a trust-pool row (P5). Before and
+// After are the full JSON snapshots of the row (never key material); both are
+// empty for the create/delete side that does not exist. Notes mirrors the
+// row's notes so a blocked-row reason is part of the trail.
+type TrustPoolAudit struct {
+	ID          int64     `gorm:"primaryKey" json:"id"`
+	TrustPoolID int64     `gorm:"not null;index" json:"trust_pool_id"`
+	ActorID     int64     `gorm:"not null;index" json:"actor_id"`
+	Action      string    `gorm:"size:16;not null;index" json:"action"`
+	Before      string    `gorm:"type:text;not null" json:"before"`
+	After       string    `gorm:"type:text;not null" json:"after"`
+	Notes       string    `gorm:"type:text;not null" json:"notes"`
+	CreatedAt   time.Time `gorm:"index" json:"created_at"`
+}
+
+func (TrustPoolAudit) TableName() string { return "mp_trust_pool_audit" }
+
+// Ops metric names (P5). Every row of mp_ops_metrics is one derived metric of
+// one time bucket: a request-derived rate/count aggregated from mp_requests, a
+// process-local slot snapshot, or the pre-freeze deviation total.
+const (
+	MetricStreamCutRate      = "stream_cut_rate"
+	Metric503Reason          = "503_reason"
+	MetricFingerprintAnomaly = "fingerprint_anomaly"
+	MetricSubscriptionSignal = "subscription_signal"
+	MetricSlotUsage          = "slot_usage"
+	MetricSlotRenewFailure   = "slot_renew_failure"
+	MetricPreFreezeDeviation = "pre_freeze_deviation"
+)
+
+// OpsMetric is one derived operations metric of one bucket (§5 P5). The row is
+// append-only: the hourly aggregation replaces the rows of the bucket it
+// recomputes, so a re-run is idempotent.
+//
+// Dimensions is a JSON object (text so SQLite, MySQL and PostgreSQL share the
+// same schema) carrying the breakdown of the value, for example
+// {"listing_id":123,"endpoint":"openai_chat","reason":"content_filter"}.
+type OpsMetric struct {
+	ID          int64     `gorm:"primaryKey" json:"id"`
+	MetricName  string    `gorm:"size:64;not null;index" json:"metric_name"`
+	MetricValue float64   `gorm:"not null" json:"metric_value"`
+	Dimensions  string    `gorm:"type:text;not null;default:''" json:"dimensions"`
+	BucketTime  time.Time `gorm:"not null;index" json:"bucket_time"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+func (OpsMetric) TableName() string { return "mp_ops_metrics" }
