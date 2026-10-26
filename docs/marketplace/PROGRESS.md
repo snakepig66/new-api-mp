@@ -666,3 +666,20 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 ### 验收
 - 前端 `tsc --noEmit`、`vitest`（30 文件 / 164 测试）、`vite build` 通过；Go `build`/`vet` 通过，marketplace 全量测试除一次本地 mock 网络抖动外通过，重跑失败用例通过。
 - 旧路径跳转已用生产构建预览验证：`/seller` → `/share`，`/seller/records` → `/console/records?view=sales`，`/admin/prices` → `/console/ops/pricing`，`/admin/channel-models` → `/console/ops/models?tab=channel-models`；`/ops-legacy` 是旧后端入口，不在 SPA 路由内。
+
+## 第三方渠道上架：codely / clinepass（2026-10-26）
+
+### 注册与协议
+- codely、clinepass 以 `kind=third_party` 注册进 mp_channels（slug 9/10），协议指向本站网关反代：`https://llmjar.com/gw/codely/v1`、`https://llmjar.com/gw/clinepass/v1`（nginx `/gw/*` → 127.0.0.1:8792 / 3126）。
+- 协议 URL 必须带 `/v1` 段：验真按 `base+"/models"`、`base+"/chat/completions"` 拼接（与 moonshot `/v1`、ark `/api/v3` 同规则）；漏掉 `/v1` 时 codely 网关把 `/models` 转给 dsh-bridge 返回 403→502。
+- 两个渠道都开 `strip_v1_prefix`：买家请求的 `/v1` 前缀被去掉，中继最终请求 `base + /chat/completions`，不会出现 `/v1/v1`。
+- 出网白名单通过 `/etc/llmjar.env` 的 `MP_EGRESS_DOMAINS` 显式固定（官方域名 + llmjar.com），验真不再依赖 registry TTL 刷新。
+
+### 挂单与验真（snake 账号下）
+- listing 7（codely，倍率 0.5）：glm-5.3→codely-core、deepseek-v4.1-flash→codely-flash，逐模型验真通过 → canary。
+- listing 8（clinepass，倍率 0.5）：deepseek-v4.1-flash-1017→cline-pass/deepseek-v4.1-flash-1017，验真通过 → canary。
+- 挂单向导开放第三方渠道分组（前端已部署），卖家粘贴网关 Key（codely 渠道 Key / clinepass proxyKey）即可上架。
+
+### 端到端验收
+- 用 e2ebuyer（10012）的临时 Key 分别调用 glm-5.3（codely）与 deepseek-v4.1-flash-1017（clinepass）：HTTP 200，mp_requests 记录成功，账本三向一致（buyer_debit = platform_fee + seller_credit，卖家收益 7 天后可提）。
+- 公开模型广场 `/api/marketplace/square/models` 已列出三个模型及其渠道数；canary 挂单按 10% 灰度放量，24h 成功率 ≥98% 后由任务自动转 live。
