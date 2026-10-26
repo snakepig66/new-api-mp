@@ -28,7 +28,10 @@ export interface TableProps {
 export function Table({ children, className, minWidth = 720, size = 'default' }: TableProps) {
   return (
     <TableSizeContext.Provider value={size}>
-      <div className="w-full overflow-x-auto">
+      {/* `relative` anchors absolutely positioned descendants (the sr-only
+          labels inside cells); without it they escape the scroll container and
+          inflate the document's scrollWidth on 390px screens. */}
+      <div className="relative w-full overflow-x-auto">
         <table
           className={cn('w-full border-collapse text-[14px]', className)}
           style={{ minWidth }}
