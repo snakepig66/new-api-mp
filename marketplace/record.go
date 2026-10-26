@@ -470,15 +470,19 @@ func (s *RelaySession) settleAtomic(c *gin.Context, db *gorm.DB, u marketplaceUs
 			return err
 		}
 		settlement := Settlement{
-			RequestID:       s.RequestID(),
-			BuyerUserID:     int64(s.buyerUserID),
-			SellerUserID:    listing.SellerID,
-			ListingID:       listing.ID,
-			PriceVersion:    quote.PriceVersion,
-			MultiplierMilli: listing.MultiplierMilli,
-			TokenDebit:      tokenDebit,
-			ToolDebit:       toolDebit,
-			Now:             time.Now(),
+			RequestID:            s.RequestID(),
+			BuyerUserID:          int64(s.buyerUserID),
+			SellerUserID:         listing.SellerID,
+			ListingID:            listing.ID,
+			ChannelID:            listing.ID, // mp_seller_channels.id == listing id
+			KeyID:                0,          // one key per listing until P4
+			Endpoint:             string(s.EndpointKind()),
+			ModelMultiplierMilli: listing.MultiplierMilli,
+			PriceVersion:         quote.PriceVersion,
+			MultiplierMilli:      listing.MultiplierMilli,
+			TokenDebit:           tokenDebit,
+			ToolDebit:            toolDebit,
+			Now:                  time.Now(),
 		}
 		if err := PostSettlement(tx, settlement); err != nil && !errors.Is(err, ErrSettlementConflict) {
 			return err
@@ -623,6 +627,11 @@ func (s *RelaySession) insertRecord(c *gin.Context, db *gorm.DB, u marketplaceUs
 		BuyerTokenID:            int64(s.tokenID),
 		SellerID:                listing.SellerID,
 		ListingID:               listing.ID,
+		ChannelID:               listing.ID, // mp_seller_channels.id == listing id
+		KeyID:                   0,          // one key per listing until P4
+		Endpoint:                string(s.EndpointKind()),
+		ModelMultiplierMilli:    listing.MultiplierMilli,
+		Converted:               false, // protocol conversion is deferred
 		Model:                   s.model,
 		UpstreamModel:           upstreamModel,
 		ModelFingerprintAnomaly: modelAnomaly,

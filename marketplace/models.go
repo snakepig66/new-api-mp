@@ -1,6 +1,10 @@
 package marketplace
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 // Table definitions follow MARKETPLACE-DEV.md §4.2. All tables carry the mp_
 // prefix and live in the primary database alongside upstream tables. Money is
@@ -124,6 +128,148 @@ type Listing struct {
 
 func (Listing) TableName() string { return "mp_listings" }
 
+// P3 extension: a listing is split into a seller channel with one or more
+// endpoints, keys and per-model rows. During P3a the old mp_listings tables
+// remain authoritative: the new tables are written by CreateListing and by
+// BackfillSellerChannels, and are never read by the selector or relay paths.
+const (
+	// Key strategy of a seller channel.
+	KeyStrategyWeightedRoundRobin = "weighted_round_robin"
+	KeyStrategyPrimaryBackup      = "primary_backup"
+
+	// Endpoint protocols. The values match relay/constant.EndpointKind.
+	EndpointProtocolOpenAIChat        = "openai_chat"
+	EndpointProtocolOpenAIResponses   = "openai_responses"
+	EndpointProtocolAnthropicMessages = "anthropic_messages"
+
+	// Endpoint authentication schemes.
+	EndpointAuthBearer  = "bearer"
+	EndpointAuthXAPIKey = "x-api-key"
+
+	// Per-key lifecycle states.
+	ChannelKeyNormal       = "normal"
+	ChannelKeyCooling      = "cooling"
+	ChannelKeyFailed       = "failed"
+	ChannelKeyInsufficient = "insufficient"
+	ChannelKeyDraining     = "draining"
+)
+
+// SellerChannel is the P3 shadow identity of one legacy Listing. Its id is the
+// listing id, so request/ledger rows can carry one channel identity across the
+// migration. Status uses the same values as Listing.Status.
+type SellerChannel struct {
+	ID          int64 `gorm:"primaryKey"`
+	SellerID    int64 `gorm:"not null;index"`
+	TrustPoolID int64 `gorm:"not null;default:0;index"` // matched mp_trust_pool row, 0 when none
+	// Base is the normalized OpenAI-compatible base of the channel; endpoints
+	// carry the protocol-specific bases.
+	Base string `gorm:"size:512;not null;default:''"`
+	// HeaderPolicy is a JSON header policy for requests to this channel.
+	HeaderPolicy    string `gorm:"type:text;not null;default:''"`
+	KeyStrategy     string `gorm:"size:32;not null;default:'weighted_round_robin'"`
+	AffinityEnabled bool   `gorm:"not null;default:false"`
+	// Channel-level limits. A key-level limit may not exceed these.
+	ConcurrencyLimit   int    `gorm:"not null"`
+	RPMLimit           int    `gorm:"not null"`
+	DailyCapMicro      int64  `gorm:"not null"`
+	CumulativeCapMicro int64  `gorm:"not null"`
+	Hours              string `gorm:"type:text"`
+	Status             string `gorm:"size:32;not null;index"`
+	PauseReason        string `gorm:"size:64;not null;default:''"`
+	ResumeAt           *time.Time
+	Version            int64 `gorm:"not null"`
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+func (SellerChannel) TableName() string { return "mp_seller_channels" }
+
+// ChannelEndpoint is one protocol endpoint of a seller channel. FixedPath is
+// the protocol's fixed upstream path, so a buyer's request path never decides
+// the upstream URL.
+type ChannelEndpoint struct {
+	ID         int64  `gorm:"primaryKey"`
+	ChannelID  int64  `gorm:"not null;uniqueIndex:uk_mp_channel_endpoints,priority:1"`
+	Protocol   string `gorm:"size:32;not null;uniqueIndex:uk_mp_channel_endpoints,priority:2"`
+	Base       string `gorm:"size:512;not null;default:''"`
+	FixedPath  string `gorm:"size:255;not null;default:''"`
+	AuthMethod string `gorm:"size:16;not null;default:'bearer'"`
+	// StreamEndRule reports whether the upstream ends its SSE stream with
+	// [DONE] (OpenAI chat completions). Responses and Messages use their own
+	// terminal events.
+	StreamEndRule bool   `gorm:"not null;default:false"`
+	TimeoutConfig string `gorm:"type:text;not null;default:''"`
+	Verified      bool   `gorm:"not null;default:false"`
+	VerifiedAt    *time.Time
+	// NewAPIChannelID points at the placeholder model.Channel row that the
+	// legacy write path provisions for this listing.
+	NewAPIChannelID int64 `gorm:"not null;default:0;index"`
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+func (ChannelEndpoint) TableName() string { return "mp_channel_endpoints" }
+
+// ChannelKey is one upstream credential of a seller channel. KeyCiphertext is
+// the same AES-256-GCM blob the legacy listing carries. DeletedAt is a soft
+// delete so historical requests keep a resolvable key id.
+type ChannelKey struct {
+	ID                         int64 `gorm:"primaryKey"`
+	ChannelID                  int64 `gorm:"not null;index"`
+	KeyCiphertext              []byte
+	KeyFingerprint             string `gorm:"size:128;not null;uniqueIndex"`
+	UpstreamAccountFingerprint string `gorm:"size:128;not null;default:''"`
+	Weight                     int    `gorm:"not null;default:100"`
+	// Per-key limits; normalization rejects values above the channel level.
+	ConcurrencyLimit int    `gorm:"not null"`
+	RPMLimit         int    `gorm:"not null"`
+	Status           string `gorm:"size:16;not null;index"`
+	PauseReason      string `gorm:"size:64;not null;default:''"`
+	ResumeAt         *time.Time
+	QuotaWindow      string         `gorm:"type:text;not null;default:''"`
+	DeletedAt        gorm.DeletedAt `gorm:"index"`
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+func (ChannelKey) TableName() string { return "mp_channel_keys" }
+
+// SellerChannelModel is one platform model a seller channel may serve. It is
+// the per-seller counterpart of the pool's mp_channel_models (channel ×
+// upstream model qualification); the distinct table name avoids conflating the
+// global pool row with a live listing row.
+type SellerChannelModel struct {
+	ID                        int64  `gorm:"primaryKey"`
+	ChannelID                 int64  `gorm:"not null;uniqueIndex:uk_mp_seller_channel_models,priority:1"`
+	Model                     string `gorm:"size:128;not null;uniqueIndex:uk_mp_seller_channel_models,priority:2"`
+	UpstreamModel             string `gorm:"size:128;not null;default:''"`
+	AllowedEndpoints          string `gorm:"type:text;not null;default:''"` // JSON array of protocol ids
+	MultiplierMilli           int64  `gorm:"not null"`
+	Enabled                   bool   `gorm:"not null"`
+	VerifiedOpenAIChat        bool   `gorm:"not null;default:false"`
+	VerifiedOpenAIResponses   bool   `gorm:"not null;default:false"`
+	VerifiedAnthropicMessages bool   `gorm:"not null;default:false"`
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+}
+
+func (SellerChannelModel) TableName() string { return "mp_seller_channel_models" }
+
+// MultiplierChange is the append-only history of a seller channel's per-model
+// multiplier edits.
+type MultiplierChange struct {
+	ID                 int64  `gorm:"primaryKey"`
+	ChannelID          int64  `gorm:"not null;index"`
+	Model              string `gorm:"size:128;not null;default:'';index"`
+	OldMultiplierMilli int64  `gorm:"not null"`
+	NewMultiplierMilli int64  `gorm:"not null"`
+	ActorID            int64  `gorm:"not null;default:0"`
+	Notes              string `gorm:"type:text;not null;default:''"`
+	CreatedAt          time.Time
+}
+
+func (MultiplierChange) TableName() string { return "mp_multiplier_changes" }
+
 // Probe is one verification / patrol / report check against a listing (§3.5).
 type Probe struct {
 	ID        int64  `gorm:"primaryKey"`
@@ -197,7 +343,15 @@ type Request struct {
 	BuyerTokenID int64  `gorm:"not null;index"`
 	SellerID     int64  `gorm:"not null;index"`
 	ListingID    int64  `gorm:"not null;index"`
-	Model        string `gorm:"size:128;not null;index"`
+	// P3 shadow identity: ChannelID mirrors ListingID (mp_seller_channels.id),
+	// KeyID is the mp_channel_keys row (0 until multi-key supply exists), and
+	// Endpoint is the buyer protocol the request was served on.
+	ChannelID            int64  `gorm:"not null;default:0;index"`
+	KeyID                int64  `gorm:"not null;default:0"`
+	Endpoint             string `gorm:"size:32;not null;default:''"`
+	ModelMultiplierMilli int64  `gorm:"not null;default:0"`
+	Converted            bool   `gorm:"not null;default:false"`
+	Model                string `gorm:"size:128;not null;index"`
 	// UpstreamModel is the raw model id the upstream returned in the response
 	// body before the marketplace rewrote it to Model (§3.4). Empty when the
 	// response carried no model (for example an all-failed request).
@@ -264,17 +418,22 @@ const (
 // Invariants: (request_id, entry_type) is unique; the signed AmountMicro of
 // all rows of one request sums to zero.
 type LedgerEntry struct {
-	ID              int64  `gorm:"primaryKey"`
-	RequestID       string `gorm:"size:64;not null;uniqueIndex:uk_mp_ledger_req_type,priority:1;index"`
-	EntryType       string `gorm:"size:20;not null;uniqueIndex:uk_mp_ledger_req_type,priority:2"`
-	Account         string `gorm:"size:40;not null;index"` // "buyer:<id>", "seller:<id>", "platform"; legacy "user:<id>"
-	ListingID       int64
-	AmountMicro     int64 `gorm:"not null"` // signed
-	PriceVersion    int64
-	MultiplierMilli int64
-	Status          string     `gorm:"size:16;not null;index"`
-	AvailableAt     *time.Time `gorm:"index"`
-	CreatedAt       time.Time
+	ID        int64  `gorm:"primaryKey"`
+	RequestID string `gorm:"size:64;not null;uniqueIndex:uk_mp_ledger_req_type,priority:1;index"`
+	EntryType string `gorm:"size:20;not null;uniqueIndex:uk_mp_ledger_req_type,priority:2"`
+	Account   string `gorm:"size:40;not null;index"` // "buyer:<id>", "seller:<id>", "platform"; legacy "user:<id>"
+	ListingID int64
+	// P3 shadow identity, mirroring the request it settles (§4.2).
+	ChannelID            int64  `gorm:"not null;default:0;index"`
+	KeyID                int64  `gorm:"not null;default:0"`
+	Endpoint             string `gorm:"size:32;not null;default:''"`
+	ModelMultiplierMilli int64  `gorm:"not null;default:0"`
+	AmountMicro          int64  `gorm:"not null"` // signed
+	PriceVersion         int64
+	MultiplierMilli      int64
+	Status               string     `gorm:"size:16;not null;index"`
+	AvailableAt          *time.Time `gorm:"index"`
+	CreatedAt            time.Time
 }
 
 func (LedgerEntry) TableName() string { return "mp_ledger" }
@@ -306,6 +465,32 @@ type ResponseBinding struct {
 }
 
 func (ResponseBinding) TableName() string { return "mp_response_bindings" }
+
+// AffinityBinding pins one buyer session to one listing (endpoint + key) for a
+// short window (P4-A 亲和). It is a performance hint only: the selector still
+// applies every filter to the preferred listing, and a full concurrency slot
+// may dispatch the request elsewhere without rewriting the recorded relation.
+//
+// AffinityKey is HMAC(secret, buyer_id ‖ source ‖ value), so a session value
+// observed by one buyer never matches another buyer's binding. Endpoint is part
+// of the unique key because one session may use different protocols; the pair
+// (affinity_key, endpoint) is unique so RecordAffinity can upsert within one
+// dialect-independent statement.
+type AffinityBinding struct {
+	ID          int64  `gorm:"primaryKey"`
+	AffinityKey string `gorm:"size:128;not null;uniqueIndex:uk_mp_affinity_key_endpoint,priority:1"`
+	BuyerID     int64  `gorm:"not null;index"`
+	ListingID   int64  `gorm:"not null"`
+	Endpoint    string `gorm:"size:32;not null;default:'';uniqueIndex:uk_mp_affinity_key_endpoint,priority:2"`
+	// CreatedAt is the binding's first creation instant and drives the 24-hour
+	// absolute upper bound; it never changes on a hit.
+	CreatedAt time.Time
+	// ExpiresAt is the sliding 1-hour TTL, capped by CreatedAt+24h.
+	ExpiresAt time.Time `gorm:"not null;index"`
+	LastHitAt time.Time
+}
+
+func (AffinityBinding) TableName() string { return "mp_affinity_bindings" }
 
 // Payout statuses (§3.9).
 const (

@@ -28,6 +28,7 @@ func TestMigrateCreatesTables(t *testing.T) {
 		"mp_key_models",
 		"mp_requests",
 		"mp_response_bindings",
+		"mp_affinity_bindings",
 		"mp_ledger",
 		"mp_payouts",
 		"mp_channel_model_map",
@@ -38,6 +39,11 @@ func TestMigrateCreatesTables(t *testing.T) {
 		"mp_trust_pool",
 		"mp_trust_pool_audit",
 		"mp_ops_metrics",
+		"mp_seller_channels",
+		"mp_channel_endpoints",
+		"mp_channel_keys",
+		"mp_seller_channel_models",
+		"mp_multiplier_changes",
 	}
 	var tables []string
 	switch db.Dialector.Name() {

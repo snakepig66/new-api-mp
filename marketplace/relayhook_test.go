@@ -1462,6 +1462,96 @@ func TestReselectChannelRefusesAfterResponseCommitted(t *testing.T) {
 	assert.Contains(t, apiErr.Error(), "already started")
 }
 
+// TestBeginDistributeBuyerBalancePrecheck locks P4-A's coarse buyer-side gate:
+// a zero or negative users.quota is a 402 before any listing selection, so no
+// slot is acquired and no supplier lookup work is spent.
+func TestBeginDistributeBuyerBalancePrecheck(t *testing.T) {
+	for _, quota := range []int{0, -5} {
+		t.Run(fmt.Sprintf("quota=%d", quota), func(t *testing.T) {
+			f := newRelayFixture(t, quota)
+			listing := f.addListing(t, 500)
+			f.addKeyModel(t, 77, "deepseek-flash", 0)
+			c := f.newRelayContext(t, []byte(`{"model":"deepseek-flash"}`))
+
+			_, handled, status, err := BeginDistribute(c, "deepseek-flash")
+			require.Error(t, err)
+			assert.True(t, handled)
+			assert.Equal(t, http.StatusPaymentRequired, status)
+			assert.ErrorIs(t, err, ErrInsufficientBalance)
+			assert.False(t, IsRelayRequest(c), "no session is opened")
+			assert.Equal(t, 0, f.selector.Slots.InFlight(listing.ID), "selection was never reached")
+		})
+	}
+}
+
+// TestBeginDistributeAffinityPinsListing covers the read side of P4-A: a
+// recorded session binding is looked up before selection and the bound listing
+// wins even when a cheaper supplier exists.
+func TestBeginDistributeAffinityPinsListing(t *testing.T) {
+	f := newRelayFixture(t, 10_000_000)
+	pinned := f.addListing(t, 800)
+	f.addListing(t, 400)
+	f.addKeyModel(t, 77, "deepseek-flash", 0)
+	require.NoError(t, RecordAffinity(f.db, f.buyerID, AffinitySourceSessionHeader, "sess-pinned",
+		string(relayconstant.EndpointOpenAIChat), pinned.ID))
+
+	c := f.newRelayContext(t, []byte(`{"model":"deepseek-flash"}`))
+	c.Request.Header.Set("X-Session-Id", "sess-pinned")
+	ch, handled, _, err := BeginDistribute(c, "deepseek-flash")
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.NotNil(t, ch)
+	assert.Equal(t, int(pinned.ChannelID), ch.Id, "the bound listing serves the session")
+	assert.Equal(t, pinned.ID, CurrentRelaySession(c).CurrentListing().ID)
+}
+
+// TestBeginDistributeRecordsAffinityOnSuccess covers the write side: a
+// successful request records the binding for its session, and a later request
+// in that session stays on the recorded listing even when a cheaper one
+// appears.
+func TestBeginDistributeRecordsAffinityOnSuccess(t *testing.T) {
+	f := newRelayFixture(t, 10_000_000)
+	first := f.addListing(t, 400)
+	f.addListing(t, 800)
+	f.addKeyModel(t, 77, "deepseek-flash", 0)
+
+	c := f.newRelayContext(t, []byte(`{"model":"deepseek-flash"}`))
+	c.Request.Header.Set("X-Session-Id", "sess-record")
+	_, handled, _, err := BeginDistribute(c, "deepseek-flash")
+	require.NoError(t, err)
+	require.True(t, handled)
+	assert.Equal(t, first.ID, CurrentRelaySession(c).CurrentListing().ID)
+
+	// Nothing is recorded while the request is still in flight.
+	binding, err := LookupAffinity(f.db, f.buyerID, AffinitySourceSessionHeader, "sess-record",
+		string(relayconstant.EndpointOpenAIChat))
+	require.NoError(t, err)
+	assert.Nil(t, binding, "a request records its binding only after it settles")
+
+	// Simulate a successful settle and the deferred EndRelay.
+	s := CurrentRelaySession(c)
+	s.mu.Lock()
+	s.settled = true
+	s.settledMicro = 1
+	s.mu.Unlock()
+	s.endRelay(c)
+
+	binding, err = LookupAffinity(f.db, f.buyerID, AffinitySourceSessionHeader, "sess-record",
+		string(relayconstant.EndpointOpenAIChat))
+	require.NoError(t, err)
+	require.NotNil(t, binding)
+	assert.Equal(t, first.ID, binding.ListingID)
+
+	// A cheaper listing appears, but the recorded session stays pinned.
+	f.addListing(t, 100)
+	c2 := f.newRelayContext(t, []byte(`{"model":"deepseek-flash"}`))
+	c2.Request.Header.Set("X-Session-Id", "sess-record")
+	ch, handled, _, err := BeginDistribute(c2, "deepseek-flash")
+	require.NoError(t, err)
+	require.True(t, handled)
+	assert.Equal(t, int(first.ChannelID), ch.Id)
+}
+
 // TestReselectChannelReleasesFreezeDifference covers a hop to a cheaper
 // listing: the same billing session releases only the difference, and the
 // buyer's balance reflects that exact release.

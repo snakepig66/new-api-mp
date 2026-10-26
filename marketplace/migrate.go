@@ -27,12 +27,18 @@ func Migrate(db *gorm.DB) error {
 		&KeyModel{},
 		&Request{},
 		&ResponseBinding{},
+		&AffinityBinding{},
 		&LedgerEntry{},
 		&Payout{},
 		&Notification{},
 		&TrustPool{},
 		&TrustPoolAudit{},
 		&OpsMetric{},
+		&SellerChannel{},
+		&ChannelEndpoint{},
+		&ChannelKey{},
+		&SellerChannelModel{},
+		&MultiplierChange{},
 	); err != nil {
 		return fmt.Errorf("marketplace migrate: %w", err)
 	}
@@ -41,6 +47,11 @@ func Migrate(db *gorm.DB) error {
 	// listing is created. SeedTrustPool is idempotent.
 	if err := SeedTrustPool(db); err != nil {
 		return fmt.Errorf("marketplace seed trust pool: %w", err)
+	}
+	// P3a: split legacy listings into the shadow tables. Idempotent, batched,
+	// and a no-op on a fresh database.
+	if err := BackfillSellerChannels(db); err != nil {
+		return fmt.Errorf("marketplace backfill seller channels: %w", err)
 	}
 	if err := ensureUserIDStart(db, FirstUserID); err != nil {
 		return fmt.Errorf("marketplace user id watermark: %w", err)

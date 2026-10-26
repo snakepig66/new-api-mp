@@ -117,8 +117,13 @@ type RelaySession struct {
 	hasThinkingSignature bool
 	maxMultiplierMilli   int64
 	officialOnly         bool
-	freezeAt             time.Time
-	listing              Listing
+	// affinitySource/affinityValue carry the session identifier extracted at
+	// BeginDistribute (P4-A) so a successful settle can record the binding.
+	// They are in-process only and never logged.
+	affinitySource string
+	affinityValue  string
+	freezeAt       time.Time
+	listing        Listing
 	// realKey is the current listing's decrypted seller key. It is only ever
 	// written into the channel context key for the relay adaptor; never
 	// logged, never returned (§2.3).
@@ -429,6 +434,7 @@ func (s *RelaySession) endRelay(c *gin.Context) {
 			db, _ := relayState()
 			if db != nil {
 				s.recordResponseBinding(c, db)
+				s.recordAffinity(db)
 			}
 		}
 		return
@@ -571,12 +577,27 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 		common.SysError(common.LogText("marketplace: query key models: %s", qerr.Error()))
 		return nil, true, http.StatusServiceUnavailable, errors.New("marketplace: failed to query key models")
 	}
+	buyerUserID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	// P4-A buyer-side precheck: a non-positive buyers.quota cannot pay for any
+	// request, so the buyer is refused before listing selection spends work.
+	// This is deliberately coarse — the precise pre-freeze still happens in
+	// PrepareBilling, because the quote depends on the selected listing's
+	// multiplier and channel coefficient.
+	if buyerUserID > 0 {
+		balance, berr := model.GetUserQuota(int(buyerUserID), true)
+		if berr != nil {
+			common.SysError(common.LogText("marketplace: read buyer balance: %s", berr.Error()))
+			return nil, true, http.StatusServiceUnavailable, errors.New("marketplace: failed to read buyer balance")
+		}
+		if balance <= 0 {
+			return nil, true, http.StatusPaymentRequired, ErrInsufficientBalance
+		}
+	}
 	// MP: 买家 RPM 限制 (§3.6 每个买家有自己的 RPM 限制), counted per buyer
 	// user across all of that buyer's keys (M13), checked after the
 	// deterministic model-added rejection so a refused request never spends
 	// budget. §3.10's outward error list has no 429; per the 402/403 待定
 	// precedent this is mapped to 400 with a rate-limited message — §10 待确认.
-	buyerUserID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
 	// M13/§3.6: the key preference may lower the limit, but a key without an
 	// explicit limit uses the platform-wide buyer default instead of being
 	// unlimited.
@@ -622,12 +643,30 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 		// (MODEL-CHANNEL-POOL 验收: 未认证的渠道或模型后端直接拒绝).
 		return nil, true, http.StatusServiceUnavailable, noSupplierError(officialOnly)
 	}
+	// P4-A 亲和: a session identifier pins this request to the listing that
+	// served the session, but only as a ranking preference — the selector still
+	// applies every filter. Affinity is best-effort: a lookup failure must not
+	// fail the request.
+	var affinityBody []byte
+	if storage, serr := common.GetBodyStorage(c); serr == nil && storage != nil {
+		affinityBody, _ = storage.Bytes()
+	}
+	affinitySource, affinityValue, hasAffinity := ExtractAffinityIdentifier(c, affinityBody)
+	var preferredListingID int64
+	if hasAffinity {
+		if binding, berr := LookupAffinity(db, int(buyerUserID), affinitySource, affinityValue, string(endpointKind)); berr != nil {
+			common.SysError(common.LogText("marketplace: read affinity binding: %s", berr.Error()))
+		} else if binding != nil {
+			preferredListingID = binding.ListingID
+		}
+	}
 	listing, tookProbe, qerr := DefaultSelector().SelectWithProbe(db, SelectInput{
 		Model:              modelName,
 		BuyerID:            buyerUserID,
 		MaxMultiplierMilli: capMilli,
 		OfficialOnly:       officialOnly,
 		EndpointKind:       endpointKind,
+		PreferredListingID: preferredListingID,
 	})
 	if errors.Is(qerr, ErrNoListingAvailable) {
 		return nil, true, http.StatusServiceUnavailable, noSupplierError(officialOnly)
@@ -640,6 +679,13 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 		capMilli, officialOnly, "", hasThinkingSignature)
 	if qerr != nil {
 		return nil, true, http.StatusServiceUnavailable, qerr
+	}
+	if hasAffinity {
+		if s := CurrentRelaySession(c); s != nil {
+			s.mu.Lock()
+			s.affinitySource, s.affinityValue = affinitySource, affinityValue
+			s.mu.Unlock()
+		}
 	}
 	return channel, true, 0, nil
 }

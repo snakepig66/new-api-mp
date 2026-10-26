@@ -108,6 +108,69 @@ func TestCreateListingSuccess(t *testing.T) {
 	assert.Equal(t, "default", ch.Group)
 }
 
+// TestCreateListingWritesShadowTables proves CreateListing double-writes the
+// P3 split tables in the same transaction: the seller channel keeps the
+// listing id and every field is copied, and a failure anywhere would have
+// rolled the whole create back (the model is the constraint enforced by the
+// shadow insert).
+func TestCreateListingWritesShadowTables(t *testing.T) {
+	db := newListingTestDB(t)
+
+	listing, err := CreateListing(db, CreateListingInput{
+		SellerID:        10023,
+		VendorID:        "deepseek",
+		APIKey:          uniqueTestKey("sk-shadow"),
+		Models:          []string{"deepseek-flash", "deepseek-v4-pro"},
+		MultiplierMilli: 300,
+		Concurrency:     9,
+		RPM:             40,
+		DailyCapMicro:   6_000_000,
+		Hours:           `[{"start":"08:00","end":"20:00"}]`,
+	})
+	require.NoError(t, err)
+
+	var channel SellerChannel
+	require.NoError(t, db.Where("id = ?", listing.ID).Take(&channel).Error)
+	assert.Equal(t, listing.ID, channel.ID, "shadow channel id equals the listing id")
+	assert.Equal(t, listing.SellerID, channel.SellerID)
+	assert.Equal(t, "https://api.deepseek.com", channel.Base)
+	assert.Equal(t, KeyStrategyWeightedRoundRobin, channel.KeyStrategy)
+	assert.Equal(t, listing.ConcurrencyLimit, channel.ConcurrencyLimit)
+	assert.Equal(t, listing.RPMLimit, channel.RPMLimit)
+	assert.Equal(t, listing.DailyCapMicro, channel.DailyCapMicro)
+	assert.Equal(t, listing.Hours, channel.Hours)
+	assert.Equal(t, listing.Status, channel.Status)
+	assert.Equal(t, listing.Version, channel.Version)
+
+	var key ChannelKey
+	require.NoError(t, db.Where("channel_id = ?", listing.ID).Take(&key).Error)
+	assert.Equal(t, listing.KeyFingerprint, key.KeyFingerprint)
+	assert.Equal(t, listing.KeyCiphertext, key.KeyCiphertext)
+	assert.Equal(t, ChannelKeyNormal, key.Status)
+	assert.Equal(t, 100, key.Weight)
+
+	var models []SellerChannelModel
+	require.NoError(t, db.Where("channel_id = ?", listing.ID).Order("model ASC").Find(&models).Error)
+	require.Len(t, models, 2)
+	for _, row := range models {
+		assert.Equal(t, row.Model, row.UpstreamModel, "deepseek maps the platform id onto itself")
+		assert.Equal(t, int64(300), row.MultiplierMilli)
+		assert.True(t, row.Enabled)
+		assert.False(t, row.VerifiedOpenAIChat, "a draft listing is unverified")
+		assert.False(t, row.VerifiedOpenAIResponses)
+		assert.False(t, row.VerifiedAnthropicMessages)
+	}
+
+	var endpoints []ChannelEndpoint
+	require.NoError(t, db.Where("channel_id = ?", listing.ID).Find(&endpoints).Error)
+	require.Len(t, endpoints, 3)
+	for _, ep := range endpoints {
+		assert.Equal(t, listing.ChannelID, ep.NewAPIChannelID)
+		assert.False(t, ep.Verified)
+		assert.Nil(t, ep.VerifiedAt)
+	}
+}
+
 func TestCreateListingDefaultsAndDedup(t *testing.T) {
 	db := newListingTestDB(t)
 

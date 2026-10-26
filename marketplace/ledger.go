@@ -71,16 +71,23 @@ func accountUserID(account string) (int64, bool) {
 
 // Settlement is the priced outcome of one successful request (§3.7/§3.9).
 type Settlement struct {
-	RequestID       string
-	BuyerUserID     int64
-	SellerUserID    int64
-	ListingID       int64
-	PriceVersion    int64
-	MultiplierMilli int64
-	TokenDebit      Micro // token charges, buyer-rounded up
-	ToolDebit       Micro // Search/Fetch per-call charges (§3.4)
-	Now             time.Time
-	Maturity        time.Duration // 0 → DefaultMaturity
+	RequestID    string
+	BuyerUserID  int64
+	SellerUserID int64
+	ListingID    int64
+	// P3 shadow identity carried onto every ledger row (§4.2). ChannelID equals
+	// ListingID (mp_seller_channels.id), KeyID is 0 until multi-key supply, and
+	// ModelMultiplierMilli is the listing multiplier used for pricing.
+	ChannelID            int64
+	KeyID                int64
+	Endpoint             string
+	ModelMultiplierMilli int64
+	PriceVersion         int64
+	MultiplierMilli      int64
+	TokenDebit           Micro // token charges, buyer-rounded up
+	ToolDebit            Micro // Search/Fetch per-call charges (§3.4)
+	Now                  time.Time
+	Maturity             time.Duration // 0 → DefaultMaturity
 }
 
 func (s Settlement) validate() error {
@@ -123,11 +130,15 @@ func (s Settlement) rows() ([]LedgerEntry, error) {
 	}
 	availableAt := s.Now.Add(maturity)
 	base := LedgerEntry{
-		RequestID:       s.RequestID,
-		ListingID:       s.ListingID,
-		PriceVersion:    s.PriceVersion,
-		MultiplierMilli: s.MultiplierMilli,
-		CreatedAt:       s.Now,
+		RequestID:            s.RequestID,
+		ListingID:            s.ListingID,
+		ChannelID:            s.ChannelID,
+		KeyID:                s.KeyID,
+		Endpoint:             s.Endpoint,
+		ModelMultiplierMilli: s.ModelMultiplierMilli,
+		PriceVersion:         s.PriceVersion,
+		MultiplierMilli:      s.MultiplierMilli,
+		CreatedAt:            s.Now,
 	}
 	rows := []LedgerEntry{
 		func() LedgerEntry {
@@ -359,6 +370,8 @@ func Reverse(db *gorm.DB, requestID string, now time.Time) error {
 				RequestID: requestID, EntryType: EntryRefund,
 				Account: refundAccount, AmountMicro: total,
 				ListingID: creditRow.ListingID, PriceVersion: creditRow.PriceVersion,
+				ChannelID: creditRow.ChannelID, KeyID: creditRow.KeyID,
+				Endpoint: creditRow.Endpoint, ModelMultiplierMilli: creditRow.ModelMultiplierMilli,
 				MultiplierMilli: creditRow.MultiplierMilli,
 				Status:          LedgerAvailable, CreatedAt: now,
 			},
@@ -366,6 +379,8 @@ func Reverse(db *gorm.DB, requestID string, now time.Time) error {
 				RequestID: requestID, EntryType: EntryReversal,
 				Account: creditRow.Account, AmountMicro: -int64(credit),
 				ListingID: creditRow.ListingID, PriceVersion: creditRow.PriceVersion,
+				ChannelID: creditRow.ChannelID, KeyID: creditRow.KeyID,
+				Endpoint: creditRow.Endpoint, ModelMultiplierMilli: creditRow.ModelMultiplierMilli,
 				MultiplierMilli: creditRow.MultiplierMilli,
 				Status:          LedgerReversed, CreatedAt: now,
 			},
@@ -373,6 +388,8 @@ func Reverse(db *gorm.DB, requestID string, now time.Time) error {
 				RequestID: requestID, EntryType: EntryFeeReversal,
 				Account: PlatformAccount(), AmountMicro: -int64(fee),
 				ListingID: creditRow.ListingID, PriceVersion: creditRow.PriceVersion,
+				ChannelID: creditRow.ChannelID, KeyID: creditRow.KeyID,
+				Endpoint: creditRow.Endpoint, ModelMultiplierMilli: creditRow.ModelMultiplierMilli,
 				MultiplierMilli: creditRow.MultiplierMilli,
 				Status:          LedgerAvailable, CreatedAt: now,
 			},

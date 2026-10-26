@@ -507,6 +507,11 @@ type SelectInput struct {
 	// configured to serve it are candidates. Empty means no restriction, which
 	// keeps callers that route outside the three v1 protocols unchanged.
 	EndpointKind relayconstant.EndpointKind
+	// PreferredListingID is the affinity binding's listing (P4-A). It is only a
+	// ranking preference: the listing must still pass every filter, and when its
+	// concurrency slots are full the selector falls through to the other
+	// candidates. 0 means no preference.
+	PreferredListingID int64
 }
 
 // loadVerifiedChannels returns the active channels that have a verified,
@@ -714,6 +719,18 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 		}
 	}
 	slices.SortFunc(cands, func(a, b Listing) int {
+		// An affinity-preferred candidate ranks first so the commit loop tries it
+		// before any other. All filters (price cap, official-only, hours,
+		// endpoint, self-purchase, breaker) have already run, so this only
+		// reorders candidates that are already eligible.
+		if in.PreferredListingID > 0 {
+			if a.ID == in.PreferredListingID {
+				return -1
+			}
+			if b.ID == in.PreferredListingID {
+				return 1
+			}
+		}
 		if ea, eb := effectiveByID[a.ID], effectiveByID[b.ID]; ea != eb {
 			return cmp.Compare(ea, eb)
 		}

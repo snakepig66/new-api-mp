@@ -445,6 +445,12 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 			// transaction (a failed transaction cannot query on PostgreSQL).
 			return err
 		}
+		// P3a shadow double-write: the legacy listing stays authoritative, but
+		// the split tables are kept in sync so a later read-path switch has a
+		// complete snapshot. Any failure rolls the whole create back.
+		if err := createSellerChannelShadow(tx, listing, baseURL, bases, channelMapping); err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {

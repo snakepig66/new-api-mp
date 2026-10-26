@@ -158,6 +158,37 @@ func TestPostSettlementNoTool(t *testing.T) {
 	assert.Equal(t, -buyer.AmountMicro, seller.AmountMicro+fee.AmountMicro)
 }
 
+// TestPostSettlementChannelIdentity proves every ledger row of one settlement
+// carries the P3 shadow identity (§4.2): channel_id, key_id, endpoint and
+// model_multiplier_milli. Reversal compensation rows copy the same identity.
+func TestPostSettlementChannelIdentity(t *testing.T) {
+	db := newTestDB(t)
+	migrateAll(t, db)
+
+	s := baseSettlement()
+	s.ChannelID = 77
+	s.KeyID = 88
+	s.Endpoint = EndpointProtocolOpenAIChat
+	s.ModelMultiplierMilli = 300
+	require.NoError(t, PostSettlement(db, s))
+
+	rows := rowsOfRequest(t, db, s.RequestID)
+	require.NotEmpty(t, rows)
+	for _, r := range rows {
+		assert.Equal(t, int64(77), r.ChannelID)
+		assert.Equal(t, int64(88), r.KeyID)
+		assert.Equal(t, EndpointProtocolOpenAIChat, r.Endpoint)
+		assert.Equal(t, int64(300), r.ModelMultiplierMilli)
+	}
+
+	createLedgerBuyer(t, db, s.BuyerUserID, 0)
+	require.NoError(t, Reverse(db, s.RequestID, ledgerTestNow.Add(time.Hour)))
+	for _, r := range rowsOfRequest(t, db, s.RequestID) {
+		assert.Equal(t, int64(77), r.ChannelID, "compensation row %s", r.EntryType)
+		assert.Equal(t, EndpointProtocolOpenAIChat, r.Endpoint, "compensation row %s", r.EntryType)
+	}
+}
+
 func TestPostSettlementZeroAmount(t *testing.T) {
 	db := newTestDB(t)
 	migrateAll(t, db)

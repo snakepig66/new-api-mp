@@ -726,6 +726,137 @@ func TestHasLiveListingForEndpoint(t *testing.T) {
 	assert.True(t, has)
 }
 
+// TestSelectAffinityPreference locks P4-A's promise: the bound listing ranks
+// first, but only after it passes every filter, and a full concurrency limit
+// falls through to another supplier.
+func TestSelectAffinityPreference(t *testing.T) {
+	loc := shanghaiLocation(t)
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, loc)
+	newSelector := func() *Selector {
+		s := NewSelector()
+		s.Rand = rand.New(rand.NewSource(1))
+		return s
+	}
+
+	t.Run("the preferred listing outranks a cheaper one", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		cheap := addSelectorListing(t, db, "fp-cheap", func(l *Listing) { l.MultiplierMilli = 200 })
+		preferred := addSelectorListing(t, db, "fp-preferred", func(l *Listing) { l.MultiplierMilli = 800 })
+		s := newSelector()
+		got, err := s.Select(db, SelectInput{
+			Model: "deepseek-flash", Now: now, PreferredListingID: preferred.ID,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, preferred.ID, got.ID)
+		assert.Equal(t, 0, s.Slots.InFlight(cheap.ID), "the cheaper loser hands its slot back")
+	})
+
+	t.Run("the price cap still filters the preferred listing", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		cheap := addSelectorListing(t, db, "fp-cheap", func(l *Listing) { l.MultiplierMilli = 200 })
+		preferred := addSelectorListing(t, db, "fp-preferred", func(l *Listing) { l.MultiplierMilli = 800 })
+		got, err := newSelector().Select(db, SelectInput{
+			Model: "deepseek-flash", Now: now, MaxMultiplierMilli: 500,
+			PreferredListingID: preferred.ID,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, cheap.ID, got.ID, "an over-cap preferred listing is not selectable")
+	})
+
+	t.Run("the preferred listing never overrides the self-purchase block", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		other := addSelectorListing(t, db, "fp-other", func(l *Listing) {
+			l.SellerID = 43
+			l.MultiplierMilli = 400
+		})
+		own := addSelectorListing(t, db, "fp-own", func(l *Listing) {
+			l.SellerID = 42
+			l.MultiplierMilli = 100
+		})
+		got, err := newSelector().Select(db, SelectInput{
+			Model: "deepseek-flash", Now: now, BuyerID: 42, PreferredListingID: own.ID,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, other.ID, got.ID)
+	})
+
+	t.Run("the preferred listing still obeys its business hours", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		available := addSelectorListing(t, db, "fp-available", func(l *Listing) { l.MultiplierMilli = 400 })
+		preferred := addSelectorListing(t, db, "fp-preferred", func(l *Listing) {
+			l.MultiplierMilli = 100
+			l.Hours = `[{"start":"09:00","end":"10:00"}]`
+		})
+		got, err := newSelector().Select(db, SelectInput{
+			Model: "deepseek-flash", Now: now, PreferredListingID: preferred.ID,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, available.ID, got.ID, "a closed listing is skipped even when preferred")
+	})
+
+	t.Run("the preferred listing still needs a compatible endpoint", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		addEndpointChannel(t, db, "affinity-messages-only", `{"anthropic":"https://api.example.com/anthropic"}`)
+		chat := addSelectorListing(t, db, "fp-chat", func(l *Listing) { l.MultiplierMilli = 400 })
+		preferred := addSelectorListing(t, db, "fp-messages", func(l *Listing) {
+			l.Vendor = "affinity-messages-only"
+			l.MultiplierMilli = 100
+		})
+		got, err := newSelector().Select(db, SelectInput{
+			Model: "deepseek-flash", Now: now, EndpointKind: relayconstant.EndpointOpenAIChat,
+			PreferredListingID: preferred.ID,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, chat.ID, got.ID, "a messages-only preferred listing cannot serve chat")
+	})
+
+	t.Run("official-only routing still filters the preferred listing", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		official := addSelectorListing(t, db, "fp-official", func(l *Listing) { l.MultiplierMilli = 400 })
+		require.NoError(t, db.Create(&ChannelPool{
+			Slug: "affinity-plan", Name: "affinity-plan", Kind: ChannelKindPlan,
+			Protocols: `{"openai":"https://plan.example.com"}`, Status: PoolStatusActive,
+		}).Error)
+		require.NoError(t, db.Create(&ChannelModel{
+			ChannelSlug: "affinity-plan", UpstreamModel: "deepseek-flash", Model: "deepseek-flash",
+			CoefficientMilli: 1000, Verified: true, Status: PoolStatusActive,
+		}).Error)
+		preferred := addSelectorListing(t, db, "fp-plan", func(l *Listing) {
+			l.Vendor = "affinity-plan"
+			l.MultiplierMilli = 100
+		})
+		got, err := newSelector().Select(db, SelectInput{
+			Model: "deepseek-flash", Now: now, OfficialOnly: true,
+			PreferredListingID: preferred.ID,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, official.ID, got.ID, "只用官方 never lands on a plan channel")
+	})
+
+	t.Run("full concurrency dispatches elsewhere without failing", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		preferred := addSelectorListing(t, db, "fp-preferred", func(l *Listing) {
+			l.MultiplierMilli = 100
+			l.ConcurrencyLimit = 1
+		})
+		other := addSelectorListing(t, db, "fp-other", func(l *Listing) { l.MultiplierMilli = 400 })
+		s := newSelector()
+		require.True(t, s.Slots.Acquire(preferred.ID, preferred.ConcurrencyLimit, now))
+		got, err := s.Select(db, SelectInput{
+			Model: "deepseek-flash", Now: now, PreferredListingID: preferred.ID,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, other.ID, got.ID, "a full preferred listing is replaced for this request")
+	})
+}
+
 func TestSelectTieBreakSpreadsLoad(t *testing.T) {
 	db := newTestDB(t)
 	migrateAll(t, db)

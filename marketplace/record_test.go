@@ -192,6 +192,26 @@ func TestSettleRelaySuccess(t *testing.T) {
 	assert.Len(t, ledgerRows(t, f.db, "req_relayhook_test"), 3)
 }
 
+// TestSettleRelayRecordsChannelIdentity covers the P3 shadow identity written
+// onto mp_requests: channel_id mirrors the listing id, endpoint is the buyer
+// protocol and model_multiplier_milli is the listing multiplier; key_id and
+// converted stay zero/false in this stage.
+func TestSettleRelayRecordsChannelIdentity(t *testing.T) {
+	f, c, info, l := settleFixture(t, 10_000_000, 500)
+	s := CurrentRelaySession(c)
+
+	micro := SettleRelay(c, info, &dto.Usage{PromptTokens: 900, CompletionTokens: 80})
+	require.Greater(t, micro, 0)
+
+	var rec Request
+	require.NoError(t, f.db.Where("request_id = ?", s.RequestID()).Take(&rec).Error)
+	assert.Equal(t, l.ID, rec.ChannelID)
+	assert.Equal(t, int64(0), rec.KeyID)
+	assert.Equal(t, string(relayconstant.EndpointOpenAIChat), rec.Endpoint)
+	assert.Equal(t, int64(500), rec.ModelMultiplierMilli)
+	assert.False(t, rec.Converted)
+}
+
 // The raw upstream model returned in the response body is persisted in
 // mp_requests.upstream_model before the writer rewrites it to the standard id
 // (§3.4).
