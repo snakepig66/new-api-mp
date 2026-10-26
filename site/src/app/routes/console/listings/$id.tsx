@@ -28,6 +28,7 @@ import {
 } from '@/features/seller/api'
 import { AsyncError, notify, PageSkeleton } from '@/features/seller/components'
 import { sellerErrorMessage } from '@/features/seller/errors'
+import { historyProbeLatencyMs, probeTypeLabel } from '@/features/seller/probe'
 import {
   isListingReverifiable,
   listingStatusView,
@@ -259,22 +260,27 @@ function SellerListingDetailPage() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {listing.probes.map((probe) => (
-                  <TableRow key={probe.id}>
-                    <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
-                      {formatDateTime(probe.created_at)}
-                    </TableCell>
-                    <TableCell className="text-[13px] text-ink-3">{probe.type}</TableCell>
-                    <TableCell>
-                      <Tag tone={probe.ok ? 'brand' : 'danger'} dot>
-                        {probe.ok ? page.passed : page.failed}
-                      </Tag>
-                    </TableCell>
-                    <TableCell numeric className="tabular-nums text-ink-3">
-                      {probe.latency_ms} ms
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {listing.probes.map((probe) => {
+                  const latency = historyProbeLatencyMs(probe)
+                  return (
+                    <TableRow key={probe.id}>
+                      <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
+                        {formatDateTime(probe.created_at)}
+                      </TableCell>
+                      <TableCell className="text-[13px] text-ink-3">
+                        {probeTypeLabel(probe.type)}
+                      </TableCell>
+                      <TableCell>
+                        <Tag tone={probe.ok ? 'brand' : 'danger'} dot>
+                          {probe.ok ? page.passed : page.failed}
+                        </Tag>
+                      </TableCell>
+                      <TableCell numeric className="tabular-nums text-ink-3">
+                        {latency !== null ? `${latency} ms` : '—'}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
           )}

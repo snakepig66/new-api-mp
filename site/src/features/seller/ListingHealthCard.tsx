@@ -21,6 +21,7 @@ import { Multiplier, Tag } from '@/ui'
 import type { SellerListing, SellerListingHealth } from './api'
 import { vendorName } from './api'
 import { probeFailReasonLabel } from './errors'
+import { healthProbeLatencyMs, probeTypeLabel } from './probe'
 import {
   listingHealthLevel,
   listingStatusView,
@@ -94,9 +95,8 @@ export function ListingHealthCard({ listing, health, actions }: ListingHealthCar
   const levelView = healthLevelView(level)
   const status = listingStatusView(listing.status)
   const probe = health?.latest_probe ?? null
-  const probeLabel = probe
-    ? (healthCopy.probeTypes[probe.type] ?? probe.type)
-    : ''
+  const probeLabel = probe ? probeTypeLabel(probe.type) : ''
+  const latency = healthProbeLatencyMs(probe)
   const rate = successRateText(health)
   const requests = health?.today_requests ?? 0
   const income = health?.today_income_micro ?? 0
@@ -106,8 +106,8 @@ export function ListingHealthCard({ listing, health, actions }: ListingHealthCar
       aria-label={`${healthCopy.ariaLabel} ${vendorName(listing.vendor)} #${listing.id}`}
       className="rounded-md border border-line bg-bg p-5"
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span
               role="img"
@@ -132,12 +132,10 @@ export function ListingHealthCard({ listing, health, actions }: ListingHealthCar
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="text-right">
-            <div className="text-[13px] text-ink-3">{healthCopy.todayIncome}</div>
-            <div className="tabular-nums text-[20px] font-semibold leading-tight text-ink">
-              {formatYuan(income)}
-            </div>
+        <div className="shrink-0 text-right">
+          <div className="text-[13px] text-ink-3">{healthCopy.todayIncome}</div>
+          <div className="tabular-nums text-[20px] font-semibold leading-tight text-ink">
+            {formatYuan(income)}
           </div>
         </div>
       </div>
@@ -156,7 +154,7 @@ export function ListingHealthCard({ listing, health, actions }: ListingHealthCar
         />
         <Metric
           label={healthCopy.latency}
-          value={probe ? `${probe.latency_ms} ms` : '—'}
+          value={latency !== null ? `${latency} ms` : '—'}
         />
         <div className="col-span-2 min-w-0">
           <div className="text-[13px] text-ink-3">

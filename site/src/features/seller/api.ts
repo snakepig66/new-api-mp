@@ -403,6 +403,9 @@ export const sellerListingsHealthQuery = () =>
     queryKey: ['marketplace', 'seller', 'listings', 'health'],
     queryFn: () => api.get<SellerListingHealth[]>(`${sellerBase}/listings/health`),
     staleTime: 30_000,
+    // The card is a live reading (today's rate/income + last probe); without a
+    // poll an open tab keeps showing the values it loaded hours ago.
+    refetchInterval: 60_000,
   })
 
 export const sellerListingDetailQuery = (id: number) =>

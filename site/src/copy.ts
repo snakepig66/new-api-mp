@@ -2012,8 +2012,8 @@ console.log(response.choices[0].message.content)
         successRate: '成功率',
         latency: '延迟',
         noSamples: '暂无样本',
-        lastProbe: '最近巡检',
-        noProbe: '还没有巡检记录',
+        lastProbe: '最近检测',
+        noProbe: '还没有检测记录',
         probePassed: '通过',
         probeFailed: '未通过',
         probeTypes: {
