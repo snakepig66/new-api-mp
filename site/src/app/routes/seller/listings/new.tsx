@@ -368,7 +368,6 @@ export function NewListingPage() {
   // the brief window before the status query resolves.
   const feePercent = marketplaceStatus.data?.platform_fee_percent ?? DEFAULT_FEE_PERCENT
   // Official and plan channels are selectable; third-party relays are shown
-  // in their own disabled group until the backend opens that tier.
   const allVendors = vendors.data ?? []
   const officialVendors = allVendors.filter((vendor) => sellerChannelKind(vendor) === 'official')
   const planVendors = allVendors.filter((vendor) => sellerChannelKind(vendor) === 'plan')
@@ -523,7 +522,6 @@ export function NewListingPage() {
   const submitError = create.isError ? sellerErrorMessage(create.error) : null
   const probedModels = probe.data?.verified_models ?? probe.data?.models ?? []
   // Certified models the key did not expose on GET /models. They are shown
-  // disabled above; this line names them and explains the missing-model case.
   const uncallableModels = vendorModels.filter((model) => !probedModels.includes(model))
 
   return (
@@ -602,7 +600,6 @@ export function NewListingPage() {
                     <VendorGroup
                       title={page.channel.groups.thirdParty}
                       vendors={thirdPartyVendors}
-                      disabled
                       selectedId={values.vendor_id}
                       badge={page.channel.thirdParty.badge}
                       emptyLabel={page.channel.thirdParty.description}

@@ -1626,7 +1626,7 @@ console.log(response.choices[0].message.content)
         groups: {
           official: '官方渠道',
           plan: '套餐渠道',
-          thirdParty: '第三方（即将开放）',
+          thirdParty: '第三方渠道',
         },
         official: {
           title: '官方渠道',
@@ -1641,7 +1641,7 @@ console.log(response.choices[0].message.content)
         thirdParty: {
           title: '第三方渠道',
           description: '由第三方服务商提供接入与路由。',
-          badge: '即将开放',
+          badge: '第三方',
         },
       },
       plan: {

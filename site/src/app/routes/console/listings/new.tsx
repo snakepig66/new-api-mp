@@ -367,15 +367,13 @@ export function NewListingPage() {
   // The backend is the single source for the split; the fallback only covers
   // the brief window before the status query resolves.
   const feePercent = marketplaceStatus.data?.platform_fee_percent ?? DEFAULT_FEE_PERCENT
-  // Official and plan channels are selectable; third-party relays are shown
-  // in their own disabled group until the backend opens that tier.
   const allVendors = vendors.data ?? []
   const officialVendors = allVendors.filter((vendor) => sellerChannelKind(vendor) === 'official')
   const planVendors = allVendors.filter((vendor) => sellerChannelKind(vendor) === 'plan')
   const thirdPartyVendors = allVendors.filter(
     (vendor) => sellerChannelKind(vendor) === 'third_party',
   )
-  const vendorList = [...officialVendors, ...planVendors]
+  const vendorList = [...officialVendors, ...planVendors, ...thirdPartyVendors]
   const selectedVendor = vendorList.find((vendor) => vendor.id === values.vendor_id)
   const vendorModels = selectedVendor?.models ?? []
   const vendorHasModels = Boolean(selectedVendor && vendorModels.length > 0)
@@ -602,7 +600,6 @@ export function NewListingPage() {
                     <VendorGroup
                       title={page.channel.groups.thirdParty}
                       vendors={thirdPartyVendors}
-                      disabled
                       selectedId={values.vendor_id}
                       badge={page.channel.thirdParty.badge}
                       emptyLabel={page.channel.thirdParty.description}

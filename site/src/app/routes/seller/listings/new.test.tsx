@@ -148,17 +148,17 @@ function renderPage() {
 }
 
 describe('new listing wizard', () => {
-  it('groups channels by kind and keeps third-party disabled', async () => {
+  it('groups channels by kind and lets a third-party channel be selected', async () => {
     renderPage()
     await screen.findByText('DeepSeek')
 
     expect(screen.getByText('官方渠道')).toBeTruthy()
     expect(screen.getByText('套餐渠道')).toBeTruthy()
-    expect(screen.getByText('第三方（即将开放）')).toBeTruthy()
+    expect(screen.getByText('第三方渠道')).toBeTruthy()
     expect(screen.getByText('tipig gateway')).toBeTruthy()
 
     const thirdParty = screen.getByRole('radio', { name: /tipig/ }) as HTMLInputElement
-    expect(thirdParty.disabled).toBe(true)
+    expect(thirdParty.disabled).toBe(false)
   })
 
   it('blocks next when the selected channel has no priced models', async () => {
@@ -176,13 +176,16 @@ describe('new listing wizard', () => {
     expect(screen.getByRole('button', { name: '下一步' })).toHaveProperty('disabled', true)
   })
 
-  it('never lets a third-party vendor be selected', async () => {
+  it('lets a third-party vendor be selected', async () => {
     renderPage()
     await screen.findByText('DeepSeek')
 
     const thirdParty = screen.getByRole('radio', { name: /tipig/ }) as HTMLInputElement
-    expect(thirdParty.disabled).toBe(true)
+    expect(thirdParty.disabled).toBe(false)
     expect(thirdParty.checked).toBe(false)
+
+    fireEvent.click(thirdParty)
+    expect(thirdParty.checked).toBe(true)
   })
 
   it('requires the plan-terms checkbox before submitting a plan channel', async () => {
