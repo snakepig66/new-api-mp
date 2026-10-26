@@ -644,7 +644,7 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 ### 统一控制台
 - 删除买家/分享者身份切换和三套侧边栏，改为 `/console` 下一条分组侧边栏：使用（概览/API Key/使用记录）、资金（钱包）、分享（我的渠道/收益与提现，开通后显示）、账号、运营（定价/模型/审核/工具，管理员显示）。
 - 顶部导航改为「模型广场 · 文档 · 分享额度」；新增公开 `/share` 分享额度介绍页。未开通分享的用户在概览看到「把闲置额度分享出来」卡片，开通引导不再常驻侧边栏。
-- 卖家页面迁入 `/console/listings`、`/console/earnings`、`/console/onboarding`；旧 `/seller/*` 全部跳转。运营页面迁入 `/console/ops/pricing|models|review|tools`；旧 `/admin/*` 全部跳转，`/ops-legacy` 跳 `/console/ops`。
+- 卖家页面迁入 `/console/listings`、`/console/earnings`、`/console/onboarding`；旧 `/seller/*` 全部跳转。运营页面迁入 `/console/ops/pricing|models|review|tools`；旧 `/admin/*` 全部跳转；`/ops-legacy` 是后端鉴权的旧后台入口，保持原样，新运营功能在 `/console/ops`。
 - 390px 侧边栏改为 Radix Dialog 抽屉；桌面保持 220px sticky 分组侧栏。
 
 ### 术语与文案
@@ -663,4 +663,4 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 
 ### 验收
 - 前端 `tsc --noEmit`、`vitest`（30 文件 / 164 测试）、`vite build` 通过；Go `build`/`vet` 通过，marketplace 全量测试除一次本地 mock 网络抖动外通过，重跑失败用例通过。
-- 旧路径跳转已用生产构建预览验证：`/seller` → `/share`，`/seller/records` → `/console/records?view=sales`，`/admin/prices` → `/console/ops/pricing`，`/admin/channel-models` → `/console/ops/models?tab=channel-models`，`/ops-legacy` → `/console/ops`。
+- 旧路径跳转已用生产构建预览验证：`/seller` → `/share`，`/seller/records` → `/console/records?view=sales`，`/admin/prices` → `/console/ops/pricing`，`/admin/channel-models` → `/console/ops/models?tab=channel-models`；`/ops-legacy` 是旧后端入口，不在 SPA 路由内。

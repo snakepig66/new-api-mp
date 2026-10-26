@@ -16,7 +16,6 @@ import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as LoginRouteImport } from './routes/login'
-import { Route as OpsLegacyRouteImport } from './routes/ops-legacy'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as SellerRouteImport } from './routes/seller'
@@ -102,11 +101,6 @@ const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const OpsLegacyRoute = OpsLegacyRouteImport.update({
-  id: '/ops-legacy',
-  path: '/ops-legacy',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PrivacyRoute = PrivacyRouteImport.update({
@@ -374,7 +368,6 @@ export interface FileRoutesByFullPath {
   '/docs': typeof DocsRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
-  '/ops-legacy': typeof OpsLegacyRoute
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
   '/seller': typeof SellerRouteWithChildren
@@ -433,7 +426,6 @@ export interface FileRoutesByTo {
   '/docs': typeof DocsRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
-  '/ops-legacy': typeof OpsLegacyRoute
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
   '/share': typeof ShareRoute
@@ -488,7 +480,6 @@ export interface FileRoutesById {
   '/docs': typeof DocsRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
-  '/ops-legacy': typeof OpsLegacyRoute
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
   '/seller': typeof SellerRouteWithChildren
@@ -551,7 +542,6 @@ export interface FileRouteTypes {
     | '/docs'
     | '/forgot-password'
     | '/login'
-    | '/ops-legacy'
     | '/privacy'
     | '/register'
     | '/seller'
@@ -610,7 +600,6 @@ export interface FileRouteTypes {
     | '/docs'
     | '/forgot-password'
     | '/login'
-    | '/ops-legacy'
     | '/privacy'
     | '/register'
     | '/share'
@@ -664,7 +653,6 @@ export interface FileRouteTypes {
     | '/docs'
     | '/forgot-password'
     | '/login'
-    | '/ops-legacy'
     | '/privacy'
     | '/register'
     | '/seller'
@@ -726,7 +714,6 @@ export interface RootRouteChildren {
   DocsRoute: typeof DocsRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   LoginRoute: typeof LoginRoute
-  OpsLegacyRoute: typeof OpsLegacyRoute
   PrivacyRoute: typeof PrivacyRoute
   RegisterRoute: typeof RegisterRoute
   SellerRoute: typeof SellerRouteWithChildren
@@ -787,13 +774,6 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/ops-legacy': {
-      id: '/ops-legacy'
-      path: '/ops-legacy'
-      fullPath: '/ops-legacy'
-      preLoaderRoute: typeof OpsLegacyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/privacy': {
@@ -1332,7 +1312,6 @@ const rootRouteChildren: RootRouteChildren = {
   DocsRoute: DocsRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
   LoginRoute: LoginRoute,
-  OpsLegacyRoute: OpsLegacyRoute,
   PrivacyRoute: PrivacyRoute,
   RegisterRoute: RegisterRoute,
   SellerRoute: SellerRouteWithChildren,
