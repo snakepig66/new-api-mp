@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -305,6 +306,202 @@ func TestAdminListingReview(t *testing.T) {
 	draft := f.addAdminListing(t, ListingDraft)
 	w = f.do(t, http.MethodPost, "/api/marketplace/admin/listings/"+strconv.FormatInt(draft.ID, 10)+"/ban", nil, f.adminID)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ---------------------------------------------------------------------------
+// P2 运营审核: 待审队列 + 通过/拒绝
+// ---------------------------------------------------------------------------
+
+// latestReviewProbe returns the newest operator decision recorded for a listing.
+func latestReviewProbe(t *testing.T, db *gorm.DB, listingID int64) Probe {
+	t.Helper()
+	var probe Probe
+	require.NoError(t, db.Where("listing_id = ? AND type = ?", listingID, ProbeTypeReview).
+		Order("id DESC").Take(&probe).Error)
+	return probe
+}
+
+// TestAdminPendingListingQueue covers the review queue: empty, then only
+// pending_review rows, newest first, with the seller's real-name status.
+func TestAdminPendingListingQueue(t *testing.T) {
+	f := newAdminAPIFixture(t)
+	w := f.do(t, http.MethodGet, "/api/marketplace/admin/listings/pending", nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	items, ok := decodeAdminBody(t, w)["data"].([]any)
+	require.True(t, ok)
+	assert.Empty(t, items)
+
+	require.NoError(t, f.db.Create(&Seller{
+		UserID:           f.sellerID,
+		Status:           SellerStatusActive,
+		RealNameStatus:   SellerRealNameVerified,
+		AgreementVersion: CurrentSellerAgreementVersion,
+	}).Error)
+	older := f.addAdminListing(t, ListingPendingReview)
+	newer := f.addAdminListing(t, ListingPendingReview)
+	live := f.addAdminListing(t, ListingLive)
+	require.NoError(t, f.db.Model(&Listing{}).Where("id = ?", older.ID).
+		Update("created_at", time.Now().Add(-time.Hour)).Error)
+
+	w = f.do(t, http.MethodGet, "/api/marketplace/admin/listings/pending", nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	items, ok = decodeAdminBody(t, w)["data"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, 2, "only pending_review listings are queued")
+	for _, item := range items {
+		assert.NotEqualValues(t, live.ID, item.(map[string]any)["id"])
+	}
+
+	first, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	assert.EqualValues(t, newer.ID, first["id"])
+	assert.EqualValues(t, f.sellerID, first["seller_id"])
+	assert.Equal(t, SeedVendorDeepSeek, first["vendor"])
+	assert.Equal(t, "", first["custom_base_url"], "platform channels have no seller-supplied address")
+	assert.Equal(t, []any{"deepseek-flash"}, first["models"])
+	assert.Equal(t, SellerRealNameVerified, first["seller_real_name_status"])
+
+	second, ok := items[1].(map[string]any)
+	require.True(t, ok)
+	assert.EqualValues(t, older.ID, second["id"], "newest first")
+}
+
+// TestAdminApproveListing covers approval: pending_review → verifying, the
+// audit probe, and the background verification that promotes it to canary.
+func TestAdminApproveListing(t *testing.T) {
+	f := newAdminAPIFixture(t)
+	h := allGreenHandler()
+	srv, _ := newVendorServer(t, h)
+	target, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+	restore := setSellerVerifyClientForTest(&http.Client{Transport: rewriteTransport{target: target}})
+	defer restore()
+
+	key := uniqueTestKey("sk-admin-approve")
+	h.wantAuth = "Bearer " + key
+	listing, err := CreateListing(f.db, CreateListingInput{
+		SellerID:        f.sellerID,
+		VendorID:        SeedVendorDeepSeek,
+		APIKey:          key,
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 500,
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.db.Model(&Listing{}).Where("id = ?", listing.ID).
+		Update("status", ListingPendingReview).Error)
+	idText := strconv.FormatInt(listing.ID, 10)
+
+	w := f.do(t, http.MethodPost, "/api/marketplace/admin/listings/"+idText+"/approve",
+		map[string]any{"notes": "upstream certified by ops"}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	data, ok := decodeAdminBody(t, w)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, ListingVerifying, data["status"])
+
+	probe := latestReviewProbe(t, f.db, listing.ID)
+	assert.True(t, probe.OK)
+	var detail map[string]any
+	require.NoError(t, common.Unmarshal([]byte(probe.Detail), &detail))
+	assert.EqualValues(t, f.adminID, detail["reviewer_id"])
+	assert.Equal(t, "approve", detail["action"])
+	assert.Equal(t, "upstream certified by ops", detail["notes"])
+	assert.Equal(t, ListingPendingReview, detail["previous_status"])
+	assert.Equal(t, ListingVerifying, detail["new_status"])
+
+	// Approval hands the row to the ordinary verifier, which promotes it.
+	require.Eventually(t, func() bool {
+		row, err := GetListing(f.db, listing.ID)
+		return err == nil && row.Status == ListingCanary
+	}, 5*time.Second, 10*time.Millisecond)
+	var verifyProbes int64
+	require.NoError(t, f.db.Model(&Probe{}).
+		Where("listing_id = ? AND type = ?", listing.ID, ProbeTypeVerify).Count(&verifyProbes).Error)
+	assert.EqualValues(t, 1, verifyProbes)
+
+	// Approving again is not a pending_review edge any more.
+	w = f.do(t, http.MethodPost, "/api/marketplace/admin/listings/"+idText+"/approve", nil, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	w = f.do(t, http.MethodPost, "/api/marketplace/admin/listings/999999/approve", nil, f.adminID)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestAdminRejectListing covers both rejection outcomes and the guards: an
+// unknown action, a listing that is no longer pending, and an unknown id.
+func TestAdminRejectListing(t *testing.T) {
+	f := newAdminAPIFixture(t)
+	reject := func(id int64, action string) *httptest.ResponseRecorder {
+		return f.do(t, http.MethodPost,
+			"/api/marketplace/admin/listings/"+strconv.FormatInt(id, 10)+"/reject",
+			map[string]any{"action": action, "notes": "not certified"}, f.adminID)
+	}
+
+	toDraft := f.addAdminListing(t, ListingPendingReview)
+	w := reject(toDraft.ID, "draft")
+	require.Equal(t, http.StatusOK, w.Code)
+	row, err := GetListing(f.db, toDraft.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingDraft, row.Status, "the seller can fix and resubmit")
+	probe := latestReviewProbe(t, f.db, toDraft.ID)
+	assert.False(t, probe.OK)
+	var detail map[string]any
+	require.NoError(t, common.Unmarshal([]byte(probe.Detail), &detail))
+	assert.Equal(t, "reject", detail["action"])
+	assert.Equal(t, "not certified", detail["notes"])
+	assert.Equal(t, ListingPendingReview, detail["previous_status"])
+	assert.Equal(t, ListingDraft, detail["new_status"])
+
+	toBan := f.addAdminListing(t, ListingPendingReview)
+	w = reject(toBan.ID, "ban")
+	require.Equal(t, http.StatusOK, w.Code)
+	row, err = GetListing(f.db, toBan.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingBanned, row.Status)
+	detail = nil
+	require.NoError(t, common.Unmarshal([]byte(latestReviewProbe(t, f.db, toBan.ID).Detail), &detail))
+	assert.Equal(t, ListingBanned, detail["new_status"])
+
+	// An unknown action changes nothing.
+	bad := f.addAdminListing(t, ListingPendingReview)
+	w = reject(bad.ID, "maybe")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	row, err = GetListing(f.db, bad.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingPendingReview, row.Status)
+
+	// A listing that already left pending_review cannot be reviewed again.
+	w = reject(toDraft.ID, "draft")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	w = reject(999999, "draft")
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestAdminListingReviewRootOnly covers the L5 gate on the P2 review API: the
+// group is RootAuth and the handlers re-check the role themselves.
+func TestAdminListingReviewRootOnly(t *testing.T) {
+	f := newAdminAPIFixture(t)
+	listing := f.addAdminListing(t, ListingPendingReview)
+	idText := strconv.FormatInt(listing.ID, 10)
+	nonRoot := common.RoleAdminUser
+
+	cases := []struct {
+		method string
+		path   string
+		body   any
+	}{
+		{http.MethodGet, "/api/marketplace/admin/listings/pending", nil},
+		{http.MethodPost, "/api/marketplace/admin/listings/" + idText + "/approve", nil},
+		{http.MethodPost, "/api/marketplace/admin/listings/" + idText + "/reject",
+			map[string]any{"action": "draft"}},
+	}
+	for _, tc := range cases {
+		w := f.doRole(t, tc.method, tc.path, tc.body, f.adminID, nonRoot)
+		assert.Equal(t, http.StatusForbidden, w.Code, tc.path)
+	}
+	row, err := GetListing(f.db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingPendingReview, row.Status, "a refused review must not change the listing")
 }
 
 // TestAdminPayoutListAndNotFound covers the payout queue: the list endpoint

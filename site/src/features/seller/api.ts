@@ -159,6 +159,19 @@ export interface ProbeInput {
   custom_base_url?: string
 }
 
+export type TrustState = 'trusted' | 'watch' | 'blocked' | 'unlisted'
+
+/** Trust-pool recognition attached to a probe result (P2). */
+export interface TrustPoolInfo {
+  matched: boolean
+  trust: TrustState
+  kind: 'official' | 'third_party' | 'plan' | ''
+  vendor_name: string
+  endpoints: string[]
+  /** e.g. 「智谱 · 官方 · OpenAI + Anthropic · 免审核」. */
+  badge_text: string
+}
+
 export interface ProbeResult {
   ok: boolean
   models: string[]
@@ -176,6 +189,8 @@ export interface ProbeResult {
   balance_micro: number | string | null
   key_valid: boolean
   fail_reason: string
+  /** Certification-pool recognition; present on new backends. */
+  trust_pool?: TrustPoolInfo | null
 }
 
 // ---------------------------------------------------------------------------
@@ -335,6 +350,21 @@ export const sellerVendorsQuery = () =>
     queryKey: ['marketplace', 'seller', 'vendors'],
     queryFn: () => api.get<SellerVendor[]>('/marketplace/seller/vendors'),
     staleTime: 60_000,
+  })
+
+/** One trusted upstream address the wizard can prefill (P2). */
+export interface SellerCommonAddress {
+  host: string
+  vendor_name: string
+  kind: 'official' | 'third_party' | 'plan' | ''
+  endpoints: string[]
+}
+
+export const sellerCommonAddressesQuery = () =>
+  queryOptions({
+    queryKey: ['marketplace', 'seller', 'common-addresses'],
+    queryFn: () => api.get<SellerCommonAddress[]>('/marketplace/seller/common-addresses'),
+    staleTime: 5 * 60_000,
   })
 
 /**

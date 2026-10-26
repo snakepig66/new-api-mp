@@ -15,6 +15,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -124,7 +125,7 @@ func vendorCatalogue(db *gorm.DB, viewerID int64) []vendorView {
 		}
 		views = append(views, vendorView{
 			ID:              vendor.ID,
-			DisplayName:      vendor.DisplayName,
+			DisplayName:     vendor.DisplayName,
 			Tier:            vendor.Tier,
 			Kind:            vendor.Tier,
 			LogoURL:         vendorLogoURL(vendor.ID),
@@ -150,6 +151,70 @@ func quotaWindowView(raw string) map[string]any {
 		return nil
 	}
 	return out
+}
+
+// listSellerCommonAddresses serves GET /seller/common-addresses — the trusted
+// Hosts of the certification pool in a shape the wizard can prefill:
+//
+//	[{"host":"api.deepseek.com","vendor_name":"DeepSeek","kind":"official",
+//	  "endpoints":["openai_chat"]}, ...]
+//
+// Only host-exact, unexpired trusted rows are returned. Pattern rows have no
+// concrete address to prefill, and watch/blocked rows must not be advertised as
+// common. Duplicate hosts collapse to the first (lowest id) row.
+func listSellerCommonAddresses(c *gin.Context) {
+	db, _ := relayState()
+	if db == nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("marketplace is not initialized"))
+		return
+	}
+	var rows []TrustPool
+	if err := db.Where("trust = ? AND host <> ?", TrustTrusted, "").
+		Order("id ASC").Find(&rows).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query common addresses"))
+		return
+	}
+	now := time.Now()
+	seen := make(map[string]bool, len(rows))
+	out := make([]sellerCommonAddress, 0, len(rows))
+	for i := range rows {
+		row := rows[i]
+		host := normalizeEgressHost(row.Host)
+		if host == "" || seen[host] {
+			continue
+		}
+		if row.ExpiresAt != nil && !row.ExpiresAt.After(now) {
+			continue
+		}
+		seen[host] = true
+		vendorName := strings.TrimSpace(row.VendorSlug)
+		if slug := vendorName; slug != "" {
+			if vendor, ok := lookupVendorForDB(db, slug); ok && strings.TrimSpace(vendor.DisplayName) != "" {
+				vendorName = vendor.DisplayName
+			}
+		}
+		kind := strings.TrimSpace(row.Kind)
+		if kind == "" {
+			kind = TrustKindThirdParty
+		}
+		endpoints := make([]string, 0)
+		endpoints = append(endpoints, parseStringList(row.Endpoints)...)
+		out = append(out, sellerCommonAddress{
+			Host:       host,
+			VendorName: vendorName,
+			Kind:       kind,
+			Endpoints:  endpoints,
+		})
+	}
+	common.ApiSuccess(c, out)
+}
+
+// sellerCommonAddress is one trusted upstream address the wizard can prefill.
+type sellerCommonAddress struct {
+	Host       string   `json:"host"`
+	VendorName string   `json:"vendor_name"`
+	Kind       string   `json:"kind"`
+	Endpoints  []string `json:"endpoints"`
 }
 
 // listableModels returns the standard model ids a channel can list right now:

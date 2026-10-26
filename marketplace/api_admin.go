@@ -54,6 +54,10 @@ func registerAdminRootRoutes(g *gin.RouterGroup) {
 	g.POST("/admin/holidays", adminPostHolidays)
 	g.GET("/admin/holidays", adminListHolidays)
 	g.GET("/admin/listings", adminListListings)
+	// 待审队列 (P2) + 通过/拒绝.
+	g.GET("/admin/listings/pending", adminListPendingListings)
+	g.POST("/admin/listings/:id/approve", adminApproveListing)
+	g.POST("/admin/listings/:id/reject", adminRejectListing)
 	g.POST("/admin/listings/:id/ban", adminBanListing)
 	g.POST("/admin/listings/:id/unban", adminUnbanListing)
 	g.GET("/admin/payouts", adminListPayouts)
@@ -578,6 +582,211 @@ func adminUnbanListing(c *gin.Context) {
 	notifySeller(db, id, NotificationKindReview, "渠道已恢复",
 		"渠道已恢复为暂停状态，请重新检测后恢复接单。", "/console/listings")
 	common.ApiSuccess(c, gin.H{"id": id, "status": ListingPaused})
+}
+
+// ---------------------------------------------------------------------------
+// 运营审核 (P2): 待审队列 + 通过/拒绝.
+//
+// A seller-defined upstream the trust pool does not trust is created in
+// pending_review (listing.go); only an operator may release it into the
+// automated verification flow or return it to the seller. The decision is
+// recorded as an mp_probes row of type "review" so the review trail sits next
+// to verification and patrol evidence.
+// ---------------------------------------------------------------------------
+
+// ProbeTypeReview marks an operator review decision in mp_probes.
+const ProbeTypeReview = "review"
+
+// adminPendingListing is one row of the review queue. custom_base_url is set
+// only for a seller-defined channel; platform channels already have a fixed
+// address. No key material is exposed (§2.3).
+type adminPendingListing struct {
+	ID                   int64     `json:"id"`
+	SellerID             int64     `json:"seller_id"`
+	Vendor               string    `json:"vendor"`
+	CustomBaseURL        string    `json:"custom_base_url"`
+	Models               []string  `json:"models"`
+	CreatedAt            time.Time `json:"created_at"`
+	SellerRealNameStatus string    `json:"seller_real_name_status"`
+}
+
+// adminListPendingListings serves GET /admin/listings/pending — every
+// pending_review listing, newest first. The real-name status of each seller is
+// joined in so the operator can see whether the account is verified; seller
+// relation/overlap ranking is out of scope for this phase.
+func adminListPendingListings(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	var rows []Listing
+	if err := db.Select("id", "seller_id", "vendor", "models", "created_at").
+		Where("status = ?", ListingPendingReview).
+		Order("created_at DESC").Order("id DESC").
+		Find(&rows).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query pending listings"))
+		return
+	}
+	out := make([]adminPendingListing, 0, len(rows))
+	if len(rows) == 0 {
+		common.ApiSuccess(c, out)
+		return
+	}
+	sellerIDs := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		sellerIDs = append(sellerIDs, row.SellerID)
+	}
+	var sellers []Seller
+	if err := db.Select("user_id", "real_name_status").
+		Where("user_id IN ?", sellerIDs).Find(&sellers).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query sellers"))
+		return
+	}
+	realName := make(map[int64]string, len(sellers))
+	for _, s := range sellers {
+		realName[s.UserID] = s.RealNameStatus
+	}
+	for i := range rows {
+		item := adminPendingListing{
+			ID:                   rows[i].ID,
+			SellerID:             rows[i].SellerID,
+			Vendor:               rows[i].Vendor,
+			Models:               rows[i].Models,
+			CreatedAt:            rows[i].CreatedAt,
+			SellerRealNameStatus: realName[rows[i].SellerID],
+		}
+		if isCustomChannelSlug(rows[i].Vendor) {
+			if vendor, ok := lookupVendorForDB(db, rows[i].Vendor); ok {
+				item.CustomBaseURL = VendorOpenAIBase(vendor)
+			}
+		}
+		out = append(out, item)
+	}
+	common.ApiSuccess(c, out)
+}
+
+// recordListingReview writes one operator decision to mp_probes. A failure is
+// logged but never undoes or reports failure for the state transition that has
+// already committed: the audit write is a side effect, like a notification.
+func recordListingReview(db *gorm.DB, listingID, reviewerID int64, action, notes, previous, next string) {
+	detail, err := common.Marshal(map[string]any{
+		"reviewer_id":     reviewerID,
+		"action":          action,
+		"notes":           notes,
+		"previous_status": previous,
+		"new_status":      next,
+	})
+	if err != nil {
+		common.SysError(common.LogText("marketplace: record review for listing %d: %s", listingID, err.Error()))
+		return
+	}
+	probe := Probe{
+		ListingID: listingID,
+		Type:      ProbeTypeReview,
+		OK:        action == "approve",
+		Detail:    string(detail),
+		CreatedAt: time.Now(),
+	}
+	if err := db.Create(&probe).Error; err != nil {
+		common.SysError(common.LogText("marketplace: record review for listing %d: %s", listingID, err.Error()))
+	}
+}
+
+// adminListingReviewError maps a state-machine error to the review API status.
+func adminListingReviewError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrListingNotFound):
+		common.ApiErrorStatus(c, http.StatusNotFound, errors.New("listing not found"))
+	case errors.Is(err, ErrInvalidTransition):
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("listing is not pending review"))
+	default:
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to update listing"))
+	}
+}
+
+// adminApproveListing serves POST /admin/listings/:id/approve —
+// pending_review → verifying, then the standard verification runs in the
+// background. An optional {"notes": "..."} body is stored with the decision.
+func adminApproveListing(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	id, ok := adminIDParam(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Notes string `json:"notes"`
+	}
+	if c.Request != nil && c.Request.Body != nil && c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+			return
+		}
+	}
+	if err := StartVerification(db, id); err != nil {
+		adminListingReviewError(c, err)
+		return
+	}
+	reviewerID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	recordListingReview(db, id, reviewerID, "approve", req.Notes, ListingPendingReview, ListingVerifying)
+	go verifyApprovedListingAsync(db, id)
+	common.ApiSuccess(c, gin.H{"id": id, "status": ListingVerifying})
+}
+
+// adminRejectListing serves POST /admin/listings/:id/reject with
+// {"action": "draft" | "ban", "notes": "..."}. draft returns the listing to the
+// seller for correction; ban is the terminal edge for a severe violation.
+func adminRejectListing(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	id, ok := adminIDParam(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Action string `json:"action"`
+		Notes  string `json:"notes"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	var next string
+	switch req.Action {
+	case "draft":
+		next = ListingDraft
+	case "ban":
+		next = ListingBanned
+	default:
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(`action must be "draft" or "ban"`))
+		return
+	}
+	var err error
+	if next == ListingBanned {
+		err = BanListing(db, id)
+	} else {
+		err = RejectListing(db, id)
+	}
+	if err != nil {
+		adminListingReviewError(c, err)
+		return
+	}
+	reviewerID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	recordListingReview(db, id, reviewerID, "reject", req.Notes, ListingPendingReview, next)
+	common.ApiSuccess(c, gin.H{"id": id, "status": next})
 }
 
 // ---------------------------------------------------------------------------

@@ -27,15 +27,6 @@ const vendors = [
     passthrough_body: true,
   },
   {
-    id: 'volcengine',
-    display_name: '火山方舟',
-    tier: 'official',
-    kind: 'official',
-    protocols: { openai: 'https://ark.cn-beijing.volces.com/api/v3', anthropic: '' },
-    models: [],
-    passthrough_body: true,
-  },
-  {
     id: 'volcengine-ark-coding-plan',
     display_name: '火山方舟 Coding Plan',
     tier: 'plan',
@@ -48,20 +39,38 @@ const vendors = [
     passthrough_body: true,
     quota_window: { period_seconds: 18000, reset_timezone: 'Asia/Shanghai' },
   },
+]
+
+const commonAddresses = [
   {
-    id: 'tipig',
-    display_name: 'tipig gateway',
-    tier: 'third_party',
-    kind: 'third_party',
-    protocols: { openai: 'https://api.tipig.cloud', anthropic: 'https://api.tipig.cloud' },
-    models: ['deepseek-v4.1-flash-1017'],
-    passthrough_body: true,
+    host: 'api.deepseek.com',
+    vendor_name: 'DeepSeek',
+    kind: 'official',
+    endpoints: ['openai_chat', 'anthropic_messages'],
   },
 ]
 
-function jsonResponse(body: unknown): Response {
+const trustedPool = {
+  matched: true,
+  trust: 'trusted',
+  kind: 'official',
+  vendor_name: 'DeepSeek',
+  endpoints: ['openai_chat', 'anthropic_messages'],
+  badge_text: 'DeepSeek · 官方 · OpenAI + Anthropic · 免审核',
+}
+
+const unlistedPool = {
+  matched: false,
+  trust: 'unlisted',
+  kind: '',
+  vendor_name: '',
+  endpoints: [],
+  badge_text: '未收录地址 · 需人工审核',
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: { 'content-type': 'application/json' },
   })
 }
@@ -71,8 +80,8 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
   if (url.startsWith('/api/marketplace/seller/vendors')) {
     return jsonResponse({ success: true, data: vendors })
   }
-  if (url.startsWith('/api/marketplace/vendors')) {
-    return jsonResponse({ success: true, data: vendors.filter((v) => !v.id.startsWith('custom-')) })
+  if (url.startsWith('/api/marketplace/seller/common-addresses')) {
+    return jsonResponse({ success: true, data: commonAddresses })
   }
   if (url.startsWith('/api/marketplace/status')) {
     return jsonResponse({
@@ -80,37 +89,50 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
       data: { enabled: true, version: 'test', platform_fee_percent: 7 },
     })
   }
-  if (url === '/api/marketplace/seller/listings' && init?.method === 'POST') {
-    return new Response(
-      JSON.stringify({
-        success: false,
-        message: 'this api key is already listed by you',
-        code: 'DUPLICATE_KEY_OWN',
-        listing_id: 77,
-      }),
-      { status: 409, headers: { 'content-type': 'application/json' } },
-    )
-  }
-  if (url.startsWith('/api/marketplace/seller/listings/probe')) {
-    const body = init?.body ? (JSON.parse(String(init.body)) as { vendor_id?: string }) : {}
-    const plan = body.vendor_id === 'volcengine-ark-coding-plan'
-    const available = plan ? ['deepseek-v4-pro'] : ['deepseek-flash']
+  if (url.startsWith('/api/marketplace/square/models/')) {
     return jsonResponse({
       success: true,
       data: {
-        ok: true,
-        models: ['deepseek-flash', 'deepseek-v4-pro'],
-        verified_models: available,
+        model: decodeURIComponent(url.split('/').pop() ?? ''),
+        tier: 'flat',
+        official_prices: { flat: { input_micro_per_mtok: 1_000_000, output_micro_per_mtok: 2_000_000 } },
+        multiplier_min_milli: 300,
+        multiplier_max_milli: 1000,
+        channels: [],
+      },
+    })
+  }
+  if (url === '/api/marketplace/seller/listings' && init?.method === 'POST') {
+    return jsonResponse({ success: true, data: { id: 91, status: 'draft' } })
+  }
+  if (url.startsWith('/api/marketplace/seller/listings') && init?.method !== 'POST') {
+    return jsonResponse({ success: true, data: [] })
+  }
+  if (url.startsWith('/api/marketplace/seller/listings/probe')) {
+    const body = init?.body
+      ? (JSON.parse(String(init.body)) as { api_key?: string; custom_base_url?: string })
+      : {}
+    const custom = Boolean(body.custom_base_url)
+    const bad = String(body.api_key ?? '').includes('bad')
+    const models = ['deepseek-flash', 'deepseek-v4-pro']
+    return jsonResponse({
+      success: true,
+      data: {
+        ok: !bad,
+        models,
+        verified_models: bad ? models : ['deepseek-flash'],
+        coefficients: { 'deepseek-flash': 1000 },
         missing_models: [],
         latency_ms: 120,
         prompt_cache: true,
         balance_micro: 10_000_000,
-        key_valid: true,
-        fail_reason: '',
+        key_valid: !bad,
+        fail_reason: bad ? 'key rejected by upstream' : '',
+        trust_pool: custom ? unlistedPool : trustedPool,
       },
     })
   }
-  return jsonResponse({ success: false, message: 'not found' })
+  return jsonResponse({ success: false, message: 'not found' }, 404)
 })
 
 beforeEach(() => {
@@ -150,171 +172,166 @@ function renderPage() {
   )
 }
 
-describe('new listing wizard', () => {
-  it('groups channels by kind and lets a third-party channel be selected', async () => {
-    renderPage()
-    await screen.findByText('DeepSeek')
+async function fillAddressAndKeys(url: string, keys: string) {
+  renderPage()
+  const urlInput = await screen.findByLabelText('上游地址')
+  fireEvent.change(urlInput, { target: { value: url } })
+  const keyInput = screen.getByLabelText('上游 API Key')
+  fireEvent.change(keyInput, { target: { value: keys } })
+}
 
-    expect(screen.getByText('官方渠道')).toBeTruthy()
-    expect(screen.getByText('套餐渠道')).toBeTruthy()
-    expect(screen.getByText('第三方渠道')).toBeTruthy()
-    expect(screen.getByText('tipig gateway')).toBeTruthy()
+async function clickNext() {
+  const next = screen.getByRole('button', { name: '下一步' })
+  await waitFor(() => expect(next).toHaveProperty('disabled', false), { timeout: 4000 })
+  fireEvent.click(next)
+}
 
-    const thirdParty = screen.getByRole('radio', { name: /tipig/ }) as HTMLInputElement
-    expect(thirdParty.disabled).toBe(false)
+async function advance(steps: number) {
+  for (let index = 0; index < steps; index += 1) {
+    await clickNext()
+  }
+}
+
+async function reachVerify(url = 'https://api.deepseek.com', keys = 'sk-good-1234567890') {
+  await fillAddressAndKeys(url, keys)
+  await advance(4)
+  await screen.findByRole('heading', { level: 2, name: '验真' })
+}
+
+describe('new listing wizard: five steps', () => {
+  it('walks forward through all five steps and back', async () => {
+    await fillAddressAndKeys('https://api.deepseek.com', 'sk-good-1234567890')
+    await advance(1)
+    expect(await screen.findByRole('heading', { level: 2, name: '模型' })).toBeTruthy()
+    await advance(1)
+    expect(await screen.findByRole('heading', { level: 2, name: '限制' })).toBeTruthy()
+    await advance(1)
+    expect(await screen.findByRole('heading', { level: 2, name: '高级' })).toBeTruthy()
+    await advance(1)
+    expect(await screen.findByRole('heading', { level: 2, name: '验真' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '上一步' }))
+    expect(await screen.findByRole('heading', { level: 2, name: '高级' })).toBeTruthy()
   })
 
-  it('blocks next when the selected channel has no priced models', async () => {
+  it('fills a common address, probes it and shows the trust-pool badge', async () => {
     renderPage()
-    await screen.findByText('火山方舟')
+    const address = await screen.findByRole('button', { name: /DeepSeek/ })
+    fireEvent.click(address)
+    const urlInput = screen.getByLabelText('上游地址') as HTMLInputElement
+    expect(urlInput.value).toBe('https://api.deepseek.com')
 
-    const volcengine = screen
-      .getAllByRole('radio')
-      .find((radio) => (radio as HTMLInputElement).value === 'volcengine') as HTMLInputElement
-    fireEvent.click(volcengine)
+    fireEvent.change(screen.getByLabelText('上游 API Key'), {
+      target: { value: 'sk-good-1234567890' },
+    })
 
-    expect(
-      screen.getByText('该渠道还没有已认证且可卖的模型，请联系运营配置'),
-    ).toBeTruthy()
-    expect(screen.getByRole('button', { name: '下一步' })).toHaveProperty('disabled', true)
+    expect(await screen.findByText(trustedPool.badge_text, {}, { timeout: 4000 })).toBeTruthy()
+    const probeCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).includes('/listings/probe') && init?.method === 'POST',
+    )
+    const body = JSON.parse(String(probeCall?.[1]?.body))
+    expect(body.vendor_id).toBe('deepseek')
+    expect(body.api_key).toBe('sk-good-1234567890')
   })
 
-  it('lets a third-party vendor be selected', async () => {
-    renderPage()
-    await screen.findByText('DeepSeek')
-
-    const thirdParty = screen.getByRole('radio', { name: /tipig/ }) as HTMLInputElement
-    expect(thirdParty.disabled).toBe(false)
-    expect(thirdParty.checked).toBe(false)
-
-    fireEvent.click(thirdParty)
-    expect(thirdParty.checked).toBe(true)
-  })
-
-  it('requires the plan-terms checkbox before submitting a plan channel', async () => {
-    renderPage()
-    await screen.findByText('火山方舟 Coding Plan')
-
-    fireEvent.click(screen.getByRole('radio', { name: /火山方舟 Coding Plan/ }))
-    expect(screen.getByText('套餐额度说明')).toBeTruthy()
-    expect(
-      screen.getByText(/每 5 小时重置一次（Asia\/Shanghai）/),
-    ).toBeTruthy()
-
-    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
-    const key = await screen.findByLabelText('上游 API Key')
-    fireEvent.change(key, { target: { value: 'sk-plan-1234567890' } })
-    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
-
-    await screen.findByRole('checkbox', { name: 'deepseek-v4-pro' })
-    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
-
-    const terms = await screen.findByRole('checkbox', {
-      name: '我确认该套餐条款允许共享',
-    }) as HTMLInputElement
-    const submit = screen.getByRole('button', { name: '提交渠道' }) as HTMLButtonElement
-    expect(terms.checked).toBe(false)
-    expect(submit.disabled).toBe(true)
-
-    fireEvent.click(terms)
-    await waitFor(() => expect(submit.disabled).toBe(false))
-  })
-
-  it('links to the existing listing when the seller already listed the key', async () => {
-    renderPage()
-    await screen.findByText('DeepSeek')
-
-    fireEvent.click(screen.getByRole('radio', { name: /DeepSeek/ }))
-    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
-    const key = await screen.findByLabelText('上游 API Key')
-    fireEvent.change(key, { target: { value: 'sk-duplicate-1234567890' } })
-    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
-
-    await screen.findByRole('checkbox', { name: 'deepseek-flash' })
-    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
-    fireEvent.click(await screen.findByRole('button', { name: '提交渠道' }))
-
-    expect(
-      await screen.findByText('你自己已上架过这个 Key（渠道 #77）。'),
-    ).toBeTruthy()
-    const link = screen.getByRole('link', { name: '查看已有渠道' }) as HTMLAnchorElement
-    expect(link.getAttribute('href')).toBe('/console/listings/77')
-  })
-
-  it('lists only the selected channel models after probing', async () => {
-    renderPage()
-    await screen.findByText('DeepSeek')
-
-    fireEvent.click(screen.getByRole('radio', { name: /DeepSeek/ }))
-    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
-
-    const key = await screen.findByLabelText('上游 API Key')
-    fireEvent.change(key, { target: { value: 'sk-test-1234567890' } })
-    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
+  it('shows the model table, applies a batch multiplier and previews the buyer price', async () => {
+    await fillAddressAndKeys('https://api.deepseek.com', 'sk-good-1234567890')
+    await advance(1)
 
     const flash = await screen.findByRole('checkbox', { name: 'deepseek-flash' })
-    const pro = screen.getByRole('checkbox', {
-      name: 'deepseek-v4-pro',
-    }) as HTMLInputElement
     expect((flash as HTMLInputElement).checked).toBe(true)
-    // verified_models narrows the selectable set.
-    expect(pro.disabled).toBe(true)
-    expect(pro.checked).toBe(false)
+    expect(screen.getByText('接口')).toBeTruthy()
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '下一步' })).toHaveProperty('disabled', false)
-    })
+    const batch = screen.getByLabelText('批量倍率') as HTMLInputElement
+    fireEvent.change(batch, { target: { value: '0.3' } })
+    fireEvent.click(screen.getByRole('button', { name: '应用到全部' }))
+
+    const multiplier = screen.getByLabelText('deepseek-flash 的倍率') as HTMLInputElement
+    expect(multiplier.value).toBe('0.3')
+    expect((await screen.findAllByText('¥0.30', {}, { timeout: 4000 })).length).toBeGreaterThan(0)
+  })
+
+  it('collects limits and hours before the advanced step', async () => {
+    await fillAddressAndKeys('https://api.deepseek.com', 'sk-good-1234567890')
+    await advance(2)
+
+    const concurrency = screen.getByLabelText('并发数') as HTMLInputElement
+    const rpm = screen.getByLabelText('RPM') as HTMLInputElement
+    const daily = screen.getByLabelText('日限额（元）') as HTMLInputElement
+    fireEvent.change(concurrency, { target: { value: '8' } })
+    fireEvent.change(rpm, { target: { value: '120' } })
+    fireEvent.change(daily, { target: { value: '20' } })
+    expect(concurrency.value).toBe('8')
+    expect(rpm.value).toBe('120')
+    expect(daily.value).toBe('20')
+
+    const weekday = screen.getByRole('checkbox', { name: '启用工作日时段' })
+    fireEvent.click(weekday)
+    expect((weekday as HTMLInputElement).checked).toBe(true)
+
+    await clickNext()
+    expect(await screen.findByRole('heading', { level: 2, name: '高级' })).toBeTruthy()
+  })
+
+  it('keeps advanced collapsed and locks headers for a listed address', async () => {
+    await fillAddressAndKeys('https://api.deepseek.com', 'sk-good-1234567890')
+    await advance(3)
+
+    expect(screen.queryByLabelText('请求头')).toBeNull()
+    const expand = screen.getByRole('button', { name: '展开高级设置' })
+    expect(expand.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(expand)
+    expect(expand.getAttribute('aria-expanded')).toBe('true')
+    expect(await screen.findByText('已收录地址不允许自定义请求头。')).toBeTruthy()
+    expect(screen.queryByLabelText('请求头')).toBeNull()
+  })
+
+  it('unlocks request headers for an unlisted address', async () => {
+    await fillAddressAndKeys('https://unlisted.example.com/v1', 'sk-good-1234567890')
+    await advance(3)
+    fireEvent.click(screen.getByRole('button', { name: '展开高级设置' }))
+    expect(await screen.findByLabelText('请求头')).toBeTruthy()
   })
 })
 
-describe('new listing wizard: custom upstream', () => {
-  it('gates step 0 on a valid custom URL and submits custom_base_url', async () => {
-    renderPage()
-    await screen.findByText('DeepSeek')
+describe('new listing wizard: verification', () => {
+  it('shows key × model × endpoint results and publishes only passing models', async () => {
+    await reachVerify('https://api.deepseek.com', 'sk-good-1234567890\nsk-bad-1234567890')
 
-    const customRadio = screen
-      .getAllByRole('radio')
-      .find((radio) => (radio as HTMLInputElement).value === 'custom') as HTMLInputElement
-    fireEvent.click(customRadio)
+    expect(await screen.findByRole('heading', { level: 2, name: '验真' })).toBeTruthy()
+    await waitFor(() => expect(screen.getAllByText('通过').length).toBeGreaterThan(0))
+    expect(screen.getAllByText('未通过').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('key rejected by upstream').length).toBeGreaterThan(0)
 
-    const urlInput = (await screen.findByLabelText('自定义上游地址')) as HTMLInputElement
-    fireEvent.change(urlInput, { target: { value: 'http://api.example.com' } })
-    fireEvent.blur(urlInput)
-    expect(
-      await screen.findByText('请填写 https 开头的完整域名地址（可带 /v1 等路径）。'),
-    ).toBeTruthy()
-    expect(screen.getByRole('button', { name: '下一步' })).toHaveProperty('disabled', true)
-
-    fireEvent.change(urlInput, { target: { value: 'https://api.example.com/v1' } })
-    fireEvent.blur(urlInput)
-    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
-
-    const keyInput = (await screen.findByLabelText(/上游 API Key/)) as HTMLInputElement
-    fireEvent.change(keyInput, { target: { value: 'sk-custom-12345678' } })
-    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
-
-    // The probe names the custom upstream, not a registered channel.
+    fireEvent.click(screen.getByRole('button', { name: '通过的先上架' }))
     await waitFor(() => {
-      const probeCall = fetchMock.mock.calls.find(
-        ([url, init]) => String(url).includes('/listings/probe') && init?.method === 'POST',
-      )
-      const body = JSON.parse(String(probeCall?.[1]?.body))
-      expect(body.custom_base_url).toBe('https://api.example.com/v1')
-    })
-
-    // The probe's callable model is auto-selected; advance to the pricing step.
-    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
-    fireEvent.click(await screen.findByRole('button', { name: '提交渠道' }))
-
-    await waitFor(() => {
-      const createCall = fetchMock.mock.calls.find(
+      const calls = fetchMock.mock.calls.filter(
         ([url, init]) =>
           String(url) === '/api/marketplace/seller/listings' && init?.method === 'POST',
       )
-      const body = JSON.parse(String(createCall?.[1]?.body))
-      expect(body.custom_base_url).toBe('https://api.example.com/v1')
-      expect(body.vendor_id).toBe('')
+      expect(calls).toHaveLength(1)
+      const body = JSON.parse(String(calls[0][1]?.body))
+      expect(body.api_key).toBe('sk-good-1234567890')
       expect(body.models).toEqual(['deepseek-flash'])
+      expect(body.vendor_id).toBe('deepseek')
+    })
+  })
+
+  it('keeps every selected model as a draft for each key', async () => {
+    await reachVerify('https://unlisted.example.com/v1', 'sk-bad-1234567890')
+
+    fireEvent.click(await screen.findByRole('button', { name: '失败的保留为草稿' }))
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.filter(
+        ([url, init]) =>
+          String(url) === '/api/marketplace/seller/listings' && init?.method === 'POST',
+      )
+      expect(calls).toHaveLength(1)
+      const body = JSON.parse(String(calls[0][1]?.body))
+      expect(body.api_key).toBe('sk-bad-1234567890')
+      expect(body.models).toEqual(['deepseek-flash', 'deepseek-v4-pro'])
+      expect(body.custom_base_url).toBe('https://unlisted.example.com/v1')
+      expect(body.vendor_id).toBe('')
     })
   })
 })

@@ -1,6 +1,7 @@
 package marketplace
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -322,6 +323,49 @@ func TestTransitionIllegal(t *testing.T) {
 	// Unknown id.
 	err = StartVerification(db, 999999)
 	assert.ErrorIs(t, err, ErrListingNotFound)
+}
+
+// TestPendingReviewTransitions covers the operator-review edges: approval
+// releases pending_review into verification, rejection returns it to draft, and
+// a severe violation bans it. No other promotion is legal from pending_review.
+func TestPendingReviewTransitions(t *testing.T) {
+	db := newListingTestDB(t)
+	pending := func(key string) Listing {
+		t.Helper()
+		listing := createTestListing(t, db, 10023, key)
+		require.NoError(t, db.Model(&Listing{}).Where("id = ?", listing.ID).
+			Update("status", ListingPendingReview).Error)
+		return listing
+	}
+	status := func(id int64) string {
+		t.Helper()
+		row, err := GetListing(db, id)
+		require.NoError(t, err)
+		return row.Status
+	}
+
+	approved := pending(uniqueTestKey("sk-pending-approve"))
+	require.NoError(t, StartVerification(db, approved.ID))
+	assert.Equal(t, ListingVerifying, status(approved.ID))
+
+	returned := pending(uniqueTestKey("sk-pending-draft"))
+	require.NoError(t, RejectListing(db, returned.ID))
+	assert.Equal(t, ListingDraft, status(returned.ID))
+
+	banned := pending(uniqueTestKey("sk-pending-ban"))
+	require.NoError(t, BanListing(db, banned.ID))
+	assert.Equal(t, ListingBanned, status(banned.ID))
+
+	// pending_review cannot skip review: no live, no pass without verifying,
+	// no seller-side pause/live edges.
+	stuck := pending(uniqueTestKey("sk-pending-illegal"))
+	assert.ErrorIs(t, TransitionListing(db, stuck.ID, ListingPendingReview, ListingLive), ErrInvalidTransition)
+	assert.ErrorIs(t, PassVerification(db, stuck.ID), ErrInvalidTransition)
+	assert.ErrorIs(t, GoLive(db, stuck.ID), ErrInvalidTransition)
+	assert.ErrorIs(t, PauseListing(db, stuck.ID), ErrInvalidTransition)
+	// RejectListing only accepts pending_review (approved is verifying now).
+	assert.ErrorIs(t, RejectListing(db, approved.ID), ErrInvalidTransition)
+	assert.ErrorIs(t, RejectListing(db, 999999), ErrListingNotFound)
 }
 
 // TestPassVerificationRequiresPassingProbe proves the verifying → canary edge
@@ -649,6 +693,104 @@ func TestCreateListingUsesEndpointBases(t *testing.T) {
 		setting = *channel.Setting
 	}
 	assert.Contains(t, setting, `"mp_anthropic_messages_url":"https://messages.example.com/v1/messages"`)
+}
+
+// TestCreateListingTrustPoolBlockedRejected proves a blocked upstream leaves
+// neither a channel nor a listing behind.
+func TestCreateListingTrustPoolBlockedRejected(t *testing.T) {
+	db := newListingTestDB(t)
+	createTrustPoolRow(t, db, TrustPool{
+		Host: "blocked-listing.example.com", Kind: TrustKindThirdParty,
+		Trust: TrustBlocked, Source: "manual",
+	})
+
+	_, err := CreateListing(db, CreateListingInput{
+		SellerID:        10023,
+		APIKey:          uniqueTestKey("sk-trust-blocked"),
+		CustomBaseURL:   "https://blocked-listing.example.com",
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 500,
+	})
+	assert.ErrorIs(t, err, ErrTrustPoolBlocked)
+
+	var listings, channels int64
+	require.NoError(t, db.Model(&Listing{}).Count(&listings).Error)
+	require.NoError(t, db.Model(&model.Channel{}).Count(&channels).Error)
+	assert.Zero(t, listings)
+	assert.Zero(t, channels, "a blocked address must not provision an upstream channel")
+}
+
+// TestCreateListingUntrustedUpstreamsWaitForReview covers watch and unlisted:
+// both create a listing, but it stays out of draft so the asynchronous
+// verification cannot promote it.
+func TestCreateListingUntrustedUpstreamsWaitForReview(t *testing.T) {
+	db := newListingTestDB(t)
+	createTrustPoolRow(t, db, TrustPool{
+		Host: "watch-listing.example.com", Kind: TrustKindThirdParty,
+		Trust: TrustWatch, Source: "probe",
+	})
+
+	cases := []struct {
+		name string
+		host string
+	}{
+		{name: "watch", host: "watch-listing.example.com"},
+		{name: "unlisted", host: "unlisted-listing.example.com"},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			listing, err := CreateListing(db, CreateListingInput{
+				SellerID:        10023,
+				APIKey:          uniqueTestKey("sk-review-" + tc.name),
+				CustomBaseURL:   "https://" + tc.host,
+				Models:          []string{"deepseek-flash"},
+				MultiplierMilli: 500,
+			})
+			require.NoError(t, err)
+			require.Equal(t, ListingPendingReview, listing.Status)
+
+			// The automated path refuses a pending_review row, so it can never
+			// reach canary before an operator approves it. No network is touched
+			// because the status check runs first.
+			_, err = VerifyListing(context.Background(), db, nil, nil, listing.ID)
+			assert.ErrorIs(t, err, ErrInvalidTransition, "case %d", i)
+			row, err := GetListing(db, listing.ID)
+			require.NoError(t, err)
+			assert.Equal(t, ListingPendingReview, row.Status)
+		})
+	}
+}
+
+// TestCreateListingTrustedCustomChannelAutoVerifies covers the trusted branch
+// end to end: the listing starts in draft and the ordinary verification may
+// promote it to canary.
+func TestCreateListingTrustedCustomChannelAutoVerifies(t *testing.T) {
+	t.Setenv(MPAllowLoopbackBaseURLEnv, "1")
+	db := newListingTestDB(t)
+	createTrustPoolRow(t, db, TrustPool{
+		Host: "127.0.0.1", Kind: TrustKindThirdParty, Trust: TrustTrusted, Source: "manual",
+	})
+
+	const key = "sk-trusted-upstream-key"
+	server := fakeCustomUpstream(t, key, "deepseek-flash")
+
+	listing, err := CreateListing(db, CreateListingInput{
+		SellerID:        10023,
+		APIKey:          key,
+		CustomBaseURL:   server.URL,
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 500,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, ListingDraft, listing.Status, "trusted means no manual review")
+
+	res, err := VerifyListing(context.Background(), db, server.Client(), NewVerifyLimiter(1, 600), listing.ID)
+	require.NoError(t, err)
+	require.True(t, res.OK, "fail reason: %s", res.FailReason)
+
+	row, err := GetListing(db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingCanary, row.Status)
 }
 
 // TestRefreshListingChannelMapping updates the pinned upstream name on every

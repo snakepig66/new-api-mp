@@ -1,22 +1,23 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
-import { useFieldArray, useForm } from 'react-hook-form'
+import { useEffect, useMemo, useState } from 'react'
+import { useForm, type UseFormRegister } from 'react-hook-form'
 import { z } from 'zod'
 
 import { copy } from '@/copy'
 import { cn } from '@/lib/cn'
-import { formatMultiplier, savingPercent } from '@/lib/multiplier'
-import { formatYuan } from '@/lib/money'
 import {
   Button,
-  Empty,
   Input,
-  Multiplier,
   PageHeader,
-  PasswordInput,
   Price,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
   Tag,
   useToast,
 } from '@/ui'
@@ -26,32 +27,38 @@ import {
   marketplaceStatusQuery,
   probeListing,
   sellerChannelKind,
+  sellerCommonAddressesQuery,
   sellerListingsQuery,
   sellerVendorsQuery,
   squareModelForSeller,
   type ProbeResult,
   type SellerQuotaWindow,
   type SellerVendor,
+  type SellerCommonAddress,
+  type CreateListingInput,
 } from '@/features/seller/api'
-import { Field, notify, Skeleton, selectClass } from '@/features/seller/components'
+import { Field, notify, Skeleton } from '@/features/seller/components'
 import {
   duplicateKeyIssue,
-  probeFailReasonLabel,
   sellerErrorMessage,
   type DuplicateKeyIssue,
 } from '@/features/seller/errors'
 import { parseYuanToMicro } from '@/features/seller/money-input'
+import { DEFAULT_FEE_PERCENT, previewMultiplier } from '@/features/seller/preview'
 import {
-  compareMultiplier,
-  DEFAULT_FEE_PERCENT,
-  previewMultiplier,
-} from '@/features/seller/preview'
-import {
+  buildVerificationMatrix,
   canLeaveStep,
   canSubmit,
   CUSTOM_VENDOR_ID,
+  DEFAULT_MULTIPLIER_MILLI,
+  maskApiKey,
+  parseApiKeys,
   previousWizardStep,
+  validApiKeys,
   validCustomURL,
+  validModelMultiplier,
+  validRequestHeaders,
+  type VerificationCell,
   type WizardSnapshot,
   type WizardStep,
 } from '@/features/seller/wizard'
@@ -63,27 +70,27 @@ export const Route = createFileRoute('/console/listings/new')({
 const page = copy.pages.sellerListingNew
 const validation = page.validation
 const timeRe = /^([01]\d|2[0-3]):[0-5]\d$/
+const PROBE_DEBOUNCE_MS = 500
+const DAY_KEYS = ['weekday', 'weekend', 'holiday'] as const
+type DayKey = (typeof DAY_KEYS)[number]
 
-const hourWindowSchema = z.object({
-  start: z.string(),
-  end: z.string(),
+const windowGroupSchema = z.object({
+  enabled: z.boolean(),
+  peakStart: z.string(),
+  peakEnd: z.string(),
+  idleStart: z.string(),
+  idleEnd: z.string(),
 })
 
 const wizardSchema = z
   .object({
-    vendor_id: z.string().min(1, validation.vendor),
-    custom_base_url: z.string(),
-    api_key: z
+    url: z
       .string()
       .trim()
-      .min(8, validation.key)
-      .refine((value) => !/\s/.test(value), validation.key),
+      .min(1, validation.url)
+      .refine((value) => validCustomURL(value), validation.url),
+    api_keys: z.string().refine((value) => validApiKeys(parseApiKeys(value)), validation.key),
     models: z.array(z.string()).min(1, validation.models),
-    multiplier_milli: z
-      .number()
-      .int()
-      .min(1, validation.multiplier)
-      .max(1000, validation.multiplier),
     concurrency: z
       .number()
       .int(validation.concurrency)
@@ -94,38 +101,50 @@ const wizardSchema = z
       const micro = parseYuanToMicro(value)
       return micro !== null && micro <= 1_000_000_000_000n
     }, validation.dailyCap),
-    use_hours: z.boolean(),
-    hours: z.array(hourWindowSchema),
+    availability: z.object({
+      weekday: windowGroupSchema,
+      weekend: windowGroupSchema,
+      holiday: windowGroupSchema,
+    }),
+    key_strategy: z.enum(['weighted', 'primary_backup']),
+    affinity: z.boolean(),
+    headers: z.string(),
+    extra_endpoints: z.array(z.string()),
     plan_terms_accepted: z.boolean(),
   })
   .superRefine((value, ctx) => {
-    if (value.vendor_id === CUSTOM_VENDOR_ID && !validCustomURL(value.custom_base_url)) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['custom_base_url'],
-        message: validation.customURL,
-      })
+    for (const day of DAY_KEYS) {
+      const group = value.availability[day]
+      if (!group.enabled) continue
+      for (const [startKey, endKey] of [
+        ['peakStart', 'peakEnd'],
+        ['idleStart', 'idleEnd'],
+      ] as const) {
+        const start = group[startKey]
+        const end = group[endKey]
+        if (!timeRe.test(start) || !timeRe.test(end) || end <= start) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['availability', day, endKey],
+            message: validation.hours,
+          })
+        }
+      }
     }
-    if (!value.use_hours) return
-    value.hours.forEach((window, index) => {
-      if (!timeRe.test(window.start)) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['hours', index, 'start'],
-          message: validation.hours,
-        })
-      }
-      if (!timeRe.test(window.end) || window.end <= window.start) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['hours', index, 'end'],
-          message: validation.hours,
-        })
-      }
-    })
+    if (value.headers.trim() && !validRequestHeaders(value.headers)) {
+      ctx.addIssue({ code: 'custom', path: ['headers'], message: validation.headers })
+    }
   })
 
 type WizardForm = z.infer<typeof wizardSchema>
+
+const emptyWindowGroup = {
+  enabled: false,
+  peakStart: '09:00',
+  peakEnd: '12:00',
+  idleStart: '12:00',
+  idleEnd: '18:00',
+}
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 
@@ -148,15 +167,68 @@ function planWindowText(window: SellerQuotaWindow | undefined): string | null {
   return page.plan.windowFixed(hoursText, window.reset_timezone ?? 'UTC')
 }
 
-function windowsValid(windows: { start: string; end: string }[]): boolean {
-  return windows.every(
-    (window) => timeRe.test(window.start) && timeRe.test(window.end) && window.start < window.end,
-  )
+function hostOf(raw: string): string | null {
+  if (!raw) return null
+  try {
+    return new URL(raw).hostname.toLowerCase()
+  } catch {
+    return null
+  }
+}
+
+/** The registered channel whose protocol host matches the typed address. */
+function vendorForURL(raw: string, vendors: readonly SellerVendor[]): SellerVendor | undefined {
+  const host = hostOf(raw.trim())
+  if (!host) return undefined
+  return vendors.find((vendor) => {
+    return (
+      hostOf(vendor.protocols.openai) === host || hostOf(vendor.protocols.anthropic) === host
+    )
+  })
+}
+
+function defaultEndpointsFor(vendor: SellerVendor | undefined): string[] {
+  if (!vendor) return ['openai_chat']
+  const out: string[] = []
+  if (vendor.protocols.openai) out.push('openai_chat')
+  if (vendor.protocols.anthropic) out.push('anthropic_messages')
+  return out.length > 0 ? out : ['openai_chat']
+}
+
+interface FlatHours {
+  windows: { start: string; end: string }[]
+  valid: boolean
+  any: boolean
+}
+
+/** Flatten the day-type groups into the backend's [{start,end}] hours contract. */
+function flattenHours(availability: WizardForm['availability']): FlatHours {
+  const windows: { start: string; end: string }[] = []
+  let valid = true
+  let any = false
+  for (const day of DAY_KEYS) {
+    const group = availability[day]
+    if (!group.enabled) continue
+    any = true
+    for (const [start, end] of [
+      [group.peakStart, group.peakEnd],
+      [group.idleStart, group.idleEnd],
+    ]) {
+      if (!timeRe.test(start) || !timeRe.test(end) || end <= start) {
+        valid = false
+        continue
+      }
+      if (!windows.some((w) => w.start === start && w.end === end)) {
+        windows.push({ start, end })
+      }
+    }
+  }
+  return { windows, valid, any }
 }
 
 function StepRail({ step, onJump }: { step: number; onJump: (next: WizardStep) => void }) {
   return (
-    <ol className="mt-6 grid grid-cols-2 gap-3 rounded-md border border-line bg-bg p-4 sm:grid-cols-4">
+    <ol className="mt-6 grid grid-cols-2 gap-3 rounded-md border border-line bg-bg p-4 sm:grid-cols-5">
       {page.steps.map((title, index) => {
         const completed = index < step
         const active = index === step
@@ -219,127 +291,182 @@ function StepRail({ step, onJump }: { step: number; onJump: (next: WizardStep) =
   )
 }
 
-function ProbeSummary({ probe }: { probe: ProbeResult }) {
+function endpointLabel(endpoint: string): string {
+  return page.advanced.endpointNames[endpoint] ?? endpoint
+}
+
+function TrustBadge({
+  trust,
+  recognizing,
+  error,
+}: {
+  trust: ProbeResult['trust_pool']
+  recognizing: boolean
+  error: string | null
+}) {
+  if (recognizing) {
+    return (
+      <Tag dot aria-live="polite">
+        {page.trust.probing}
+      </Tag>
+    )
+  }
+  if (error) {
+    return <span className="text-[13px] leading-5 text-danger">{error}</span>
+  }
+  if (!trust) {
+    return <span className="text-[13px] text-ink-3">{page.trust.idle}</span>
+  }
+  const tone = trust.trust === 'blocked' ? 'danger' : trust.trust === 'trusted' ? 'brand' : 'neutral'
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <Tag tone={probe.key_valid ? 'brand' : 'danger'} dot>
-          {probe.key_valid ? page.verify.valid : page.verify.invalid}
-        </Tag>
-        {probe.prompt_cache ? (
-          <Tag tone="brand">
-            {page.verify.cache} · {page.verify.cacheYes}
-          </Tag>
-        ) : (
-          <Tag>
-            {page.verify.cache} · {page.verify.cacheNo}
-          </Tag>
-        )}
-      </div>
-
-      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <div className="rounded-md bg-bg-soft px-4 py-3">
-          <dt className="text-[13px] text-ink-3">{page.verify.balance}</dt>
-          <dd className="mt-0.5 tabular-nums text-[14px] text-ink">
-            {probe.balance_micro === null || probe.balance_micro === undefined
-              ? page.verify.balanceUnknown
-              : formatYuan(probe.balance_micro)}
-          </dd>
-        </div>
-        <div className="rounded-md bg-bg-soft px-4 py-3">
-          <dt className="text-[13px] text-ink-3">{page.verify.latency}</dt>
-          <dd className="mt-0.5 tabular-nums text-[14px] text-ink">
-            {probe.latency_ms} ms
-          </dd>
-        </div>
-        <div className="rounded-md bg-bg-soft px-4 py-3">
-          <dt className="text-[13px] text-ink-3">{page.verify.cache}</dt>
-          <dd className="mt-0.5 text-[14px] text-ink">
-            {probe.prompt_cache ? page.verify.cacheYes : page.verify.cacheNo}
-          </dd>
-        </div>
-      </dl>
-
-      {probe.fail_reason ? (
-        <div className="rounded-md border border-warn/25 bg-warn/10 px-4 py-3 text-[13px] leading-5 text-warn">
-          {page.verify.failReason}：{probeFailReasonLabel(probe.fail_reason)}
-        </div>
-      ) : null}
-
-      {probe.missing_models.length > 0 ? (
-        <p className="text-[13px] leading-5 text-warn">
-          {page.verify.missing(probe.missing_models.join('、'))}
-        </p>
-      ) : null}
+    <div className="flex flex-wrap items-center gap-2" aria-live="polite">
+      <Tag tone={tone} dot>
+        {trust.badge_text || page.trust.unlisted}
+      </Tag>
+      {trust.endpoints.length > 0
+        ? trust.endpoints.map((endpoint) => (
+            <Tag key={endpoint} tone="neutral">
+              {endpointLabel(endpoint)}
+            </Tag>
+          ))
+        : null}
     </div>
   )
 }
 
-function VendorGroup({
-  title,
-  vendors,
-  disabled = false,
-  selectedId,
-  badge,
-  emptyLabel,
-  onSelect,
+function CommonAddressList({
+  addresses,
+  pending,
+  error,
+  onPick,
+  onRetry,
 }: {
-  title: string
-  vendors: SellerVendor[]
-  disabled?: boolean
-  selectedId: string
-  badge?: string
-  emptyLabel?: string
-  onSelect: (id: string) => void
+  addresses: SellerCommonAddress[]
+  pending: boolean
+  error: boolean
+  onPick: (address: SellerCommonAddress) => void
+  onRetry: () => void
 }) {
   return (
     <div>
-      <h4 className="text-[13px] font-medium text-ink-3">{title}</h4>
-      {vendors.length === 0 ? (
-        <p className="mt-2 text-[13px] leading-5 text-ink-3">{emptyLabel}</p>
+      <h4 className="text-[13px] font-medium text-ink-3">{page.url.commonTitle}</h4>
+      <p className="mt-1 text-[13px] text-ink-3">{page.url.commonHint}</p>
+      {pending ? (
+        <div className="mt-2 flex flex-wrap gap-2" aria-busy="true">
+          {Array.from({ length: 4 }, (_, index) => (
+            <Skeleton key={index} className="h-9 w-44" />
+          ))}
+        </div>
+      ) : error ? (
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <span className="text-[13px] text-danger">{page.url.commonError}</span>
+          <Button variant="secondary" size="sm" onClick={onRetry}>
+            {page.actions.retry}
+          </Button>
+        </div>
+      ) : addresses.length === 0 ? (
+        <p className="mt-2 text-[13px] text-ink-3">{page.url.commonEmpty}</p>
       ) : (
-        <div className="mt-2 grid gap-2 sm:grid-cols-3">
-          {vendors.map((vendor) => {
-            const checked = !disabled && selectedId === vendor.id
-            return (
-              <label
-                key={vendor.id}
-                aria-disabled={disabled || undefined}
-                className={cn(
-                  'flex items-center justify-between gap-3 rounded-md border px-4 py-3.5 transition-colors',
-                  disabled
-                    ? 'cursor-not-allowed border-line bg-bg-soft opacity-70'
-                    : 'cursor-pointer',
-                  checked
-                    ? 'border-brand bg-brand-soft/60'
-                    : !disabled && 'border-line bg-bg hover:border-brand/40',
-                )}
-              >
-                <span className="min-w-0">
-                  <span className="flex items-center gap-1.5">
-                    <span className="block truncate text-[13px] font-medium text-ink">
-                      {vendor.display_name}
-                    </span>
-                    {badge ? <Tag>{badge}</Tag> : null}
-                  </span>
-                  <span className="block truncate tabular-nums text-[13px] text-ink-3">
-                    {vendor.id}
-                  </span>
-                </span>
-                <input
-                  type="radio"
-                  name="vendor_id"
-                  value={vendor.id}
-                  checked={checked}
-                  disabled={disabled}
-                  onChange={() => onSelect(vendor.id)}
-                  className="h-4 w-4 shrink-0 accent-brand"
-                />
-              </label>
-            )
-          })}
+        <div className="mt-2 flex flex-wrap gap-2">
+          {addresses.map((address) => (
+            <button
+              key={address.host}
+              type="button"
+              onClick={() => onPick(address)}
+              className="flex items-center gap-2 rounded-md border border-line bg-bg px-3 py-2 text-left text-[13px] transition-colors hover:border-brand/40"
+            >
+              <span className="font-medium text-ink">{address.vendor_name || address.host}</span>
+              <span className="font-mono text-[12px] text-ink-3">{address.host}</span>
+            </button>
+          ))}
         </div>
       )}
+    </div>
+  )
+}
+
+function BuyerPriceCell({
+  model,
+  multiplierMilli,
+  coefficientMilli,
+  feePercent,
+}: {
+  model: string
+  multiplierMilli: number
+  coefficientMilli: number
+  feePercent: number
+}) {
+  const market = useQuery(squareModelForSeller(model))
+  const tier = market.data?.tier ?? 'flat'
+  const officialPrice = market.data?.official_prices?.[tier]?.input_micro_per_mtok
+  if (market.isPending) {
+    return <Skeleton className="h-4 w-20" />
+  }
+  if (officialPrice === undefined || officialPrice === null) {
+    return <span className="text-[13px] text-ink-3">{page.models.buyerUnavailable}</span>
+  }
+  const preview = previewMultiplier(officialPrice, multiplierMilli, feePercent, coefficientMilli)
+  if (!preview) {
+    return <span className="text-[13px] text-ink-3">{page.models.buyerUnavailable}</span>
+  }
+  return <Price value={preview.buyerMicro} tier={tier} size="sm" unit={null} />
+}
+
+function AvailabilityGroup({
+  day,
+  label,
+  register,
+  error,
+}: {
+  day: DayKey
+  label: string
+  register: UseFormRegister<WizardForm>
+  error?: string
+}) {
+  return (
+    <div className="rounded-md border border-line p-4">
+      <label className="flex items-center gap-2 text-[13px] font-medium text-ink">
+        <input
+          type="checkbox"
+          className="h-4 w-4 accent-brand"
+          {...register(`availability.${day}.enabled`)}
+        />
+        {page.limits.enable(label)}
+      </label>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        {(
+          [
+            ['peak', 'peakStart', 'peakEnd'],
+            ['idle', 'idleStart', 'idleEnd'],
+          ] as const
+        ).map(([tier, startKey, endKey]) => (
+          <div key={tier}>
+            <span className="block text-[13px] text-ink-3">
+              {tier === 'peak' ? page.limits.peak : page.limits.idle}
+            </span>
+            <div className="mt-1 flex items-center gap-2">
+              <Input
+                type="time"
+                aria-label={`${label}${tier === 'peak' ? page.limits.peak : page.limits.idle}${page.limits.start}`}
+                {...register(`availability.${day}.${startKey}` as const)}
+              />
+              <span className="text-ink-3" aria-hidden="true">
+                –
+              </span>
+              <Input
+                type="time"
+                aria-label={`${label}${tier === 'peak' ? page.limits.peak : page.limits.idle}${page.limits.end}`}
+                {...register(`availability.${day}.${endKey}` as const)}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+      {error ? (
+        <p className="mt-2 text-[13px] text-danger" role="alert">
+          {error}
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -349,185 +476,251 @@ export function NewListingPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [step, setStep] = useState<WizardStep>(0)
-  const [multiplierText, setMultiplierText] = useState('0.500')
-  const [previewModel, setPreviewModel] = useState('')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [multipliers, setMultipliers] = useState<Record<string, number>>({})
+  const [batchMultiplier, setBatchMultiplier] = useState('0.5')
+  const [batchApplied, setBatchApplied] = useState(false)
+  const [recognition, setRecognition] = useState<ProbeResult | null>(null)
+  const [recognizing, setRecognizing] = useState(false)
+  const [recognizeError, setRecognizeError] = useState<string | null>(null)
+  const [keyProbes, setKeyProbes] = useState<Record<string, ProbeResult>>({})
+  const [probeErrors, setProbeErrors] = useState<Record<string, string>>({})
+  const [probingKeys, setProbingKeys] = useState(false)
+  const [manualEndpoints, setManualEndpoints] = useState<string[]>([])
   const [duplicate, setDuplicate] = useState<DuplicateKeyIssue | null>(null)
+  const [submitError, setSubmitError] = useState<string | null>(null)
 
   const form = useForm<WizardForm>({
     resolver: zodResolver(wizardSchema),
     mode: 'onTouched',
     defaultValues: {
-      vendor_id: '',
-      custom_base_url: '',
-      api_key: '',
+      url: '',
+      api_keys: '',
       models: [],
-      multiplier_milli: 500,
       concurrency: 5,
       rpm: 0,
       daily_cap_yuan: '0',
-      use_hours: false,
-      hours: [],
+      availability: {
+        weekday: { ...emptyWindowGroup },
+        weekend: { ...emptyWindowGroup },
+        holiday: { ...emptyWindowGroup },
+      },
+      key_strategy: 'weighted',
+      affinity: true,
+      headers: '',
+      extra_endpoints: [],
       plan_terms_accepted: false,
     },
   })
   const values = form.watch()
-  const { fields, append, remove } = useFieldArray({ control: form.control, name: 'hours' })
+  const keys = parseApiKeys(values.api_keys)
+  const firstKey = keys[0] ?? ''
 
   const vendors = useQuery(sellerVendorsQuery())
+  const commonAddresses = useQuery(sellerCommonAddressesQuery())
   const marketplaceStatus = useQuery(marketplaceStatusQuery())
-  // The backend is the single source for the split; the fallback only covers
-  // the brief window before the status query resolves.
   const feePercent = marketplaceStatus.data?.platform_fee_percent ?? DEFAULT_FEE_PERCENT
-  const allVendors = vendors.data ?? []
-  const officialVendors = allVendors.filter((vendor) => sellerChannelKind(vendor) === 'official')
-  const planVendors = allVendors.filter((vendor) => sellerChannelKind(vendor) === 'plan')
-  const thirdPartyVendors = allVendors.filter(
-    (vendor) => sellerChannelKind(vendor) === 'third_party',
-  )
-  const vendorList = [...officialVendors, ...planVendors, ...thirdPartyVendors]
-  const isCustomVendor = values.vendor_id === CUSTOM_VENDOR_ID
-  const selectedVendor = vendorList.find((vendor) => vendor.id === values.vendor_id)
-  // A custom upstream serves the platform catalogue verbatim (identity
-  // mapping), so the picker offers every model any channel can sell.
-  const customCatalogModels = Array.from(
-    new Set(allVendors.flatMap((vendor) => vendor.models)),
-  ).sort()
-  const vendorModels = isCustomVendor
-    ? customCatalogModels
-    : selectedVendor?.models ?? []
-  const vendorHasModels = Boolean(
-    (isCustomVendor && customCatalogModels.length > 0) ||
-      (selectedVendor && vendorModels.length > 0),
-  )
+  const allVendors = useMemo(() => vendors.data ?? [], [vendors.data])
+  const matchedVendor = vendorForURL(values.url, allVendors)
+  const isCustomAddress = Boolean(validCustomURL(values.url) && !matchedVendor)
   const requiresPlanTerms = Boolean(
-    selectedVendor && sellerChannelKind(selectedVendor) === 'plan',
+    matchedVendor && sellerChannelKind(matchedVendor) === 'plan',
   )
   const quotaWindowText = requiresPlanTerms
-    ? planWindowText(selectedVendor?.quota_window)
+    ? planWindowText(matchedVendor?.quota_window)
     : null
 
-  const probe = useMutation({
-    mutationFn: probeListing,
-    onSuccess: (result) => {
-      // The writable catalog is the channel's certified model list; keep only
-      // the models the probe says this key can actually call. `verified_models`
-      // is the pool contract, `models` the legacy alias.
-      const certified = result.verified_models ?? result.models
-      const available = certified.filter((model) => vendorModels.includes(model))
-      form.setValue('models', available, { shouldValidate: true })
-    },
+  const probeInput = (key: string) => ({
+    vendor_id: matchedVendor?.id ?? '',
+    api_key: key,
+    models: [] as string[],
+    custom_base_url: matchedVendor ? undefined : values.url.trim(),
   })
 
-  const create = useMutation({
-    mutationFn: createListing,
-    onSuccess: () => {
-      setDuplicate(null)
-      notify(toast, { title: page.success, tone: 'success' })
-      void queryClient.invalidateQueries({ queryKey: sellerListingsQuery().queryKey })
-      void navigate({ to: '/console/listings' })
-    },
-    onError: (error) => setDuplicate(duplicateKeyIssue(error)),
-  })
+  // Live recognition: debounce 500ms after the address and the first key are
+  // both usable, then classify the address through the probe endpoint.
+  const recognitionSignature = `${values.url.trim()}|${matchedVendor?.id ?? ''}|${firstKey}`
+  useEffect(() => {
+    setRecognizeError(null)
+    if (!validCustomURL(values.url) || !validApiKeys([firstKey])) {
+      setRecognition(null)
+      return
+    }
+    let cancelled = false
+    const timer = setTimeout(() => {
+      setRecognizing(true)
+      probeListing(probeInput(firstKey))
+        .then((result) => {
+          if (cancelled) return
+          setRecognition(result)
+          setKeyProbes((current) => ({ ...current, [firstKey]: result }))
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) setRecognizeError(sellerErrorMessage(error))
+        })
+        .finally(() => {
+          if (!cancelled) setRecognizing(false)
+        })
+    }, PROBE_DEBOUNCE_MS)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+    // probeInput is derived from these values; listing them individually keeps
+    // the effect from restarting on unrelated form updates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recognitionSignature])
 
+  const trust = recognition?.trust_pool ?? null
+  const trustEndpoints = trust?.endpoints ?? []
+  const trustEndpointSignature = trustEndpoints.join('|')
+
+  useEffect(() => {
+    setManualEndpoints(trustEndpoints)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trustEndpointSignature])
+
+  const endpoints =
+    manualEndpoints.length > 0
+      ? manualEndpoints
+      : trustEndpoints.length > 0
+        ? trustEndpoints
+        : defaultEndpointsFor(matchedVendor)
+
+  const probed = Boolean(recognition) || Object.keys(keyProbes).length > 0
+  const availableModels = useMemo(() => {
+    if (!probed) return matchedVendor?.models ?? []
+    const union = new Set<string>()
+    Object.values(keyProbes).forEach((probe) => {
+      for (const model of probe.verified_models ?? probe.models) union.add(model)
+    })
+    if (recognition) {
+      for (const model of recognition.verified_models ?? recognition.models) union.add(model)
+    }
+    return Array.from(union).sort()
+  }, [probed, keyProbes, recognition, matchedVendor])
+
+  // Keep the selection and multiplier map aligned with what the keys can
+  // actually call. When nothing is selected yet, preselect every available
+  // model so the common case needs no extra clicks.
+  useEffect(() => {
+    const available = new Set(availableModels)
+    const current = form.getValues('models')
+    const kept = current.filter((model) => available.has(model))
+    const next = kept.length > 0 ? kept : availableModels
+    if (next.length !== current.length || next.some((model, index) => current[index] !== model)) {
+      form.setValue('models', next, { shouldValidate: true })
+    }
+    setMultipliers((previous) => {
+      const updated = { ...previous }
+      for (const model of availableModels) {
+        if (!validModelMultiplier(updated[model])) {
+          updated[model] = DEFAULT_MULTIPLIER_MILLI
+        }
+      }
+      return updated
+    })
+  }, [availableModels, form])
+
+  const flatHours = flattenHours(values.availability)
+  const headersValid = trust?.trust === 'unlisted' ? validRequestHeaders(values.headers) : true
   const snapshot: WizardSnapshot = {
-    vendorId: values.vendor_id,
-    apiKey: values.api_key,
-    customBaseURL: values.custom_base_url,
-    probe: probe.data ?? null,
+    url: values.url,
+    vendorId: matchedVendor?.id ?? (isCustomAddress ? CUSTOM_VENDOR_ID : ''),
+    customBaseURL: matchedVendor ? undefined : values.url.trim(),
+    apiKeys: keys,
+    trust,
+    probe: recognition,
+    availableModels,
     selectedModels: values.models,
-    multiplierMilli: values.multiplier_milli,
+    modelMultipliers: multipliers,
     concurrency: values.concurrency,
     rpm: values.rpm,
     dailyCapYuan: values.daily_cap_yuan,
-    hoursValid: !values.use_hours || values.hours.length === 0 || windowsValid(values.hours),
+    hoursValid: flatHours.valid,
+    headersValid,
     requiresPlanTerms,
     planTermsAccepted: values.plan_terms_accepted,
   }
 
-  const effectivePreviewModel =
-    previewModel && values.models.includes(previewModel) ? previewModel : values.models[0] ?? ''
-  const market = useQuery({
-    ...squareModelForSeller(effectivePreviewModel),
-    enabled: step === 3 && Boolean(effectivePreviewModel),
+  const create = useMutation({
+    mutationFn: async (payloads: CreateListingInput[]) => {
+      for (const payload of payloads) {
+        await createListing(payload)
+      }
+      return payloads.length
+    },
+    onSuccess: (count) => {
+      setDuplicate(null)
+      setSubmitError(null)
+      notify(toast, {
+        title: count > 1 ? page.successCount(count) : page.success,
+        tone: 'success',
+      })
+      void queryClient.invalidateQueries({ queryKey: sellerListingsQuery().queryKey })
+      void navigate({ to: '/console/listings' })
+    },
+    onError: (error) => {
+      const issue = duplicateKeyIssue(error)
+      if (issue) setDuplicate(issue)
+      else setSubmitError(sellerErrorMessage(error))
+    },
   })
 
-  const tier = market.data?.tier ?? 'flat'
-  const officialPrice = market.data?.official_prices?.[tier]?.input_micro_per_mtok
-  // The backend Quote applies both the listing multiplier and the channel's
-  // price coefficient; use the probe's coefficient for the same buyer price.
-  const coefficientMilli = probe.data?.coefficients?.[effectivePreviewModel] ?? 1000
-  const preview =
-    officialPrice !== undefined && officialPrice !== null
-      ? previewMultiplier(
-          officialPrice,
-          values.multiplier_milli,
-          feePercent,
-          coefficientMilli,
-        )
-      : null
-  const marketMin = market.data?.multiplier_min_milli
-  const comparison = compareMultiplier(values.multiplier_milli, marketMin)
-
-  function runProbe() {
-    const current = form.getValues()
-    probe.mutate({
-      vendor_id: current.vendor_id,
-      api_key: current.api_key.trim(),
-      models: [],
-      custom_base_url:
-        current.vendor_id === CUSTOM_VENDOR_ID ? current.custom_base_url.trim() : undefined,
-    })
+  async function probeOneKey(key: string, force: boolean): Promise<void> {
+    if (!force && keyProbes[key]) return
+    try {
+      const result = await probeListing(probeInput(key))
+      setKeyProbes((current) => ({ ...current, [key]: result }))
+      setProbeErrors((current) => {
+        const next = { ...current }
+        delete next[key]
+        return next
+      })
+    } catch (error) {
+      setProbeErrors((current) => ({ ...current, [key]: sellerErrorMessage(error) }))
+    }
   }
 
-  async function handleNext() {
+  async function probeAllKeys(force = false): Promise<void> {
+    if (probingKeys || !validApiKeys(keys) || !validCustomURL(values.url)) return
+    setProbingKeys(true)
+    try {
+      for (const key of keys) {
+        await probeOneKey(key, force)
+      }
+    } finally {
+      setProbingKeys(false)
+    }
+  }
+
+  function handleNext() {
+    if (!canLeaveStep(step, snapshot)) return
     if (step === 0) {
-      if (!vendorHasModels) return
-      const valid = isCustomVendor
-        ? await form.trigger(['vendor_id', 'custom_base_url'])
-        : await form.trigger(['vendor_id'])
-      if (!valid) return
+      void form.trigger(['url', 'api_keys'])
       setStep(1)
+      void probeAllKeys()
       return
     }
     if (step === 1) {
-      if (!(await form.trigger(['api_key']))) return
+      void form.trigger('models')
       setStep(2)
-      probe.reset()
-      runProbe()
       return
     }
     if (step === 2) {
-      if (!vendorHasModels) return
-      if (!(await form.trigger(['models']))) return
-      if (!probe.data?.ok) return
+      void form.trigger(['concurrency', 'rpm', 'daily_cap_yuan', 'availability'])
       setStep(3)
       return
+    }
+    if (step === 3) {
+      void form.trigger('headers')
+      setAdvancedOpen(false)
+      setStep(4)
     }
   }
 
   function handleJump(next: WizardStep) {
     if (next <= step) setStep(next)
-  }
-
-  function onSubmit(data: WizardForm) {
-    const dailyCap = parseYuanToMicro(data.daily_cap_yuan)
-    if (dailyCap === null) return
-    setDuplicate(null)
-    const hours =
-      data.use_hours && data.hours.length > 0 ? JSON.stringify(data.hours) : ''
-    create.mutate({
-      vendor_id: data.vendor_id === CUSTOM_VENDOR_ID ? '' : data.vendor_id,
-      api_key: data.api_key.trim(),
-      models: data.models,
-      multiplier_milli: data.multiplier_milli,
-      concurrency: data.concurrency,
-      rpm: data.rpm,
-      daily_cap_micro: Number(dailyCap),
-      hours,
-      plan_terms_accepted: requiresPlanTerms ? data.plan_terms_accepted : false,
-      custom_base_url:
-        data.vendor_id === CUSTOM_VENDOR_ID ? data.custom_base_url.trim() : undefined,
-    })
   }
 
   function toggleModel(model: string, checked: boolean) {
@@ -540,19 +733,85 @@ export function NewListingPage() {
     form.setValue('models', next, { shouldValidate: true, shouldDirty: true })
   }
 
-  function selectVendor(id: string) {
-    form.setValue('vendor_id', id, { shouldValidate: true, shouldDirty: true })
-    form.setValue('models', [], { shouldValidate: true })
-    form.setValue('plan_terms_accepted', false)
-    setDuplicate(null)
-    probe.reset()
+  function setModelMultiplier(model: string, text: string) {
+    const parsed = Number(text)
+    if (!Number.isFinite(parsed)) return
+    const milli = Math.min(1000, Math.max(100, Math.round(parsed * 1000)))
+    setMultipliers((current) => ({ ...current, [model]: milli }))
   }
 
-  const submitError = create.isError ? sellerErrorMessage(create.error) : null
-  const probedModels = probe.data?.verified_models ?? probe.data?.models ?? []
-  // Certified models the key did not expose on GET /models. They are shown
-  // disabled above; this line names them and explains the missing-model case.
-  const uncallableModels = vendorModels.filter((model) => !probedModels.includes(model))
+  function applyBatchMultiplier() {
+    const parsed = Number(batchMultiplier)
+    if (!Number.isFinite(parsed)) return
+    const milli = Math.min(1000, Math.max(100, Math.round(parsed * 1000)))
+    setMultipliers((current) => {
+      const next = { ...current }
+      for (const model of availableModels) next[model] = milli
+      return next
+    })
+    setBatchApplied(true)
+  }
+
+  function payloadsFor(mode: 'passing' | 'draft'): CreateListingInput[] {
+    const data = form.getValues()
+    const dailyCap = parseYuanToMicro(data.daily_cap_yuan)
+    if (dailyCap === null) return []
+    const representative = data.models[0]
+    const multiplierMilli = multipliers[representative] ?? DEFAULT_MULTIPLIER_MILLI
+    if (!validModelMultiplier(multiplierMilli)) return []
+    const hours = flatHours.windows.length > 0 ? JSON.stringify(flatHours.windows) : ''
+    const base = {
+      vendor_id: matchedVendor?.id ?? '',
+      multiplier_milli: multiplierMilli,
+      concurrency: data.concurrency,
+      rpm: data.rpm,
+      daily_cap_micro: Number(dailyCap),
+      hours,
+      plan_terms_accepted: requiresPlanTerms ? data.plan_terms_accepted : false,
+      custom_base_url: matchedVendor ? undefined : data.url.trim(),
+    }
+    const payloads: CreateListingInput[] = []
+    for (const key of keys) {
+      const probe = keyProbes[key]
+      const callable = new Set(probe ? probe.verified_models ?? probe.models : [])
+      const models =
+        mode === 'passing'
+          ? data.models.filter((model) => probe?.key_valid && callable.has(model))
+          : [...data.models]
+      if (models.length === 0) continue
+      payloads.push({ ...base, api_key: key, models })
+    }
+    return payloads
+  }
+
+  function publishPassing() {
+    const payloads = payloadsFor('passing')
+    if (payloads.length === 0) return
+    setDuplicate(null)
+    setSubmitError(null)
+    create.mutate(payloads)
+  }
+
+  function keepAsDraft() {
+    const payloads = payloadsFor('draft')
+    if (payloads.length === 0) return
+    setDuplicate(null)
+    setSubmitError(null)
+    create.mutate(payloads)
+  }
+
+  function pickCommonAddress(address: SellerCommonAddress) {
+    form.setValue('url', `https://${address.host}`, { shouldValidate: true, shouldDirty: true })
+  }
+
+  const verification = buildVerificationMatrix(keys, values.models, endpoints, keyProbes)
+  const passedCount = verification.filter((cell) => cell.ok).length
+  const hasPassingModels = keys.some((key) => {
+    const probe = keyProbes[key]
+    if (!probe?.key_valid) return false
+    const callable = new Set(probe.verified_models ?? probe.models)
+    return values.models.some((model) => callable.has(model))
+  })
 
   return (
     <>
@@ -561,7 +820,7 @@ export function NewListingPage() {
 
       <form
         className="mt-6 rounded-md border border-line bg-bg p-6"
-        onSubmit={form.handleSubmit(onSubmit)}
+        onSubmit={(event) => event.preventDefault()}
       >
         <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-4">
           <div>
@@ -570,134 +829,279 @@ export function NewListingPage() {
             </h2>
             <p className="mt-1 text-[13px] leading-5 text-ink-3">{page.stepLead[step]}</p>
           </div>
-          <span className="tabular-nums text-[13px] text-ink-3">0{step + 1} / 04</span>
+          <span className="tabular-nums text-[13px] text-ink-3">0{step + 1} / 05</span>
         </header>
 
         <div className="pt-5">
           {step === 0 ? (
             <div className="space-y-6">
-              <Field
-                label={page.vendor.label}
-                hint={page.vendor.hint}
-                error={form.formState.errors.vendor_id?.message}
-              >
-                {vendors.isPending ? (
-                  <div className="grid gap-2 sm:grid-cols-3" aria-busy="true" aria-live="polite">
-                    <span className="sr-only">{page.vendor.loading}</span>
-                    {Array.from({ length: 6 }, (_, index) => (
-                      <Skeleton key={index} className="h-[62px] w-full" />
-                    ))}
-                  </div>
-                ) : vendors.isError ? (
-                  <div className="rounded-md border border-danger/25 bg-danger/10 px-4 py-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-[13px] leading-5 text-danger">
-                        {page.vendor.loadFailed}
-                      </p>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => void vendors.refetch()}
-                      >
-                        {copy.actions.retry}
-                      </Button>
-                    </div>
-                  </div>
-                ) : vendorList.length === 0 && thirdPartyVendors.length === 0 ? (
-                  <p className="text-[13px] leading-5 text-ink-3">{page.vendor.empty}</p>
-                ) : (
-                  <div
-                    role="radiogroup"
-                    aria-label={page.vendor.label}
-                    className="space-y-5"
-                  >
-                    <VendorGroup
-                      title={page.channel.groups.official}
-                      vendors={officialVendors}
-                      selectedId={values.vendor_id}
-                      badge={page.channel.official.badge}
-                      emptyLabel={page.vendor.groupEmpty}
-                      onSelect={selectVendor}
-                    />
-                    <VendorGroup
-                      title={page.channel.groups.plan}
-                      vendors={planVendors}
-                      selectedId={values.vendor_id}
-                      badge={page.channel.plan.badge}
-                      emptyLabel={page.vendor.groupEmpty}
-                      onSelect={selectVendor}
-                    />
-                    <VendorGroup
-                      title={page.channel.groups.thirdParty}
-                      vendors={thirdPartyVendors}
-                      selectedId={values.vendor_id}
-                      badge={page.channel.thirdParty.badge}
-                      emptyLabel={page.channel.thirdParty.description}
-                      onSelect={selectVendor}
-                    />
-                    <div>
-                      <h4 className="text-[13px] font-medium text-ink-3">
-                        {page.channel.custom.title}
-                      </h4>
-                      <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                        <label
-                          className={cn(
-                            'flex cursor-pointer items-center justify-between gap-3 rounded-md border px-4 py-3.5 transition-colors',
-                            isCustomVendor
-                              ? 'border-brand bg-brand-soft/60'
-                              : 'border-line bg-bg hover:border-brand/40',
-                          )}
-                        >
-                          <span className="min-w-0">
-                            <span className="flex items-center gap-1.5">
-                              <span className="block truncate text-[13px] font-medium text-ink">
-                                {page.channel.custom.title}
-                              </span>
-                              <Tag>{page.channel.custom.badge}</Tag>
-                            </span>
-                            <span className="block truncate text-[13px] text-ink-3">
-                              {page.channel.custom.description}
-                            </span>
-                          </span>
-                          <input
-                            type="radio"
-                            name="vendor_id"
-                            value={CUSTOM_VENDOR_ID}
-                            checked={isCustomVendor}
-                            onChange={() => selectVendor(CUSTOM_VENDOR_ID)}
-                            className="h-4 w-4 shrink-0 accent-brand"
-                          />
-                        </label>
-                      </div>
-                      {isCustomVendor ? (
-                        <div className="mt-3 max-w-xl">
-                          <Field
-                            label={page.channel.custom.label}
-                            htmlFor="new-listing-custom-url"
-                            hint={page.channel.custom.hint}
-                            error={form.formState.errors.custom_base_url?.message}
-                          >
-                            <Input
-                              id="new-listing-custom-url"
-                              type="url"
-                              spellCheck={false}
-                              placeholder={page.channel.custom.placeholder}
-                              invalid={Boolean(form.formState.errors.custom_base_url)}
-                              {...form.register('custom_base_url')}
-                            />
-                          </Field>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                )}
-              </Field>
+              <div className="max-w-2xl space-y-4">
+                <Field
+                  label={page.url.label}
+                  htmlFor="new-listing-url"
+                  hint={page.url.hint}
+                  error={form.formState.errors.url?.message}
+                >
+                  <Input
+                    id="new-listing-url"
+                    type="url"
+                    spellCheck={false}
+                    placeholder={page.url.placeholder}
+                    invalid={Boolean(form.formState.errors.url)}
+                    {...form.register('url')}
+                  />
+                </Field>
+                <Field
+                  label={page.key.label}
+                  htmlFor="new-listing-keys"
+                  hint={page.key.hint}
+                  error={form.formState.errors.api_keys?.message}
+                >
+                  <textarea
+                    id="new-listing-keys"
+                    rows={4}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder={page.key.placeholder}
+                    aria-invalid={Boolean(form.formState.errors.api_keys) || undefined}
+                    className="w-full rounded-md border border-transparent bg-bg-soft px-4 py-3 font-mono text-[14px] text-ink transition-colors placeholder:text-ink-3 focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft aria-[invalid=true]:border-danger"
+                    {...form.register('api_keys')}
+                  />
+                </Field>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[13px] text-ink-3">
+                    {keys.length > 0 ? page.key.count(keys.length) : page.key.empty}
+                  </span>
+                  <TrustBadge
+                    trust={trust}
+                    recognizing={recognizing}
+                    error={recognizeError}
+                  />
+                </div>
+                {trust?.trust === 'blocked' ? (
+                  <p className="text-[13px] leading-5 text-danger" role="alert">
+                    {page.trust.blocked}
+                  </p>
+                ) : trust?.trust === 'watch' || trust?.trust === 'unlisted' ? (
+                  <p className="text-[13px] leading-5 text-warn" role="status">
+                    {trust.trust === 'watch' ? page.trust.watch : page.trust.unlisted}
+                  </p>
+                ) : null}
+              </div>
 
-              {selectedVendor && !vendorHasModels ? (
+              <CommonAddressList
+                addresses={commonAddresses.data ?? []}
+                pending={commonAddresses.isPending}
+                error={commonAddresses.isError}
+                onPick={pickCommonAddress}
+                onRetry={() => void commonAddresses.refetch()}
+              />
+            </div>
+          ) : null}
+
+          {step === 1 ? (
+            <div className="space-y-5">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h3 className="text-[14px] font-semibold text-ink">{page.models.title}</h3>
+                  <p className="mt-1 text-[13px] text-ink-3">{page.models.lead}</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="flex items-center gap-2 text-[13px] text-ink-3">
+                    {page.models.batchLabel}
+                    <Input
+                      className="w-24"
+                      inputMode="decimal"
+                      value={batchMultiplier}
+                      onChange={(event) => {
+                        setBatchMultiplier(event.target.value)
+                        setBatchApplied(false)
+                      }}
+                    />
+                  </label>
+                  <Button variant="secondary" size="sm" onClick={applyBatchMultiplier}>
+                    {page.models.applyAll}
+                  </Button>
+                  {batchApplied ? (
+                    <span className="text-[13px] text-brand-ink" role="status">
+                      {page.models.applied}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              <p className="text-[13px] text-ink-3">{page.models.batchHint}</p>
+
+              {probingKeys ? (
+                <div className="flex items-center gap-2" aria-busy="true" aria-live="polite">
+                  <Skeleton className="h-4 w-4 rounded-full" />
+                  <span className="text-[13px] text-ink-3">{page.models.loading}</span>
+                </div>
+              ) : availableModels.length === 0 ? (
                 <p className="text-[13px] leading-5 text-warn" role="status">
-                  {page.vendor.modelsEmpty}
+                  {page.models.noModels}
+                </p>
+              ) : (
+                <Table minWidth={760} size="compact">
+                  <TableHead>
+                    <TableRow>
+                      <TableHeaderCell className="w-12">{page.models.columns.select}</TableHeaderCell>
+                      <TableHeaderCell>{page.models.columns.model}</TableHeaderCell>
+                      <TableHeaderCell>{page.models.columns.endpoint}</TableHeaderCell>
+                      <TableHeaderCell>{page.models.columns.multiplier}</TableHeaderCell>
+                      <TableHeaderCell>{page.models.columns.buyer}</TableHeaderCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {availableModels.map((model) => {
+                      const checked = values.models.includes(model)
+                      const multiplierMilli = multipliers[model] ?? DEFAULT_MULTIPLIER_MILLI
+                      const coefficientMilli = recognition?.coefficients?.[model] ?? 1000
+                      return (
+                        <TableRow key={model}>
+                          <TableCell>
+                            <input
+                              type="checkbox"
+                              aria-label={model}
+                              checked={checked}
+                              onChange={(event) => toggleModel(model, event.target.checked)}
+                              className="h-4 w-4 accent-brand"
+                            />
+                          </TableCell>
+                          <TableCell className="font-mono text-[13px]">{model}</TableCell>
+                          <TableCell>
+                            <div className="flex flex-wrap gap-1.5">
+                              {endpoints.map((endpoint) => (
+                                <Tag key={endpoint}>{endpointLabel(endpoint)}</Tag>
+                              ))}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              className="w-24"
+                              type="number"
+                              min={0.1}
+                              max={1}
+                              step={0.1}
+                              aria-label={page.models.multiplierLabel(model)}
+                              value={(multiplierMilli / 1000).toFixed(1)}
+                              onChange={(event) => setModelMultiplier(model, event.target.value)}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <BuyerPriceCell
+                              model={model}
+                              multiplierMilli={multiplierMilli}
+                              coefficientMilli={coefficientMilli}
+                              feePercent={feePercent}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+              {Object.keys(keyProbes).length < keys.length && !probingKeys ? (
+                <p className="text-[13px] text-ink-3" role="status">
+                  {page.models.partial}
                 </p>
               ) : null}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[13px] text-ink-3">
+                  {page.models.selected(values.models.length)}
+                </span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  loading={probingKeys}
+                  onClick={() => void probeAllKeys(true)}
+                >
+                  {probingKeys ? page.verify.rechecking : page.verify.recheck}
+                </Button>
+              </div>
+              {new Set(values.models.map((model) => multipliers[model])).size > 1 ? (
+                <p className="text-[13px] leading-5 text-warn" role="status">
+                  {page.models.mixedMultiplier}
+                </p>
+              ) : null}
+              {form.formState.errors.models?.message ? (
+                <p className="text-[13px] text-danger" role="alert">
+                  {form.formState.errors.models.message}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {step === 2 ? (
+            <div className="max-w-3xl space-y-6">
+              <div>
+                <h3 className="text-[14px] font-semibold text-ink">{page.limits.title}</h3>
+                <p className="mt-1 text-[13px] text-ink-3">{page.limits.lead}</p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <Field
+                  label={page.limits.concurrency}
+                  htmlFor="listing-concurrency"
+                  hint={page.limits.concurrencyHint}
+                  error={form.formState.errors.concurrency?.message}
+                >
+                  <Input
+                    id="listing-concurrency"
+                    type="number"
+                    min={1}
+                    max={1000}
+                    {...form.register('concurrency', { valueAsNumber: true })}
+                  />
+                </Field>
+                <Field
+                  label={page.limits.rpm}
+                  htmlFor="listing-rpm"
+                  hint={page.limits.rpmHint}
+                  error={form.formState.errors.rpm?.message}
+                >
+                  <Input
+                    id="listing-rpm"
+                    type="number"
+                    min={0}
+                    max={1_000_000}
+                    {...form.register('rpm', { valueAsNumber: true })}
+                  />
+                </Field>
+                <Field
+                  label={page.limits.dailyCap}
+                  htmlFor="listing-daily-cap"
+                  hint={page.limits.dailyCapHint}
+                  error={form.formState.errors.daily_cap_yuan?.message}
+                >
+                  <Input
+                    id="listing-daily-cap"
+                    inputMode="decimal"
+                    {...form.register('daily_cap_yuan')}
+                  />
+                </Field>
+              </div>
+
+              <div className="border-t border-line pt-4">
+                <h3 className="text-[14px] font-semibold text-ink">{page.limits.hoursTitle}</h3>
+                <p className="mt-1 text-[13px] text-ink-3">{page.limits.hoursLead}</p>
+                <div className="mt-3 grid gap-3">
+                  {DAY_KEYS.map((day) => (
+                    <AvailabilityGroup
+                      key={day}
+                      day={day}
+                      label={page.limits.dayTypes[day]}
+                      register={form.register}
+                      error={
+                        form.formState.errors.availability?.[day]?.idleEnd?.message ??
+                        form.formState.errors.availability?.[day]?.peakEnd?.message
+                      }
+                    />
+                  ))}
+                </div>
+                {!flatHours.any ? (
+                  <p className="mt-2 text-[13px] text-ink-3">{page.limits.noHours}</p>
+                ) : null}
+              </div>
 
               {requiresPlanTerms ? (
                 <div className="rounded-md border border-brand/25 bg-brand-soft/40 px-4 py-3">
@@ -706,9 +1110,9 @@ export function NewListingPage() {
                   {quotaWindowText ? (
                     <p className="mt-1 text-[13px] leading-5 text-ink-2">{quotaWindowText}</p>
                   ) : null}
-                  {selectedVendor?.terms_url ? (
+                  {matchedVendor?.terms_url ? (
                     <a
-                      href={selectedVendor.terms_url}
+                      href={matchedVendor.terms_url}
                       target="_blank"
                       rel="noreferrer"
                       className="mt-1 inline-block text-[13px] text-brand-ink underline"
@@ -716,450 +1120,228 @@ export function NewListingPage() {
                       {page.plan.termsLink}
                     </a>
                   ) : null}
+                  <label className="mt-3 flex items-start gap-2 text-[13px] text-ink">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 shrink-0 accent-brand"
+                      {...form.register('plan_terms_accepted')}
+                    />
+                    <span>{page.plan.terms}</span>
+                  </label>
+                  <p className="mt-1 pl-6 text-[13px] leading-5 text-ink-3">
+                    {page.plan.termsHint}
+                  </p>
+                  {!values.plan_terms_accepted ? (
+                    <p className="mt-1 pl-6 text-[13px] text-warn" role="status">
+                      {page.plan.required}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
             </div>
           ) : null}
 
-          {step === 1 ? (
-            <div className="max-w-xl space-y-4">
-              <Field
-                label={page.key.label}
-                htmlFor="new-listing-key"
-                hint={page.key.hint}
-                error={form.formState.errors.api_key?.message}
-              >
-                <PasswordInput
-                  id="new-listing-key"
-                  autoComplete="new-password"
-                  spellCheck={false}
-                  placeholder={page.key.placeholder}
-                  invalid={Boolean(form.formState.errors.api_key)}
-                  {...form.register('api_key')}
-                />
-              </Field>
-              <div className="rounded-md bg-bg-soft px-4 py-3 text-[13px]">
-                <span className="text-ink-3">
-                  {values.api_key.trim().length >= 4
-                    ? page.key.preview(values.api_key.trim().slice(-4))
-                    : page.key.previewEmpty}
-                </span>
-              </div>
-            </div>
-          ) : null}
-
-          {step === 2 ? (
-            <div className="space-y-5">
-              {probe.isPending ? (
-                <div className="space-y-3" aria-busy="true" aria-live="polite">
-                  <p className="text-[13px] text-ink-3">{page.verify.probing}</p>
-                  <Skeleton className="h-16 w-full" />
-                  <Skeleton className="h-10 w-2/3" />
-                </div>
-              ) : probe.isError ? (
-                <Empty
-                  title={page.verify.invalid}
-                  reason={sellerErrorMessage(probe.error)}
-                  next={copy.pages.sellerCommon.probeErrors.generic}
-                  action={
-                    <Button variant="secondary" onClick={runProbe}>
-                      {page.verify.retry}
-                    </Button>
-                  }
-                />
-              ) : probe.data ? (
-                <>
-                  <ProbeSummary probe={probe.data} />
-
-                  <div className="border-t border-line pt-4">
-                    <div className="flex flex-wrap items-baseline justify-between gap-2">
-                      <h3 className="text-[13px] font-medium text-ink">
-                        {page.verify.modelsTitle}
-                      </h3>
-                      <span className="text-[13px] text-ink-3">
-                        {page.verify.selected(values.models.length, vendorModels.length)}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-[13px] text-ink-3">{page.verify.modelsHint}</p>
-
-                    {vendorModels.length === 0 ? (
-                      <p className="mt-3 text-[13px] text-warn" role="status">
-                        {page.vendor.modelsEmpty}
-                      </p>
-                    ) : (
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                        {vendorModels.map((model) => {
-                          const callable = probedModels.includes(model)
-                          return (
-                            <label
-                              key={model}
-                              className={cn(
-                                'flex items-center gap-2 rounded-md border border-line px-3 py-2 text-[13px]',
-                                callable
-                                  ? 'cursor-pointer text-ink hover:border-brand/40'
-                                  : 'cursor-not-allowed text-ink-3 opacity-70',
-                              )}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={values.models.includes(model)}
-                                disabled={!callable}
-                                onChange={(event) => toggleModel(model, event.target.checked)}
-                                className="h-4 w-4 accent-brand"
-                              />
-                              <span className="tabular-nums">{model}</span>
-                            </label>
-                          )
-                        })}
-                      </div>
-                    )}
-                    {probe.data && uncallableModels.length > 0 ? (
-                      <p className="mt-2 text-[13px] leading-5 text-warn" role="status">
-                        {page.verify.missing(uncallableModels.join('、'))}
-                      </p>
-                    ) : null}
-                    {form.formState.errors.models?.message ? (
-                      <p className="mt-2 text-[13px] text-danger" role="alert">
-                        {form.formState.errors.models.message}
-                      </p>
-                    ) : null}
-                  </div>
-
-                  <div className="flex justify-end border-t border-line pt-4">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      loading={probe.isPending}
-                      onClick={runProbe}
-                    >
-                      {probe.isPending ? page.verify.retrying : page.verify.retry}
-                    </Button>
-                  </div>
-                </>
-              ) : (
-                <Button variant="secondary" onClick={runProbe}>
-                  {page.actions.probe}
-                </Button>
-              )}
-            </div>
-          ) : null}
-
           {step === 3 ? (
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-              <div className="space-y-6">
+            <div className="max-w-2xl space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <div className="flex items-end justify-between gap-3">
-                    <Field label={page.pricing.label} hint={page.pricing.lead}>
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="range"
-                          min={1}
-                          max={1000}
-                          step={1}
-                          value={values.multiplier_milli}
-                          onChange={(event) => {
-                            const next = Number(event.target.value)
-                            setMultiplierText((next / 1000).toFixed(3))
-                            form.setValue('multiplier_milli', next, { shouldValidate: true })
-                          }}
-                          className="h-1.5 w-full cursor-pointer accent-brand"
-                          aria-label={page.pricing.label}
-                        />
-                        <Input
-                          aria-label={page.pricing.inputLabel}
-                          className="w-24 shrink-0 text-right"
-                          inputMode="decimal"
-                          value={multiplierText}
-                          onChange={(event) => {
-                            const text = event.target.value
-                            setMultiplierText(text)
-                            const next = Number(text)
-                            if (Number.isFinite(next)) {
-                              form.setValue(
-                                'multiplier_milli',
-                                Math.min(1000, Math.max(1, Math.round(next * 1000))),
-                                { shouldValidate: true },
-                              )
-                            }
-                          }}
-                        />
-                      </div>
-                    </Field>
-                  </div>
-                  {form.formState.errors.multiplier_milli?.message ? (
-                    <p className="mt-1 text-[13px] text-danger" role="alert">
-                      {form.formState.errors.multiplier_milli.message}
-                    </p>
-                  ) : null}
+                  <h3 className="text-[14px] font-semibold text-ink">{page.advanced.title}</h3>
+                  <p className="mt-1 text-[13px] text-ink-3">{page.advanced.lead}</p>
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  aria-expanded={advancedOpen}
+                  onClick={() => setAdvancedOpen((open) => !open)}
+                >
+                  {advancedOpen ? page.advanced.collapse : page.advanced.expand}
+                </Button>
+              </div>
 
-                  {requiresPlanTerms ? (
-                    <div className="mt-4 rounded-md border border-brand/25 bg-brand-soft/40 px-4 py-3">
-                      <label className="flex items-start gap-2 text-[13px] text-ink">
+              {advancedOpen ? (
+                <div className="space-y-6">
+                  <fieldset>
+                    <legend className="text-[13px] font-medium text-ink">
+                      {page.advanced.keyPolicy}
+                    </legend>
+                    <p className="mt-1 text-[13px] text-ink-3">{page.advanced.keyPolicyHint}</p>
+                    <div className="mt-2 flex flex-wrap gap-4">
+                      <label className="flex items-center gap-2 text-[13px] text-ink">
                         <input
-                          type="checkbox"
-                          className="mt-0.5 h-4 w-4 shrink-0 accent-brand"
-                          {...form.register('plan_terms_accepted')}
+                          type="radio"
+                          value="weighted"
+                          className="h-4 w-4 accent-brand"
+                          {...form.register('key_strategy')}
                         />
-                        <span>{page.plan.terms}</span>
+                        {page.advanced.weighted}
                       </label>
-                      <p className="mt-1 pl-6 text-[13px] leading-5 text-ink-3">
-                        {page.plan.termsHint}
-                      </p>
-                      {!values.plan_terms_accepted ? (
-                        <p className="mt-1 pl-6 text-[13px] text-warn" role="status">
-                          {page.plan.required}
-                        </p>
-                      ) : null}
+                      <label className="flex items-center gap-2 text-[13px] text-ink">
+                        <input
+                          type="radio"
+                          value="primary_backup"
+                          className="h-4 w-4 accent-brand"
+                          {...form.register('key_strategy')}
+                        />
+                        {page.advanced.primaryBackup}
+                      </label>
                     </div>
-                  ) : null}
-                </div>
+                  </fieldset>
 
-                <div className="border-t border-line pt-4">
-                  <h3 className="text-[13px] font-medium text-ink">{page.pricing.limitsTitle}</h3>
-                  <div className="mt-3 grid gap-4 sm:grid-cols-3">
-                    <Field
-                      label={page.pricing.concurrency}
-                      htmlFor="listing-concurrency"
-                      hint={page.pricing.concurrencyHint}
-                      error={form.formState.errors.concurrency?.message}
-                    >
-                      <Input
-                        id="listing-concurrency"
-                        type="number"
-                        min={1}
-                        max={1000}
-                        {...form.register('concurrency', { valueAsNumber: true })}
-                      />
-                    </Field>
-                    <Field
-                      label={page.pricing.rpm}
-                      htmlFor="listing-rpm"
-                      hint={page.pricing.rpmHint}
-                      error={form.formState.errors.rpm?.message}
-                    >
-                      <Input
-                        id="listing-rpm"
-                        type="number"
-                        min={0}
-                        max={1_000_000}
-                        {...form.register('rpm', { valueAsNumber: true })}
-                      />
-                    </Field>
-                    <Field
-                      label={page.pricing.dailyCap}
-                      htmlFor="listing-daily-cap"
-                      hint={page.pricing.dailyCapHint}
-                      error={form.formState.errors.daily_cap_yuan?.message}
-                    >
-                      <Input
-                        id="listing-daily-cap"
-                        inputMode="decimal"
-                        {...form.register('daily_cap_yuan')}
-                      />
-                    </Field>
-                  </div>
-                </div>
-
-                <div className="border-t border-line pt-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <h3 className="text-[13px] font-medium text-ink">{page.pricing.hours}</h3>
-                      <p className="mt-1 text-[13px] text-ink-3">{page.pricing.hoursHint}</p>
-                    </div>
-                    <label className="flex items-center gap-2 text-[13px] text-ink">
+                  <div>
+                    <label className="flex items-center gap-2 text-[13px] font-medium text-ink">
                       <input
                         type="checkbox"
                         className="h-4 w-4 accent-brand"
-                        {...form.register('use_hours')}
-                        onChange={(event) => {
-                          const checked = event.target.checked
-                          form.setValue('use_hours', checked, { shouldValidate: true })
-                          if (checked && fields.length === 0) {
-                            append({ start: '09:00', end: '18:00' })
-                          }
-                        }}
+                        {...form.register('affinity')}
                       />
-                      {page.pricing.enableHours}
+                      {page.advanced.affinity}
                     </label>
+                    <p className="mt-1 pl-6 text-[13px] text-ink-3">
+                      {page.advanced.affinityHint}
+                    </p>
                   </div>
 
-                  {values.use_hours ? (
-                    <div className="mt-3 space-y-2">
-                      {fields.length === 0 ? (
-                        <p className="text-[13px] text-ink-3">{page.pricing.noWindow}</p>
-                      ) : null}
-                      {fields.map((field, index) => (
-                        <div key={field.id} className="flex flex-wrap items-end gap-2">
-                          <Field
-                            label={page.pricing.start}
-                            className="w-[132px]"
-                            error={form.formState.errors.hours?.[index]?.start?.message}
-                          >
-                            <Input type="time" {...form.register(`hours.${index}.start`)} />
-                          </Field>
-                          <span className="pb-2 text-ink-3" aria-hidden="true">
-                            –
-                          </span>
-                          <Field
-                            label={page.pricing.end}
-                            className="w-[132px]"
-                            error={form.formState.errors.hours?.[index]?.end?.message}
-                          >
-                            <Input type="time" {...form.register(`hours.${index}.end`)} />
-                          </Field>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="mb-0.5"
-                            onClick={() => remove(index)}
-                          >
-                            {page.pricing.removeWindow}
-                          </Button>
-                        </div>
-                      ))}
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => append({ start: '09:00', end: '18:00' })}
+                  <div className="border-t border-line pt-4">
+                    <h4 className="text-[13px] font-medium text-ink">{page.advanced.headers}</h4>
+                    {trust?.trust === 'unlisted' ? (
+                      <Field
+                        label={page.advanced.headers}
+                        htmlFor="new-listing-headers"
+                        hint={page.advanced.headersHint}
+                        error={form.formState.errors.headers?.message}
                       >
-                        {page.pricing.addWindow}
-                      </Button>
+                        <textarea
+                          id="new-listing-headers"
+                          rows={3}
+                          spellCheck={false}
+                          placeholder={'X-Custom-Header: value'}
+                          className="w-full rounded-md border border-transparent bg-bg-soft px-4 py-3 font-mono text-[14px] text-ink transition-colors placeholder:text-ink-3 focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft aria-[invalid=true]:border-danger"
+                          {...form.register('headers')}
+                        />
+                      </Field>
+                    ) : (
+                      <p className="mt-2 text-[13px] text-ink-3">{page.advanced.headersLocked}</p>
+                    )}
+                  </div>
+
+                  <div className="border-t border-line pt-4">
+                    <h4 className="text-[13px] font-medium text-ink">
+                      {page.advanced.endpoints}
+                    </h4>
+                    <p className="mt-1 text-[13px] text-ink-3">
+                      {page.advanced.endpointsHint}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-4">
+                      {(['openai_chat', 'openai_responses', 'anthropic_messages'] as const).map(
+                        (endpoint) => (
+                          <label
+                            key={endpoint}
+                            className="flex items-center gap-2 text-[13px] text-ink"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={manualEndpoints.includes(endpoint)}
+                              onChange={(event) => {
+                                setManualEndpoints((current) =>
+                                  event.target.checked
+                                    ? [...current, endpoint]
+                                    : current.filter((item) => item !== endpoint),
+                                )
+                              }}
+                              className="h-4 w-4 accent-brand"
+                            />
+                            {endpointLabel(endpoint)}
+                          </label>
+                        ),
+                      )}
                     </div>
-                  ) : (
-                    <p className="mt-2 text-[13px] text-ink-3">{page.pricing.noWindow}</p>
-                  )}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {step === 4 ? (
+            <div className="space-y-5">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h3 className="text-[14px] font-semibold text-ink">{page.verify.title}</h3>
+                  <p className="mt-1 text-[13px] text-ink-3">{page.verify.lead}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[13px] tabular-nums text-ink-3">
+                    {page.verify.passed(passedCount, verification.length)}
+                  </span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    loading={probingKeys}
+                    onClick={() => void probeAllKeys(true)}
+                  >
+                    {probingKeys ? page.verify.rechecking : page.verify.recheck}
+                  </Button>
                 </div>
               </div>
 
-              <aside className="rounded-md bg-bg-soft p-5">
-                <h3 className="text-[14px] font-semibold text-ink">{page.pricing.title}</h3>
+              {keys.length === 0 || values.models.length === 0 ? (
+                <p className="text-[13px] text-ink-3">{page.verify.noSelection}</p>
+              ) : (
+                <Table minWidth={760} size="compact">
+                  <TableHead>
+                    <TableRow>
+                      <TableHeaderCell>{page.verify.columns.key}</TableHeaderCell>
+                      <TableHeaderCell>{page.verify.columns.model}</TableHeaderCell>
+                      <TableHeaderCell>{page.verify.columns.endpoint}</TableHeaderCell>
+                      <TableHeaderCell>{page.verify.columns.result}</TableHeaderCell>
+                      <TableHeaderCell>{page.verify.columns.reason}</TableHeaderCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {verification.map((cell: VerificationCell) => (
+                      <TableRow key={`${cell.key}|${cell.model}|${cell.endpoint}`}>
+                        <TableCell className="font-mono text-[13px]">
+                          {maskApiKey(cell.key)}
+                        </TableCell>
+                        <TableCell className="font-mono text-[13px]">{cell.model}</TableCell>
+                        <TableCell>{endpointLabel(cell.endpoint)}</TableCell>
+                        <TableCell>
+                          <Tag tone={cell.ok ? 'brand' : 'danger'} dot>
+                            {cell.ok ? page.verify.pass : page.verify.fail}
+                          </Tag>
+                        </TableCell>
+                        <TableCell className="text-[13px] text-ink-3">
+                          {cell.ok
+                            ? '—'
+                            : probeErrors[cell.key] ||
+                              cell.failReason ||
+                              page.verify.notProbed}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+              <p className="text-[13px] leading-5 text-ink-3">{page.verify.endpointNote}</p>
 
-                {values.models.length > 1 ? (
-                  <label className="mt-3 block">
-                    <span className="block text-[13px] text-ink-3">
-                      {page.pricing.previewModel}
-                    </span>
-                    <select
-                      className={cn(selectClass, 'mt-1')}
-                      value={effectivePreviewModel}
-                      onChange={(event) => setPreviewModel(event.target.value)}
-                    >
-                      {values.models.map((model) => (
-                        <option key={model} value={model}>
-                          {model}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : (
-                  <div className="mt-2 tabular-nums text-[13px] text-ink-3">
-                    {effectivePreviewModel || '—'}
-                  </div>
-                )}
-
-                {market.isPending ? (
-                  <div className="mt-4 space-y-2" aria-busy="true">
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-2/3" />
-                  </div>
-                ) : preview ? (
-                  <dl className="mt-4 space-y-3">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <dt className="text-[13px] text-ink-3">{page.pricing.official}</dt>
-                      <dd>
-                        <Price
-                          value={officialPrice ?? 0}
-                          tier={tier}
-                          size="sm"
-                          unit={null}
-                        />
-                      </dd>
-                    </div>
-                    <div className="flex items-baseline justify-between gap-3">
-                      <dt className="text-[13px] text-ink-3">{page.pricing.coefficient}</dt>
-                      <dd className="tabular-nums text-[13px] text-ink-3">
-                        ×{formatMultiplier(coefficientMilli)}
-                      </dd>
-                    </div>
-                    <div className="flex items-baseline justify-between gap-3">
-                      <dt className="text-[13px] text-ink-3">{page.pricing.buyer}</dt>
-                      <dd>
-                        <Price value={preview.buyerMicro} tier={tier} size="sm" unit={null} />
-                      </dd>
-                    </div>
-                    <p className="text-[13px] leading-5 text-ink-3">
-                      {page.pricing.buyerHint}
-                    </p>
-                    <div className="flex items-baseline justify-between gap-3 border-t border-line pt-3">
-                      <dt className="text-[13px] text-ink-3">{page.pricing.seller}</dt>
-                      <dd className="text-[18px] font-semibold tabular-nums text-brand-ink">
-                        {formatYuan(preview.sellerMicro)}
-                      </dd>
-                    </div>
-                    <p className="text-[13px] leading-5 text-ink-3">
-                      {page.pricing.sellerHint(preview.feePercent)}
-                    </p>
-                    <div className="flex items-baseline justify-between gap-3">
-                      <dt className="text-[13px] text-ink-3">{page.pricing.fee}</dt>
-                      <dd className="text-[13px] tabular-nums text-ink-3">
-                        {formatYuan(preview.feeMicro)} ·{' '}
-                        {page.pricing.feeRate(preview.feePercent)}
-                      </dd>
-                    </div>
-                  </dl>
-                ) : (
-                  <p className="mt-4 text-[13px] leading-5 text-ink-3">
-                    {page.pricing.noOfficial}
-                  </p>
-                )}
-
-                <div className="mt-4 border-t border-line pt-3">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-[13px] text-ink-3">{page.pricing.marketLowest}</span>
-                    <span>
-                      {marketMin ? (
-                        <Multiplier milli={marketMin} showSaving={false} />
-                      ) : (
-                        <span className="text-[13px] text-ink-3">—</span>
-                      )}
-                    </span>
-                  </div>
-                  {comparison ? (
-                    <p
-                      className={cn(
-                        'mt-2 text-[13px]',
-                        comparison === 'lower'
-                          ? 'text-brand-ink'
-                          : comparison === 'higher'
-                            ? 'text-warn'
-                            : 'text-ink-3',
-                      )}
-                    >
-                      {comparison === 'higher'
-                        ? page.pricing.compareHigher(
-                            formatMultiplier(values.multiplier_milli - (marketMin ?? 0)),
-                          )
-                        : comparison === 'lower'
-                          ? page.pricing.compareLower(
-                              formatMultiplier((marketMin ?? 0) - values.multiplier_milli),
-                            )
-                          : page.pricing.compareSame}
-                    </p>
-                  ) : (
-                    <p className="mt-2 text-[13px] text-ink-3">{page.pricing.noMarket}</p>
-                  )}
-                </div>
-
-                <div className="mt-4 border-t border-line pt-3 text-[13px] leading-5 text-ink-3">
-                  {page.pricing.summary(
-                    formatMultiplier(values.multiplier_milli),
-                    savingPercent(values.multiplier_milli),
-                  )}
-                  <span className="mt-1 block text-[13px] text-ink-3/80">
-                    {page.pricing.tierNote(copy.tiers[tier])}
-                  </span>
-                </div>
-              </aside>
+              <div className="flex flex-wrap items-center gap-3 border-t border-line pt-4">
+                <Button
+                  onClick={publishPassing}
+                  loading={create.isPending}
+                  disabled={!canSubmit(snapshot) || !hasPassingModels}
+                  title={!hasPassingModels ? page.verify.nothingPassed : undefined}
+                >
+                  {create.isPending ? page.verify.creating : page.verify.publishPassing}
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={keepAsDraft}
+                  disabled={!canSubmit(snapshot) || create.isPending}
+                >
+                  {page.verify.keepDraft}
+                </Button>
+              </div>
+              <p className="text-[13px] leading-5 text-ink-3">{page.verify.publishHint}</p>
+              <p className="text-[13px] leading-5 text-ink-3">{page.verify.draftHint}</p>
             </div>
           ) : null}
 
@@ -1205,9 +1387,7 @@ export function NewListingPage() {
 
         <footer className="mt-6 flex items-center justify-between gap-2 border-t border-line pt-4">
           <div className="text-[13px] text-ink-3">
-            {values.models.length > 0
-              ? page.pricing.selectedCount(values.models.length)
-              : null}
+            {values.models.length > 0 ? page.models.selected(values.models.length) : null}
           </div>
           <div className="flex items-center gap-2">
             {step > 0 ? (
@@ -1219,26 +1399,14 @@ export function NewListingPage() {
                 {page.actions.back}
               </Button>
             ) : null}
-            {step < 3 ? (
+            {step < 4 ? (
               <Button
-                onClick={() => void handleNext()}
-                disabled={
-                  !canLeaveStep(step, snapshot) ||
-                  ((step === 0 || step === 2) && !vendorHasModels) ||
-                  probe.isPending
-                }
+                onClick={handleNext}
+                disabled={!canLeaveStep(step, snapshot) || probingKeys}
               >
                 {page.actions.next}
               </Button>
-            ) : (
-              <Button
-                type="submit"
-                loading={create.isPending}
-                disabled={!canSubmit(snapshot)}
-              >
-                {create.isPending ? page.pricing.submitting : page.actions.create}
-              </Button>
-            )}
+            ) : null}
           </div>
         </footer>
       </form>

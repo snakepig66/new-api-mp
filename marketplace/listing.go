@@ -243,11 +243,35 @@ func dedupModels(models []string) []string {
 // and finally the listing itself, all in one transaction. The channel's Key
 // column holds only the "mp-managed:<fp8>" placeholder — the real key lives
 // solely in Listing.KeyCiphertext.
+//
+// A seller-defined upstream that the trust pool classifies as watch or
+// unlisted is created in pending_review instead of draft, so no automated
+// verification can promote it.
 func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
+	// A custom upstream is classified by the trust pool before any channel row
+	// is provisioned: blocked addresses are refused, watch/unlisted addresses
+	// may be listed but stay in pending_review until an operator approves them,
+	// and a trusted address keeps the automated verification flow. Platform
+	// channels (VendorID set) are already governed by mp_channels, so their
+	// existing flow is unchanged.
+	trust := TrustTrusted
 	// Seller-defined upstream: provision the private third-party channel first
 	// and derive the vendor id from it, then run the standard flow unchanged.
 	if strings.TrimSpace(in.VendorID) == "" && strings.TrimSpace(in.CustomBaseURL) != "" {
-		slug, err := ensureCustomChannel(db, in.SellerID, in.CustomBaseURL, in.Models)
+		base, host, err := validateCustomBaseURL(in.CustomBaseURL)
+		if err != nil {
+			return Listing{}, err
+		}
+		// The credential is passed whole: a key_prefix row matches when its
+		// configured prefix is a prefix of it (trustpool.go).
+		trust, _, err = CheckTrustPoolDB(db, host, customBasePath(base), strings.TrimSpace(in.APIKey))
+		if err != nil {
+			return Listing{}, err
+		}
+		if trust == TrustBlocked {
+			return Listing{}, fmt.Errorf("%w: host %q", ErrTrustPoolBlocked, host)
+		}
+		slug, err := ensureCustomChannel(db, in.SellerID, base, in.Models)
 		if err != nil {
 			return Listing{}, err
 		}
@@ -390,6 +414,15 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 		if concurrency <= 0 {
 			concurrency = defaultListingConcurrency
 		}
+		// A watch/unlisted upstream cannot be verified automatically: the
+		// listing exists but stays in pending_review until an operator approves
+		// it. VerifyListing only accepts draft, so the async verification path
+		// cannot promote it (and the host stays out of the relay whitelist until
+		// a listing is live/canary).
+		status := ListingDraft
+		if trust == TrustWatch || trust == TrustUnlisted {
+			status = ListingPendingReview
+		}
 		listing = Listing{
 			SellerID:         in.SellerID,
 			ChannelID:        int64(channel.Id),
@@ -400,7 +433,7 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 			RPMLimit:         in.RPM,
 			DailyCapMicro:    in.DailyCapMicro,
 			Hours:            strings.TrimSpace(in.Hours),
-			Status:           ListingDraft,
+			Status:           status,
 			KeyFingerprint:   fingerprint,
 			KeyCiphertext:    ciphertext,
 			Version:          1,
@@ -483,9 +516,18 @@ func TransitionListing(db *gorm.DB, id int64, from, to string) error {
 	return transitionListingFrom(db, id, []string{from}, to)
 }
 
-// StartVerification moves draft → verifying (verification requested).
+// StartVerification moves draft → verifying (verification requested). An
+// operator-approved pending_review listing takes the same edge: approval is
+// what releases it into the automated flow (api_admin.go).
 func StartVerification(db *gorm.DB, id int64) error {
-	return TransitionListing(db, id, ListingDraft, ListingVerifying)
+	return transitionListingFrom(db, id, []string{ListingDraft, ListingPendingReview}, ListingVerifying)
+}
+
+// RejectListing moves pending_review → draft: the operator returned the
+// seller-defined upstream for correction. The seller can change the listing
+// and submit it again; the ordinary draft flow then re-runs verification.
+func RejectListing(db *gorm.DB, id int64) error {
+	return transitionListingFrom(db, id, []string{ListingPendingReview}, ListingDraft)
 }
 
 // PassVerification moves verifying → canary (key verified, 10% gray traffic).
@@ -715,10 +757,12 @@ func RefreshListingChannelMapping(db *gorm.DB, channelSlug, modelName, upstream 
 	return nil
 }
 
-// BanListing moves live/paused/canary/verifying → banned. Banned is terminal.
+// BanListing moves live/paused/canary/verifying/pending_review → banned.
+// Banned is terminal. pending_review is included so an operator can reject a
+// listing outright for a severe violation instead of returning it to draft.
 func BanListing(db *gorm.DB, id int64) error {
 	return transitionListingFrom(db, id,
-		[]string{ListingLive, ListingPaused, ListingCanary, ListingVerifying}, ListingBanned)
+		[]string{ListingLive, ListingPaused, ListingCanary, ListingVerifying, ListingPendingReview}, ListingBanned)
 }
 
 // UpdateMultiplier changes the listing's 倍率 (§3.5): it never re-verifies

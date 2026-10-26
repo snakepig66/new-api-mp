@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -84,6 +85,10 @@ func RegisterSellerRoutes(g *gin.RouterGroup) { registerSellerRoutes(g) }
 func registerSellerRoutes(g *gin.RouterGroup) {
 	g.POST("/seller/listings", postSellerListing)
 	g.GET("/seller/listings", listSellerListings)
+	// Common addresses come from the trust pool's trusted rows so the wizard can
+	// prefill an address the operator already certified. The handler lives in
+	// api_vendors.go next to the catalogue it describes.
+	g.GET("/seller/common-addresses", listSellerCommonAddresses)
 	// Static route, registered before the :id parameter route on purpose: gin
 	// matches static segments first, so /listings/health never parses "health"
 	// as a listing id.
@@ -306,8 +311,9 @@ func toSellerListingView(l *Listing) sellerListingView {
 	}
 }
 
-// postSellerListing serves POST /seller/listings — create a listing (draft)
-// and asynchronously trigger verification (§3.5 挂单向导). The response
+// postSellerListing serves POST /seller/listings — create a listing (draft,
+// or pending_review for an untrusted seller-defined upstream) and, for a
+// draft, asynchronously trigger verification (§3.5 挂单向导). The response
 // returns the listing id and status immediately; verification runs in the
 // background through the independent VerifyLimiter.
 func postSellerListing(c *gin.Context) {
@@ -362,7 +368,14 @@ func postSellerListing(c *gin.Context) {
 	// verification flips it to verifying → canary (or back to draft) in the
 	// background. The goroutine is recovered and logged so a panic never takes
 	// the request path down.
-	go verifyListingAsync(db, listing.ID)
+	//
+	// A seller-defined upstream the trust pool does not trust is parked in
+	// pending_review instead of draft: VerifyListing refuses any other start
+	// state, so starting it here would only write an ErrInvalidTransition log
+	// line. It stays untouched until an operator approves it (api_admin.go).
+	if listing.Status == ListingDraft {
+		go verifyListingAsync(db, listing.ID)
+	}
 	common.ApiSuccess(c, gin.H{"id": listing.ID, "status": listing.Status})
 }
 
@@ -425,6 +438,29 @@ func verifyListingAsync(db *gorm.DB, listingID int64) {
 	if !res.OK {
 		common.SysLog(common.LogText("marketplace: listing %d verification failed: %s", listingID, res.FailReason))
 	}
+}
+
+// verifyApprovedListingAsync runs the standard verification for a listing the
+// operator just approved. The approval edge records pending_review → verifying
+// for the console and the audit trail, but VerifyListing owns the
+// draft→verifying edge itself and refuses any other start state (fail-closed),
+// so this steps the row back to draft and lets the single verifier drive it.
+// A row another operator action has already moved on (banned, paused) is left
+// alone.
+func verifyApprovedListingAsync(db *gorm.DB, listingID int64) {
+	row, err := GetListing(db, listingID)
+	if err != nil {
+		common.SysError(common.LogText("marketplace: verify approved listing %d: %s", listingID, err.Error()))
+		return
+	}
+	if row.Status != ListingVerifying {
+		return
+	}
+	if err := revertVerificationToDraft(db, listingID); err != nil {
+		common.SysError(common.LogText("marketplace: verify approved listing %d: %s", listingID, err.Error()))
+		return
+	}
+	verifyListingAsync(db, listingID)
 }
 
 // listSellerListings serves GET /seller/listings — the seller's own listings,
@@ -541,6 +577,13 @@ func replaceSellerKey(c *gin.Context) {
 // 「重新检测」 without a state-changing key swap. Only draft listings qualify;
 // a listing already verifying returns 409 so a double click cannot queue two
 // probes.
+//
+// A seller-defined upstream the trust pool does not trust (watch/unlisted) is
+// refused here: such a listing reaches draft only through an operator's reject
+// decision (pending_review → draft), and letting the seller re-run verification
+// on it would bypass the review the trust pool requires. Only an operator
+// approve may release it into the automated flow (api_admin.go). Platform
+// channels are governed by mp_channels/operators and keep the automated flow.
 func verifySellerListing(c *gin.Context) {
 	sellerID, ok := sellerUserID(c)
 	if !ok {
@@ -568,6 +611,37 @@ func verifySellerListing(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest,
 			errors.New("only a draft listing can be re-verified"))
 		return
+	}
+	// Review-bypass guard. CreateListing parks a custom channel the trust pool
+	// classifies as watch/unlisted in pending_review; an operator reject moves
+	// it back to draft. Without this check the seller could then drive
+	// draft → verifying → canary on their own, skipping the review. Re-classify
+	// with the full stored credential (key-specific trust rows) and fail closed.
+	if isCustomChannelSlug(listing.Vendor) {
+		vendor, found := lookupVendorForDB(db, listing.Vendor)
+		if !found {
+			common.ApiErrorStatus(c, http.StatusForbidden, errors.New("该渠道需要运营审核"))
+			return
+		}
+		apiKey, err := DecryptListingKey(listing.KeyCiphertext)
+		if err != nil {
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to load listing key"))
+			return
+		}
+		host, path := sellerTrustAddress(vendor)
+		trust, _, err := CheckTrustPoolDB(db, host, path, apiKey)
+		if err != nil {
+			if errors.Is(err, ErrTrustPoolBlocked) {
+				common.ApiErrorStatus(c, http.StatusForbidden, errors.New("该渠道已被运营屏蔽"))
+				return
+			}
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to check channel trust"))
+			return
+		}
+		if trust != TrustTrusted {
+			common.ApiErrorStatus(c, http.StatusForbidden, errors.New("该渠道需要运营审核"))
+			return
+		}
 	}
 	go verifyListingAsync(db, id)
 	common.ApiSuccess(c, gin.H{"id": id, "status": ListingVerifying})
@@ -920,6 +994,113 @@ func resetProbeStateForTest() {
 	probeFingerprintOwners.mu.Unlock()
 }
 
+// sellerTrustPoolView is the recognition result the wizard shows as a badge
+// while the seller types an upstream address. It is metadata only: the probe
+// still runs the normal per-model verification, and listing creation re-checks
+// the trust pool independently.
+type sellerTrustPoolView struct {
+	Matched    bool     `json:"matched"`
+	Trust      string   `json:"trust"`
+	Kind       string   `json:"kind"`
+	VendorName string   `json:"vendor_name"`
+	Endpoints  []string `json:"endpoints"`
+	BadgeText  string   `json:"badge_text"`
+}
+
+// trustEndpointLabel is the short protocol name used in the badge.
+func trustEndpointLabel(endpoint string) string {
+	switch endpoint {
+	case "openai_chat":
+		return "OpenAI"
+	case "openai_responses":
+		return "OpenAI Responses"
+	case "anthropic_messages":
+		return "Anthropic"
+	default:
+		return endpoint
+	}
+}
+
+// trustKindLabel is the channel kind shown in the badge.
+func trustKindLabel(kind string) string {
+	switch kind {
+	case TrustKindOfficial:
+		return "官方"
+	case TrustKindPlan:
+		return "套餐"
+	case TrustKindThirdParty:
+		return "第三方"
+	default:
+		return ""
+	}
+}
+
+// trustStateLabel is the review state shown in the badge.
+func trustStateLabel(trust string) string {
+	switch trust {
+	case TrustTrusted:
+		return "免审核"
+	case TrustWatch:
+		return "人工审核"
+	case TrustBlocked:
+		return "已屏蔽"
+	default:
+		return "未收录 · 需人工审核"
+	}
+}
+
+// sellerTrustPoolViewFor classifies (host, path, key) and renders the badge.
+// It never carries the key and ignores the blocked error (the trust state is
+// what the console needs; the create/probe gates still fail closed).
+func sellerTrustPoolViewFor(db *gorm.DB, host, path, key string) sellerTrustPoolView {
+	trust, pool, _ := CheckTrustPool(host, path, key)
+	if trust == "" {
+		trust = TrustUnlisted
+	}
+	view := sellerTrustPoolView{Matched: pool != nil, Trust: trust, Endpoints: []string{}}
+	if pool != nil {
+		view.Kind = strings.TrimSpace(pool.Kind)
+		if view.Kind == "" {
+			view.Kind = TrustKindThirdParty
+		}
+		if slug := strings.TrimSpace(pool.VendorSlug); slug != "" {
+			view.VendorName = slug
+			if vendor, ok := lookupVendorForDB(db, slug); ok && strings.TrimSpace(vendor.DisplayName) != "" {
+				view.VendorName = vendor.DisplayName
+			}
+		}
+		view.Endpoints = append(view.Endpoints, parseStringList(pool.Endpoints)...)
+	}
+	parts := make([]string, 0, 4)
+	if view.VendorName != "" {
+		parts = append(parts, view.VendorName)
+	}
+	if label := trustKindLabel(view.Kind); label != "" {
+		parts = append(parts, label)
+	}
+	if len(view.Endpoints) > 0 {
+		labels := make([]string, 0, len(view.Endpoints))
+		for _, endpoint := range view.Endpoints {
+			labels = append(labels, trustEndpointLabel(endpoint))
+		}
+		parts = append(parts, strings.Join(labels, " + "))
+	}
+	parts = append(parts, trustStateLabel(view.Trust))
+	view.BadgeText = strings.Join(parts, " · ")
+	return view
+}
+
+// sellerTrustAddress returns the (host, path) of a vendor's OpenAI-compatible
+// base, which is the address the trust pool classifies for a registered
+// channel. A malformed base yields empty values and therefore "unlisted".
+func sellerTrustAddress(vendor Vendor) (host, path string) {
+	parsed, err := url.Parse(VendorOpenAIBase(vendor))
+	if err != nil {
+		return "", ""
+	}
+	return parsed.Hostname(), parsed.Path
+}
+
 // postSellerListingProbe serves POST /seller/listings/probe — one dry-run
 // verification identical to the async listing check (§3.5) plus the §4
 // certified-model discovery: key validity, balance, /models latency,
@@ -976,10 +1157,14 @@ func postSellerListingProbe(c *gin.Context) {
 	// channel row (and any relay-whitelist membership) is provisioned by
 	// CreateListing when the seller submits, never by a dry run.
 	if strings.TrimSpace(req.CustomBaseURL) != "" {
-		if _, _, err := validateCustomBaseURL(req.CustomBaseURL); err != nil {
+		base, host, err := validateCustomBaseURL(req.CustomBaseURL)
+		if err != nil {
 			common.ApiErrorStatus(c, http.StatusBadRequest, err)
 			return
 		}
+		// Recognition runs before the paid probe so the console can show the
+		// trust badge even when the upstream call fails.
+		trustView := sellerTrustPoolViewFor(db, host, customBasePath(base), apiKey)
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 		defer cancel()
 		client, limiter := sellerVerifyResources()
@@ -1021,6 +1206,7 @@ func postSellerListingProbe(c *gin.Context) {
 			"balance_sufficient": balance != nil && *balance > 0,
 			"key_valid":          keyRes.KeyValid,
 			"fail_reason":        failReason,
+			"trust_pool":         trustView,
 		})
 		return
 	}
@@ -1037,6 +1223,8 @@ func postSellerListingProbe(c *gin.Context) {
 			return
 		}
 	}
+	trustHost, trustPath := sellerTrustAddress(vendor)
+	trustView := sellerTrustPoolViewFor(db, trustHost, trustPath, apiKey)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
@@ -1114,6 +1302,7 @@ func postSellerListingProbe(c *gin.Context) {
 		"balance_sufficient": balance != nil && *balance > 0,
 		"key_valid":          keyRes.KeyValid,
 		"fail_reason":        failReason,
+		"trust_pool":         trustView,
 	})
 }
 

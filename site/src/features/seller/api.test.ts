@@ -5,10 +5,13 @@ import { queryClient } from '@/lib/query-client'
 import {
   normalizePayout,
   sellerChannelKind,
+  sellerCommonAddressesQuery,
   VERIFY_POLL_INTERVAL_MS,
   verifyingRefetchInterval,
   vendorName,
   vendorsQuery,
+  type ProbeResult,
+  type SellerCommonAddress,
   type SellerVendor,
 } from './api'
 
@@ -101,5 +104,42 @@ describe('vendorName', () => {
     queryClient.setQueryData(vendorsQuery().queryKey, [deepseek])
     expect(vendorName('deepseek')).toBe('DeepSeek')
     expect(vendorName('acme-ai')).toBe('acme-ai')
+  })
+})
+
+describe('P2 trust-pool shapes', () => {
+  it('probe results carry the trust-pool recognition fields', () => {
+    const probe: ProbeResult = {
+      ok: true,
+      models: ['deepseek-flash'],
+      missing_models: [],
+      latency_ms: 10,
+      prompt_cache: false,
+      balance_micro: null,
+      key_valid: true,
+      fail_reason: '',
+      trust_pool: {
+        matched: true,
+        trust: 'trusted',
+        kind: 'official',
+        vendor_name: 'DeepSeek',
+        endpoints: ['openai_chat'],
+        badge_text: 'DeepSeek · 官方 · OpenAI · 免审核',
+      },
+    }
+    expect(probe.trust_pool?.trust).toBe('trusted')
+    expect(probe.trust_pool?.endpoints).toEqual(['openai_chat'])
+  })
+
+  it('common addresses use the seller-scoped query key', () => {
+    const options = sellerCommonAddressesQuery()
+    expect(options.queryKey).toEqual(['marketplace', 'seller', 'common-addresses'])
+    const address: SellerCommonAddress = {
+      host: 'api.deepseek.com',
+      vendor_name: 'DeepSeek',
+      kind: 'official',
+      endpoints: ['openai_chat'],
+    }
+    expect(address.kind).toBe('official')
   })
 })

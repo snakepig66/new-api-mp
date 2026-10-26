@@ -143,6 +143,8 @@ func TestCreateListingWithCustomBaseURL(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, isCustomChannelSlug(listing.Vendor), "vendor id derives from the custom channel")
 	assert.Equal(t, []string{"deepseek-flash"}, listing.Models)
+	assert.Equal(t, ListingPendingReview, listing.Status,
+		"an unlisted upstream is created but must wait for operator review")
 
 	// The placeholder relay channel points at the seller's base and maps the
 	// platform model to the identical upstream name.
@@ -221,6 +223,9 @@ func fakeCustomUpstream(t *testing.T, key string, models ...string) *httptest.Se
 func TestVerifyListingCustomChannelNormalizesBase(t *testing.T) {
 	t.Setenv(MPAllowLoopbackBaseURLEnv, "1")
 	db := newListingTestDB(t)
+	createTrustPoolRow(t, db, TrustPool{
+		Host: "127.0.0.1", Kind: TrustKindThirdParty, Trust: TrustTrusted, Source: "manual",
+	})
 
 	const key = "sk-custom-upstream-key"
 	server := fakeCustomUpstream(t, key, "deepseek-flash")
@@ -263,6 +268,9 @@ func TestVerifyListingCustomChannelNormalizesBase(t *testing.T) {
 func TestVerifyListingCustomChannelBadKeyStaysDraft(t *testing.T) {
 	t.Setenv(MPAllowLoopbackBaseURLEnv, "1")
 	db := newListingTestDB(t)
+	createTrustPoolRow(t, db, TrustPool{
+		Host: "127.0.0.1", Kind: TrustKindThirdParty, Trust: TrustTrusted, Source: "manual",
+	})
 
 	server := fakeCustomUpstream(t, "sk-the-right-key", "deepseek-flash")
 
@@ -284,6 +292,73 @@ func TestVerifyListingCustomChannelBadKeyStaysDraft(t *testing.T) {
 	fresh, err := GetListing(db, listing.ID)
 	require.NoError(t, err)
 	assert.Equal(t, ListingDraft, fresh.Status)
+}
+
+// TestCustomChannelTrustPoolBlockedRefused covers the blocked branch: neither
+// the channel provisioning helper nor listing creation may touch a blocked
+// address.
+func TestCustomChannelTrustPoolBlockedRefused(t *testing.T) {
+	db := newListingTestDB(t)
+	createTrustPoolRow(t, db, TrustPool{
+		Host: "blocked-upstream.example.com", Kind: TrustKindThirdParty,
+		Trust: TrustBlocked, Source: "manual", Notes: "confirmed abuse",
+	})
+
+	_, err := ensureCustomChannel(db, 10023, "https://blocked-upstream.example.com", []string{"deepseek-flash"})
+	assert.ErrorIs(t, err, ErrTrustPoolBlocked)
+
+	_, err = CreateListing(db, CreateListingInput{
+		SellerID:        10023,
+		APIKey:          uniqueTestKey("sk-blocked"),
+		CustomBaseURL:   "https://blocked-upstream.example.com",
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 500,
+	})
+	assert.ErrorIs(t, err, ErrTrustPoolBlocked)
+}
+
+// TestCustomChannelTrustPoolWatchNeedsReview covers the watch branch: the
+// channel is provisioned, but the listing is parked in pending_review.
+func TestCustomChannelTrustPoolWatchNeedsReview(t *testing.T) {
+	db := newListingTestDB(t)
+	createTrustPoolRow(t, db, TrustPool{
+		Host: "watch-upstream.example.com", Kind: TrustKindThirdParty,
+		Trust: TrustWatch, Source: "probe",
+	})
+
+	slug, err := ensureCustomChannel(db, 10023, "https://watch-upstream.example.com", []string{"deepseek-flash"})
+	require.NoError(t, err)
+	assert.True(t, isCustomChannelSlug(slug))
+
+	listing, err := CreateListing(db, CreateListingInput{
+		SellerID:        10023,
+		APIKey:          uniqueTestKey("sk-watch"),
+		CustomBaseURL:   "https://watch-upstream.example.com",
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 500,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, ListingPendingReview, listing.Status)
+}
+
+// TestCustomChannelTrustPoolTrustedProceeds covers the trusted branch: the
+// seller-defined channel keeps the normal draft → verification flow.
+func TestCustomChannelTrustPoolTrustedProceeds(t *testing.T) {
+	db := newListingTestDB(t)
+	createTrustPoolRow(t, db, TrustPool{
+		Host: "trusted-upstream.example.com", Kind: TrustKindThirdParty,
+		Trust: TrustTrusted, Source: "manual",
+	})
+
+	listing, err := CreateListing(db, CreateListingInput{
+		SellerID:        10023,
+		APIKey:          uniqueTestKey("sk-trusted"),
+		CustomBaseURL:   "https://trusted-upstream.example.com",
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 500,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, ListingDraft, listing.Status, "a trusted upstream skips manual review")
 }
 
 func TestListVendorsHidesCustomChannelsFromOthers(t *testing.T) {

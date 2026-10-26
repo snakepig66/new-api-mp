@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -175,6 +176,66 @@ func TestSellerCreateListingTriggersVerify(t *testing.T) {
 		return err == nil && row.Status == ListingCanary
 	}, 5*time.Second, 10*time.Millisecond)
 	assert.NotContains(t, w.Body.String(), key, "§2.3: the create response never echoes the key")
+}
+
+// TestSellerCreatePendingReviewSkipsVerification covers a seller-defined
+// upstream the trust pool does not trust: the create response is pending_review
+// and the background verifier is not started at all, so no
+// ErrInvalidTransition line is logged for a row the operator has not approved.
+func TestSellerCreatePendingReviewSkipsVerification(t *testing.T) {
+	f := newSellerAPIFixture(t)
+
+	var logs syncBuffer
+	oldWriter := gin.DefaultErrorWriter
+	gin.DefaultErrorWriter = &logs
+	t.Cleanup(func() { gin.DefaultErrorWriter = oldWriter })
+
+	key := uniqueTestKey("sk-seller-pending")
+	w := f.do(t, http.MethodPost, "/api/marketplace/seller/listings", map[string]any{
+		"custom_base_url":  "https://unlisted-" + strconv.FormatInt(time.Now().UnixNano(), 36) + ".example.com",
+		"api_key":          key,
+		"models":           []string{"deepseek-flash"},
+		"multiplier_milli": 500,
+	}, int(f.sellerID))
+	require.Equal(t, http.StatusOK, w.Code)
+	data, ok := decodeSellerBody(t, w)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, ListingPendingReview, data["status"])
+	id := int64(data["id"].(float64))
+
+	// The verifier, if it were started, would reach VerifyListing after its
+	// small delay and log the invalid transition. Never seeing the line is the
+	// observable contract.
+	require.Never(t, func() bool {
+		return strings.Contains(logs.String(), "invalid listing status transition")
+	}, 150*time.Millisecond, 10*time.Millisecond)
+
+	var probes int64
+	require.NoError(t, f.db.Model(&Probe{}).
+		Where("listing_id = ? AND type = ?", id, ProbeTypeVerify).Count(&probes).Error)
+	assert.Zero(t, probes, "no verification probe may be written before approval")
+	row, err := GetListing(f.db, id)
+	require.NoError(t, err)
+	assert.Equal(t, ListingPendingReview, row.Status)
+}
+
+// syncBuffer is a concurrency-safe log sink: the background verifier this test
+// guards against would write from another goroutine.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
 
 // TestSellerListListingsNoKey covers the seller listing list: it shows the
@@ -568,6 +629,16 @@ func TestProbeDoesNotPersist(t *testing.T) {
 	assert.EqualValues(t, 1200, coefficients["deepseek-flash"])
 	assert.EqualValues(t, 0, len(data["missing_models"].([]any)))
 	assert.Equal(t, "", data["fail_reason"])
+	trust, ok := data["trust_pool"].(map[string]any)
+	require.True(t, ok, "the probe carries the trust-pool recognition result")
+	assert.Equal(t, true, trust["matched"])
+	assert.Equal(t, TrustTrusted, trust["trust"])
+	assert.Equal(t, TrustKindOfficial, trust["kind"])
+	assert.Equal(t, "DeepSeek", trust["vendor_name"])
+	assert.Contains(t, trust["endpoints"], "openai_chat")
+	assert.Contains(t, trust["badge_text"], "DeepSeek")
+	assert.Contains(t, trust["badge_text"], "官方")
+	assert.Contains(t, trust["badge_text"], "免审核")
 	assert.NotContains(t, w.Body.String(), verifyTestKey, "§2.3: probe never echoes the key")
 
 	var listingsAfter, probesAfter int64
@@ -621,6 +692,11 @@ func TestProbeCustomURLDoesNotPersist(t *testing.T) {
 	assert.Equal(t, []any{"deepseek-flash"}, data["models"])
 	assert.NotContains(t, data, "balance_micro")
 	assert.Equal(t, false, data["balance_sufficient"], "the fake upstream has no balance endpoint")
+	trust, ok := data["trust_pool"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, false, trust["matched"])
+	assert.Equal(t, TrustUnlisted, trust["trust"])
+	assert.Contains(t, trust["badge_text"], "未收录")
 	assert.NotContains(t, w.Body.String(), key, "§2.3: probe never echoes the key")
 
 	var channelsAfter, modelsAfter int64
@@ -925,4 +1001,138 @@ func TestSellerCannotResumeSystemPause(t *testing.T) {
 	row, err = GetListing(f.db, listing.ID)
 	require.NoError(t, err)
 	assert.Equal(t, ListingLive, row.Status)
+}
+
+// addSellerCustomListing creates one seller-defined listing and returns it and
+// its plaintext key. The trust pool decides the initial status: trusted yields
+// draft, watch/unlisted yields pending_review (CreateListing, listing.go).
+func addSellerCustomListing(t *testing.T, f *sellerAPIFixture, baseURL string) (Listing, string) {
+	t.Helper()
+	key := uniqueTestKey("sk-seller-custom-verify")
+	listing, err := CreateListing(f.db, CreateListingInput{
+		SellerID:        f.sellerID,
+		APIKey:          key,
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 500,
+		CustomBaseURL:   baseURL,
+	})
+	require.NoError(t, err)
+	return listing, key
+}
+
+// TestSellerVerifyListingRejectsUntrustedCustomChannel is the review-bypass
+// regression: after an operator rejects a watch/unlisted custom channel back to
+// draft, the seller must not be able to run verification on it themselves — that
+// would drive draft → verifying → canary and skip the required review.
+func TestSellerVerifyListingRejectsUntrustedCustomChannel(t *testing.T) {
+	cases := []struct {
+		name string
+		row  *TrustPool
+		host string
+	}{
+		{
+			name: "watch",
+			host: "watch.seller-verify.example",
+			row:  &TrustPool{Host: "watch.seller-verify.example", Kind: TrustKindThirdParty, Trust: TrustWatch, Source: "manual"},
+		},
+		{
+			name: "unlisted",
+			host: "unlisted-" + strconv.FormatInt(time.Now().UnixNano(), 36) + ".example.com",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSellerAPIFixture(t)
+			if tc.row != nil {
+				createTrustPoolRow(t, f.db, *tc.row)
+			}
+			listing, _ := addSellerCustomListing(t, f, "https://"+tc.host)
+			require.Equal(t, ListingPendingReview, listing.Status)
+			// The operator's reject decision returns it to the seller.
+			require.NoError(t, RejectListing(f.db, listing.ID))
+
+			w := f.do(t, http.MethodPost,
+				"/api/marketplace/seller/listings/"+strconv.FormatInt(listing.ID, 10)+"/verify",
+				nil, int(f.sellerID))
+			require.Equal(t, http.StatusForbidden, w.Code)
+			assert.Contains(t, decodeSellerBody(t, w)["message"], "需要运营审核")
+
+			row, err := GetListing(f.db, listing.ID)
+			require.NoError(t, err)
+			assert.Equal(t, ListingDraft, row.Status, "a refused verify must not move the listing")
+			var probes int64
+			require.NoError(t, f.db.Model(&Probe{}).
+				Where("listing_id = ? AND type = ?", listing.ID, ProbeTypeVerify).Count(&probes).Error)
+			assert.Zero(t, probes, "no verification probe may be written for an untrusted channel")
+		})
+	}
+}
+
+// TestSellerVerifyListingAllowsTrustedChannels covers the other side of the
+// guard: a trusted custom upstream and a platform channel (already governed by
+// operators) keep the self-service draft → verifying → canary flow.
+func TestSellerVerifyListingAllowsTrustedChannels(t *testing.T) {
+	t.Run("trusted custom channel", func(t *testing.T) {
+		f := newSellerAPIFixture(t)
+		h := allGreenHandler()
+		srv, _ := newVendorServer(t, h)
+		target, err := url.Parse(srv.URL)
+		require.NoError(t, err)
+		restore := setSellerVerifyClientForTest(&http.Client{Transport: rewriteTransport{target: target}})
+		defer restore()
+
+		host := "trusted.seller-verify.example"
+		createTrustPoolRow(t, f.db, TrustPool{Host: host, Kind: TrustKindThirdParty, Trust: TrustTrusted, Source: "manual"})
+		listing, key := addSellerCustomListing(t, f, "https://"+host)
+		require.Equal(t, ListingDraft, listing.Status, "a trusted upstream keeps the automated flow")
+		h.wantAuth = "Bearer " + key
+
+		w := f.do(t, http.MethodPost,
+			"/api/marketplace/seller/listings/"+strconv.FormatInt(listing.ID, 10)+"/verify",
+			nil, int(f.sellerID))
+		require.Equal(t, http.StatusOK, w.Code)
+		data, ok := decodeSellerBody(t, w)["data"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, ListingVerifying, data["status"])
+
+		require.Eventually(t, func() bool {
+			row, err := GetListing(f.db, listing.ID)
+			return err == nil && row.Status == ListingCanary
+		}, 5*time.Second, 10*time.Millisecond)
+	})
+
+	t.Run("platform channel", func(t *testing.T) {
+		f := newSellerAPIFixture(t)
+		key := uniqueTestKey("sk-seller-platform-verify")
+		h := allGreenHandler()
+		h.wantAuth = "Bearer " + key
+		srv, _ := newVendorServer(t, h)
+		target, err := url.Parse(srv.URL)
+		require.NoError(t, err)
+		restore := setSellerVerifyClientForTest(&http.Client{Transport: rewriteTransport{target: target}})
+		defer restore()
+
+		listing, err := CreateListing(f.db, CreateListingInput{
+			SellerID:        f.sellerID,
+			VendorID:        SeedVendorDeepSeek,
+			APIKey:          key,
+			Models:          []string{"deepseek-flash"},
+			MultiplierMilli: 500,
+		})
+		require.NoError(t, err)
+		require.Equal(t, ListingDraft, listing.Status)
+
+		w := f.do(t, http.MethodPost,
+			"/api/marketplace/seller/listings/"+strconv.FormatInt(listing.ID, 10)+"/verify",
+			nil, int(f.sellerID))
+		require.Equal(t, http.StatusOK, w.Code)
+		data, ok := decodeSellerBody(t, w)["data"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, ListingVerifying, data["status"])
+
+		require.Eventually(t, func() bool {
+			row, err := GetListing(f.db, listing.ID)
+			return err == nil && row.Status == ListingCanary
+		}, 5*time.Second, 10*time.Millisecond)
+	})
 }

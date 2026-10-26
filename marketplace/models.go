@@ -7,13 +7,17 @@ import "time"
 // stored as integer 微元 (Micro); no float columns exist anywhere.
 
 // Listing lifecycle (§3.5): draft → verifying → canary → live ⇄ paused → banned.
+// ListingPendingReview is the gate for a seller-defined upstream that is not in
+// the trust pool's trusted set (watch or unlisted): the listing exists but no
+// automated verification may promote it until an operator approves it.
 const (
-	ListingDraft     = "draft"
-	ListingVerifying = "verifying"
-	ListingCanary    = "canary"
-	ListingLive      = "live"
-	ListingPaused    = "paused"
-	ListingBanned    = "banned"
+	ListingDraft         = "draft"
+	ListingPendingReview = "pending_review"
+	ListingVerifying     = "verifying"
+	ListingCanary        = "canary"
+	ListingLive          = "live"
+	ListingPaused        = "paused"
+	ListingBanned        = "banned"
 )
 
 // Price tiers (§3.3).
@@ -325,3 +329,66 @@ type Payout struct {
 }
 
 func (Payout) TableName() string { return "mp_payouts" }
+
+// Trust pool kinds and trust states (P2).
+const (
+	TrustKindOfficial   = "official"
+	TrustKindThirdParty = "third_party"
+	TrustKindPlan       = "plan"
+
+	TrustTrusted  = "trusted"
+	TrustWatch    = "watch"
+	TrustBlocked  = "blocked"
+	TrustUnlisted = "unlisted" // not a stored state: no pool row matched
+)
+
+// TrustPool is one certified upstream address (P2). A match is host-exact or,
+// when no exact host row matches, an anchored host_pattern regex; path_prefix
+// and key_prefix narrow a row to one mount point or one credential class.
+//
+// Every JSON field is a text column so the schema is identical on SQLite,
+// MySQL and PostgreSQL. The operator maintains allowed_models explicitly; the
+// code never infers sellable models from a channel mapping.
+type TrustPool struct {
+	ID          int64  `gorm:"primaryKey" json:"id"`
+	Host        string `gorm:"size:255;not null;default:'';index" json:"host"`
+	HostPattern string `gorm:"size:512;not null;default:'';index" json:"host_pattern"`
+	PathPrefix  string `gorm:"size:512;not null;default:''" json:"path_prefix"`
+	KeyPrefix   string `gorm:"size:128;not null;default:''" json:"key_prefix"`
+	VendorSlug  string `gorm:"size:64;not null;default:'';index" json:"vendor_slug"`
+	// Kind is official / third_party / plan.
+	Kind string `gorm:"size:32;not null;default:'third_party'" json:"kind"`
+	// Trust is trusted / watch / blocked.
+	Trust string `gorm:"size:16;not null;default:'watch';index" json:"trust"`
+	// Endpoints is a JSON array of the endpoint kinds this address serves
+	// (openai_chat / openai_responses / anthropic_messages).
+	Endpoints string `gorm:"type:text;not null;default:''" json:"endpoints"`
+	// AllowedModels is a JSON array (or object mapping) of the platform models
+	// the operator explicitly allows on this address.
+	AllowedModels string `gorm:"type:text;not null;default:''" json:"allowed_models"`
+	// OfficialPriceBookID points at the official reference price book row.
+	OfficialPriceBookID int64 `gorm:"not null;default:0" json:"official_price_book_id"`
+	// QuotaWindowTemplate is a JSON quota-window template (plan channels).
+	QuotaWindowTemplate string `gorm:"type:text;not null;default:''" json:"quota_window_template"`
+	// DenyKeyPrefixes / DenyPaths are JSON arrays of hard refusal rules.
+	DenyKeyPrefixes string `gorm:"type:text;not null;default:''" json:"deny_key_prefixes"`
+	DenyPaths       string `gorm:"type:text;not null;default:''" json:"deny_paths"`
+	// ErrorCodeTable is a JSON object classifying the vendor's error codes into
+	// auth / balance / ratelimit / content.
+	ErrorCodeTable string `gorm:"type:text;not null;default:''" json:"error_code_table"`
+	// DefaultHeaders is the JSON header policy for requests to this address.
+	DefaultHeaders string `gorm:"type:text;not null;default:''" json:"default_headers"`
+	// AccountFingerprintRules is a JSON description of the upstream account
+	// fingerprint rules used to spot shared/resold plan accounts.
+	AccountFingerprintRules string `gorm:"type:text;not null;default:''" json:"account_fingerprint_rules"`
+	// Source records where the row came from: seed / manual / probe.
+	Source string `gorm:"size:16;not null;default:'manual'" json:"source"`
+	Notes  string `gorm:"type:text;not null;default:''" json:"notes"`
+	// ExpiresAt bounds a trusted row's validity. A nil value means no expiry is
+	// set; P5 governance owns enforcing required expiries for official rows.
+	ExpiresAt *time.Time `gorm:"index" json:"expires_at,omitempty"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (TrustPool) TableName() string { return "mp_trust_pool" }

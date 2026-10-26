@@ -30,8 +30,15 @@ func Migrate(db *gorm.DB) error {
 		&LedgerEntry{},
 		&Payout{},
 		&Notification{},
+		&TrustPool{},
 	); err != nil {
 		return fmt.Errorf("marketplace migrate: %w", err)
+	}
+	// The seed rows of the trust pool are part of the initial schema contract:
+	// the official vendor addresses must classify as trusted before the first
+	// listing is created. SeedTrustPool is idempotent.
+	if err := SeedTrustPool(db); err != nil {
+		return fmt.Errorf("marketplace seed trust pool: %w", err)
 	}
 	if err := ensureUserIDStart(db, FirstUserID); err != nil {
 		return fmt.Errorf("marketplace user id watermark: %w", err)

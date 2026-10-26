@@ -12,6 +12,9 @@ package marketplace
 // never goes live.
 //
 // Security (§3.11 stays in force):
+//   - the trust pool (trustpool.go) classifies the address before provisioning:
+//     a blocked host is refused, watch/unlisted hosts may be listed only as
+//     pending_review, and a trusted host keeps the automated flow;
 //   - the base URL must be https, host-based (never an IP literal), without
 //     userinfo, query or fragment, with a canonical path and only the default
 //     :443 port;
@@ -234,6 +237,16 @@ func customChannelSlug(sellerID int64, base string) string {
 	return fmt.Sprintf("%s%d-%s", customChannelSlugPrefix, sellerID, hex.EncodeToString(sum[:])[:10])
 }
 
+// customBasePath returns the path component of an already-validated base URL.
+// It is what the trust pool's path_prefix is matched against.
+func customBasePath(base string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return ""
+	}
+	return u.Path
+}
+
 // isCustomChannelSlug reports whether the slug belongs to a seller-created
 // channel.
 func isCustomChannelSlug(slug string) bool {
@@ -282,6 +295,13 @@ func ensureCustomChannel(db *gorm.DB, sellerID int64, rawURL string, models []st
 	base, host, err := validateCustomBaseURL(rawURL)
 	if err != nil {
 		return "", err
+	}
+	// A blocked address never becomes a channel, even when a caller reaches
+	// ensureCustomChannel directly. Watch/unlisted addresses are provisioned;
+	// CreateListing parks their listing in pending_review (the key is unknown at
+	// this layer, so key-specific rows are left to that call).
+	if _, _, terr := CheckTrustPoolDB(db, host, customBasePath(base), ""); terr != nil {
+		return "", terr
 	}
 	slug := customChannelSlug(sellerID, base)
 	if _, ok := ChannelPoolBySlug(db, slug); !ok {
@@ -333,9 +353,17 @@ func ensureCustomChannel(db *gorm.DB, sellerID int64, rawURL string, models []st
 // model names verbatim). Returns the detected base, the raw key result and the
 // sellable platform models.
 func probeCustomChannelKey(ctx context.Context, client *http.Client, db *gorm.DB, rawURL, apiKey string) (string, VerifyResult, []string) {
-	base, _, err := validateCustomBaseURL(rawURL)
+	base, host, err := validateCustomBaseURL(rawURL)
 	if err != nil {
 		return "", VerifyResult{FailReason: err.Error()}, nil
+	}
+	// The dry run may classify an unlisted/watch address (that is what the
+	// review queue needs) but a blocked address or a deny-rule match is refused
+	// before any network call.
+	if db != nil {
+		if _, _, terr := CheckTrustPoolDB(db, host, customBasePath(base), strings.TrimSpace(apiKey)); terr != nil {
+			return "", VerifyResult{FailReason: terr.Error()}, nil
+		}
 	}
 	res := VerifyChannelKey(ctx, client, Vendor{Protocols: VendorProtocols{OpenAI: base}}, apiKey)
 	detected := base
