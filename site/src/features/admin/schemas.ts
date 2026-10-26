@@ -2,7 +2,7 @@
  * 运营后台的表单校验与输入解析。
  *
  * 这些函数不依赖 DOM，单测可以直接调用：
- *  - 价目 / 按次价表单（zod）：tier 枚举、正整数微元、版本、生效时间
+ *  - 价目 / 按次价表单（zod）：tier 枚举、元金额、版本、生效时间
  *  - 节假日导入：JSON 数组或逐行 `date,kind`
  *  - 生效时间：datetime-local 字符串按 Asia/Shanghai 解析为 RFC 3339
  */
@@ -10,6 +10,7 @@
 import { z } from 'zod'
 
 import { copy } from '@/copy'
+import { parseYuanToMicro } from '@/features/console/format'
 
 import type {
   AdminHoliday,
@@ -35,15 +36,19 @@ export function isHolidayKind(value: string): boolean {
   return (HOLIDAY_KINDS as readonly string[]).includes(value)
 }
 
-/** 正整数（十进制）字符串，微元字段用字符串承接以免 float 丢精度。 */
+/** 正整数（十进制）字符串，版本号等整数字段用。 */
 const POSITIVE_INTEGER = /^\d+$/
 
-function positiveIntegerString(required: string, invalid: string) {
+/** 元金额字符串；提交时转成后端整数微元，避免 float 丢精度。 */
+function positiveYuanString(required: string, invalid: string) {
   return z
     .string()
     .trim()
     .min(1, required)
-    .refine((value) => POSITIVE_INTEGER.test(value) && BigInt(value) > 0n, invalid)
+    .refine((value) => {
+      const micro = parseYuanToMicro(value)
+      return micro !== null && micro > 0
+    }, invalid)
 }
 
 /**
@@ -155,7 +160,7 @@ export function emptyPriceForm(now: number = Date.now()): PriceFormValues {
 }
 
 /**
- * 价目表单。tier 必须是 peak/offpeak/flat；四个价格必须是正整数微元；
+ * 价目表单。tier 必须是 peak/offpeak/flat；四个价格按元填写；
  * version 留空表示由后端自动分配；effective_at 按 Asia/Shanghai 解析且
  * 不得早于当前分钟（后端还会做一次精确校验）。
  */
@@ -173,19 +178,19 @@ export function priceFormSchema(now: number = Date.now()) {
         .min(1, prices.errors.vendorRequired)
         .max(64, prices.errors.vendorTooLong),
       tier: z.string().refine(isPriceTier, prices.errors.tierInvalid),
-      input_micro_per_mtok: positiveIntegerString(
+      input_micro_per_mtok: positiveYuanString(
         prices.errors.priceRequired,
         prices.errors.pricePositive,
       ),
-      output_micro_per_mtok: positiveIntegerString(
+      output_micro_per_mtok: positiveYuanString(
         prices.errors.priceRequired,
         prices.errors.pricePositive,
       ),
-      cache_read_micro_per_mtok: positiveIntegerString(
+      cache_read_micro_per_mtok: positiveYuanString(
         prices.errors.priceRequired,
         prices.errors.pricePositive,
       ),
-      cache_write_micro_per_mtok: positiveIntegerString(
+      cache_write_micro_per_mtok: positiveYuanString(
         prices.errors.priceRequired,
         prices.errors.pricePositive,
       ),
@@ -212,10 +217,10 @@ export function priceFormToInput(values: PriceFormValues): CreatePriceInput {
     model: values.model.trim(),
     vendor: values.vendor.trim(),
     tier: values.tier as CreatePriceInput['tier'],
-    input_micro_per_mtok: Number(values.input_micro_per_mtok),
-    output_micro_per_mtok: Number(values.output_micro_per_mtok),
-    cache_read_micro_per_mtok: Number(values.cache_read_micro_per_mtok),
-    cache_write_micro_per_mtok: Number(values.cache_write_micro_per_mtok),
+    input_micro_per_mtok: parseYuanToMicro(values.input_micro_per_mtok) ?? 0,
+    output_micro_per_mtok: parseYuanToMicro(values.output_micro_per_mtok) ?? 0,
+    cache_read_micro_per_mtok: parseYuanToMicro(values.cache_read_micro_per_mtok) ?? 0,
+    cache_write_micro_per_mtok: parseYuanToMicro(values.cache_write_micro_per_mtok) ?? 0,
     version: values.version.trim() ? Number(values.version.trim()) : undefined,
     effective_at: values.effective_at.trim()
       ? (shanghaiDateTimeToRfc3339(values.effective_at) ?? undefined)
@@ -253,7 +258,7 @@ export function perCallFormSchema(now: number = Date.now()) {
       .min(1, perCall.errors.vendorRequired)
       .max(64, perCall.errors.vendorTooLong),
     item: z.string().refine(isPerCallItem, perCall.errors.itemInvalid),
-    unit_price_micro: positiveIntegerString(
+    unit_price_micro: positiveYuanString(
       perCall.errors.priceRequired,
       perCall.errors.pricePositive,
     ),
@@ -279,7 +284,7 @@ export function perCallFormToInput(values: PerCallFormValues): CreatePerCallPric
   return {
     vendor: values.vendor.trim(),
     item: values.item as PerCallItem,
-    unit_price_micro: Number(values.unit_price_micro),
+    unit_price_micro: parseYuanToMicro(values.unit_price_micro) ?? 0,
     version: values.version.trim() ? Number(values.version.trim()) : undefined,
     effective_at: values.effective_at.trim()
       ? (shanghaiDateTimeToRfc3339(values.effective_at) ?? undefined)

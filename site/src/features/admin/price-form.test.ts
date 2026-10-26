@@ -16,10 +16,10 @@ function validForm() {
     model: 'deepseek-v4-pro',
     vendor: 'deepseek',
     tier: 'offpeak',
-    input_micro_per_mtok: '2000000',
-    output_micro_per_mtok: '5000000',
-    cache_read_micro_per_mtok: '40000',
-    cache_write_micro_per_mtok: '2000000',
+    input_micro_per_mtok: '2',
+    output_micro_per_mtok: '5',
+    cache_read_micro_per_mtok: '0.04',
+    cache_write_micro_per_mtok: '2',
     version: '',
     effective_at: '2026-10-24T14:01',
   }
@@ -45,7 +45,7 @@ describe('priceFormSchema', () => {
     expect(result.error.issues[0]?.message).toBe('时段只能是 peak、offpeak 或 flat')
   })
 
-  it.each(['0', '-1', '1.5', 'abc', ''])('rejects a non-positive integer price: %s', (value) => {
+  it.each(['0', '-1', 'abc', '', '1.2345678'])('rejects an invalid price: %s', (value) => {
     const result = priceFormSchema(NOW).safeParse({
       ...validForm(),
       input_micro_per_mtok: value,
