@@ -110,6 +110,7 @@ ssh -i ~/.ssh/llmjar_prod_ed25519 root@47.76.231.181 \
 ## 重要约束
 
 - `MP_KEY_SECRET` 必须另行备份；丢失后所有卖家上游 Key 无法解密。
+- `/etc/llmjar.env` 必须固定 `SESSION_SECRET`（以及可选的 `CRYPTO_SECRET`）。不设置时进程每次启动会生成新的 UUID，所有登录态会在重启/部署后失效。当前已写入持久随机值，需与 `MP_KEY_SECRET` 一起备份。
 - 当前站点是 HTTPS：`ServerAddress=https://llmjar.com`。`/etc/llmjar.env` 中：
   - `SESSION_COOKIE_SECURE=true`
   - `SESSION_COOKIE_TRUSTED_URL=https://llmjar.com,https://www.llmjar.com`

@@ -392,6 +392,9 @@ func InitResources() error {
 	}
 	model.InitOptionMap()
 	enforceMarketplaceBillingInvariants()
+	if os.Getenv("SESSION_SECRET") == "" {
+		common.SysError(common.LogText("ALERT: SESSION_SECRET is not set; sessions will be invalidated on every restart. Set a persistent random value in the service environment."))
+	}
 
 	// 清理旧的磁盘缓存文件
 	common.CleanupOldCacheFiles()
