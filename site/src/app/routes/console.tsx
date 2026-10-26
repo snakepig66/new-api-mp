@@ -40,7 +40,14 @@ function ConsoleLayout() {
   const sellerActive = seller.data ? isSellerActive(seller.data.seller) : false
 
   const groups = consoleGroups({ sellerActive, isAdmin })
-
+  const mobileLabel =
+    groups
+      .flatMap((group) => group.items)
+      .find((item) =>
+        item.exact
+          ? pathname === item.to || pathname === `${item.to}/`
+          : pathname === item.to || pathname.startsWith(`${item.to}/`),
+      )?.label ?? copy.pages.console.nav.overview
 
   return (
     <div className="min-h-screen bg-bg-soft">
@@ -53,7 +60,7 @@ function ConsoleLayout() {
           <Button variant="secondary" size="sm" onClick={() => setMenuOpen(true)}>
             {shell.menu}
           </Button>
-          <span className="text-[14px] font-medium text-ink">{copy.pages.console.nav.overview}</span>
+          <span className="text-[14px] font-medium text-ink">{mobileLabel}</span>
         </div>
 
         <DialogPrimitive.Root open={menuOpen} onOpenChange={setMenuOpen}>

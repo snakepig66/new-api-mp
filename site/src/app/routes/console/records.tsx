@@ -92,6 +92,7 @@ function RecordsPage() {
                 key={tab.key}
                 to="/console/records"
                 search={{ page: 1, view: tab.key }}
+                aria-current={active ? 'page' : undefined}
                 className={
                   active
                     ? 'inline-flex h-9 shrink-0 items-center rounded-full bg-brand-soft px-3.5 text-[14px] font-medium text-brand-ink'

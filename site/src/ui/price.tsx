@@ -10,6 +10,8 @@ export interface PriceProps {
   value: MicroAmount
   /** Which tier `value` belongs to; flat tiers show no tier label. */
   tier?: PriceTier
+  /** Hide the inline tier label when the caller renders a separate peak badge. */
+  showTier?: boolean
   /** The other tier's price, rendered smaller and grey. */
   other?: { value: MicroAmount; tier: PriceTier } | null
   /** Defaults to "百万 tokens"; pass null to omit the unit. */
@@ -42,6 +44,7 @@ function tierLabel(tier: PriceTier): string {
 export function Price({
   value,
   tier = 'flat',
+  showTier = true,
   other = null,
   unit = copy.units.perMillionTokens,
   align = 'right',
@@ -62,7 +65,7 @@ export function Price({
           align === 'right' ? 'justify-end' : 'justify-start',
         )}
       >
-        {tier !== 'flat' ? (
+        {tier !== 'flat' && showTier ? (
           <span className="inline-flex items-center gap-1 text-[13px] text-ink-3">
             <span
               className={cn('h-1.5 w-1.5 rounded-full', tierDot[tier])}

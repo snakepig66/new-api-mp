@@ -250,7 +250,7 @@ function PerCallDialog({ open, onClose }: { open: boolean; onClose: () => void }
         <Field label={page.dialog.unitPrice} htmlFor="per-call-price" error={errors.unit_price_micro}>
           <TextInput
             id="per-call-price"
-            inputMode="numeric"
+            inputMode="decimal"
             value={form.unit_price_micro}
             invalid={Boolean(errors.unit_price_micro)}
             onChange={(event) => update('unit_price_micro', event.target.value)}

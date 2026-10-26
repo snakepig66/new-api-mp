@@ -65,7 +65,6 @@ export const copy = {
 
   multiplier: {
     savings: (percent: string) => `省 ${percent}%`,
-    baseline: '倍率',
   },
 
   peak: {
@@ -497,7 +496,7 @@ console.log(response.choices[0].message.content)
       lead: '登录后管理 Key、用量、账单与渠道。',
       brandHeading: '同一个 Key，用官方模型更便宜',
       brandBody:
-        '买家用一个 Key 调用广场上的模型；分享者把官方额度挂上市场。价格、倍率和可用率都公开。',
+        '买家用一个 Key 调用广场上的模型；分享者把官方额度分享到市场。价格和可用率都公开。',
       points: [
         { title: '价格一次看清', body: '官方价、到手价并排展示。' },
         { title: '失败调用不收费', body: '只有成功的请求计费。' },
@@ -614,7 +613,7 @@ console.log(response.choices[0].message.content)
         keys: 'API Key',
         records: '使用记录',
         wallet: '钱包',
-        account: '账号',
+        account: '账号设置',
       },
       stats: {
         balance: '余额',
@@ -766,7 +765,7 @@ console.log(response.choices[0].message.content)
           nameTooLong: '名称不能超过 50 个字',
           modelsRequired: '请至少勾选一个模型',
           spendInvalid: '花费上限要写成非负金额，例如 50 或 12.5',
-          capInvalid: '价格上限要写成 0 到 1 之间的小数，例如 0.85',
+          capInvalid: '价格上限要写成 0 到 1 之间的小数（1 = 官方价），例如 0.85',
           rpmInvalid: 'RPM 要写成正整数',
           sellerInvalid: '分享者编号必须是正整数，多个用逗号分隔',
           expiryInvalid: '请选择一个将来的过期时间，或勾选永不过期',
@@ -855,7 +854,7 @@ console.log(response.choices[0].message.content)
           selected: (count: number) => `已选 ${count} 个`,
           sellers: (count: number) => `${count} 位分享者`,
           noMatch: '没有匹配的模型，换个关键词试试。',
-          capLabel: '价格上限（倍率，可选）',
+          capLabel: '价格上限（相对官方价，可选）',
           capPlaceholder: '如 0.85，留空不限',
           emptyTitle: '没有可选的模型',
           emptyReason: '模型广场当前没有在售模型，无法把模型加进 Key。',
@@ -867,7 +866,7 @@ console.log(response.choices[0].message.content)
           options: {
             cheapest: {
               label: '最便宜',
-              hint: '优先当前倍率最低的分享者，省钱第一。',
+              hint: '优先当前价格最低的分享者，省钱第一。',
             },
             balanced: {
               label: '均衡',
@@ -897,7 +896,7 @@ console.log(response.choices[0].message.content)
           nameRequired: '给 Key 起一个名字',
           nameTooLong: '名称不能超过 50 个字',
           modelsRequired: '至少选择一个模型',
-          capInvalid: '倍率上限要写成 0 到 1 之间的小数，例如 0.85',
+          capInvalid: '价格上限要写成 0 到 1 之间的小数（1 = 官方价），例如 0.85',
           spendInvalid: '花费上限要写成非负金额，例如 50 或 12.5',
         },
         success: 'Key 已创建',
@@ -922,7 +921,7 @@ console.log(response.choices[0].message.content)
         title: '路由偏好',
         hint: '保存后对后续请求生效',
         strategy: '路由策略',
-        priceCap: 'Key 价格上限（倍率）',
+        priceCap: 'Key 价格上限（相对官方价）',
         priceCapHint: '留空表示不限；每个模型可以单独设上限。',
         rpm: '每分钟请求上限（RPM）',
         rpmHint: '留空表示不限。',
@@ -971,7 +970,7 @@ console.log(response.choices[0].message.content)
         capFollow: '跟随 Key 上限',
         addTitle: '添加模型',
         addModel: '选择模型',
-        addCap: '价格上限（倍率）',
+        addCap: '价格上限（相对官方价）',
         add: '添加模型',
         adding: '正在添加',
         added: '模型已添加',
@@ -989,7 +988,7 @@ console.log(response.choices[0].message.content)
         saving: '正在保存',
         saved: '模型设置已保存',
         required: '请至少勾选一个模型',
-        capInvalid: '价格上限要写成 0 到 1 之间的小数，例如 0.85',
+        capInvalid: '价格上限要写成 0 到 1 之间的小数（1 = 官方价），例如 0.85',
       },
       officialOnly: {
         title: '当前设置下调不了的模型',
@@ -1014,7 +1013,7 @@ console.log(response.choices[0].message.content)
         deleted: 'Key 已删除',
       },
       errors: {
-        priceCapInvalid: '倍率上限要写成 0 到 1 之间的小数，例如 0.85',
+        priceCapInvalid: '价格上限要写成 0 到 1 之间的小数（1 = 官方价），例如 0.85',
         rpmInvalid: 'RPM 要写成正整数',
         sellerInvalid: '分享者编号必须是正整数，多个用逗号分隔',
         onlyInvalid: '「只用某一家」只能填一个正整数编号',

@@ -255,7 +255,7 @@ export function ModelDetailPage() {
                 </div>
                 {price ? (
                   <div className="mt-2">
-                    <Price value={price.input_micro_per_mtok} tier={data.tier} size="lg" />
+                    <Price value={price.input_micro_per_mtok} tier={data.tier} showTier={false} size="lg" />
                     {!officialOnly && officialInput ? (
                       <p className="mt-2 text-[14px] text-ink-2">
                         官方 <span className="tabular-nums">{formatYuan(officialInput)}</span>

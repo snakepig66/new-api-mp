@@ -19,6 +19,8 @@ const FORBIDDEN = [
   '运营工具',
 ]
 
+const BUYER_FORBIDDEN = [...FORBIDDEN, '倍率']
+
 const buyerBlocks = [
   copy.brand,
   copy.nav,
@@ -86,7 +88,8 @@ describe('user-facing copy terminology', () => {
   ] as const) {
     it(`${group} copy has no operator-only terms`, () => {
       const text = flatten(blocks).join('\n')
-      const hits = FORBIDDEN.filter((term) => text.includes(term))
+      const forbidden = group === 'buyer' ? BUYER_FORBIDDEN : FORBIDDEN
+      const hits = forbidden.filter((term) => text.includes(term))
       expect(hits).toEqual([])
     })
   }

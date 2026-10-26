@@ -305,7 +305,7 @@ function PriceDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
         <Field label={page.dialog.input} htmlFor="price-input" error={errors.input_micro_per_mtok}>
           <TextInput
             id="price-input"
-            inputMode="numeric"
+            inputMode="decimal"
             value={form.input_micro_per_mtok}
             invalid={Boolean(errors.input_micro_per_mtok)}
             onChange={(event) => update('input_micro_per_mtok', event.target.value)}
@@ -314,7 +314,7 @@ function PriceDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
         <Field label={page.dialog.output} htmlFor="price-output" error={errors.output_micro_per_mtok}>
           <TextInput
             id="price-output"
-            inputMode="numeric"
+            inputMode="decimal"
             value={form.output_micro_per_mtok}
             invalid={Boolean(errors.output_micro_per_mtok)}
             onChange={(event) => update('output_micro_per_mtok', event.target.value)}
@@ -327,7 +327,7 @@ function PriceDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
         >
           <TextInput
             id="price-cache-read"
-            inputMode="numeric"
+            inputMode="decimal"
             value={form.cache_read_micro_per_mtok}
             invalid={Boolean(errors.cache_read_micro_per_mtok)}
             onChange={(event) => update('cache_read_micro_per_mtok', event.target.value)}
@@ -340,7 +340,7 @@ function PriceDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
         >
           <TextInput
             id="price-cache-write"
-            inputMode="numeric"
+            inputMode="decimal"
             value={form.cache_write_micro_per_mtok}
             invalid={Boolean(errors.cache_write_micro_per_mtok)}
             onChange={(event) => update('cache_write_micro_per_mtok', event.target.value)}
