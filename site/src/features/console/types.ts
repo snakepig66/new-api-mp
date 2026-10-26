@@ -148,6 +148,26 @@ export interface WalletLedgerEntry {
   created_at: string
 }
 
+/** A ledger row or a top-up order in the unified wallet stream. */
+export type WalletTransactionKind = 'usage' | 'refund' | 'topup'
+
+/**
+ * GET /api/marketplace/wallet/transactions
+ *
+ * amount_micro is signed for ledger rows and the credited quota for top-ups.
+ * money is what the buyer actually paid for a top-up and is absent on ledger
+ * rows. reference is the request id or the top-up trade number.
+ */
+export interface WalletTransaction {
+  id: string
+  kind: WalletTransactionKind
+  amount_micro: number | string
+  status: string
+  reference: string
+  money?: number | string
+  created_at: string
+}
+
 export interface KeyPrefInput {
   token_id: number
   strategy: Strategy

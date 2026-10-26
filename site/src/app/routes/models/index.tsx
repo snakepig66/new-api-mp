@@ -10,7 +10,6 @@ import { QueryError } from '@/features/market/query-error'
 import { VendorPills } from '@/features/market/VendorPills'
 import { toVendorLookup, vendorLogo, vendorOptions } from '@/features/market/vendors'
 import { vendorsQuery } from '@/features/seller/api'
-import { formatMultiplier } from '@/lib/multiplier'
 import { formatYuan } from '@/lib/money'
 import { Button, Empty, Input, PageHeader, buttonClasses } from '@/ui'
 import type { SquareModel } from '@/features/market/api'
@@ -109,23 +108,23 @@ export function ModelsPage() {
       .sort((a, b) => a.model.localeCompare(b.model))
   }, [rows, vendor])
 
-  // Detail queries carry 官方价 and 最低倍率, which the list endpoint omits.
-  // Fetch for the whole catalog so the header's lowest multiplier is stable
-  // while a vendor pill or search narrows the table.
+  // Detail queries carry the official price, which the list endpoint omits.
   const { details, loading: detailsLoading } = useSquareModelDetails(rows)
 
-  const lowestMilli = useMemo(() => {
+  const lowestPrice = useMemo(() => {
     let lowest: number | null = null
-    for (const detail of details.values()) {
-      // Official-only models have no multiplier; they must not drag the
-      // headline "最低倍率" down to zero.
-      if (detail.multiplier_min_milli <= 0 || detail.listing_count === 0) continue
-      if (lowest === null || detail.multiplier_min_milli < lowest) {
-        lowest = detail.multiplier_min_milli
+    for (const model of rows) {
+      if (model.listing_count === 0) continue
+      const prices = model.prices[model.tier] ?? model.prices.peak ?? model.prices.offpeak
+      if (!prices) continue
+      const input = Number(prices.input_micro_per_mtok)
+      if (!Number.isFinite(input)) continue
+      if (lowest === null || input < lowest) {
+        lowest = input
       }
     }
     return lowest
-  }, [details])
+  }, [rows])
 
   const hasFilters = vendor !== null || query.length > 0
 
@@ -164,7 +163,7 @@ export function ModelsPage() {
             ? modelsCopy.count(rows.length)
             : modelsCopy.leadSummary(
                 rows.length,
-                lowestMilli === null ? null : formatMultiplier(lowestMilli),
+                lowestPrice === null ? null : formatYuan(lowestPrice),
               )
         }
         className="border-b-0 pb-0"
@@ -283,7 +282,7 @@ export function ModelsPage() {
               detailsLoading={detailsLoading}
               vendorMeta={vendorMeta}
               showAddToKey
-              minWidth={1160}
+              minWidth={1080}
             />
           </>
         )}

@@ -22,6 +22,9 @@ import {
 } from '@/ui'
 
 import { usageRecordQuery, usageRecordsQuery } from '@/features/console/api'
+import { meQuery } from '@/features/seller/api'
+import { ShareRecordsTable } from '@/features/seller/ShareRecordsTable'
+import { isSellerActive } from '@/features/seller/status'
 import {
   ErrorBlock,
   PageSkeleton,
@@ -37,12 +40,14 @@ const PAGE_SIZE = 20
 export const Route = createFileRoute('/console/records')({
   validateSearch: (
     search: Record<string, unknown>,
-  ): { page: number; request?: string } => {
+  ): { page: number; request?: string; view?: 'calls' | 'sales' } => {
     const parsed = Number(search.page)
+    const view = search.view === 'sales' ? 'sales' : search.view === 'calls' ? 'calls' : undefined
     return {
       page: Number.isInteger(parsed) && parsed > 0 ? parsed : 1,
       request:
         typeof search.request === 'string' && search.request ? search.request : undefined,
+      view,
     }
   },
   component: RecordsPage,
@@ -51,9 +56,15 @@ export const Route = createFileRoute('/console/records')({
 const page = copy.pages.consoleRecords
 
 function RecordsPage() {
-  const { page: currentPage, request } = Route.useSearch()
+  const { page: currentPage, request, view } = Route.useSearch()
   const navigate = useNavigate()
-  const records = useQuery(usageRecordsQuery(currentPage, PAGE_SIZE))
+  const me = useQuery(meQuery())
+  const sellerActive = me.data ? isSellerActive(me.data.seller) : false
+  const activeView = sellerActive ? (view ?? 'calls') : 'calls'
+  const records = useQuery({
+    ...usageRecordsQuery(currentPage, PAGE_SIZE),
+    enabled: activeView === 'calls',
+  })
 
   const total = records.data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
@@ -69,7 +80,36 @@ function RecordsPage() {
     <>
       <PageHeader title={page.title} lead={page.lead} />
 
-      {records.isPending ? (
+      {sellerActive ? (
+        <nav className="mt-5 flex items-center gap-1.5 overflow-x-auto" aria-label={page.title}>
+          {([
+            { key: 'calls' as const, label: page.tabs.calls },
+            { key: 'sales' as const, label: page.tabs.sales },
+          ]).map((tab) => {
+            const active = activeView === tab.key
+            return (
+              <Link
+                key={tab.key}
+                to="/console/records"
+                search={{ page: 1, view: tab.key }}
+                className={
+                  active
+                    ? 'inline-flex h-9 shrink-0 items-center rounded-full bg-brand-soft px-3.5 text-[14px] font-medium text-brand-ink'
+                    : 'inline-flex h-9 shrink-0 items-center rounded-full px-3.5 text-[14px] text-ink-2 transition-colors hover:bg-bg-soft hover:text-ink'
+                }
+              >
+                {tab.label}
+              </Link>
+            )
+          })}
+        </nav>
+      ) : null}
+
+      {activeView === 'sales' ? (
+        <div className="mt-6">
+          <ShareRecordsTable />
+        </div>
+      ) : records.isPending ? (
         <div className="mt-6">
           <PageSkeleton />
         </div>
@@ -142,7 +182,7 @@ function RecordsPage() {
         </Section>
       )}
 
-      {request ? (
+      {activeView === 'calls' && request ? (
         <RecordDialog
           requestId={request}
           onClose={() =>

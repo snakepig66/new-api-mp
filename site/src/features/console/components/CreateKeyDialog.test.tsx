@@ -213,7 +213,7 @@ describe('CreateKeyDialog', () => {
         'true',
       )
     })
-    const cap = (await screen.findByLabelText('glm-5.3 上限')) as HTMLInputElement
+    const cap = (await screen.findByLabelText('glm-5.3 价格上限')) as HTMLInputElement
     expect(cap.value).toBe('0.8')
     expect((screen.getByLabelText('路由策略') as HTMLSelectElement).value).toBe('cheapest')
   })

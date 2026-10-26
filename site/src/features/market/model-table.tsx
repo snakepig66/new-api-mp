@@ -2,7 +2,6 @@ import { Link } from '@tanstack/react-router'
 
 import { copy } from '@/copy'
 import { formatYuan } from '@/lib/money'
-import { formatMultiplier } from '@/lib/multiplier'
 import {
   PeakBadge,
   Table,
@@ -20,7 +19,7 @@ import { isOfficialVendor, vendorLabel, type VendorLookup } from './vendors'
 
 export interface ModelTableProps {
   models: SquareModel[]
-  /** Detail enrichment for 官方价 / 最低倍率 (the list endpoint lacks both). */
+  /** Detail enrichment for 官方价 (the list endpoint lacks it). */
   details?: Map<string, SquareModelDetail>
   detailsLoading?: boolean
   /** Vendor catalogue metadata; enables display names and the official tag. */
@@ -88,7 +87,6 @@ export function ModelTable({
           <TableHeaderCell>{columns.model}</TableHeaderCell>
           <TableHeaderCell numeric>{columns.input}</TableHeaderCell>
           <TableHeaderCell numeric>{columns.output}</TableHeaderCell>
-          <TableHeaderCell>{columns.multiplier}</TableHeaderCell>
           <TableHeaderCell numeric>{columns.buyerPrice}</TableHeaderCell>
           <TableHeaderCell numeric>{columns.channels}</TableHeaderCell>
           <TableHeaderCell numeric>{columns.sellers}</TableHeaderCell>
@@ -116,7 +114,6 @@ export function ModelTable({
                 <TableCell numeric>
                   <div className="flex justify-end">{skeletonCell('w-16')}</div>
                 </TableCell>
-                <TableCell>{skeletonCell('w-12')}</TableCell>
                 <TableCell numeric>
                   <div className="flex justify-end">{skeletonCell('w-16')}</div>
                 </TableCell>
@@ -186,17 +183,6 @@ export function ModelTable({
                       </span>
                     ) : detailsLoading ? (
                       <div className="flex justify-end">{skeletonCell('w-16')}</div>
-                    ) : (
-                      <Missing />
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {hasMarketSupply && detail ? (
-                      <span className="font-medium tabular-nums text-brand-ink">
-                        {formatMultiplier(detail.multiplier_min_milli)}x
-                      </span>
-                    ) : hasMarketSupply && detailsLoading ? (
-                      skeletonCell('w-12')
                     ) : (
                       <Missing />
                     )}

@@ -35,9 +35,12 @@ import type {
   UsageStats,
   WalletLedgerEntry,
   WalletSummary,
+  WalletTransaction,
+  WalletTransactionKind,
 } from './types'
 
 export type LedgerPage = PageInfo<WalletLedgerEntry>
+export type WalletTransactionPage = PageInfo<WalletTransaction>
 export type UsagePage = PageInfo<UsageRecord>
 export type TokenPage = PageInfo<TokenRecord>
 export type TopUpPage = PageInfo<TopUpRecord>
@@ -144,6 +147,24 @@ export const walletLedgerQuery = (page: number, pageSize = 20) =>
     queryFn: () =>
       api.get<LedgerPage>('/marketplace/wallet/ledger', {
         query: { page, page_size: pageSize },
+      }),
+    staleTime: 20_000,
+  })
+
+/**
+ * Unified wallet stream: marketplace ledger rows and top-up orders merged,
+ * newest first. kind=all|usage|topup selects both sources or one of them.
+ */
+export const walletTransactionsQuery = (
+  page: number,
+  kind: WalletTransactionKind | 'all' = 'all',
+  pageSize = 20,
+) =>
+  queryOptions({
+    queryKey: ['console', 'wallet-transactions', page, pageSize, kind],
+    queryFn: () =>
+      api.get<WalletTransactionPage>('/marketplace/wallet/transactions', {
+        query: { p: page, page_size: pageSize, kind },
       }),
     staleTime: 20_000,
   })

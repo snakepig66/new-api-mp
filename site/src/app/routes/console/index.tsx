@@ -36,6 +36,8 @@ import {
 } from '@/features/console/components/DataState'
 import { Notice } from '@/features/console/components/form'
 import { formatCount } from '@/features/console/format'
+import { meQuery } from '@/features/seller/api'
+import { isSellerActive } from '@/features/seller/status'
 import { soonestExpiringKey } from '@/features/console/key-expiry'
 import { toUsageRow } from '@/features/console/records'
 import type { UsageTier } from '@/features/console/types'
@@ -56,8 +58,10 @@ function ConsoleOverviewPage() {
   const stats = useQuery(usageStatsQuery(7))
   const recent = useQuery(usageRecordsQuery(1, 10))
   const keys = useQuery(consoleKeysQuery())
+  const me = useQuery(meQuery())
   const requestsTotal = stats.data?.items.reduce((sum, item) => sum + item.requests, 0) ?? 0
   const expiring = keys.data ? soonestExpiringKey(keys.data) : null
+  const sellerActive = me.data ? isSellerActive(me.data.seller) : false
 
   return (
     <>
@@ -70,6 +74,22 @@ function ConsoleOverviewPage() {
           </Link>
         }
       />
+
+      {!sellerActive ? (
+        <section className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-md border border-line bg-bg p-6">
+          <div className="min-w-0">
+            <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+              {page.shareCard.title}
+            </h2>
+            <p className="mt-1 max-w-2xl text-[14px] leading-6 text-ink-2">
+              {page.shareCard.body}
+            </p>
+          </div>
+          <Link to="/share" className={buttonClasses('secondary', 'sm', 'shrink-0')}>
+            {page.shareCard.action}
+          </Link>
+        </section>
+      ) : null}
 
       {expiring ? (
         <Notice className="mt-6" tone="warning" title={copy.pages.consoleKeys.expirySoon.title}>

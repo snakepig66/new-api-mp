@@ -6,13 +6,12 @@ import { logout, useAuth } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { Button, Logo, buttonClasses } from '@/ui'
 
-type NavTo = '/' | '/models' | '/docs' | '/seller' | '/console' | '/admin'
+type NavTo = '/' | '/models' | '/docs' | '/share' | '/console'
 
 const navItems: { to: NavTo; label: string; exact?: boolean }[] = [
-  { to: '/', label: copy.nav.home, exact: true },
   { to: '/models', label: copy.nav.models },
   { to: '/docs', label: copy.nav.docs },
-  { to: '/seller', label: copy.nav.seller },
+  { to: '/share', label: copy.nav.seller },
 ]
 
 function useIsActive(to: NavTo, exact = false): boolean {
@@ -97,7 +96,7 @@ function realFooterValue(value: string | undefined): value is string {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { user, isLoggedIn, isAdmin } = useAuth()
+  const { user, isLoggedIn } = useAuth()
   const navigate = useNavigate()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const [signingOut, setSigningOut] = useState(false)
@@ -139,7 +138,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
             {isLoggedIn ? (
               <>
-                {isAdmin ? <UtilityLink to="/admin" label={copy.nav.admin} /> : null}
                 <UtilityLink to="/console" label={copy.nav.console} />
                 <span className="hidden max-w-[120px] truncate text-[13px] text-ink-3 lg:inline">
                   {user?.display_name || user?.username}
@@ -193,9 +191,6 @@ export function AppShell({ children }: { children: ReactNode }) {
               {navItems.map((item) => (
                 <MobileNavItem key={item.to} {...item} onNavigate={() => setMenuOpen(false)} />
               ))}
-              {isAdmin ? (
-                <MobileNavItem to="/admin" label={copy.nav.admin} onNavigate={() => setMenuOpen(false)} />
-              ) : null}
               {isLoggedIn ? (
                 <MobileNavItem to="/console" label={copy.nav.console} onNavigate={() => setMenuOpen(false)} />
               ) : null}

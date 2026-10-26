@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 
 import { copy } from '@/copy'
@@ -28,10 +28,9 @@ import {
   fetchTopUpRecord,
   quoteTopupAmount,
   requestEpayTopup,
-  topUpRecordsQuery,
   topupInfoQuery,
-  walletLedgerQuery,
   walletQuery,
+  walletTransactionsQuery,
 } from '@/features/console/api'
 import {
   ErrorBlock,
@@ -40,8 +39,12 @@ import {
   StatSkeleton,
 } from '@/features/console/components/DataState'
 import { Notice } from '@/features/console/components/form'
-import { ledgerEntryLabel, ledgerStatusLabel } from '@/features/console/labels'
 import { redeemCodeSchema } from '@/features/console/schemas'
+import {
+  walletDescription,
+  walletKindLabel,
+  walletStatusMeta,
+} from '@/features/console/wallet-labels'
 
 const PAGE_SIZE = 20
 
@@ -58,13 +61,52 @@ export const Route = createFileRoute('/console/wallet')({
 
 const page = copy.pages.consoleWallet
 
-function WalletPage() {
-  const { page: currentPage } = Route.useSearch()
-  const navigate = useNavigate()
-  const wallet = useQuery(walletQuery())
-  const ledger = useQuery(walletLedgerQuery(currentPage, PAGE_SIZE))
+/** Unified wallet stream copy. New strings live here instead of copy.ts. */
+const tx = {
+  title: '全部流水',
+  hint: '消费、退款与充值按时间倒序合并展示。',
+  tabs: {
+    all: '全部',
+    usage: '消费',
+    topup: '充值',
+  } as const,
+  columns: {
+    time: '时间',
+    type: '类型',
+    description: '说明',
+    amount: '金额',
+    status: '状态',
+    reference: '单号',
+  },
+  emptyTitle: page.ledger.emptyTitle,
+  emptyReason: page.ledger.emptyReason,
+  emptyNext: page.ledger.emptyNext,
+  emptyTopupReason: '这个账号还没有充值记录。',
+} as const
 
-  const total = ledger.data?.total ?? 0
+type WalletTab = keyof typeof tx.tabs
+
+const WALLET_TABS: WalletTab[] = ['all', 'usage', 'topup']
+
+/** Read the validated page/topup search values. */
+function useWalletSearch(): { page: number; topup?: string } {
+  const search = useSearch({ strict: false }) as Record<string, unknown>
+  const parsed = Number(search.page)
+  return {
+    page: Number.isInteger(parsed) && parsed > 0 ? parsed : 1,
+    topup:
+      typeof search.topup === 'string' && search.topup ? search.topup : undefined,
+  }
+}
+
+export function WalletPage() {
+  const { page: currentPage } = useWalletSearch()
+  const navigate = useNavigate()
+  const [kind, setKind] = useState<WalletTab>('all')
+  const wallet = useQuery(walletQuery())
+  const transactions = useQuery(walletTransactionsQuery(currentPage, kind))
+
+  const total = transactions.data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   function goTo(next: number) {
@@ -72,6 +114,14 @@ function WalletPage() {
       to: '/console/wallet',
       search: { page: Math.min(Math.max(1, next), totalPages) },
     })
+  }
+
+  function selectKind(next: WalletTab) {
+    setKind(next)
+    // A filtered stream has a different length; start over at page 1.
+    if (currentPage !== 1) {
+      void navigate({ to: '/console/wallet', search: { page: 1 } })
+    }
   }
 
   return (
@@ -124,56 +174,98 @@ function WalletPage() {
         <RedeemPanel />
       </div>
 
-      <TopUpRecords />
+      <Section className="mt-9" title={tx.title} hint={tx.hint}>
+        <div
+          role="tablist"
+          aria-label={tx.title}
+          className="mb-4 inline-flex rounded-md border border-line bg-bg-subtle p-1"
+        >
+          {WALLET_TABS.map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={kind === tab}
+              onClick={() => selectKind(tab)}
+              className={
+                kind === tab
+                  ? 'rounded px-3 py-1.5 text-[13px] font-medium text-brand-ink'
+                  : 'rounded px-3 py-1.5 text-[13px] text-ink-2 transition-colors hover:text-ink'
+              }
+            >
+              {tx.tabs[tab]}
+            </button>
+          ))}
+        </div>
 
-      <Section className="mt-9" title={page.ledger.title} hint={page.ledger.hint}>
-        {ledger.isPending ? (
+        {transactions.isPending ? (
           <div className="space-y-2">
             <Skeleton className="h-5 w-full" />
             <Skeleton className="h-5 w-full" />
             <Skeleton className="h-5 w-4/5" />
           </div>
-        ) : ledger.isError ? (
-          <ErrorBlock error={ledger.error} onRetry={() => void ledger.refetch()} />
-        ) : ledger.data.items.length === 0 ? (
+        ) : transactions.isError ? (
+          <ErrorBlock
+            error={transactions.error}
+            onRetry={() => void transactions.refetch()}
+          />
+        ) : transactions.data.items.length === 0 ? (
           <Empty
-            title={page.ledger.emptyTitle}
-            reason={page.ledger.emptyReason}
-            next={page.ledger.emptyNext}
+            title={tx.emptyTitle}
+            reason={kind === 'topup' ? tx.emptyTopupReason : tx.emptyReason}
+            next={tx.emptyNext}
           />
         ) : (
           <>
-            <Table minWidth={760}>
+            <Table minWidth={860}>
               <TableHead>
                 <TableRow interactive={false}>
-                  <TableHeaderCell>{page.ledger.columns.time}</TableHeaderCell>
-                  <TableHeaderCell>{page.ledger.columns.type}</TableHeaderCell>
-                  <TableHeaderCell>{page.ledger.columns.request}</TableHeaderCell>
-                  <TableHeaderCell numeric>{page.ledger.columns.amount}</TableHeaderCell>
-                  <TableHeaderCell>{page.ledger.columns.status}</TableHeaderCell>
+                  <TableHeaderCell>{tx.columns.time}</TableHeaderCell>
+                  <TableHeaderCell>{tx.columns.type}</TableHeaderCell>
+                  <TableHeaderCell>{tx.columns.description}</TableHeaderCell>
+                  <TableHeaderCell numeric>{tx.columns.amount}</TableHeaderCell>
+                  <TableHeaderCell>{tx.columns.status}</TableHeaderCell>
+                  <TableHeaderCell>{tx.columns.reference}</TableHeaderCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {ledger.data.items.map((entry, index) => (
-                  <TableRow key={`${entry.request_id}-${entry.entry_type}-${index}`}>
-                    <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
-                      {formatDateTime(entry.created_at)}
-                    </TableCell>
-                    <TableCell>{ledgerEntryLabel(entry.entry_type)}</TableCell>
-                    <TableCell className="max-w-[220px] truncate tabular-nums text-[13px] text-ink-3">
-                      {entry.request_id || copy.pages.consoleShared.none}
-                    </TableCell>
-                    <TableCell
-                      numeric
-                      className={entry.entry_type === 'refund' ? 'text-brand-ink' : undefined}
-                    >
-                      {formatYuan(entry.amount_micro)}
-                    </TableCell>
-                    <TableCell>
-                      <LedgerStatus status={entry.status} />
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {transactions.data.items.map((entry) => {
+                  const status = walletStatusMeta(entry.kind, entry.status)
+                  const description = walletDescription(entry)
+                  return (
+                    <TableRow key={entry.id}>
+                      <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
+                        {formatDateTime(entry.created_at)}
+                      </TableCell>
+                      <TableCell>{walletKindLabel(entry.kind)}</TableCell>
+                      <TableCell
+                        className="max-w-[240px] truncate text-[13px] text-ink-3"
+                        title={description}
+                      >
+                        {description}
+                      </TableCell>
+                      <TableCell
+                        numeric
+                        className={
+                          entry.kind === 'refund' || entry.kind === 'topup'
+                            ? 'text-brand-ink'
+                            : undefined
+                        }
+                      >
+                        {formatYuan(entry.amount_micro)}
+                      </TableCell>
+                      <TableCell>
+                        <Tag tone={status.tone}>{status.label}</Tag>
+                      </TableCell>
+                      <TableCell
+                        className="max-w-[220px] truncate font-mono text-[12px] text-ink-2"
+                        title={entry.reference}
+                      >
+                        {entry.reference || copy.pages.consoleShared.none}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
 
@@ -465,7 +557,7 @@ type TopupReturnState = 'idle' | 'confirming' | 'success' | 'timeout'
  * vanished; on timeout hand them the order number for support.
  */
 function TopupReturnWatcher() {
-  const { topup } = Route.useSearch()
+  const { topup } = useWalletSearch()
   const queryClient = useQueryClient()
   const [state, setState] = useState<TopupReturnState>('idle')
   const [orderNo, setOrderNo] = useState('')
@@ -499,8 +591,7 @@ function TopupReturnWatcher() {
           sessionStorage.removeItem('mp:last-topup')
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: ['console', 'wallet'] }),
-            queryClient.invalidateQueries({ queryKey: ['console', 'wallet-ledger'] }),
-            queryClient.invalidateQueries({ queryKey: ['console', 'topup-records'] }),
+            queryClient.invalidateQueries({ queryKey: ['console', 'wallet-transactions'] }),
           ])
           return
         }
@@ -555,66 +646,6 @@ function TopupReturnWatcher() {
   )
 }
 
-function TopUpRecords() {
-  const records = useQuery(topUpRecordsQuery())
-
-  return (
-    <Section className="mt-9" title={page.topups.title} hint={page.topups.hint}>
-      {records.isPending ? (
-        <div className="space-y-2">
-          <Skeleton className="h-5 w-full" />
-          <Skeleton className="h-5 w-full" />
-        </div>
-      ) : records.isError ? (
-        <ErrorBlock error={records.error} onRetry={() => void records.refetch()} />
-      ) : records.data.items.length === 0 ? (
-        <Empty
-          title={page.topups.emptyTitle}
-          reason={page.topups.emptyReason}
-        />
-      ) : (
-        <Table minWidth={720}>
-          <TableHead>
-            <TableRow interactive={false}>
-              <TableHeaderCell>{page.topups.time}</TableHeaderCell>
-              <TableHeaderCell>{page.topups.order}</TableHeaderCell>
-              <TableHeaderCell numeric>{page.topups.amount}</TableHeaderCell>
-              <TableHeaderCell numeric>{page.topups.money}</TableHeaderCell>
-              <TableHeaderCell>{page.topups.status}</TableHeaderCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {records.data.items.map((record) => (
-              <TableRow key={record.id} interactive={false}>
-                <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
-                  {formatDateTime(record.create_time)}
-                </TableCell>
-                <TableCell className="max-w-[220px] truncate font-mono text-[12px] text-ink-2">
-                  {record.trade_no}
-                </TableCell>
-                <TableCell numeric>{record.amount} 元</TableCell>
-                <TableCell numeric>¥{Number(record.money).toFixed(2)}</TableCell>
-                <TableCell>
-                  <TopUpStatus status={record.status} />
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
-    </Section>
-  )
-}
-
-function TopUpStatus({ status }: { status: string }) {
-  const label =
-    page.topups.statuses[status as keyof typeof page.topups.statuses] ??
-    page.topups.statuses.unknown
-  if (status === 'success') return <Tag tone="brand">{label}</Tag>
-  if (status === 'pending') return <Tag tone="neutral">{label}</Tag>
-  return <Tag tone="danger">{label}</Tag>
-}
-
 function formatDiscount(discount: number): string {
   if (!Number.isFinite(discount) || discount <= 0) return '—'
   return (discount * 10).toFixed(1).replace(/\.0$/, '')
@@ -636,14 +667,6 @@ function submitPaymentForm(url: string, params: Record<string, string>) {
   document.body.appendChild(form)
   form.submit()
   form.remove()
-}
-
-function LedgerStatus({ status }: { status: string }) {
-  const label = ledgerStatusLabel(status)
-  if (status === 'available') return <Tag tone="brand">{label}</Tag>
-  if (status === 'pending') return <Tag tone="neutral">{label}</Tag>
-  if (status === 'reversed') return <Tag tone="danger">{label}</Tag>
-  return <Tag tone="neutral">{label}</Tag>
 }
 
 function RedeemPanel() {
@@ -669,7 +692,7 @@ function RedeemPanel() {
       })
       setCode('')
       await queryClient.invalidateQueries({ queryKey: ['console', 'wallet'] })
-      await queryClient.invalidateQueries({ queryKey: ['console', 'wallet-ledger'] })
+      await queryClient.invalidateQueries({ queryKey: ['console', 'wallet-transactions'] })
     } catch (redeemError) {
       setError(
         redeemError instanceof ApiError ? redeemError.message : copy.pages.consoleShared.errorHint,

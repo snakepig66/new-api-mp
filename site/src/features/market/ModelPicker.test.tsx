@@ -130,7 +130,7 @@ describe('ModelPicker', () => {
     const { onChange } = renderPicker({})
     expect(await screen.findByText('deepseek-flash')).toBeTruthy()
 
-    const cap = screen.getByLabelText('deepseek-flash 上限') as HTMLInputElement
+    const cap = screen.getByLabelText('deepseek-flash 价格上限') as HTMLInputElement
     expect(cap.disabled).toBe(true)
 
     const groupToggle = screen.getByLabelText(/DeepSeek 0 \/ 2/) as HTMLInputElement
@@ -142,7 +142,7 @@ describe('ModelPicker', () => {
     renderPicker({ 'deepseek-flash': '0.8' })
     const partial = (await screen.findByLabelText(/DeepSeek 1 \/ 2/)) as HTMLInputElement
     await waitFor(() => expect(partial.indeterminate).toBe(true))
-    const enabledCap = screen.getByLabelText('deepseek-flash 上限') as HTMLInputElement
+    const enabledCap = screen.getByLabelText('deepseek-flash 价格上限') as HTMLInputElement
     expect(enabledCap.disabled).toBe(false)
   })
 
@@ -158,15 +158,15 @@ describe('ModelPicker', () => {
     expect(within(kimi).getByText('K')).toBeTruthy()
   })
 
-  it('shows the lowest market multiplier and warns when the cap is below it', async () => {
+  it('shows the current lowest price and warns when the cap is below it', async () => {
     renderPicker({ 'deepseek-flash': '0.3' })
-    expect(await screen.findByText('当前最低 0.45')).toBeTruthy()
-    expect(screen.getByText('低于当前最低，暂无可用供给')).toBeTruthy()
+    expect(await screen.findByText('当前最低 ¥1.00 / 百万')).toBeTruthy()
+    expect(screen.getByText('低于当前最低价，暂无可用供给')).toBeTruthy()
 
     cleanup()
     renderPicker({ 'deepseek-flash': '0.5' })
-    expect(await screen.findByText('当前最低 0.45')).toBeTruthy()
-    expect(screen.queryByText('低于当前最低，暂无可用供给')).toBeNull()
+    expect(await screen.findByText('当前最低 ¥1.00 / 百万')).toBeTruthy()
+    expect(screen.queryByText('低于当前最低价，暂无可用供给')).toBeNull()
   })
 
   it('shows the two different empty states', async () => {

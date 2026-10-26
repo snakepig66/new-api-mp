@@ -127,17 +127,17 @@ describe('model detail channels', () => {
   it('renders sellable channels grouped by kind with badges and differences', async () => {
     renderPage()
 
-    expect(await screen.findByText('渠道挂单')).toBeTruthy()
+    expect(await screen.findByText('渠道信息')).toBeTruthy()
     expect(screen.getAllByText('DeepSeek').length).toBeGreaterThan(0)
     expect(screen.getByText('火山方舟 Coding Plan')).toBeTruthy()
-    expect(screen.getByText('官方')).toBeTruthy()
+    expect(screen.getAllByText('官方').length).toBeGreaterThan(0)
     expect(screen.getByText('套餐')).toBeTruthy()
     expect(screen.getByText('已验真')).toBeTruthy()
     expect(screen.getByText('未验真')).toBeTruthy()
     expect(screen.getByText('上下文 128K')).toBeTruthy()
     expect(screen.getByText('无图片')).toBeTruthy()
     expect(screen.getByText('与官方一致')).toBeTruthy()
-    expect(screen.getByText('2 个渠道 · 3 个挂单')).toBeTruthy()
+    expect(screen.getByText('2 个渠道 · 3 位分享者')).toBeTruthy()
   })
 
   it('shows the official price and an empty channel list without supply', async () => {
@@ -167,9 +167,9 @@ describe('model detail channels', () => {
 
     renderPage()
 
-    expect(await screen.findByText('渠道挂单')).toBeTruthy()
-    expect(screen.getByText('暂时没有渠道挂单')).toBeTruthy()
+    expect(await screen.findByText('渠道信息')).toBeTruthy()
+    expect(screen.getByText('暂时没有渠道')).toBeTruthy()
     expect(screen.getAllByText('官方价').length).toBeGreaterThan(0)
-    expect(screen.getByText('0 个渠道 · 0 个挂单')).toBeTruthy()
+    expect(screen.getByText('0 个渠道 · 0 位分享者')).toBeTruthy()
   })
 })

@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 )
 
@@ -44,7 +45,10 @@ func newWalletFixture(t *testing.T) *walletFixture {
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
 	migrateAll(t, db)
-	require.NoError(t, db.AutoMigrate(&model.User{}))
+	// Top-ups belong to the upstream schema; the unified wallet stream reads
+	// them next to mp_ledger, so the fixture creates the same table production
+	// GORM owns.
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}))
 
 	relayStateMu.Lock()
 	oldRelayDB := relayDB
@@ -89,6 +93,23 @@ func seedWalletLedger(t *testing.T, db *gorm.DB, row LedgerEntry) {
 		row.Status = LedgerAvailable
 	}
 	require.NoError(t, db.Create(&row).Error)
+}
+
+// seedWalletTopUp writes one upstream top_ups row. create_time is Unix
+// seconds, unlike the ledger's time.Time column.
+func seedWalletTopUp(t *testing.T, db *gorm.DB, row model.TopUp) {
+	t.Helper()
+	if row.Status == "" {
+		row.Status = common.TopUpStatusSuccess
+	}
+	require.NoError(t, db.Create(&row).Error)
+}
+
+func apiStr(t *testing.T, m map[string]any, key string) string {
+	t.Helper()
+	value, ok := m[key].(string)
+	require.True(t, ok, "field %q must be a string, map: %v", key, m)
+	return value
 }
 
 func seedWalletRequest(t *testing.T, db *gorm.DB, row Request) {
@@ -258,4 +279,170 @@ func TestWalletLedgerPaginationAndOwnership(t *testing.T) {
 	// No login → 401.
 	w = f.get(t, "/api/marketplace/wallet/ledger", 0)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// TestWalletTransactionsMergeOrderingAndPagination covers the unified stream:
+// ledger debits/refunds and top-up orders interleave by created_at, pagination
+// crosses the source boundary, and only buyer-side rows of the logged-in user
+// are visible.
+func TestWalletTransactionsMergeOrderingAndPagination(t *testing.T) {
+	f := newWalletFixture(t)
+	previousUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500_000
+	t.Cleanup(func() { common.QuotaPerUnit = previousUnit })
+
+	base := time.Unix(1_700_000_000, 0)
+	buyer := strconv.FormatInt(f.buyerID, 10)
+	other := strconv.FormatInt(f.otherID, 10)
+
+	ledgerRows := []LedgerEntry{
+		{RequestID: "tx-legacy", EntryType: EntryBuyerDebit, Account: "user:" + buyer, AmountMicro: -300_000, CreatedAt: base.Add(30 * time.Second)},
+		{RequestID: "tx-debit", EntryType: EntryBuyerDebit, Account: "buyer:" + buyer, AmountMicro: -1_000_000, CreatedAt: base.Add(120 * time.Second)},
+		{RequestID: "tx-tool", EntryType: EntryToolDebit, Account: "user:" + buyer, AmountMicro: -500_000, CreatedAt: base.Add(180 * time.Second)},
+		{RequestID: "tx-refund", EntryType: EntryRefund, Account: "user:" + buyer, AmountMicro: 200_000, CreatedAt: base.Add(240 * time.Second)},
+		// Another buyer and the same user's seller income never enter the
+		// buyer's wallet stream.
+		{RequestID: "tx-other", EntryType: EntryBuyerDebit, Account: "user:" + other, AmountMicro: -9_000_000, CreatedAt: base.Add(360 * time.Second)},
+		{RequestID: "tx-seller", EntryType: EntrySellerCredit, Account: "seller:" + buyer, AmountMicro: 5_000_000, Status: LedgerPending, CreatedAt: base.Add(400 * time.Second)},
+	}
+	for _, row := range ledgerRows {
+		seedWalletLedger(t, f.db, row)
+	}
+	seedWalletTopUp(t, f.db, model.TopUp{
+		UserId: int(f.buyerID), Amount: 10, Money: 10, TradeNo: "trade-buyer-1",
+		CreateTime: base.Add(60 * time.Second).Unix(), Status: common.TopUpStatusSuccess,
+	})
+	seedWalletTopUp(t, f.db, model.TopUp{
+		UserId: int(f.otherID), Amount: 99, Money: 99, TradeNo: "trade-other-1",
+		CreateTime: base.Add(300 * time.Second).Unix(), Status: common.TopUpStatusSuccess,
+	})
+
+	// Page 1 of 2: newest buyer rows across both sources (refund, then tool).
+	w := f.get(t, "/api/marketplace/wallet/transactions?p=1&page_size=2", f.buyerID)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	data := apiData(t, decodeAPIBody(t, w))
+	assert.Equal(t, int64(5), apiNum(t, data, "total"))
+	assert.Equal(t, int64(1), apiNum(t, data, "page"))
+	assert.Equal(t, int64(2), apiNum(t, data, "page_size"))
+
+	items := apiPageItems(t, data)
+	require.Len(t, items, 2)
+	first := items[0].(map[string]any)
+	assert.Equal(t, "tx-refund", apiStr(t, first, "reference"))
+	assert.Equal(t, walletTxKindRefund, apiStr(t, first, "kind"))
+	assert.Equal(t, int64(200_000), apiNum(t, first, "amount_micro"))
+	assert.Equal(t, LedgerAvailable, apiStr(t, first, "status"))
+	assert.Contains(t, apiStr(t, first, "id"), "ledger:")
+	_, hasMoney := first["money"]
+	assert.False(t, hasMoney, "ledger rows must not carry money")
+
+	second := items[1].(map[string]any)
+	assert.Equal(t, "tx-tool", apiStr(t, second, "reference"))
+	assert.Equal(t, walletTxKindUsage, apiStr(t, second, "kind"))
+
+	// Page 2 crosses the source boundary: a ledger debit then the top-up.
+	w = f.get(t, "/api/marketplace/wallet/transactions?p=2&page_size=2", f.buyerID)
+	require.Equal(t, http.StatusOK, w.Code)
+	data = apiData(t, decodeAPIBody(t, w))
+	items = apiPageItems(t, data)
+	require.Len(t, items, 2)
+	assert.Equal(t, "tx-debit", apiStr(t, items[0].(map[string]any), "reference"))
+	topup := items[1].(map[string]any)
+	assert.Equal(t, walletTxKindTopup, apiStr(t, topup, "kind"))
+	assert.Equal(t, "trade-buyer-1", apiStr(t, topup, "reference"))
+	assert.Equal(t, int64(10*500_000), apiNum(t, topup, "amount_micro"), "amount is CNY × QuotaPerUnit")
+	assert.Equal(t, int64(10), apiNum(t, topup, "money"))
+	assert.Equal(t, common.TopUpStatusSuccess, apiStr(t, topup, "status"))
+	assert.Contains(t, apiStr(t, topup, "id"), "topup:")
+	createdAt, err := time.Parse(time.RFC3339Nano, apiStr(t, topup, "created_at"))
+	require.NoError(t, err)
+	assert.Equal(t, base.Add(60*time.Second).Unix(), createdAt.Unix(), "create_time is Unix seconds")
+
+	// Page 3 holds only the oldest row; page 4 is empty but keeps total.
+	w = f.get(t, "/api/marketplace/wallet/transactions?p=3&page_size=2", f.buyerID)
+	require.Equal(t, http.StatusOK, w.Code)
+	data = apiData(t, decodeAPIBody(t, w))
+	items = apiPageItems(t, data)
+	require.Len(t, items, 1)
+	assert.Equal(t, "tx-legacy", apiStr(t, items[0].(map[string]any), "reference"))
+
+	w = f.get(t, "/api/marketplace/wallet/transactions?p=4&page_size=2", f.buyerID)
+	require.Equal(t, http.StatusOK, w.Code)
+	data = apiData(t, decodeAPIBody(t, w))
+	assert.Equal(t, int64(5), apiNum(t, data, "total"))
+	assert.Empty(t, apiPageItems(t, data))
+
+	// The other buyer sees only their own top-up and debit.
+	w = f.get(t, "/api/marketplace/wallet/transactions?p=1&page_size=20", f.otherID)
+	require.Equal(t, http.StatusOK, w.Code)
+	data = apiData(t, decodeAPIBody(t, w))
+	assert.Equal(t, int64(2), apiNum(t, data, "total"))
+	for _, raw := range apiPageItems(t, data) {
+		item := raw.(map[string]any)
+		ref := apiStr(t, item, "reference")
+		assert.True(t, ref == "tx-other" || ref == "trade-other-1", "unexpected row %q", ref)
+	}
+
+	// No login → 401.
+	w = f.get(t, "/api/marketplace/wallet/transactions", 0)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// TestWalletTransactionsKindFilter checks that kind selects one source:
+// usage keeps every ledger row (including refunds), topup keeps only orders.
+func TestWalletTransactionsKindFilter(t *testing.T) {
+	f := newWalletFixture(t)
+	base := time.Unix(1_700_100_000, 0)
+	buyer := strconv.FormatInt(f.buyerID, 10)
+
+	seedWalletLedger(t, f.db, LedgerEntry{
+		RequestID: "kf-debit", EntryType: EntryBuyerDebit, Account: "user:" + buyer,
+		AmountMicro: -100, CreatedAt: base,
+	})
+	seedWalletLedger(t, f.db, LedgerEntry{
+		RequestID: "kf-refund", EntryType: EntryRefund, Account: "user:" + buyer,
+		AmountMicro: 50, CreatedAt: base.Add(time.Second),
+	})
+	seedWalletTopUp(t, f.db, model.TopUp{
+		UserId: int(f.buyerID), Amount: 1, Money: 1, TradeNo: "kf-trade",
+		CreateTime: base.Add(2 * time.Second).Unix(),
+	})
+
+	// kind=usage: both ledger rows, no top-up.
+	w := f.get(t, "/api/marketplace/wallet/transactions?p=1&page_size=20&kind=usage", f.buyerID)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	data := apiData(t, decodeAPIBody(t, w))
+	assert.Equal(t, int64(2), apiNum(t, data, "total"))
+	items := apiPageItems(t, data)
+	require.Len(t, items, 2)
+	assert.Equal(t, walletTxKindRefund, apiStr(t, items[0].(map[string]any), "kind"))
+	assert.Equal(t, walletTxKindUsage, apiStr(t, items[1].(map[string]any), "kind"))
+
+	// kind=topup: only the order.
+	w = f.get(t, "/api/marketplace/wallet/transactions?p=1&page_size=20&kind=topup", f.buyerID)
+	require.Equal(t, http.StatusOK, w.Code)
+	data = apiData(t, decodeAPIBody(t, w))
+	assert.Equal(t, int64(1), apiNum(t, data, "total"))
+	items = apiPageItems(t, data)
+	require.Len(t, items, 1)
+	assert.Equal(t, walletTxKindTopup, apiStr(t, items[0].(map[string]any), "kind"))
+
+	// An unknown kind behaves like all.
+	w = f.get(t, "/api/marketplace/wallet/transactions?p=1&page_size=20&kind=bogus", f.buyerID)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, int64(3), apiNum(t, apiData(t, decodeAPIBody(t, w)), "total"))
+}
+
+// TestWalletTopUpAmountMicro locks the display-amount → 微元 conversion: a
+// top-up is stored in currency units, never already in 微元.
+func TestWalletTopUpAmountMicro(t *testing.T) {
+	previousUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500_000
+	t.Cleanup(func() { common.QuotaPerUnit = previousUnit })
+
+	assert.Equal(t, int64(500_000), topUpAmountMicro(1))
+	assert.Equal(t, int64(5_000_000), topUpAmountMicro(10))
+	assert.NotEqual(t, int64(10), topUpAmountMicro(10))
+	assert.Equal(t, int64(0), topUpAmountMicro(0))
+	assert.Equal(t, int64(0), topUpAmountMicro(-5))
 }

@@ -3,6 +3,7 @@
  * 只组合 ui/ 基础组件，不改设计系统。
  */
 
+import { Link, useRouterState } from '@tanstack/react-router'
 import type {
   InputHTMLAttributes,
   ReactNode,
@@ -262,6 +263,53 @@ export function FilterTabs<T extends string>({
         )
       })}
     </div>
+  )
+}
+
+export type OpsTabPath =
+  | '/console/ops/pricing'
+  | '/console/ops/pricing/per-call'
+  | '/console/ops/review'
+  | '/console/ops/review/payouts'
+  | '/console/ops/tools'
+  | '/console/ops/tools/reversal'
+
+export interface OpsTabLink {
+  to: OpsTabPath
+  label: string
+}
+
+/** 运营页面分组的可分享标签页导航。 */
+export function OpsTabNav({
+  tabs,
+  ariaLabel,
+}: {
+  tabs: readonly OpsTabLink[]
+  ariaLabel: string
+}) {
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const current = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname
+  return (
+    <nav aria-label={ariaLabel} className="mb-5 flex flex-wrap items-center gap-1.5">
+      {tabs.map((tab) => {
+        const active = current === tab.to
+        return (
+          <Link
+            key={tab.to}
+            to={tab.to}
+            aria-current={active ? 'page' : undefined}
+            className={cn(
+              'inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-full px-3.5 text-[14px] transition-colors',
+              active
+                ? 'bg-brand-soft font-medium text-brand-ink'
+                : 'text-ink-2 hover:bg-bg-soft hover:text-ink',
+            )}
+          >
+            {tab.label}
+          </Link>
+        )
+      })}
+    </nav>
   )
 }
 

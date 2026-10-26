@@ -21,14 +21,18 @@ package marketplace
 import (
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 )
 
 // RegisterWalletRoutes mounts the buyer wallet endpoints on g. g MUST already
@@ -41,6 +45,7 @@ func RegisterWalletRoutes(g *gin.RouterGroup) {
 func registerWalletRoutes(g *gin.RouterGroup) {
 	g.GET("/wallet", getWallet)
 	g.GET("/wallet/ledger", listWalletLedger)
+	g.GET("/wallet/transactions", listWalletTransactions)
 }
 
 // Wallet pagination follows the other console lists: page starts at 1,
@@ -92,9 +97,14 @@ func consoleUserID(c *gin.Context) int64 {
 }
 
 // parseWalletPageQuery reads page/page_size with the same rules as the other
-// console lists.
+// console lists. Upstream console lists spell the page as "p"; the legacy
+// wallet endpoints used "page", so both are accepted.
 func parseWalletPageQuery(c *gin.Context) (page, pageSize int) {
-	page, err := strconv.Atoi(c.Query("page"))
+	rawPage := c.Query("p")
+	if rawPage == "" {
+		rawPage = c.Query("page")
+	}
+	page, err := strconv.Atoi(rawPage)
 	if err != nil || page < 1 {
 		page = 1
 	}
@@ -233,6 +243,220 @@ func listWalletLedger(c *gin.Context) {
 			CreatedAt:   r.CreatedAt,
 		})
 	}
+	pageInfo := &common.PageInfo{Page: page, PageSize: pageSize}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(items)
+	common.ApiSuccess(c, pageInfo)
+}
+
+// Unified wallet flow kinds. "usage" and "refund" are ledger rows, "topup"
+// comes from the upstream top_ups table.
+const (
+	walletTxKindAll    = "all"
+	walletTxKindUsage  = "usage"
+	walletTxKindRefund = "refund"
+	walletTxKindTopup  = "topup"
+)
+
+// walletTransaction is one row of GET /wallet/transactions, merging the
+// marketplace ledger with the upstream top-up orders:
+//
+//	id            "ledger:<mp_ledger.id>" or "topup:<top_ups.id>"
+//	kind          usage | refund | topup
+//	amount_micro  signed ledger amount, or the credited quota of a top-up
+//	status        ledger status (available/pending/reversed) or top-up status
+//	reference     ledger request id or top-up trade number
+//	money         what the buyer actually paid for a top-up, omitted for ledger
+//	created_at    row time (top_ups.create_time is Unix seconds)
+type walletTransaction struct {
+	ID          string    `json:"id"`
+	Kind        string    `json:"kind"`
+	AmountMicro int64     `json:"amount_micro"`
+	Status      string    `json:"status"`
+	Reference   string    `json:"reference"`
+	Money       float64   `json:"money,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+
+	// sourceID is the raw mp_ledger.id / top_ups.id, used only to break ties
+	// between two rows with the same second. It is never serialized.
+	sourceID int64
+}
+
+// topUpAmountMicro converts top_ups.amount into 微元.
+//
+// top_ups.amount is the display (currency) amount, not an already-micro
+// value: in this deployment it is CNY, and the credited quota is
+// amount × QuotaPerUnit — exactly the conversion the recharge paths perform
+// (model.RechargeEpay/RechargeWaffo) and getTopUpQuota uses for a currency
+// display type. The conversion is intentionally decimal-backed so it matches
+// the credit path instead of accumulating float error.
+func topUpAmountMicro(amount int64) int64 {
+	if amount <= 0 {
+		return 0
+	}
+	quota, err := common.WalletQuotaFromDecimalStrict(
+		decimal.NewFromInt(amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
+	)
+	if err != nil || quota <= 0 {
+		return 0
+	}
+	return int64(quota)
+}
+
+// listWalletTransactions serves GET /wallet/transactions?p=&page_size=&kind=
+// with one merged, newest-first stream of the buyer's ledger rows and top-up
+// orders.
+//
+// Pagination is correct across both sources without an in-database union: each
+// source is read up to page*page_size rows (already sorted), the two slices
+// are merged in memory by created_at DESC then source id DESC, and the
+// requested page is cut out of the result. total is the sum of both source
+// counts, so the UI can size the paginator. kind=usage/topup restricts the
+// stream to one source; refund rows count as usage-source rows.
+func listWalletTransactions(c *gin.Context) {
+	userID := consoleUserID(c)
+	if userID <= 0 {
+		common.ApiErrorStatus(c, http.StatusUnauthorized, errors.New("unauthorized"))
+		return
+	}
+	db := consoleDB(c)
+	if db == nil {
+		return
+	}
+	page, pageSize := parseWalletPageQuery(c)
+	kind := strings.ToLower(strings.TrimSpace(c.Query("kind")))
+	switch kind {
+	case "":
+		kind = walletTxKindAll
+	case walletTxKindAll, walletTxKindUsage, walletTxKindTopup:
+	default:
+		// Unknown filters are ignored; the console only sends the three
+		// documented values, and "all" is the safe default.
+		kind = walletTxKindAll
+	}
+
+	// Rows needed from each source before merging: the requested page ends at
+	// page*page_size, so no source can contribute a later row to an earlier
+	// page. Each source read is capped at its own row count, which keeps a
+	// deep page from asking the database for rows that do not exist. A
+	// multiplication overflow degrades to "read all rows" rather than a
+	// negative limit.
+	limit := page * pageSize
+	if limit < pageSize {
+		limit = 0
+	}
+	items := make([]walletTransaction, 0)
+	var total int64
+
+	if kind == walletTxKindAll || kind == walletTxKindUsage {
+		accounts := buyerLedgerAccounts(userID)
+		types := buyerLedgerEntryTypes()
+		var ledgerTotal int64
+		if err := db.Model(&LedgerEntry{}).
+			Where("account IN ? AND entry_type IN ?", accounts, types).
+			Count(&ledgerTotal).Error; err != nil {
+			common.SysError(common.LogText("marketplace wallet: count transactions ledger: %s", err.Error()))
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query wallet transactions"))
+			return
+		}
+		total += ledgerTotal
+		if ledgerTotal > 0 {
+			fetchLimit := limit
+			if fetchLimit <= 0 || int64(fetchLimit) > ledgerTotal {
+				fetchLimit = int(ledgerTotal)
+			}
+			var rows []LedgerEntry
+			if err := db.Where("account IN ? AND entry_type IN ?", accounts, types).
+				Order("created_at DESC").Order("id DESC").
+				Limit(fetchLimit).
+				Find(&rows).Error; err != nil {
+				common.SysError(common.LogText("marketplace wallet: query transactions ledger: %s", err.Error()))
+				common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query wallet transactions"))
+				return
+			}
+			for i := range rows {
+				r := &rows[i]
+				entryKind := walletTxKindUsage
+				if r.EntryType == EntryRefund {
+					entryKind = walletTxKindRefund
+				}
+				items = append(items, walletTransaction{
+					ID:          "ledger:" + strconv.FormatInt(r.ID, 10),
+					Kind:        entryKind,
+					AmountMicro: r.AmountMicro,
+					Status:      r.Status,
+					Reference:   r.RequestID,
+					CreatedAt:   r.CreatedAt,
+					sourceID:    r.ID,
+				})
+			}
+		}
+	}
+
+	if kind == walletTxKindAll || kind == walletTxKindTopup {
+		var topupTotal int64
+		if err := db.Model(&model.TopUp{}).
+			Where("user_id = ?", userID).
+			Count(&topupTotal).Error; err != nil {
+			common.SysError(common.LogText("marketplace wallet: count transactions topups: %s", err.Error()))
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query wallet transactions"))
+			return
+		}
+		total += topupTotal
+		if topupTotal > 0 {
+			fetchLimit := limit
+			if fetchLimit <= 0 || int64(fetchLimit) > topupTotal {
+				fetchLimit = int(topupTotal)
+			}
+			var rows []model.TopUp
+			if err := db.Where("user_id = ?", userID).
+				Order("create_time DESC").Order("id DESC").
+				Limit(fetchLimit).
+				Find(&rows).Error; err != nil {
+				common.SysError(common.LogText("marketplace wallet: query transactions topups: %s", err.Error()))
+				common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query wallet transactions"))
+				return
+			}
+			for i := range rows {
+				r := &rows[i]
+				items = append(items, walletTransaction{
+					ID:          "topup:" + strconv.Itoa(r.Id),
+					Kind:        walletTxKindTopup,
+					AmountMicro: topUpAmountMicro(r.Amount),
+					Status:      r.Status,
+					Reference:   r.TradeNo,
+					Money:       r.Money,
+					CreatedAt:   time.Unix(r.CreateTime, 0),
+					sourceID:    int64(r.Id),
+				})
+			}
+		}
+	}
+
+	// Newest first; equal timestamps fall back to the higher source row id so
+	// the order is stable across requests. The final id comparison only makes
+	// the ordering total when both sources happen to share an id.
+	sort.Slice(items, func(i, j int) bool {
+		if !items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].CreatedAt.After(items[j].CreatedAt)
+		}
+		if items[i].sourceID != items[j].sourceID {
+			return items[i].sourceID > items[j].sourceID
+		}
+		return items[i].ID > items[j].ID
+	})
+
+	start := (page - 1) * pageSize
+	if start < 0 || start >= len(items) {
+		items = items[:0]
+	} else {
+		end := start + pageSize
+		if end > len(items) {
+			end = len(items)
+		}
+		items = items[start:end]
+	}
+
 	pageInfo := &common.PageInfo{Page: page, PageSize: pageSize}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(items)

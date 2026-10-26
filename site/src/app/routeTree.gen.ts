@@ -16,9 +16,11 @@ import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as OpsLegacyRouteImport } from './routes/ops-legacy'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as SellerRouteImport } from './routes/seller'
+import { Route as ShareRouteImport } from './routes/share'
 import { Route as UsageLogsRouteImport } from './routes/usage-logs'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
 import { Route as AdminChannelModelsRouteImport } from './routes/admin/channel-models'
@@ -31,6 +33,10 @@ import { Route as AdminPricesRouteImport } from './routes/admin/prices'
 import { Route as AdminToolsRouteImport } from './routes/admin/tools'
 import { Route as ConsoleIndexRouteImport } from './routes/console/index'
 import { Route as ConsoleAccountRouteImport } from './routes/console/account'
+import { Route as ConsoleEarningsRouteImport } from './routes/console/earnings'
+import { Route as ConsoleListingsRouteImport } from './routes/console/listings'
+import { Route as ConsoleOnboardingRouteImport } from './routes/console/onboarding'
+import { Route as ConsoleOpsRouteImport } from './routes/console/ops'
 import { Route as ConsoleRecordsRouteImport } from './routes/console/records'
 import { Route as ConsoleWalletRouteImport } from './routes/console/wallet'
 import { Route as ModelsIndexRouteImport } from './routes/models/index'
@@ -41,11 +47,27 @@ import { Route as SellerOnboardingRouteImport } from './routes/seller/onboarding
 import { Route as SellerPayoutsRouteImport } from './routes/seller/payouts'
 import { Route as SellerRecordsRouteImport } from './routes/seller/records'
 import { Route as UserResetRouteImport } from './routes/user/reset'
+import { Route as ConsoleEarningsIndexRouteImport } from './routes/console/earnings/index'
+import { Route as ConsoleEarningsPayoutsRouteImport } from './routes/console/earnings/payouts'
 import { Route as ConsoleKeysIndexRouteImport } from './routes/console/keys/index'
 import { Route as ConsoleKeysIdRouteImport } from './routes/console/keys/$id'
+import { Route as ConsoleListingsIndexRouteImport } from './routes/console/listings/index'
+import { Route as ConsoleListingsIdRouteImport } from './routes/console/listings/$id'
+import { Route as ConsoleListingsNewRouteImport } from './routes/console/listings/new'
+import { Route as ConsoleOpsIndexRouteImport } from './routes/console/ops/index'
+import { Route as ConsoleOpsModelsRouteImport } from './routes/console/ops/models'
+import { Route as ConsoleOpsPricingRouteImport } from './routes/console/ops/pricing'
+import { Route as ConsoleOpsReviewRouteImport } from './routes/console/ops/review'
+import { Route as ConsoleOpsToolsRouteImport } from './routes/console/ops/tools'
 import { Route as SellerListingsIndexRouteImport } from './routes/seller/listings/index'
 import { Route as SellerListingsIdRouteImport } from './routes/seller/listings/$id'
 import { Route as SellerListingsNewRouteImport } from './routes/seller/listings/new'
+import { Route as ConsoleOpsPricingIndexRouteImport } from './routes/console/ops/pricing/index'
+import { Route as ConsoleOpsPricingPerCallRouteImport } from './routes/console/ops/pricing/per-call'
+import { Route as ConsoleOpsReviewIndexRouteImport } from './routes/console/ops/review/index'
+import { Route as ConsoleOpsReviewPayoutsRouteImport } from './routes/console/ops/review/payouts'
+import { Route as ConsoleOpsToolsIndexRouteImport } from './routes/console/ops/tools/index'
+import { Route as ConsoleOpsToolsReversalRouteImport } from './routes/console/ops/tools/reversal'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -82,6 +104,11 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OpsLegacyRoute = OpsLegacyRouteImport.update({
+  id: '/ops-legacy',
+  path: '/ops-legacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PrivacyRoute = PrivacyRouteImport.update({
   id: '/privacy',
   path: '/privacy',
@@ -95,6 +122,11 @@ const RegisterRoute = RegisterRouteImport.update({
 const SellerRoute = SellerRouteImport.update({
   id: '/seller',
   path: '/seller',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ShareRoute = ShareRouteImport.update({
+  id: '/share',
+  path: '/share',
   getParentRoute: () => rootRouteImport,
 } as any)
 const UsageLogsRoute = UsageLogsRouteImport.update({
@@ -157,6 +189,26 @@ const ConsoleAccountRoute = ConsoleAccountRouteImport.update({
   path: '/account',
   getParentRoute: () => ConsoleRoute,
 } as any)
+const ConsoleEarningsRoute = ConsoleEarningsRouteImport.update({
+  id: '/earnings',
+  path: '/earnings',
+  getParentRoute: () => ConsoleRoute,
+} as any)
+const ConsoleListingsRoute = ConsoleListingsRouteImport.update({
+  id: '/listings',
+  path: '/listings',
+  getParentRoute: () => ConsoleRoute,
+} as any)
+const ConsoleOnboardingRoute = ConsoleOnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
+  getParentRoute: () => ConsoleRoute,
+} as any)
+const ConsoleOpsRoute = ConsoleOpsRouteImport.update({
+  id: '/ops',
+  path: '/ops',
+  getParentRoute: () => ConsoleRoute,
+} as any)
 const ConsoleRecordsRoute = ConsoleRecordsRouteImport.update({
   id: '/records',
   path: '/records',
@@ -207,6 +259,16 @@ const UserResetRoute = UserResetRouteImport.update({
   path: '/user/reset',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConsoleEarningsIndexRoute = ConsoleEarningsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ConsoleEarningsRoute,
+} as any)
+const ConsoleEarningsPayoutsRoute = ConsoleEarningsPayoutsRouteImport.update({
+  id: '/payouts',
+  path: '/payouts',
+  getParentRoute: () => ConsoleEarningsRoute,
+} as any)
 const ConsoleKeysIndexRoute = ConsoleKeysIndexRouteImport.update({
   id: '/keys/',
   path: '/keys/',
@@ -216,6 +278,46 @@ const ConsoleKeysIdRoute = ConsoleKeysIdRouteImport.update({
   id: '/keys/$id',
   path: '/keys/$id',
   getParentRoute: () => ConsoleRoute,
+} as any)
+const ConsoleListingsIndexRoute = ConsoleListingsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ConsoleListingsRoute,
+} as any)
+const ConsoleListingsIdRoute = ConsoleListingsIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => ConsoleListingsRoute,
+} as any)
+const ConsoleListingsNewRoute = ConsoleListingsNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => ConsoleListingsRoute,
+} as any)
+const ConsoleOpsIndexRoute = ConsoleOpsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ConsoleOpsRoute,
+} as any)
+const ConsoleOpsModelsRoute = ConsoleOpsModelsRouteImport.update({
+  id: '/models',
+  path: '/models',
+  getParentRoute: () => ConsoleOpsRoute,
+} as any)
+const ConsoleOpsPricingRoute = ConsoleOpsPricingRouteImport.update({
+  id: '/pricing',
+  path: '/pricing',
+  getParentRoute: () => ConsoleOpsRoute,
+} as any)
+const ConsoleOpsReviewRoute = ConsoleOpsReviewRouteImport.update({
+  id: '/review',
+  path: '/review',
+  getParentRoute: () => ConsoleOpsRoute,
+} as any)
+const ConsoleOpsToolsRoute = ConsoleOpsToolsRouteImport.update({
+  id: '/tools',
+  path: '/tools',
+  getParentRoute: () => ConsoleOpsRoute,
 } as any)
 const SellerListingsIndexRoute = SellerListingsIndexRouteImport.update({
   id: '/listings/',
@@ -232,6 +334,37 @@ const SellerListingsNewRoute = SellerListingsNewRouteImport.update({
   path: '/listings/new',
   getParentRoute: () => SellerRoute,
 } as any)
+const ConsoleOpsPricingIndexRoute = ConsoleOpsPricingIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ConsoleOpsPricingRoute,
+} as any)
+const ConsoleOpsPricingPerCallRoute =
+  ConsoleOpsPricingPerCallRouteImport.update({
+    id: '/per-call',
+    path: '/per-call',
+    getParentRoute: () => ConsoleOpsPricingRoute,
+  } as any)
+const ConsoleOpsReviewIndexRoute = ConsoleOpsReviewIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ConsoleOpsReviewRoute,
+} as any)
+const ConsoleOpsReviewPayoutsRoute = ConsoleOpsReviewPayoutsRouteImport.update({
+  id: '/payouts',
+  path: '/payouts',
+  getParentRoute: () => ConsoleOpsReviewRoute,
+} as any)
+const ConsoleOpsToolsIndexRoute = ConsoleOpsToolsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ConsoleOpsToolsRoute,
+} as any)
+const ConsoleOpsToolsReversalRoute = ConsoleOpsToolsReversalRouteImport.update({
+  id: '/reversal',
+  path: '/reversal',
+  getParentRoute: () => ConsoleOpsToolsRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -241,9 +374,11 @@ export interface FileRoutesByFullPath {
   '/docs': typeof DocsRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
+  '/ops-legacy': typeof OpsLegacyRoute
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
   '/seller': typeof SellerRouteWithChildren
+  '/share': typeof ShareRoute
   '/usage-logs': typeof UsageLogsRoute
   '/admin/channel-models': typeof AdminChannelModelsRoute
   '/admin/holidays': typeof AdminHolidaysRoute
@@ -254,6 +389,10 @@ export interface FileRoutesByFullPath {
   '/admin/prices': typeof AdminPricesRoute
   '/admin/tools': typeof AdminToolsRoute
   '/console/account': typeof ConsoleAccountRoute
+  '/console/earnings': typeof ConsoleEarningsRouteWithChildren
+  '/console/listings': typeof ConsoleListingsRouteWithChildren
+  '/console/onboarding': typeof ConsoleOnboardingRoute
+  '/console/ops': typeof ConsoleOpsRouteWithChildren
   '/console/records': typeof ConsoleRecordsRoute
   '/console/wallet': typeof ConsoleWalletRoute
   '/models/$id': typeof ModelsIdRoute
@@ -266,11 +405,27 @@ export interface FileRoutesByFullPath {
   '/console/': typeof ConsoleIndexRoute
   '/models/': typeof ModelsIndexRoute
   '/seller/': typeof SellerIndexRoute
+  '/console/earnings/payouts': typeof ConsoleEarningsPayoutsRoute
   '/console/keys/$id': typeof ConsoleKeysIdRoute
+  '/console/listings/$id': typeof ConsoleListingsIdRoute
+  '/console/listings/new': typeof ConsoleListingsNewRoute
+  '/console/ops/models': typeof ConsoleOpsModelsRoute
+  '/console/ops/pricing': typeof ConsoleOpsPricingRouteWithChildren
+  '/console/ops/review': typeof ConsoleOpsReviewRouteWithChildren
+  '/console/ops/tools': typeof ConsoleOpsToolsRouteWithChildren
   '/seller/listings/$id': typeof SellerListingsIdRoute
   '/seller/listings/new': typeof SellerListingsNewRoute
+  '/console/earnings/': typeof ConsoleEarningsIndexRoute
   '/console/keys/': typeof ConsoleKeysIndexRoute
+  '/console/listings/': typeof ConsoleListingsIndexRoute
+  '/console/ops/': typeof ConsoleOpsIndexRoute
   '/seller/listings/': typeof SellerListingsIndexRoute
+  '/console/ops/pricing/per-call': typeof ConsoleOpsPricingPerCallRoute
+  '/console/ops/review/payouts': typeof ConsoleOpsReviewPayoutsRoute
+  '/console/ops/tools/reversal': typeof ConsoleOpsToolsReversalRoute
+  '/console/ops/pricing/': typeof ConsoleOpsPricingIndexRoute
+  '/console/ops/review/': typeof ConsoleOpsReviewIndexRoute
+  '/console/ops/tools/': typeof ConsoleOpsToolsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -278,8 +433,10 @@ export interface FileRoutesByTo {
   '/docs': typeof DocsRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
+  '/ops-legacy': typeof OpsLegacyRoute
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
+  '/share': typeof ShareRoute
   '/usage-logs': typeof UsageLogsRoute
   '/admin/channel-models': typeof AdminChannelModelsRoute
   '/admin/holidays': typeof AdminHolidaysRoute
@@ -290,6 +447,7 @@ export interface FileRoutesByTo {
   '/admin/prices': typeof AdminPricesRoute
   '/admin/tools': typeof AdminToolsRoute
   '/console/account': typeof ConsoleAccountRoute
+  '/console/onboarding': typeof ConsoleOnboardingRoute
   '/console/records': typeof ConsoleRecordsRoute
   '/console/wallet': typeof ConsoleWalletRoute
   '/models/$id': typeof ModelsIdRoute
@@ -302,11 +460,24 @@ export interface FileRoutesByTo {
   '/console': typeof ConsoleIndexRoute
   '/models': typeof ModelsIndexRoute
   '/seller': typeof SellerIndexRoute
+  '/console/earnings/payouts': typeof ConsoleEarningsPayoutsRoute
   '/console/keys/$id': typeof ConsoleKeysIdRoute
+  '/console/listings/$id': typeof ConsoleListingsIdRoute
+  '/console/listings/new': typeof ConsoleListingsNewRoute
+  '/console/ops/models': typeof ConsoleOpsModelsRoute
   '/seller/listings/$id': typeof SellerListingsIdRoute
   '/seller/listings/new': typeof SellerListingsNewRoute
+  '/console/earnings': typeof ConsoleEarningsIndexRoute
   '/console/keys': typeof ConsoleKeysIndexRoute
+  '/console/listings': typeof ConsoleListingsIndexRoute
+  '/console/ops': typeof ConsoleOpsIndexRoute
   '/seller/listings': typeof SellerListingsIndexRoute
+  '/console/ops/pricing/per-call': typeof ConsoleOpsPricingPerCallRoute
+  '/console/ops/review/payouts': typeof ConsoleOpsReviewPayoutsRoute
+  '/console/ops/tools/reversal': typeof ConsoleOpsToolsReversalRoute
+  '/console/ops/pricing': typeof ConsoleOpsPricingIndexRoute
+  '/console/ops/review': typeof ConsoleOpsReviewIndexRoute
+  '/console/ops/tools': typeof ConsoleOpsToolsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -317,9 +488,11 @@ export interface FileRoutesById {
   '/docs': typeof DocsRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
+  '/ops-legacy': typeof OpsLegacyRoute
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
   '/seller': typeof SellerRouteWithChildren
+  '/share': typeof ShareRoute
   '/usage-logs': typeof UsageLogsRoute
   '/admin/channel-models': typeof AdminChannelModelsRoute
   '/admin/holidays': typeof AdminHolidaysRoute
@@ -330,6 +503,10 @@ export interface FileRoutesById {
   '/admin/prices': typeof AdminPricesRoute
   '/admin/tools': typeof AdminToolsRoute
   '/console/account': typeof ConsoleAccountRoute
+  '/console/earnings': typeof ConsoleEarningsRouteWithChildren
+  '/console/listings': typeof ConsoleListingsRouteWithChildren
+  '/console/onboarding': typeof ConsoleOnboardingRoute
+  '/console/ops': typeof ConsoleOpsRouteWithChildren
   '/console/records': typeof ConsoleRecordsRoute
   '/console/wallet': typeof ConsoleWalletRoute
   '/models/$id': typeof ModelsIdRoute
@@ -342,11 +519,27 @@ export interface FileRoutesById {
   '/console/': typeof ConsoleIndexRoute
   '/models/': typeof ModelsIndexRoute
   '/seller/': typeof SellerIndexRoute
+  '/console/earnings/payouts': typeof ConsoleEarningsPayoutsRoute
   '/console/keys/$id': typeof ConsoleKeysIdRoute
+  '/console/listings/$id': typeof ConsoleListingsIdRoute
+  '/console/listings/new': typeof ConsoleListingsNewRoute
+  '/console/ops/models': typeof ConsoleOpsModelsRoute
+  '/console/ops/pricing': typeof ConsoleOpsPricingRouteWithChildren
+  '/console/ops/review': typeof ConsoleOpsReviewRouteWithChildren
+  '/console/ops/tools': typeof ConsoleOpsToolsRouteWithChildren
   '/seller/listings/$id': typeof SellerListingsIdRoute
   '/seller/listings/new': typeof SellerListingsNewRoute
+  '/console/earnings/': typeof ConsoleEarningsIndexRoute
   '/console/keys/': typeof ConsoleKeysIndexRoute
+  '/console/listings/': typeof ConsoleListingsIndexRoute
+  '/console/ops/': typeof ConsoleOpsIndexRoute
   '/seller/listings/': typeof SellerListingsIndexRoute
+  '/console/ops/pricing/per-call': typeof ConsoleOpsPricingPerCallRoute
+  '/console/ops/review/payouts': typeof ConsoleOpsReviewPayoutsRoute
+  '/console/ops/tools/reversal': typeof ConsoleOpsToolsReversalRoute
+  '/console/ops/pricing/': typeof ConsoleOpsPricingIndexRoute
+  '/console/ops/review/': typeof ConsoleOpsReviewIndexRoute
+  '/console/ops/tools/': typeof ConsoleOpsToolsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -358,9 +551,11 @@ export interface FileRouteTypes {
     | '/docs'
     | '/forgot-password'
     | '/login'
+    | '/ops-legacy'
     | '/privacy'
     | '/register'
     | '/seller'
+    | '/share'
     | '/usage-logs'
     | '/admin/channel-models'
     | '/admin/holidays'
@@ -371,6 +566,10 @@ export interface FileRouteTypes {
     | '/admin/prices'
     | '/admin/tools'
     | '/console/account'
+    | '/console/earnings'
+    | '/console/listings'
+    | '/console/onboarding'
+    | '/console/ops'
     | '/console/records'
     | '/console/wallet'
     | '/models/$id'
@@ -383,11 +582,27 @@ export interface FileRouteTypes {
     | '/console/'
     | '/models/'
     | '/seller/'
+    | '/console/earnings/payouts'
     | '/console/keys/$id'
+    | '/console/listings/$id'
+    | '/console/listings/new'
+    | '/console/ops/models'
+    | '/console/ops/pricing'
+    | '/console/ops/review'
+    | '/console/ops/tools'
     | '/seller/listings/$id'
     | '/seller/listings/new'
+    | '/console/earnings/'
     | '/console/keys/'
+    | '/console/listings/'
+    | '/console/ops/'
     | '/seller/listings/'
+    | '/console/ops/pricing/per-call'
+    | '/console/ops/review/payouts'
+    | '/console/ops/tools/reversal'
+    | '/console/ops/pricing/'
+    | '/console/ops/review/'
+    | '/console/ops/tools/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -395,8 +610,10 @@ export interface FileRouteTypes {
     | '/docs'
     | '/forgot-password'
     | '/login'
+    | '/ops-legacy'
     | '/privacy'
     | '/register'
+    | '/share'
     | '/usage-logs'
     | '/admin/channel-models'
     | '/admin/holidays'
@@ -407,6 +624,7 @@ export interface FileRouteTypes {
     | '/admin/prices'
     | '/admin/tools'
     | '/console/account'
+    | '/console/onboarding'
     | '/console/records'
     | '/console/wallet'
     | '/models/$id'
@@ -419,11 +637,24 @@ export interface FileRouteTypes {
     | '/console'
     | '/models'
     | '/seller'
+    | '/console/earnings/payouts'
     | '/console/keys/$id'
+    | '/console/listings/$id'
+    | '/console/listings/new'
+    | '/console/ops/models'
     | '/seller/listings/$id'
     | '/seller/listings/new'
+    | '/console/earnings'
     | '/console/keys'
+    | '/console/listings'
+    | '/console/ops'
     | '/seller/listings'
+    | '/console/ops/pricing/per-call'
+    | '/console/ops/review/payouts'
+    | '/console/ops/tools/reversal'
+    | '/console/ops/pricing'
+    | '/console/ops/review'
+    | '/console/ops/tools'
   id:
     | '__root__'
     | '/'
@@ -433,9 +664,11 @@ export interface FileRouteTypes {
     | '/docs'
     | '/forgot-password'
     | '/login'
+    | '/ops-legacy'
     | '/privacy'
     | '/register'
     | '/seller'
+    | '/share'
     | '/usage-logs'
     | '/admin/channel-models'
     | '/admin/holidays'
@@ -446,6 +679,10 @@ export interface FileRouteTypes {
     | '/admin/prices'
     | '/admin/tools'
     | '/console/account'
+    | '/console/earnings'
+    | '/console/listings'
+    | '/console/onboarding'
+    | '/console/ops'
     | '/console/records'
     | '/console/wallet'
     | '/models/$id'
@@ -458,11 +695,27 @@ export interface FileRouteTypes {
     | '/console/'
     | '/models/'
     | '/seller/'
+    | '/console/earnings/payouts'
     | '/console/keys/$id'
+    | '/console/listings/$id'
+    | '/console/listings/new'
+    | '/console/ops/models'
+    | '/console/ops/pricing'
+    | '/console/ops/review'
+    | '/console/ops/tools'
     | '/seller/listings/$id'
     | '/seller/listings/new'
+    | '/console/earnings/'
     | '/console/keys/'
+    | '/console/listings/'
+    | '/console/ops/'
     | '/seller/listings/'
+    | '/console/ops/pricing/per-call'
+    | '/console/ops/review/payouts'
+    | '/console/ops/tools/reversal'
+    | '/console/ops/pricing/'
+    | '/console/ops/review/'
+    | '/console/ops/tools/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -473,9 +726,11 @@ export interface RootRouteChildren {
   DocsRoute: typeof DocsRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   LoginRoute: typeof LoginRoute
+  OpsLegacyRoute: typeof OpsLegacyRoute
   PrivacyRoute: typeof PrivacyRoute
   RegisterRoute: typeof RegisterRoute
   SellerRoute: typeof SellerRouteWithChildren
+  ShareRoute: typeof ShareRoute
   UsageLogsRoute: typeof UsageLogsRoute
   ModelsIdRoute: typeof ModelsIdRoute
   OauthProviderRoute: typeof OauthProviderRoute
@@ -534,6 +789,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ops-legacy': {
+      id: '/ops-legacy'
+      path: '/ops-legacy'
+      fullPath: '/ops-legacy'
+      preLoaderRoute: typeof OpsLegacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/privacy': {
       id: '/privacy'
       path: '/privacy'
@@ -553,6 +815,13 @@ declare module '@tanstack/react-router' {
       path: '/seller'
       fullPath: '/seller'
       preLoaderRoute: typeof SellerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/share': {
+      id: '/share'
+      path: '/share'
+      fullPath: '/share'
+      preLoaderRoute: typeof ShareRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/usage-logs': {
@@ -639,6 +908,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleAccountRouteImport
       parentRoute: typeof ConsoleRoute
     }
+    '/console/earnings': {
+      id: '/console/earnings'
+      path: '/earnings'
+      fullPath: '/console/earnings'
+      preLoaderRoute: typeof ConsoleEarningsRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
+    '/console/listings': {
+      id: '/console/listings'
+      path: '/listings'
+      fullPath: '/console/listings'
+      preLoaderRoute: typeof ConsoleListingsRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
+    '/console/onboarding': {
+      id: '/console/onboarding'
+      path: '/onboarding'
+      fullPath: '/console/onboarding'
+      preLoaderRoute: typeof ConsoleOnboardingRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
+    '/console/ops': {
+      id: '/console/ops'
+      path: '/ops'
+      fullPath: '/console/ops'
+      preLoaderRoute: typeof ConsoleOpsRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
     '/console/records': {
       id: '/console/records'
       path: '/records'
@@ -709,6 +1006,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UserResetRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/console/earnings/': {
+      id: '/console/earnings/'
+      path: '/'
+      fullPath: '/console/earnings/'
+      preLoaderRoute: typeof ConsoleEarningsIndexRouteImport
+      parentRoute: typeof ConsoleEarningsRoute
+    }
+    '/console/earnings/payouts': {
+      id: '/console/earnings/payouts'
+      path: '/payouts'
+      fullPath: '/console/earnings/payouts'
+      preLoaderRoute: typeof ConsoleEarningsPayoutsRouteImport
+      parentRoute: typeof ConsoleEarningsRoute
+    }
     '/console/keys/': {
       id: '/console/keys/'
       path: '/keys'
@@ -722,6 +1033,62 @@ declare module '@tanstack/react-router' {
       fullPath: '/console/keys/$id'
       preLoaderRoute: typeof ConsoleKeysIdRouteImport
       parentRoute: typeof ConsoleRoute
+    }
+    '/console/listings/': {
+      id: '/console/listings/'
+      path: '/'
+      fullPath: '/console/listings/'
+      preLoaderRoute: typeof ConsoleListingsIndexRouteImport
+      parentRoute: typeof ConsoleListingsRoute
+    }
+    '/console/listings/$id': {
+      id: '/console/listings/$id'
+      path: '/$id'
+      fullPath: '/console/listings/$id'
+      preLoaderRoute: typeof ConsoleListingsIdRouteImport
+      parentRoute: typeof ConsoleListingsRoute
+    }
+    '/console/listings/new': {
+      id: '/console/listings/new'
+      path: '/new'
+      fullPath: '/console/listings/new'
+      preLoaderRoute: typeof ConsoleListingsNewRouteImport
+      parentRoute: typeof ConsoleListingsRoute
+    }
+    '/console/ops/': {
+      id: '/console/ops/'
+      path: '/'
+      fullPath: '/console/ops/'
+      preLoaderRoute: typeof ConsoleOpsIndexRouteImport
+      parentRoute: typeof ConsoleOpsRoute
+    }
+    '/console/ops/models': {
+      id: '/console/ops/models'
+      path: '/models'
+      fullPath: '/console/ops/models'
+      preLoaderRoute: typeof ConsoleOpsModelsRouteImport
+      parentRoute: typeof ConsoleOpsRoute
+    }
+    '/console/ops/pricing': {
+      id: '/console/ops/pricing'
+      path: '/pricing'
+      fullPath: '/console/ops/pricing'
+      preLoaderRoute: typeof ConsoleOpsPricingRouteImport
+      parentRoute: typeof ConsoleOpsRoute
+    }
+    '/console/ops/review': {
+      id: '/console/ops/review'
+      path: '/review'
+      fullPath: '/console/ops/review'
+      preLoaderRoute: typeof ConsoleOpsReviewRouteImport
+      parentRoute: typeof ConsoleOpsRoute
+    }
+    '/console/ops/tools': {
+      id: '/console/ops/tools'
+      path: '/tools'
+      fullPath: '/console/ops/tools'
+      preLoaderRoute: typeof ConsoleOpsToolsRouteImport
+      parentRoute: typeof ConsoleOpsRoute
     }
     '/seller/listings/': {
       id: '/seller/listings/'
@@ -743,6 +1110,48 @@ declare module '@tanstack/react-router' {
       fullPath: '/seller/listings/new'
       preLoaderRoute: typeof SellerListingsNewRouteImport
       parentRoute: typeof SellerRoute
+    }
+    '/console/ops/pricing/': {
+      id: '/console/ops/pricing/'
+      path: '/'
+      fullPath: '/console/ops/pricing/'
+      preLoaderRoute: typeof ConsoleOpsPricingIndexRouteImport
+      parentRoute: typeof ConsoleOpsPricingRoute
+    }
+    '/console/ops/pricing/per-call': {
+      id: '/console/ops/pricing/per-call'
+      path: '/per-call'
+      fullPath: '/console/ops/pricing/per-call'
+      preLoaderRoute: typeof ConsoleOpsPricingPerCallRouteImport
+      parentRoute: typeof ConsoleOpsPricingRoute
+    }
+    '/console/ops/review/': {
+      id: '/console/ops/review/'
+      path: '/'
+      fullPath: '/console/ops/review/'
+      preLoaderRoute: typeof ConsoleOpsReviewIndexRouteImport
+      parentRoute: typeof ConsoleOpsReviewRoute
+    }
+    '/console/ops/review/payouts': {
+      id: '/console/ops/review/payouts'
+      path: '/payouts'
+      fullPath: '/console/ops/review/payouts'
+      preLoaderRoute: typeof ConsoleOpsReviewPayoutsRouteImport
+      parentRoute: typeof ConsoleOpsReviewRoute
+    }
+    '/console/ops/tools/': {
+      id: '/console/ops/tools/'
+      path: '/'
+      fullPath: '/console/ops/tools/'
+      preLoaderRoute: typeof ConsoleOpsToolsIndexRouteImport
+      parentRoute: typeof ConsoleOpsToolsRoute
+    }
+    '/console/ops/tools/reversal': {
+      id: '/console/ops/tools/reversal'
+      path: '/reversal'
+      fullPath: '/console/ops/tools/reversal'
+      preLoaderRoute: typeof ConsoleOpsToolsReversalRouteImport
+      parentRoute: typeof ConsoleOpsToolsRoute
     }
   }
 }
@@ -773,8 +1182,102 @@ const AdminRouteChildren: AdminRouteChildren = {
 
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
+interface ConsoleEarningsRouteChildren {
+  ConsoleEarningsPayoutsRoute: typeof ConsoleEarningsPayoutsRoute
+  ConsoleEarningsIndexRoute: typeof ConsoleEarningsIndexRoute
+}
+
+const ConsoleEarningsRouteChildren: ConsoleEarningsRouteChildren = {
+  ConsoleEarningsPayoutsRoute: ConsoleEarningsPayoutsRoute,
+  ConsoleEarningsIndexRoute: ConsoleEarningsIndexRoute,
+}
+
+const ConsoleEarningsRouteWithChildren = ConsoleEarningsRoute._addFileChildren(
+  ConsoleEarningsRouteChildren,
+)
+
+interface ConsoleListingsRouteChildren {
+  ConsoleListingsIdRoute: typeof ConsoleListingsIdRoute
+  ConsoleListingsNewRoute: typeof ConsoleListingsNewRoute
+  ConsoleListingsIndexRoute: typeof ConsoleListingsIndexRoute
+}
+
+const ConsoleListingsRouteChildren: ConsoleListingsRouteChildren = {
+  ConsoleListingsIdRoute: ConsoleListingsIdRoute,
+  ConsoleListingsNewRoute: ConsoleListingsNewRoute,
+  ConsoleListingsIndexRoute: ConsoleListingsIndexRoute,
+}
+
+const ConsoleListingsRouteWithChildren = ConsoleListingsRoute._addFileChildren(
+  ConsoleListingsRouteChildren,
+)
+
+interface ConsoleOpsPricingRouteChildren {
+  ConsoleOpsPricingPerCallRoute: typeof ConsoleOpsPricingPerCallRoute
+  ConsoleOpsPricingIndexRoute: typeof ConsoleOpsPricingIndexRoute
+}
+
+const ConsoleOpsPricingRouteChildren: ConsoleOpsPricingRouteChildren = {
+  ConsoleOpsPricingPerCallRoute: ConsoleOpsPricingPerCallRoute,
+  ConsoleOpsPricingIndexRoute: ConsoleOpsPricingIndexRoute,
+}
+
+const ConsoleOpsPricingRouteWithChildren =
+  ConsoleOpsPricingRoute._addFileChildren(ConsoleOpsPricingRouteChildren)
+
+interface ConsoleOpsReviewRouteChildren {
+  ConsoleOpsReviewPayoutsRoute: typeof ConsoleOpsReviewPayoutsRoute
+  ConsoleOpsReviewIndexRoute: typeof ConsoleOpsReviewIndexRoute
+}
+
+const ConsoleOpsReviewRouteChildren: ConsoleOpsReviewRouteChildren = {
+  ConsoleOpsReviewPayoutsRoute: ConsoleOpsReviewPayoutsRoute,
+  ConsoleOpsReviewIndexRoute: ConsoleOpsReviewIndexRoute,
+}
+
+const ConsoleOpsReviewRouteWithChildren =
+  ConsoleOpsReviewRoute._addFileChildren(ConsoleOpsReviewRouteChildren)
+
+interface ConsoleOpsToolsRouteChildren {
+  ConsoleOpsToolsReversalRoute: typeof ConsoleOpsToolsReversalRoute
+  ConsoleOpsToolsIndexRoute: typeof ConsoleOpsToolsIndexRoute
+}
+
+const ConsoleOpsToolsRouteChildren: ConsoleOpsToolsRouteChildren = {
+  ConsoleOpsToolsReversalRoute: ConsoleOpsToolsReversalRoute,
+  ConsoleOpsToolsIndexRoute: ConsoleOpsToolsIndexRoute,
+}
+
+const ConsoleOpsToolsRouteWithChildren = ConsoleOpsToolsRoute._addFileChildren(
+  ConsoleOpsToolsRouteChildren,
+)
+
+interface ConsoleOpsRouteChildren {
+  ConsoleOpsModelsRoute: typeof ConsoleOpsModelsRoute
+  ConsoleOpsPricingRoute: typeof ConsoleOpsPricingRouteWithChildren
+  ConsoleOpsReviewRoute: typeof ConsoleOpsReviewRouteWithChildren
+  ConsoleOpsToolsRoute: typeof ConsoleOpsToolsRouteWithChildren
+  ConsoleOpsIndexRoute: typeof ConsoleOpsIndexRoute
+}
+
+const ConsoleOpsRouteChildren: ConsoleOpsRouteChildren = {
+  ConsoleOpsModelsRoute: ConsoleOpsModelsRoute,
+  ConsoleOpsPricingRoute: ConsoleOpsPricingRouteWithChildren,
+  ConsoleOpsReviewRoute: ConsoleOpsReviewRouteWithChildren,
+  ConsoleOpsToolsRoute: ConsoleOpsToolsRouteWithChildren,
+  ConsoleOpsIndexRoute: ConsoleOpsIndexRoute,
+}
+
+const ConsoleOpsRouteWithChildren = ConsoleOpsRoute._addFileChildren(
+  ConsoleOpsRouteChildren,
+)
+
 interface ConsoleRouteChildren {
   ConsoleAccountRoute: typeof ConsoleAccountRoute
+  ConsoleEarningsRoute: typeof ConsoleEarningsRouteWithChildren
+  ConsoleListingsRoute: typeof ConsoleListingsRouteWithChildren
+  ConsoleOnboardingRoute: typeof ConsoleOnboardingRoute
+  ConsoleOpsRoute: typeof ConsoleOpsRouteWithChildren
   ConsoleRecordsRoute: typeof ConsoleRecordsRoute
   ConsoleWalletRoute: typeof ConsoleWalletRoute
   ConsoleIndexRoute: typeof ConsoleIndexRoute
@@ -784,6 +1287,10 @@ interface ConsoleRouteChildren {
 
 const ConsoleRouteChildren: ConsoleRouteChildren = {
   ConsoleAccountRoute: ConsoleAccountRoute,
+  ConsoleEarningsRoute: ConsoleEarningsRouteWithChildren,
+  ConsoleListingsRoute: ConsoleListingsRouteWithChildren,
+  ConsoleOnboardingRoute: ConsoleOnboardingRoute,
+  ConsoleOpsRoute: ConsoleOpsRouteWithChildren,
   ConsoleRecordsRoute: ConsoleRecordsRoute,
   ConsoleWalletRoute: ConsoleWalletRoute,
   ConsoleIndexRoute: ConsoleIndexRoute,
@@ -825,9 +1332,11 @@ const rootRouteChildren: RootRouteChildren = {
   DocsRoute: DocsRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
   LoginRoute: LoginRoute,
+  OpsLegacyRoute: OpsLegacyRoute,
   PrivacyRoute: PrivacyRoute,
   RegisterRoute: RegisterRoute,
   SellerRoute: SellerRouteWithChildren,
+  ShareRoute: ShareRoute,
   UsageLogsRoute: UsageLogsRoute,
   ModelsIdRoute: ModelsIdRoute,
   OauthProviderRoute: OauthProviderRoute,

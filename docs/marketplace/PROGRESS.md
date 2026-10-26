@@ -638,3 +638,29 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 ### 其他
 - `/api/status` 新增 `smtp_configured`，登录页仅在该值为真时显示「忘记密码？」。
 - 说明：当前未实现「充值/赠送余额拆分」，而是把三类可配置赠送额度强制为 0 并排除自买自卖；管理员发放的兑换码仍是显式运营行为。
+
+## 站点结构整理：一个控制台与术语统一（2026-10-26）
+
+### 统一控制台
+- 删除买家/分享者身份切换和三套侧边栏，改为 `/console` 下一条分组侧边栏：使用（概览/API Key/使用记录）、资金（钱包）、分享（我的渠道/收益与提现，开通后显示）、账号、运营（定价/模型/审核/工具，管理员显示）。
+- 顶部导航改为「模型广场 · 文档 · 分享额度」；新增公开 `/share` 分享额度介绍页。未开通分享的用户在概览看到「把闲置额度分享出来」卡片，开通引导不再常驻侧边栏。
+- 卖家页面迁入 `/console/listings`、`/console/earnings`、`/console/onboarding`；旧 `/seller/*` 全部跳转。运营页面迁入 `/console/ops/pricing|models|review|tools`；旧 `/admin/*` 全部跳转，`/ops-legacy` 跳 `/console/ops`。
+- 390px 侧边栏改为 Radix Dialog 抽屉；桌面保持 220px sticky 分组侧栏。
+
+### 术语与文案
+- 买家/分享者文案禁用「挂单、系数、微元、倍率区间、聚合数据、不编造、尚未接入、接口错误、格式转换、运营工具」；运营后台保留内部术语。
+- 新增 `copy-terms.test.ts` 遍历买家/分享者文案，禁用词命中为 0；`console-nav.test.ts` 覆盖买家/分享者/管理员三种侧边栏分组。
+- 模型广场买家侧去掉「最低倍率」列；首页统计改为「最高可省」百分比；Key 创建的价格上限提示改为「当前最低 ¥x / 百万」。
+
+### 模型详情
+- 首屏只保留一个主价格（当前 ¥x / 百万 tokens），下方「官方 ¥y，省 z%」；峰谷标签保留。
+- 官方价目表收进「价格明细」折叠区；渠道信息收进「渠道信息」折叠区，买家侧不再显示系数和倍率区间。
+
+### 钱包与记录
+- 新增 `GET /api/marketplace/wallet/transactions`，把 mp_ledger 消费/退款与 top_ups 充值按时间合并分页；钱包页改为「全部 / 消费 / 充值」三 tab 的统一流水。
+- `/console/records` 增加「我的调用 / 我卖出的」tabs，分享记录从卖家后台移入使用记录；`/console/earnings` 只保留收益概览与提现记录。
+- 运营模型池的「渠道模型映射」tab 支持 `?tab=channel-models` 深链，不再是孤儿页。
+
+### 验收
+- 前端 `tsc --noEmit`、`vitest`（30 文件 / 164 测试）、`vite build` 通过；Go `build`/`vet` 通过，marketplace 全量测试除一次本地 mock 网络抖动外通过，重跑失败用例通过。
+- 旧路径跳转已用生产构建预览验证：`/seller` → `/share`，`/seller/records` → `/console/records?view=sales`，`/admin/prices` → `/console/ops/pricing`，`/admin/channel-models` → `/console/ops/models?tab=channel-models`，`/ops-legacy` → `/console/ops`。

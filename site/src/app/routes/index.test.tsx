@@ -90,7 +90,7 @@ function renderHome() {
     path: '/models',
     component: HomePage,
   })
-  const dummy = ['/register', '/console', '/seller', '/models/$id'].map((path) =>
+  const dummy = ['/register', '/console', '/share', '/models/$id'].map((path) =>
     createRoute({ getParentRoute: () => rootRoute, path, component: () => null }),
   )
   const router = createRouter({
@@ -136,7 +136,7 @@ describe('home page', () => {
       )
     })
 
-    // §0：无在售挂单时最低倍率只能显示「—」，整条隐藏而不是出占位数字。
+    // §0：无在售挂单时优惠幅度只能显示「—」，整条隐藏而不是出占位数字。
     expect(screen.queryByText('在售模型')).toBeNull()
     expect(screen.queryByText('今日调用量')).toBeNull()
   })
@@ -147,7 +147,8 @@ describe('home page', () => {
     renderHome()
 
     expect(await screen.findByText('在售模型')).toBeTruthy()
-    expect(screen.getByText('0.12x')).toBeTruthy()
+    expect(screen.getByText('88%')).toBeTruthy()
+    expect(screen.getByText('最高可省')).toBeTruthy()
     expect(screen.getByText('今日调用量')).toBeTruthy()
   })
 

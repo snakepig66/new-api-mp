@@ -206,7 +206,7 @@ describe('new listing wizard', () => {
     const terms = await screen.findByRole('checkbox', {
       name: '我确认该套餐条款允许共享',
     }) as HTMLInputElement
-    const submit = screen.getByRole('button', { name: '提交挂单' }) as HTMLButtonElement
+    const submit = screen.getByRole('button', { name: '提交渠道' }) as HTMLButtonElement
     expect(terms.checked).toBe(false)
     expect(submit.disabled).toBe(true)
 
@@ -226,12 +226,12 @@ describe('new listing wizard', () => {
 
     await screen.findByRole('checkbox', { name: 'deepseek-flash' })
     fireEvent.click(screen.getByRole('button', { name: '下一步' }))
-    fireEvent.click(await screen.findByRole('button', { name: '提交挂单' }))
+    fireEvent.click(await screen.findByRole('button', { name: '提交渠道' }))
 
     expect(
-      await screen.findByText('你自己已上架过这个 Key（挂单 #77）。'),
+      await screen.findByText('你自己已上架过这个 Key（渠道 #77）。'),
     ).toBeTruthy()
-    const link = screen.getByRole('link', { name: '查看已有挂单' }) as HTMLAnchorElement
+    const link = screen.getByRole('link', { name: '查看已有渠道' }) as HTMLAnchorElement
     expect(link.getAttribute('href')).toBe('/seller/listings/77')
   })
 

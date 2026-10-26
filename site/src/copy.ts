@@ -8,7 +8,7 @@ export const copy = {
     name: 'LLM Jar',
     tagline: '同一个 Key，用官方模型更便宜',
     description:
-      '把分散的官方模型额度汇总成一个市场：价格、倍率、可用率都摆在同一张表里，按量结算，失败不收费。',
+      '把分散的官方模型额度汇总成一个市场：价格、可用率都摆在同一张表里，按量结算，失败不收费。',
   },
 
   nav: {
@@ -17,7 +17,7 @@ export const copy = {
     home: '首页',
     models: '模型广场',
     docs: '文档',
-    seller: '成为分享者',
+    seller: '分享额度',
     console: '控制台',
     admin: '运营后台',
     login: '登录',
@@ -27,7 +27,7 @@ export const copy = {
 
   actions: {
     browseModels: '浏览模型',
-    becomeSeller: '成为分享者',
+    becomeSeller: '了解分享额度',
     viewDocs: '查看接入文档',
     backToModels: '返回模型广场',
     backHome: '返回首页',
@@ -88,6 +88,21 @@ export const copy = {
     buyer: '使用者',
     seller: '分享者',
     backToConsole: '返回使用者控制台',
+    menu: '菜单',
+    menuTitle: '控制台菜单',
+    groups: {
+      usage: '使用',
+      funds: '资金',
+      share: '分享',
+      account: '账号',
+      ops: '运营',
+    },
+    ops: {
+      pricing: '定价',
+      models: '模型',
+      review: '审核',
+      tools: '工具',
+    },
   },
 
   footer: {
@@ -103,7 +118,7 @@ export const copy = {
     home: {
       kicker: '官方模型额度，按量结算',
       headline: '同一个 Key，用官方模型更便宜',
-      lead: '分享者把闲置的官方额度挂上市场，买家按当前倍率取用。价格写在明面上，调用失败不收费。',
+      lead: '分享者把闲置的官方额度分享到市场，买家按当前价格取用。价格写在明面上，调用失败不收费。',
       ctaStart: '开始使用',
       facts: [
         { label: '计费', value: '按实际 tokens' },
@@ -112,7 +127,7 @@ export const copy = {
       ],
       stats: {
         models: '在售模型',
-        lowestMultiplier: '最低倍率',
+        maxSaving: '最高可省',
         callsToday: '今日调用量',
       },
       why: {
@@ -120,7 +135,7 @@ export const copy = {
         items: [
           {
             title: '价格同屏比较',
-            body: '官方价、最低倍率、到手价并排展示，峰谷档位和下次切换时间都写清楚。',
+            body: '官方价、到手价并排展示，峰谷档位和下次切换时间都写清楚。',
           },
           {
             title: '失败不收费',
@@ -136,21 +151,21 @@ export const copy = {
         title: '三步跑通第一笔调用',
         hint: '从注册到发出第一个请求，通常不超过五分钟。',
         items: [
-          { title: '注册账号', body: '一个账号同时管理买家与分享者身份。' },
+          { title: '注册账号', body: '一个账号同时管理调用与分享。' },
           { title: '创建 Key', body: '选中要用的模型，设置每个模型的价格上限。' },
           { title: '粘贴请求', body: '把 base_url 指向本站，模型名用广场里的完整 ID。' },
         ],
       },
       seller: {
         title: '有闲置的官方额度？',
-        body: '把它挂上市场，按你定的倍率接单。平台按 T+7 结算，提现记录可查。',
+        body: '把它分享到市场，按你定的价格接单。平台按 T+7 结算，提现记录可查。',
       },
       liveUpdated: (time: string) => `更新于 ${time}`,
-      statsHint: '在售模型与最低倍率来自当前挂单；调用量按北京时间当天统计。',
+      statsHint: '在售模型与最低价来自当前渠道；调用量按北京时间当天统计。',
       topTitle: '热门模型',
       topLead: '按在售分享者数量排序，最多展示 6 个模型。价格随峰谷时段切换。',
       topEmptyTitle: '暂时没有在售模型',
-      topEmptyReason: '市场还没有可用的分享者挂单，所以没有价格可以展示。',
+      topEmptyReason: '市场还没有可用的分享者渠道，所以没有价格可以展示。',
       topEmptyNext: '你可以先看接入文档，或者成为第一个分享者。',
       topErrorTitle: '模型行情加载失败',
       topErrorReason: '广场接口没有返回数据，请稍后重试。',
@@ -169,11 +184,11 @@ export const copy = {
 
     models: {
       title: '模型广场',
-      lead: '官方价与市场最低倍率并排比较，按当前时段结算。',
+      lead: '官方价与市场最低价并排比较，按当前时段结算。',
       leadSummary: (count: number, lowest: string | null) =>
         lowest
-          ? `${count} 个模型 · 最低 ${lowest}x`
-          : `${count} 个模型 · 暂无在售倍率`,
+          ? `${count} 个模型 · 最低 ${lowest}/M`
+          : `${count} 个模型 · 暂无在售价`,
       searchPlaceholder: '搜索模型名称或别名',
       searchAria: '按模型名称或别名搜索',
       allVendors: '全部',
@@ -184,10 +199,10 @@ export const copy = {
         model: '模型',
         input: '输入价',
         output: '输出价',
-        multiplier: '最低倍率',
+        multiplier: '最低价',
         buyerPrice: '最低到手价',
         channels: '渠道数',
-        sellers: '挂单数',
+        sellers: '分享者',
         tier: '当前时段',
         actions: '操作',
       },
@@ -215,7 +230,7 @@ export const copy = {
         disabledKey: '已停用',
         unconfigured: '未配置',
         unconfiguredHint: '这把 Key 还没有保存路由偏好，先在 Key 详情页保存一次。',
-        noSupply: '这个模型暂无可售挂单，已有 Key 暂时不能加入。',
+        noSupply: '这个模型暂无可售渠道，已有 Key 暂时不能加入。',
         success: (count: number) => `已加入 ${count} 把 Key`,
         partial: (added: number, failed: number) =>
           `已加入 ${added} 把，${failed} 把失败`,
@@ -225,12 +240,12 @@ export const copy = {
       },
       empty: {
         title: '暂时没有在售模型',
-        reason: '市场还没有可用的分享者挂单，所以这里没有价格可报。',
+        reason: '市场还没有可用的分享者渠道，所以这里没有价格可报。',
         next: '你可以先看接入文档，或者成为第一个分享者。',
       },
       count: (count: number) => `共 ${count} 个模型`,
       filteredCount: (shown: number, total: number) => `筛选后 ${shown} / ${total} 个模型`,
-      priceNote: '官方价与到手价均为 ¥ / 百万 tokens；到手价按当前最低倍率计算。',
+      priceNote: '官方价与到手价均为 ¥ / 百万 tokens；到手价按当前最低价计算。',
       filters: {
         clear: '清除筛选',
       },
@@ -259,10 +274,10 @@ export const copy = {
         selectGroup: '全选该厂家',
         clearGroup: '取消该厂家',
         groupCount: (selected: number, total: number) => `${selected} / ${total}`,
-        capLabel: '上限',
+        capLabel: '价格上限',
         capPlaceholder: '0.85',
-        lowestCap: (value: string) => `当前最低 ${value}`,
-        capBelowLowest: '低于当前最低，暂无可用供给',
+        lowestCap: (value: string) => `当前最低 ${value} / 百万`,
+        capBelowLowest: '低于当前最低价，暂无可用供给',
         priceLabel: '输入价',
         emptyAll: '广场暂无可售模型',
         emptyFiltered: '没有匹配的模型',
@@ -280,16 +295,16 @@ export const copy = {
 
     modelDetail: {
       title: '模型详情',
-      lead: '官方价目、挂单列表和可直接粘贴的代码示例。',
+      lead: '官方价目、渠道信息和可直接粘贴的代码示例。',
       empty: {
         title: '这个模型暂时没有报价',
-        reason: (model: string) => `「${model}」当前没有可用的分享者挂单。`,
-        next: '回到模型广场看看其他模型，或成为分享者挂上你的额度。',
+        reason: (model: string) => `「${model}」当前没有可用的分享者渠道。`,
+        next: '回到模型广场看看其他模型，或分享你的额度。',
       },
       sections: {
-        official: '官方价目',
-        channels: '渠道挂单',
-        listings: '挂单列表',
+        official: '价格明细',
+        channels: '渠道信息',
+        listings: '渠道列表',
         code: '代码示例',
       },
       loading: '正在加载模型行情',
@@ -303,8 +318,8 @@ export const copy = {
         tier: '当前时段',
       },
       tierNote: '价格为 ¥ / 百万 tokens。高峰与空闲两档按北京时间自动切换。',
-      buyerPrice: '到手价（当前时段）',
-      lowestPrice: '最低到手价',
+      buyerPrice: '当前价格',
+      lowestPrice: '当前价格',
       officialPrice: '官方价',
       access: {
         title: '接入信息',
@@ -338,25 +353,16 @@ export const copy = {
       noOfficial: {
         title: '暂无官方价目',
         reason: '价目表还没有为这个模型发布峰谷档位。',
-        next: '先看挂单聚合与代码示例，价目发布后这里会自动更新。',
-      },
-      listingAggregate: {
-        count: (count: number) => `在售分享者 ${count} 位`,
-        min: '最低倍率',
-        max: '最高倍率',
-        range: '倍率区间',
-        note: '广场接口只提供聚合数据：逐挂单的分享者编号、可用率与延迟尚未公开，这里不编造明细。',
+        next: '先看渠道信息与代码示例，价目发布后这里会自动更新。',
       },
       channels: {
         count: (channels: number, listings: number) =>
-          `${channels} 个渠道 · ${listings} 个挂单`,
+          `${channels} 个渠道 · ${listings} 位分享者`,
         columns: {
           channel: '渠道',
           kind: '类型',
           verified: '验真',
-          coefficient: '系数',
-          listings: '挂单',
-          multiplier: '倍率区间',
+          listings: '分享者',
           differences: '与官方差异',
         },
         kind: {
@@ -371,11 +377,11 @@ export const copy = {
           noVision: '无图片',
           none: '与官方一致',
         },
-        note: '同一模型可能由多个渠道供货；系数是渠道价相对标准模型官方价的倍率，差异表示该渠道与官方版本的能力差别。「官方 / 套餐 / 第三方」只用于说明渠道性质，不参与模型广场筛选；想限制买家只走官方渠道，请在 Key 详情里开启「只用官方渠道」。',
+        note: '同一模型可能由多个渠道供货。差异表示该渠道与官方版本的能力差别；「官方 / 套餐 / 第三方」只说明渠道性质。想限制买家只走官方渠道，请在 Key 详情里开启「只用官方渠道」。',
         empty: {
-          title: '暂时没有渠道挂单',
+          title: '暂时没有渠道',
           reason: '这个模型还没有可售的渠道，当前只展示官方价。',
-          next: '稍后再来，或成为分享者挂上你的渠道额度。',
+          next: '稍后再来，或分享你的额度。',
         },
       },
       code: {
@@ -471,7 +477,7 @@ console.log(response.choices[0].message.content)
           `curl "${baseUrl}/api/marketplace/square/models"`,
       },
       errors: {
-        body: '接口错误使用稳定的错误码，界面按错误码显示中文提示。',
+        body: '错误码使用稳定的错误码，界面按错误码显示中文提示。',
         rows: [
           { code: '400', meaning: '参数错误或模型未加入 Key', action: '核对模型 ID，并把模型加到当前 Key。' },
           { code: '401', meaning: 'Key 无效或已失效', action: '检查 Authorization，必要时新建 Key。' },
@@ -488,12 +494,12 @@ console.log(response.choices[0].message.content)
 
     login: {
       title: '登录',
-      lead: '登录后管理 Key、用量、账单与挂单。',
+      lead: '登录后管理 Key、用量、账单与渠道。',
       brandHeading: '同一个 Key，用官方模型更便宜',
       brandBody:
         '买家用一个 Key 调用广场上的模型；分享者把官方额度挂上市场。价格、倍率和可用率都公开。',
       points: [
-        { title: '价格一次看清', body: '官方价、最低倍率、到手价并排展示。' },
+        { title: '价格一次看清', body: '官方价、到手价并排展示。' },
         { title: '失败调用不收费', body: '只有成功的请求计费。' },
         { title: '一个 Key 通用', body: '换模型不换接入方式。' },
       ],
@@ -652,7 +658,22 @@ console.log(response.choices[0].message.content)
         reason: '创建 Key 并把模型加进 Key 之后，用量、费用和节省会出现在这里。',
         next: '先读接入文档，拿到可以直接粘贴的调用示例。',
       },
+      shareCard: {
+        title: '把闲置额度分享出来',
+        body: '把官方账号的闲置额度接入市场，按你设定的价格接单。平台按 T+7 结算，收益和提现都在控制台。',
+        action: '了解分享额度',
+        activeAction: '查看我的渠道',
+      },
       keySoon: 'Key 管理将在控制台下一阶段开放。',
+    },
+
+    consoleEarnings: {
+      title: '收益与提现',
+      lead: '待结算、可提现、本月收益与提现记录。',
+      tabs: {
+        overview: '收益概览',
+        payouts: '提现记录',
+      },
     },
 
     consoleShared: {
@@ -773,7 +794,7 @@ console.log(response.choices[0].message.content)
         stable: '最稳',
       },
       strategyHint: {
-        cheapest: '优先最低倍率',
+        cheapest: '优先最低价格',
         balanced: '价格与稳定兼顾',
         stable: '优先可用率与延迟',
       },
@@ -827,7 +848,7 @@ console.log(response.choices[0].message.content)
         },
         models: {
           label: '选择模型',
-          hint: '只列出当前有分享者挂单的模型。',
+          hint: '只列出当前有分享者渠道的模型。',
           search: '搜索模型或厂商',
           selectAll: '全选当前结果',
           clear: '清空',
@@ -1004,6 +1025,10 @@ console.log(response.choices[0].message.content)
 
     consoleRecords: {
       title: '使用记录',
+      tabs: {
+        calls: '我的调用',
+        sales: '我卖出的',
+      },
       lead: '每一笔成功或失败的调用都在这里；失败调用不计费。',
       columns: {
         time: '时间',
@@ -1208,6 +1233,24 @@ console.log(response.choices[0].message.content)
       },
     },
 
+    share: {
+      title: '分享额度',
+      lead: '把闲置的官方额度接入 LLM Jar，按你设定的价格接单。',
+      heroBody: '一个账号同时管理调用与分享；平台负责计费、结算和验真，你只需要提供可用的上游 Key。',
+      cta: '开通分享',
+      ctaActive: '查看我的渠道',
+      ctaLogin: '登录后开通',
+      stepsTitle: '三步开始分享',
+      steps: [
+        { title: '接入上游', body: '粘贴官方渠道的 API Key，系统会逐个模型验证可调用。' },
+        { title: '设定价格', body: '按官方价的比例设置你的价格，随时可以调整。' },
+        { title: '结算提现', body: '平台按成交金额收取 7% 服务费，T+7 后可提现。' },
+      ],
+      feeTitle: '结算与提现',
+      feeBody: '平台按成交金额收取 7% 服务费；T+7 后可提现。提现前需要完成实名认证并绑定支付宝。',
+      note: '仅支持官方渠道额度；套餐渠道需要确认条款允许共享。',
+    },
+
     seller: {
       title: '分享者',
       lead: '把闲置的官方额度挂到市场，按你定的倍率接单。',
@@ -1219,7 +1262,7 @@ console.log(response.choices[0].message.content)
       },
       empty: {
         title: '还没有开通分享者',
-        reason: '开通后才能挂单、查看收入与申请提现。',
+        reason: '开通后才能渠道、查看收入与申请提现。',
         next: '开通流程包含协议签署、实名认证和收款账户绑定，全程约五分钟。',
       },
       onboardingSoon: '开通流程将在分享者阶段开放。',
@@ -1228,10 +1271,10 @@ console.log(response.choices[0].message.content)
     sellerCommon: {
       nav: {
         overview: '概览',
-        listings: '我的挂单',
-        records: '分享记录',
-        payouts: '提现',
-        onboarding: '开通引导',
+        listings: '我的渠道',
+        records: '我卖出的',
+        payouts: '收益与提现',
+        onboarding: '开通分享',
       },
       status: {
         draft: '待验真',
@@ -1277,25 +1320,25 @@ console.log(response.choices[0].message.content)
         saved: '已保存',
         multiplierUpdated: '倍率已更新',
         keyUpdated: 'Key 已更新，正在重新验真',
-        paused: '挂单已暂停',
-        resumed: '挂单已恢复',
+        paused: '渠道已暂停',
+        resumed: '渠道已恢复',
         verifyStarted: '已开始重新检测',
       },
       errors: {
         generic: '操作没有完成，请稍后重试。',
-        listingNotFound: '这个挂单不存在，或者不属于当前账号。',
+        listingNotFound: '这个渠道不存在，或者不属于当前账号。',
         multiplierCooldown: '倍率 10 分钟内只能改一次，请等待冷却结束。',
         multiplierRange: '倍率必须在 0.001x 到 1.000x 之间。',
         payoutMinimum: '单次提现最低 ¥50。',
         payoutWeekly: '最近 7 天已经提过现，下一次提现请等 7 天后。',
         payoutInsufficient: '可提现金额不足，请调整提现金额。',
         payoutDuplicate: '这笔提现请求已经提交过，请勿重复点击。',
-        duplicateKey: '这个 Key 已经挂在市场里了，请换一个 Key。',
-        duplicateKeyOwn: '你自己已上架过这个 Key，请查看已有挂单。',
-        duplicateKeyOther: '该 Key 已被其他账号上架，不能重复挂单。',
+        duplicateKey: '这个 Key 已经分享到市场了，请换一个 Key。',
+        duplicateKeyOwn: '你自己已上架过这个 Key，请查看已有渠道。',
+        duplicateKeyOther: '该 Key 已被其他账号上架，不能重复渠道。',
         planTermsRequired: '请先确认该套餐条款允许共享。',
         verifyAlreadyRunning: '正在检测中，请稍候。',
-        verifyDraftOnly: '只有待验真的挂单可以重新检测。',
+        verifyDraftOnly: '只有待验真的渠道可以重新检测。',
         notActive: '请先签署分享者协议。',
         payoutAccountRequired: '提现前需要先绑定支付宝收款账户。',
         vendorUnknown: '这个厂商暂未开放。',
@@ -1331,7 +1374,7 @@ console.log(response.choices[0].message.content)
 
     sellerConsole: {
       title: '分享者概览',
-      lead: '待结算、可提现金额与近 30 天收入，挂单状态一屏看完。',
+      lead: '待结算、可提现金额与近 30 天收入，渠道状态一屏看完。',
       loadError: '收入统计加载失败',
       stats: {
         pending: '待结算（T+7）',
@@ -1351,23 +1394,23 @@ console.log(response.choices[0].message.content)
         series: '收入',
         ariaLabel: '近 30 天每日分享收入柱状图',
         emptyTitle: '过去 30 天还没有收入',
-        emptyReason: '挂单还没有完成成交，所以没有可展示的日收入。',
+        emptyReason: '渠道还没有完成成交，所以没有可展示的日收入。',
         emptyNext: '把闲置的官方额度挂上市场，成交后收入会按日出现在这里。',
       },
       health: {
-        title: '挂单健康度',
-        lead: '状态、倍率与限额；暂停的挂单会同时显示原因。',
+        title: '渠道健康度',
+        lead: '状态、倍率与限额；暂停的渠道会同时显示原因。',
         columns: {
-          listing: '挂单',
+          listing: '渠道',
           models: '模型',
           status: '状态',
           multiplier: '倍率',
           limits: '并发 / RPM / 日限额',
           created: '创建时间',
         },
-        emptyTitle: '还没有挂单',
-        emptyReason: '当前账号没有在市场上的挂单，所以没有健康度可看。',
-        emptyNext: '用挂单向导粘贴 Key，检测通过后即可上架。',
+        emptyTitle: '还没有渠道',
+        emptyReason: '当前账号没有在市场上的渠道，所以没有健康度可看。',
+        emptyNext: '用渠道向导粘贴 Key，检测通过后即可上架。',
         pausedPrefix: '暂停原因',
       },
       payoutGate: {
@@ -1390,12 +1433,12 @@ console.log(response.choices[0].message.content)
         onboardingLink: '去补齐资料',
         payoutLink: '去提现',
       },
-      newListing: '新建挂单',
+      newListing: '新建渠道',
     },
 
     sellerOnboarding: {
-      title: '开通分享者',
-      lead: '每个账号都可以分享：签完协议即可挂单。实名与支付宝收款账户只在提现前需要。',
+      title: '开通分享',
+      lead: '每个账号都可以分享：签完协议即可渠道。实名与支付宝收款账户只在提现前需要。',
       progress: '开通进度',
       state: {
         done: '已完成',
@@ -1405,11 +1448,11 @@ console.log(response.choices[0].message.content)
       },
       stepTitles: ['签署分享者协议', '实名认证', '支付宝收款账户'],
       stepHints: [
-        '签完即可挂单，开通不收费。',
+        '签完即可渠道，开通不收费。',
         '可选：提现前完成。只做格式校验，姓名与证件号不会保存明文。',
         '可选：提现前绑定。提现只打到这个支付宝账号。',
       ],
-      optionalHint: '实名与收款账户不影响挂单；准备提现时再来补齐即可。',
+      optionalHint: '实名与收款账户不影响渠道；准备提现时再来补齐即可。',
       payoutNotice: '还没有绑定支付宝收款账户，提现前需要先补齐。',
       bindAccount: '去绑定',
       agreement: {
@@ -1426,7 +1469,7 @@ console.log(response.choices[0].message.content)
           },
           {
             title: '可用性与处罚',
-            body: '探测到 Key 失效或余额不足时，挂单会自动暂停；提供虚假额度或绕过上游条款，平台有权封禁挂单并冻结结算。',
+            body: '探测到 Key 失效或余额不足时，渠道会自动暂停；提供虚假额度或绕过上游条款，平台有权封禁渠道并冻结结算。',
           },
         ],
         hint: '继续前请阅读并同意《分享者协议》与《用户协议》。',
@@ -1460,15 +1503,15 @@ console.log(response.choices[0].message.content)
         done: '收款账户已绑定',
       },
       done: {
-        title: '已开通，可以挂单了',
-        reason: '协议已生效，现在就能挂单。实名和收款账户是提现前的可选步骤，随时可以补。',
+        title: '已开通，可以渠道了',
+        reason: '协议已生效，现在就能渠道。实名和收款账户是提现前的可选步骤，随时可以补。',
         next: '先去挂一个 Key，探测通过后就能出现在模型广场。',
         overview: '查看概览',
-        newListing: '去挂单',
+        newListing: '去渠道',
       },
       blocked: {
         title: '分享者账号已被停用',
-        reason: '当前账号不能继续开通或挂单，已产生的结算仍会保留。',
+        reason: '当前账号不能继续开通或渠道，已产生的结算仍会保留。',
         next: '如有疑问，请联系运营核对账号状态。',
       },
       activeBadge: '已开通',
@@ -1476,10 +1519,10 @@ console.log(response.choices[0].message.content)
     },
 
     sellerListings: {
-      title: '我的挂单',
-      lead: '每个挂单对应一个上游 Key；暂停、改倍率和换 Key 都在这里。',
+      title: '我的渠道',
+      lead: '每个渠道对应一个上游 Key；暂停、改倍率和换 Key 都在这里。',
       columns: {
-        listing: '挂单',
+        listing: '渠道',
         models: '模型',
         status: '状态',
         multiplier: '倍率',
@@ -1500,7 +1543,7 @@ console.log(response.choices[0].message.content)
         replaceKey: '换 Key',
         recheck: '重新检测',
         rechecking: '正在重新检测',
-        newListing: '新建挂单',
+        newListing: '新建渠道',
         refresh: '刷新',
       },
       multiplierDialog: {
@@ -1514,7 +1557,7 @@ console.log(response.choices[0].message.content)
       },
       keyDialog: {
         title: '更换上游 Key',
-        lead: '换 Key 后挂单会重新验真，验真通过前不会接单。',
+        lead: '换 Key 后渠道会重新验真，验真通过前不会接单。',
         label: '新的 API Key',
         placeholder: '粘贴新的 Key',
         hint: '输入只以密码显示；保存后只保留末 4 位预览。',
@@ -1523,23 +1566,23 @@ console.log(response.choices[0].message.content)
         submit: '保存并重新验真',
         submitting: '正在保存',
       },
-      emptyTitle: '还没有挂单',
-      emptyReason: '这个账号还没有把任何上游 Key 挂到市场。',
-      emptyNext: '用挂单向导选择一个厂商，检测 Key 后设置倍率即可上架。',
-      pausedNote: '暂停的挂单不接单，恢复后立即生效。',
-      loadError: '挂单列表加载失败。',
+      emptyTitle: '还没有渠道',
+      emptyReason: '这个账号还没有把任何上游 Key 分享到市场。',
+      emptyNext: '用渠道向导选择一个厂商，检测 Key 后设置倍率即可上架。',
+      pausedNote: '暂停的渠道不接单，恢复后立即生效。',
+      loadError: '渠道列表加载失败。',
       resumeAt: (time: string) => `预计 ${time} 自动恢复`,
-      recheckHint: '重新检测会再次调用上游，检测期间挂单不会接单。',
+      recheckHint: '重新检测会再次调用上游，检测期间渠道不会接单。',
     },
 
     sellerListingDetail: {
-      title: '挂单详情',
-      lead: '验真结果、暂停原因和挂单参数。',
-      back: '返回挂单列表',
+      title: '渠道详情',
+      lead: '验真结果、暂停原因和渠道参数。',
+      back: '返回渠道列表',
       refresh: '刷新',
       recheck: '重新检测',
       rechecking: '正在重新检测',
-      loadError: '挂单详情加载失败。',
+      loadError: '渠道详情加载失败。',
       fields: {
         vendor: '上游渠道',
         status: '状态',
@@ -1552,11 +1595,11 @@ console.log(response.choices[0].message.content)
       },
       verificationHint: '逐个模型的检测结果；未通过时会标注原因，未出现在 Key 的 /models 列表中的模型会单独说明。',
       verificationEmpty: '还没有验真记录。',
-      recheckOnlyDraft: '只有待验真的挂单可以重新检测。',
+      recheckOnlyDraft: '只有待验真的渠道可以重新检测。',
       pauseTitle: '暂停信息',
       pauseReason: '暂停原因',
       resumeAt: '预计恢复时间',
-      notPaused: '这个挂单当前没有暂停。',
+      notPaused: '这个渠道当前没有暂停。',
       historyTitle: '最近检测记录',
       historyEmpty: '还没有检测记录。',
       historyColumns: {
@@ -1570,7 +1613,7 @@ console.log(response.choices[0].message.content)
     },
 
     sellerListingNew: {
-      title: '新建挂单',
+      title: '新建渠道',
       lead: '四步完成：选渠道、粘贴 Key、自动检测、定倍率与限额。',
       steps: ['选择渠道', '粘贴 Key', '检测 Key', '定倍率与限额'],
       stepLead: [
@@ -1604,7 +1647,7 @@ console.log(response.choices[0].message.content)
       },
       plan: {
         title: '套餐额度说明',
-        windows: '套餐额度按 5 小时窗口 / 每周窗口重置；额度用尽时挂单会自动暂停，窗口重置后自动恢复。',
+        windows: '套餐额度按 5 小时窗口 / 每周窗口重置；额度用尽时渠道会自动暂停，窗口重置后自动恢复。',
         windowFixed: (hours: string, timezone: string) =>
           `当前窗口：每 ${hours} 小时重置一次（${timezone}）。`,
         windowRolling: (minutes: string) => `当前窗口：每 ${minutes} 分钟滚动重置。`,
@@ -1660,16 +1703,16 @@ console.log(response.choices[0].message.content)
         inputLabel: '倍率（x）',
         previewModel: '预览模型',
         official: '官方输入价',
-        coefficient: '渠道系数',
+        coefficient: '渠道价格比例',
         buyer: '买家价',
         seller: '你的到手价',
         fee: '平台费',
         feeRate: (percent: number) => `平台费 ${percent}%`,
         sellerHint: (percent: number) =>
           `到手 = 买家实付 × ${(100 - percent) / 100}（扣除 ${percent}% 平台费）。`,
-        buyerHint: '买家价 = 官方价 × 渠道系数 × 倍率，最终以后端计价为准。',
+        buyerHint: '买家价 = 官方价 × 渠道价格比例 × 倍率，最终以后端计价为准。',
         marketLowest: '同模型市场最低倍率',
-        noMarket: '这个模型暂时没有其他挂单。',
+        noMarket: '这个模型暂时没有其他渠道。',
         compareHigher: (delta: string) => `高于市场最低 ${delta}x`,
         compareLower: (delta: string) => `低于市场最低 ${delta}x`,
         compareSame: '与市场最低倍率持平',
@@ -1684,7 +1727,7 @@ console.log(response.choices[0].message.content)
         rpm: 'RPM',
         rpmHint: '每分钟请求数，0 表示不限。',
         dailyCap: '日限额（元）',
-        dailyCapHint: '0 表示不限；按微元提交，页面只做格式转换。',
+        dailyCapHint: '0 表示不限；直接按元填写。',
         hours: '接单时段',
         hoursHint: '可选。留空表示全天接单；多段时段按 HH:MM 填写。',
         enableHours: '只在这些时段接单',
@@ -1693,21 +1736,21 @@ console.log(response.choices[0].message.content)
         start: '开始',
         end: '结束',
         noWindow: '未设置时段，全天接单。',
-        submit: '提交挂单',
+        submit: '提交渠道',
         submitting: '正在提交',
       },
       actions: {
         next: '下一步',
         back: '上一步',
         probe: '检测 Key',
-        create: '提交挂单',
+        create: '提交渠道',
       },
       duplicate: {
-        own: (id: number) => `你自己已上架过这个 Key（挂单 #${id}）。`,
-        ownLink: '查看已有挂单',
-        other: '该 Key 已被其他账号上架，不能重复挂单。',
+        own: (id: number) => `你自己已上架过这个 Key（渠道 #${id}）。`,
+        ownLink: '查看已有渠道',
+        other: '该 Key 已被其他账号上架，不能重复渠道。',
       },
-      success: '挂单已创建，正在后台验真。',
+      success: '渠道已创建，正在后台验真。',
       validation: {
         vendor: '请选择官方渠道。',
         key: '请粘贴完整的 API Key。',
@@ -1741,8 +1784,8 @@ console.log(response.choices[0].message.content)
           `第 ${page} / ${pages} 页 · 共 ${total} 条`,
       },
       emptyTitle: '还没有分享记录',
-      emptyReason: '市场上还没有买家调用你的挂单，所以没有收入记录。',
-      emptyNext: '确认挂单处于「在售」状态；有成交后记录会出现在这里。',
+      emptyReason: '市场上还没有买家调用你的渠道，所以没有收入记录。',
+      emptyNext: '确认渠道处于「在售」状态；有成交后记录会出现在这里。',
     },
 
     sellerPayouts: {
@@ -1799,10 +1842,10 @@ console.log(response.choices[0].message.content)
       },
       empty: {
         title: '运营后台正在搭建',
-        reason: '市场运营工具尚未接入当前前端。',
+        reason: '市场这些工具正在完善。',
         next: '上游渠道与系统设置暂时保留在旧后台入口，仅超管可访问。',
       },
-      legacy: '旧后台入口：/ops-legacy。请求需携带管理员访问令牌。',
+      legacy: '运营功能已合并到控制台。',
     },
 
     adminCommon: {
@@ -2431,15 +2474,15 @@ console.log(response.choices[0].message.content)
     ACCESS_TOKEN_EXPIRED: '访问令牌已过期，请重新登录。',
     ACCESS_TOKEN_SCOPE_DENIED: '访问令牌缺少所需权限。',
     ACCESS_TOKEN_LEGACY_RETIRED: '旧访问令牌已停用，请重新创建。',
-    DUPLICATE_KEY_OWN: '你自己已上架过这个 Key，请查看已有挂单。',
-    DUPLICATE_KEY_OTHER: '该 Key 已被其他账号上架，不能重复挂单。',
+    DUPLICATE_KEY_OWN: '你自己已上架过这个 Key，请查看已有渠道。',
+    DUPLICATE_KEY_OTHER: '该 Key 已被其他账号上架，不能重复渠道。',
     PLAN_TERMS_REQUIRED: '请先确认该套餐条款允许共享。',
     invalid_api_key: 'Key 无效或已失效，请检查后重试。',
     insufficient_balance: '余额不足，请充值后重试。',
     invalid_request: '请求参数有误，请核对后重试。',
     no_supplier_available: '暂无可用供应商，请稍后重试。',
     model_already_added: '这个模型已经在这个 Key 里了。',
-    no_listing_available: '这个模型暂时没有可用的分享者挂单。',
+    no_listing_available: '这个模型暂时没有可用的分享者渠道。',
     invalid_key_model: '模型或 Key 参数有误，请刷新后重试。',
     token_not_found: '这个 Key 不存在或不属于当前账号。',
     invalid_token_id: '请选择一个有效的 Key。',

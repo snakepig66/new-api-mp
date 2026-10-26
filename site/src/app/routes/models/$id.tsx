@@ -21,10 +21,8 @@ import { vendorsQuery } from '@/features/seller/api'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatYuan } from '@/lib/money'
-import { formatMultiplier } from '@/lib/multiplier'
 import {
   Empty,
-  Multiplier,
   PeakBadge,
   Price,
   Table,
@@ -44,12 +42,6 @@ export const Route = createFileRoute('/models/$id')({
 type CodeTab = 'curl' | 'python' | 'node'
 
 const PRICE_TIERS: MarketTier[] = ['peak', 'offpeak', 'flat']
-
-function otherTierOf(tier: MarketTier): 'peak' | 'offpeak' | null {
-  if (tier === 'peak') return 'offpeak'
-  if (tier === 'offpeak') return 'peak'
-  return null
-}
 
 function currentPrices(detail: SquareModelDetail): SquareTierPrices | undefined {
   return detail.prices[detail.tier] ?? detail.prices.peak ?? detail.prices.offpeak
@@ -195,12 +187,27 @@ export function ModelDetailPage() {
   const data = detail.data
   const originVendor = data.origin_vendor || data.vendor
   const price = currentPrices(data)
-  const otherTier = otherTierOf(data.tier)
-  const otherPrice = otherTier ? data.prices[otherTier] : undefined
   const tiers = PRICE_TIERS.filter((tier) => data.official_prices[tier])
   const capabilities = capabilitiesOf(data.model)
   const officialOnly =
     data.buyer_price_source === 'official' || data.listing_count === 0
+  const officialCurrent =
+    data.official_prices[data.tier] ??
+    data.official_prices.flat ??
+    data.official_prices.peak ??
+    data.official_prices.offpeak
+  const officialInput = officialCurrent?.input_micro_per_mtok
+  const officialMicro = officialInput === undefined ? null : Number(officialInput)
+  const currentMicro = price ? Number(price.input_micro_per_mtok) : null
+  const savedPercent =
+    !officialOnly &&
+    officialMicro !== null &&
+    currentMicro !== null &&
+    Number.isFinite(officialMicro) &&
+    Number.isFinite(currentMicro) &&
+    officialMicro > currentMicro
+      ? Math.round((1 - currentMicro / officialMicro) * 100)
+      : null
   const channels = data.channels ?? []
   const dimensions = [
     { key: 'input_micro_per_mtok', label: page.dimensions.input },
@@ -242,46 +249,27 @@ export function ModelDetailPage() {
         <div className="min-w-0 space-y-8">
           <section className="rounded-lg border border-line p-6 sm:p-8">
             <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
+              <div className="min-w-0">
                 <div className="text-[13px] text-ink-3">
-                  {officialOnly ? page.officialPrice : page.lowestPrice}
+                  {officialOnly ? page.officialPrice : page.buyerPrice}
                 </div>
                 {price ? (
-                  <div className="mt-2 flex flex-wrap items-center gap-3">
-                    <Price
-                      value={price.input_micro_per_mtok}
-                      tier={data.tier}
-                      other={
-                        otherPrice && otherTier
-                          ? { value: otherPrice.input_micro_per_mtok, tier: otherTier }
-                          : null
-                      }
-                      size="lg"
-                      className="[&_span.tabular-nums]:text-[32px] [&_span.tabular-nums]:font-semibold"
-                    />
-                    {officialOnly ? (
-                      <Tag tone="brand">{page.officialPrice}</Tag>
-                    ) : data.multiplier_min_milli > 0 ? (
-                      <Multiplier milli={data.multiplier_min_milli} />
+                  <div className="mt-2">
+                    <Price value={price.input_micro_per_mtok} tier={data.tier} size="lg" />
+                    {!officialOnly && officialInput ? (
+                      <p className="mt-2 text-[14px] text-ink-2">
+                        官方 <span className="tabular-nums">{formatYuan(officialInput)}</span>
+                        {savedPercent !== null ? (
+                          <span className="ml-2 inline-flex h-[22px] items-center rounded-full bg-brand-soft px-2 text-[12px] leading-none text-brand-ink">
+                            {copy.multiplier.savings(String(savedPercent))}
+                          </span>
+                        ) : null}
+                      </p>
                     ) : null}
                   </div>
                 ) : (
                   <p className="mt-2 text-[15px] text-ink-3">{copy.common.none}</p>
                 )}
-                {price ? (
-                  <p className="mt-2 text-[14px] text-ink-2">
-                    {copy.pages.models.outputPrefix}{' '}
-                    <span className="tabular-nums text-ink">
-                      {formatYuan(price.output_micro_per_mtok)}
-                    </span>
-                    {otherPrice ? (
-                      <span className="tabular-nums text-ink-3">
-                        {' '}
-                        / {formatYuan(otherPrice.output_micro_per_mtok)}
-                      </span>
-                    ) : null}
-                  </p>
-                ) : null}
               </div>
               {data.tier === 'flat' ? (
                 <Tag>{copy.pages.models.flat}</Tag>
@@ -290,10 +278,10 @@ export function ModelDetailPage() {
               )}
             </div>
 
-            <div className="mt-8 border-t border-line pt-6">
-              <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+            <details className="mt-8 border-t border-line pt-6">
+              <summary className="cursor-pointer list-none text-[16px] font-semibold tracking-tight text-ink">
                 {page.sections.official}
-              </h2>
+              </summary>
               <p className="mt-1 text-[13px] text-ink-3">{page.tierNote}</p>
 
               {tiers.length === 0 ? (
@@ -349,27 +337,27 @@ export function ModelDetailPage() {
                   </Table>
                 </div>
               )}
-            </div>
 
-            {data.tier !== 'flat' ? (
-              <div className="mt-8 border-t border-line pt-6">
-                <h2 className="text-[16px] font-semibold tracking-tight text-ink">
-                  {page.peakBar.title}
-                </h2>
-                <PeakBar nextSwitchAt={data.next_switch} className="mt-4" />
-              </div>
-            ) : null}
+              {data.tier !== 'flat' ? (
+                <div className="mt-8 border-t border-line pt-6">
+                  <h3 className="text-[16px] font-semibold tracking-tight text-ink">
+                    {page.peakBar.title}
+                  </h3>
+                  <PeakBar nextSwitchAt={data.next_switch} className="mt-4" />
+                </div>
+              ) : null}
+            </details>
           </section>
 
-          <section>
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="text-[24px] font-semibold tracking-tight text-ink">
+          <details className="rounded-lg border border-line p-6 sm:p-8">
+            <summary className="flex cursor-pointer list-none flex-wrap items-baseline justify-between gap-2">
+              <span className="text-[24px] font-semibold tracking-tight text-ink">
                 {page.sections.channels}
-              </h2>
+              </span>
               <span className="text-[13px] text-ink-3">
                 {page.channels.count(channels.length, data.listing_count)}
               </span>
-            </div>
+            </summary>
             <div className="mt-4">
               {channels.length === 0 ? (
                 <Empty
@@ -378,15 +366,13 @@ export function ModelDetailPage() {
                   next={page.channels.empty.next}
                 />
               ) : (
-                <Table minWidth={760} size="compact">
+                <Table minWidth={640} size="compact">
                   <TableHead>
                     <TableRow interactive={false}>
                       <TableHeaderCell>{page.channels.columns.channel}</TableHeaderCell>
                       <TableHeaderCell>{page.channels.columns.kind}</TableHeaderCell>
                       <TableHeaderCell>{page.channels.columns.verified}</TableHeaderCell>
-                      <TableHeaderCell numeric>{page.channels.columns.coefficient}</TableHeaderCell>
                       <TableHeaderCell numeric>{page.channels.columns.listings}</TableHeaderCell>
-                      <TableHeaderCell numeric>{page.channels.columns.multiplier}</TableHeaderCell>
                       <TableHeaderCell>{page.channels.columns.differences}</TableHeaderCell>
                     </TableRow>
                   </TableHead>
@@ -415,18 +401,7 @@ export function ModelDetailPage() {
                               </span>
                             )}
                           </TableCell>
-                          <TableCell numeric>{formatMultiplier(channel.coefficient_milli)}x</TableCell>
                           <TableCell numeric>{channel.listing_count}</TableCell>
-                          <TableCell numeric>
-                            {channel.listing_count > 0 ? (
-                              <>
-                                {formatMultiplier(channel.min_multiplier_milli)}x –{' '}
-                                {formatMultiplier(channel.max_multiplier_milli)}x
-                              </>
-                            ) : (
-                              <span className="text-ink-3">{copy.common.none}</span>
-                            )}
-                          </TableCell>
                           <TableCell>
                             {notes.length === 0 ? (
                               <span className="text-[13px] text-ink-3">
@@ -448,7 +423,7 @@ export function ModelDetailPage() {
               )}
             </div>
             <p className="mt-3 text-[13px] leading-6 text-ink-3">{page.channels.note}</p>
-          </section>
+          </details>
         </div>
 
         <aside className="lg:sticky lg:top-24">

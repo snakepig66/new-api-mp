@@ -2,10 +2,14 @@ import { createFileRoute, redirect } from '@tanstack/react-router'
 
 /**
  * 旧的渠道模型映射页已并入「模型池」的渠道模型标签页。
- * 保留这个路径做跳转，避免收藏或文档里的旧链接失效。
+ * 跳转时带上 tab 参数，保证深链接仍能直接打开该标签页。
  */
 export const Route = createFileRoute('/admin/channel-models')({
   beforeLoad: () => {
-    throw redirect({ to: '/admin/pool', replace: true })
+    throw redirect({
+      to: '/console/ops/models',
+      search: { tab: 'channel-models' },
+      replace: true,
+    })
   },
 })

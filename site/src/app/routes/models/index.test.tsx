@@ -213,7 +213,7 @@ function renderPage(initialEntry = '/models') {
 }
 
 describe('models page', () => {
-  it('renders live rows and enriches them with official prices and multipliers', async () => {
+  it('renders live rows and enriches them with official prices', async () => {
     renderPage()
 
     expect(await screen.findByText('deepseek-chat')).toBeTruthy()
@@ -223,9 +223,8 @@ describe('models page', () => {
 
     // Detail enrichment: the list endpoint has no multiplier/official price.
     await waitFor(() => {
-      expect(screen.getAllByText('0.30x').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('¥3.00').length).toBeGreaterThan(0)
     })
-    expect(screen.getAllByText('0.52x').length).toBeGreaterThan(0)
 
     // The whole row is one link to the detail page.
     const link = screen.getByRole('link', { name: /deepseek-chat/ })

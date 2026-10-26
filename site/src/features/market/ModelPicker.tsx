@@ -295,9 +295,9 @@ export function ModelPicker({
                               onChange={(event) => setCap(model.model, event.target.value)}
                               className="h-8 w-20 rounded-sm border border-transparent bg-bg-soft px-2 tabular-nums text-[13px] text-ink disabled:bg-bg-soft disabled:text-ink-3"
                             />
-                            {lowestMilli > 0 ? (
+                            {lowestMilli > 0 && prices ? (
                               <span className="tabular-nums">
-                                {pickerCopy.lowestCap((lowestMilli / 1000).toFixed(2))}
+                                {pickerCopy.lowestCap(formatYuan(prices.input_micro_per_mtok))}
                               </span>
                             ) : null}
                             {belowLowest ? (

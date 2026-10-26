@@ -10,7 +10,7 @@ import { formatCount } from '@/features/market/format'
 import { ModelTable } from '@/features/market/model-table'
 import { QueryError } from '@/features/market/query-error'
 import { currentBaseUrl } from '@/features/market/url'
-import { formatMultiplier } from '@/lib/multiplier'
+import { savingPercent } from '@/lib/multiplier'
 import { Empty, buttonClasses } from '@/ui'
 
 export const Route = createFileRoute('/')({
@@ -77,10 +77,10 @@ export function HomePage() {
               <div className="text-center">
                 <div className="text-[32px] font-semibold leading-tight tracking-tight tabular-nums text-ink">
                   {stats.data.min_multiplier_milli > 0
-                    ? `${formatMultiplier(stats.data.min_multiplier_milli)}x`
+                    ? `${savingPercent(stats.data.min_multiplier_milli)}%`
                     : copy.common.none}
                 </div>
-                <div className="mt-1 text-[13px] text-ink-3">{home.stats.lowestMultiplier}</div>
+                <div className="mt-1 text-[13px] text-ink-3">{home.stats.maxSaving}</div>
               </div>
               <div className="text-center">
                 <div className="text-[32px] font-semibold leading-tight tracking-tight tabular-nums text-ink">
@@ -138,7 +138,7 @@ export function HomePage() {
                 reason={home.topEmptyReason}
                 next={home.topEmptyNext}
                 action={
-                  <Link to="/seller" className={buttonClasses('secondary', 'md')}>
+                  <Link to="/share" className={buttonClasses('secondary', 'md')}>
                     {copy.actions.becomeSeller}
                   </Link>
                 }
@@ -198,7 +198,7 @@ export function HomePage() {
               <h2 className="text-[20px] font-semibold tracking-tight text-ink">{home.seller.title}</h2>
               <p className="mt-2 max-w-[560px] text-[15px] leading-6 text-ink-2">{home.seller.body}</p>
             </div>
-            <Link to="/seller" className={buttonClasses('primary', 'md', 'shrink-0')}>
+            <Link to="/share" className={buttonClasses('primary', 'md', 'shrink-0')}>
               {copy.actions.becomeSeller}
             </Link>
           </div>

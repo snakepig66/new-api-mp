@@ -1,8 +1,8 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
 
-/** 后台首页落到价目表：运营最常用的入口。 */
+/** 旧运营首页已迁入 /console/ops/pricing。 */
 export const Route = createFileRoute('/admin/')({
   beforeLoad: () => {
-    throw redirect({ to: '/admin/prices', replace: true })
+    throw redirect({ to: '/console/ops/pricing', replace: true })
   },
 })

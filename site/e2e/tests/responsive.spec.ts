@@ -45,24 +45,26 @@ async function visitAndCheck(page: Page, route: string, width: number) {
   await expectNoHorizontalOverflow(page, `${route} @${width}`)
 }
 
-const PUBLIC_ROUTES = ['/', '/models', '/docs', '/login', '/register']
+const PUBLIC_ROUTES = ['/', '/models', '/docs', '/share', '/login', '/register']
 const AUTH_ROUTES = [
   '/console',
   '/console/keys',
   '/console/records',
+  '/console/records?view=sales',
   '/console/wallet',
-  '/seller',
-  '/seller/onboarding',
-  '/seller/listings',
-  '/seller/listings/new',
-  '/seller/records',
-  '/seller/payouts',
-  '/admin/prices',
-  '/admin/per-call-prices',
-  '/admin/holidays',
-  '/admin/listings',
-  '/admin/payouts',
-  '/admin/tools',
+  '/console/onboarding',
+  '/console/listings',
+  '/console/listings/new',
+  '/console/earnings',
+  '/console/earnings/payouts',
+  '/console/ops/pricing',
+  '/console/ops/pricing/per-call',
+  '/console/ops/models',
+  '/console/ops/models?tab=channel-models',
+  '/console/ops/review',
+  '/console/ops/review/payouts',
+  '/console/ops/tools',
+  '/console/ops/tools/reversal',
 ]
 
 test.describe('响应式：公开区', () => {
