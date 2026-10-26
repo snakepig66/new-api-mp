@@ -11,20 +11,39 @@ import { VendorPills } from '@/features/market/VendorPills'
 import { toVendorLookup, vendorLogo, vendorOptions } from '@/features/market/vendors'
 import { vendorsQuery } from '@/features/seller/api'
 import { formatYuan } from '@/lib/money'
-import { Button, Empty, Input, PageHeader, buttonClasses } from '@/ui'
-import type { SquareModel } from '@/features/market/api'
+import { PeakBadge, Button, Empty, Input, PageHeader, buttonClasses } from '@/ui'
+import type { SquareModel, SquareTierPrices } from '@/features/market/api'
+
+type BillingFilter = 'all' | 'flat' | 'tiered'
+type SortKey = 'saving' | 'price' | 'success' | 'latency'
 
 interface ModelsSearch {
   vendor?: string
   q?: string
+  billing?: BillingFilter
+  sort?: SortKey
+  official?: boolean
+  free?: boolean
 }
 
 const searchSchema = (search: Record<string, unknown>): ModelsSearch => {
   const vendor = typeof search.vendor === 'string' ? search.vendor.trim() : ''
   const q = typeof search.q === 'string' ? search.q : ''
+  const billing =
+    search.billing === 'flat' || search.billing === 'tiered' ? search.billing : undefined
+  const sort =
+    search.sort === 'price' || search.sort === 'success' || search.sort === 'latency'
+      ? search.sort
+      : search.sort === 'saving'
+        ? 'saving'
+        : undefined
   return {
     ...(vendor ? { vendor } : {}),
     ...(q.trim() ? { q } : {}),
+    ...(billing ? { billing } : {}),
+    ...(sort ? { sort } : {}),
+    ...(search.official === true ? { official: true } : {}),
+    ...(search.free === true ? { free: true } : {}),
   }
 }
 
@@ -47,6 +66,17 @@ function uniqueByModel(rows: SquareModel[]): SquareModel[] {
   return Array.from(byModel.values())
 }
 
+function currentPrices(model: SquareModel): SquareTierPrices | undefined {
+  return model.prices[model.tier] ?? model.prices.peak ?? model.prices.offpeak
+}
+
+function inputMicro(model: SquareModel): number | null {
+  const price = currentPrices(model)
+  if (!price) return null
+  const value = Number(price.input_micro_per_mtok)
+  return Number.isFinite(value) ? value : null
+}
+
 /** Cheapest input price across every tier the model publishes. */
 function lowestInputMicro(model: SquareModel): number | null {
   let lowest: number | null = null
@@ -59,20 +89,92 @@ function lowestInputMicro(model: SquareModel): number | null {
   return lowest
 }
 
+function savingsOf(
+  model: SquareModel,
+  officialInput: number | string | undefined,
+): number | null {
+  const market = inputMicro(model)
+  const official = Number(officialInput)
+  if (market === null || !Number.isFinite(official) || official <= 0 || market >= official) {
+    return null
+  }
+  return 1 - market / official
+}
+
+const TIER_SWITCH_FORMAT: Intl.DateTimeFormatOptions = {
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+}
+
+function PeakBanner({ model }: { model: SquareModel | undefined }) {
+  const banner = copy.pages.models.peakBanner
+  if (!model) return null
+  const isFlat = model.tier === 'flat'
+  const switchAt = model.next_switch ? new Date(model.next_switch) : null
+  const switchText =
+    switchAt && !Number.isNaN(switchAt.getTime())
+      ? banner.next(switchAt.toLocaleString('zh-CN', TIER_SWITCH_FORMAT))
+      : null
+  return (
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-bg-soft px-4 py-3 text-[13px]">
+      <span className="flex items-center gap-2 text-ink-2">
+        {model.tier === 'flat' ? (
+          <span className="h-2 w-2 rounded-full bg-ink-3" aria-hidden="true" />
+        ) : (
+          <PeakBadge tier={model.tier} nextSwitchAt={model.next_switch} />
+        )}
+        <span>{isFlat ? banner.flat : model.tier === 'peak' ? banner.peak : banner.offpeak}</span>
+      </span>
+      {switchText ? <span className="tabular-nums text-ink-3">{switchText}</span> : null}
+    </div>
+  )
+}
+
+function FilterPill({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean
+  children: React.ReactNode
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={
+        active
+          ? 'rounded-full bg-brand-soft px-3 py-1.5 text-[13px] font-medium text-brand-ink'
+          : 'rounded-full border border-line px-3 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-line-strong hover:text-ink'
+      }
+    >
+      {children}
+    </button>
+  )
+}
+
 export function ModelsPage() {
   const modelsCopy = copy.pages.models
   const navigate = useNavigate()
-  const { vendor: vendorParam, q: queryParam } = Route.useSearch()
-  const vendor = vendorParam ?? null
-  const query = (queryParam ?? '').trim()
+  const search = Route.useSearch()
+  const vendor = search.vendor ?? null
+  const query = (search.q ?? '').trim()
+  const billing = search.billing ?? 'all'
+  const sort = search.sort ?? 'saving'
+  const officialOnly = Boolean(search.official)
+  const freeOnly = Boolean(search.free)
 
   const models = useQuery(squareModelsQuery())
   const vendors = useQuery(vendorsQuery())
-  const [searchInput, setSearchInput] = useState(queryParam ?? '')
+  const [searchInput, setSearchInput] = useState(search.q ?? '')
 
   useEffect(() => {
-    setSearchInput(queryParam ?? '')
-  }, [queryParam])
+    setSearchInput(search.q ?? '')
+  }, [search.q])
 
   const rows = useMemo(() => uniqueByModel(models.data ?? []), [models.data])
   const vendorMeta = useMemo(() => toVendorLookup(vendors.data ?? []), [vendors.data])
@@ -96,57 +198,93 @@ export function ModelsPage() {
     [rows, vendorMeta, vendorCounts],
   )
 
-  const filtered = useMemo(
-    () => filterPickerModels(rows, vendor ?? 'all', queryParam ?? ''),
-    [rows, vendor, queryParam],
-  )
+  const filtered = useMemo(() => {
+    let list = filterPickerModels(rows, vendor ?? 'all', search.q ?? '')
+    if (billing !== 'all') {
+      list = list.filter((row) =>
+        billing === 'flat' ? row.tier === 'flat' : row.tier !== 'flat',
+      )
+    }
+    if (officialOnly) list = list.filter((row) => Boolean(row.official_available))
+    if (freeOnly) list = list.filter((row) => inputMicro(row) === 0)
+    return list
+  }, [rows, vendor, search.q, billing, officialOnly, freeOnly])
 
-  const vendorModels = useMemo(() => {
-    if (!vendor) return []
-    return rows
-      .filter((row) => originVendorOf(row) === vendor)
-      .sort((a, b) => a.model.localeCompare(b.model))
-  }, [rows, vendor])
-
-  // Detail queries carry the official price, which the list endpoint omits.
+  // Detail queries carry the official price and the per-channel reliability.
   const { details, loading: detailsLoading } = useSquareModelDetails(rows)
+
+  const sorted = useMemo(() => {
+    const list = [...filtered]
+    const officialInput = (model: SquareModel) =>
+      details.get(model.model)?.official_prices?.[model.tier]?.input_micro_per_mtok
+    switch (sort) {
+      case 'price':
+        return list.sort((a, b) => (inputMicro(a) ?? Infinity) - (inputMicro(b) ?? Infinity))
+      case 'success':
+        return list.sort(
+          (a, b) =>
+            (b.metrics?.success_rate_24h_milli ?? -1) - (a.metrics?.success_rate_24h_milli ?? -1),
+        )
+      case 'latency':
+        return list.sort(
+          (a, b) =>
+            (a.metrics?.latency_ms || Infinity) - (b.metrics?.latency_ms || Infinity),
+        )
+      case 'saving':
+      default:
+        return list.sort((a, b) => {
+          // Saving needs the official book; models without it rank last.
+          const sa = savingsOf(a, officialInput(a)) ?? -1
+          const sb = savingsOf(b, officialInput(b)) ?? -1
+          if (sa !== sb) return sb - sa
+          return (inputMicro(a) ?? Infinity) - (inputMicro(b) ?? Infinity)
+        })
+    }
+  }, [filtered, details, sort])
 
   const lowestPrice = useMemo(() => {
     let lowest: number | null = null
     for (const model of rows) {
       if (model.listing_count === 0) continue
-      const prices = model.prices[model.tier] ?? model.prices.peak ?? model.prices.offpeak
-      if (!prices) continue
-      const input = Number(prices.input_micro_per_mtok)
-      if (!Number.isFinite(input)) continue
-      if (lowest === null || input < lowest) {
-        lowest = input
-      }
+      const value = lowestInputMicro(model)
+      if (value === null) continue
+      if (lowest === null || value < lowest) lowest = value
     }
     return lowest
   }, [rows])
 
-  const hasFilters = vendor !== null || query.length > 0
+  const hasFilters =
+    vendor !== null ||
+    query.length > 0 ||
+    billing !== 'all' ||
+    officialOnly ||
+    freeOnly
+  const hasSort = sort !== 'saving'
 
-  function selectVendor(next: string | null) {
+  function patchSearch(patch: Partial<ModelsSearch>) {
     void navigate({
       to: '/models',
-      search: (previous) => ({ ...previous, vendor: next ?? undefined }),
+      search: (previous) => {
+        const next: Record<string, unknown> = { ...previous, ...patch }
+        for (const key of Object.keys(next)) {
+          if (next[key] === undefined || next[key] === '' || next[key] === false) {
+            delete next[key]
+          }
+        }
+        return next as ModelsSearch
+      },
+      replace: true,
       resetScroll: false,
     })
   }
 
+  function selectVendor(next: string | null) {
+    patchSearch({ vendor: next ?? undefined })
+  }
+
   function updateSearch(value: string) {
     setSearchInput(value)
-    void navigate({
-      to: '/models',
-      search: (previous) => ({
-        ...previous,
-        q: value.trim() ? value : undefined,
-      }),
-      replace: true,
-      resetScroll: false,
-    })
+    patchSearch({ q: value.trim() ? value : undefined })
   }
 
   function clearFilters() {
@@ -169,7 +307,11 @@ export function ModelsPage() {
         className="border-b-0 pb-0"
       />
 
-      <div className="mt-8 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+      <div className="mt-6">
+        <PeakBanner model={rows[0]} />
+      </div>
+
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <VendorPills
             options={pillOptions}
@@ -179,34 +321,47 @@ export function ModelsPage() {
             allCount={rows.length}
             ariaLabel={modelsCopy.vendorAria}
           />
-          {vendor ? (
-            <div
-              data-testid="vendor-model-chips"
-              className="-mx-1 mt-2 flex min-w-0 items-stretch gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:thin]"
-            >
-              {vendorModels.map((model) => {
-                const input = lowestInputMicro(model)
-                return (
-                  <Link
-                    key={model.model}
-                    to="/models/$id"
-                    params={{ id: model.model }}
-                    className="shrink-0 rounded-md border border-line bg-bg px-3 py-2 transition-colors hover:border-line-strong hover:bg-bg-soft"
-                  >
-                    <span className="block whitespace-nowrap text-[13px] font-medium text-ink">
-                      {model.model}
-                    </span>
-                    <span className="mt-0.5 block whitespace-nowrap text-[12px] tabular-nums text-ink-3">
-                      {modelsCopy.modelRow.priceLabel}{' '}
-                      {input === null
-                        ? copy.common.none
-                        : `${formatYuan(input)}${modelsCopy.modelRow.perMillion}`}
-                    </span>
-                  </Link>
-                )
-              })}
-            </div>
-          ) : null}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-[13px] text-ink-3">{modelsCopy.filters.billing}</span>
+            {(
+              [
+                ['all', modelsCopy.filters.billingAll],
+                ['flat', modelsCopy.filters.billingFlat],
+                ['tiered', modelsCopy.filters.billingTiered],
+              ] as const
+            ).map(([value, label]) => (
+              <FilterPill
+                key={value}
+                active={billing === value}
+                onClick={() => patchSearch({ billing: value === 'all' ? undefined : value })}
+              >
+                {label}
+              </FilterPill>
+            ))}
+            <span className="ml-2 text-[13px] text-ink-3">{modelsCopy.filters.sort}</span>
+            {(
+              [
+                ['saving', modelsCopy.filters.sortSaving],
+                ['price', modelsCopy.filters.sortPrice],
+                ['success', modelsCopy.filters.sortSuccess],
+                ['latency', modelsCopy.filters.sortLatency],
+              ] as const
+            ).map(([value, label]) => (
+              <FilterPill
+                key={value}
+                active={sort === value}
+                onClick={() => patchSearch({ sort: value === 'saving' ? undefined : value })}
+              >
+                {label}
+              </FilterPill>
+            ))}
+            <FilterPill active={officialOnly} onClick={() => patchSearch({ official: !officialOnly || undefined })}>
+              {modelsCopy.filters.officialOnly}
+            </FilterPill>
+            <FilterPill active={freeOnly} onClick={() => patchSearch({ free: !freeOnly || undefined })}>
+              {modelsCopy.filters.freeOnly}
+            </FilterPill>
+          </div>
         </div>
 
         <div className="relative w-full shrink-0 lg:w-[260px]">
@@ -252,13 +407,13 @@ export function ModelsPage() {
                 <Link to="/docs" className={buttonClasses('secondary', 'md')}>
                   {copy.actions.viewDocs}
                 </Link>
-                <Link to="/seller" className={buttonClasses('primary', 'md')}>
+                <Link to="/share" className={buttonClasses('primary', 'md')}>
                   {copy.actions.becomeSeller}
                 </Link>
               </div>
             }
           />
-        ) : filtered.length === 0 ? (
+        ) : sorted.length === 0 ? (
           <Empty
             title={modelsCopy.filteredEmpty.title}
             reason={modelsCopy.filteredEmpty.reason}
@@ -271,13 +426,13 @@ export function ModelsPage() {
           />
         ) : (
           <>
-            {hasFilters ? (
+            {hasFilters || hasSort ? (
               <p className="mb-3 text-[13px] text-ink-3">
-                {modelsCopy.filteredCount(filtered.length, rows.length)}
+                {modelsCopy.filteredCount(sorted.length, rows.length)}
               </p>
             ) : null}
             <ModelTable
-              models={filtered}
+              models={sorted}
               details={details}
               detailsLoading={detailsLoading}
               vendorMeta={vendorMeta}

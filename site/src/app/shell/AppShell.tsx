@@ -2,14 +2,16 @@ import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useEffect, useState, type ReactNode } from 'react'
 
 import { copy } from '@/copy'
+import { NotificationBell } from '@/features/notifications/NotificationBell'
 import { logout, useAuth } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { Button, Logo, buttonClasses } from '@/ui'
 
-type NavTo = '/' | '/models' | '/docs' | '/share' | '/console'
+type NavTo = '/' | '/models' | '/docs' | '/leaderboard' | '/share' | '/console'
 
 const navItems: { to: NavTo; label: string; exact?: boolean }[] = [
   { to: '/models', label: copy.nav.models },
+  { to: '/leaderboard', label: copy.nav.leaderboard },
   { to: '/docs', label: copy.nav.docs },
   { to: '/share', label: copy.nav.seller },
 ]
@@ -138,6 +140,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
             {isLoggedIn ? (
               <>
+                <NotificationBell />
                 <UtilityLink to="/console" label={copy.nav.console} />
                 <span className="hidden max-w-[120px] truncate text-[13px] text-ink-3 lg:inline">
                   {user?.display_name || user?.username}

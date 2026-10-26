@@ -26,12 +26,15 @@ import {
 import {
   redeemCode,
   fetchTopUpRecord,
+  fetchWalletTransactionsCsv,
   quoteTopupAmount,
   requestEpayTopup,
   topupInfoQuery,
+  walletFlowQuery,
   walletQuery,
-  walletTransactionsQuery,
+  walletTransactionsExportUrl,
 } from '@/features/console/api'
+import type { WalletFlowKind, WalletFlowRow } from '@/features/console/api'
 import {
   ErrorBlock,
   Section,
@@ -40,13 +43,14 @@ import {
 } from '@/features/console/components/DataState'
 import { Notice } from '@/features/console/components/form'
 import { redeemCodeSchema } from '@/features/console/schemas'
-import {
-  walletDescription,
-  walletKindLabel,
-  walletStatusMeta,
-} from '@/features/console/wallet-labels'
+import { walletKindLabel } from '@/features/console/wallet-labels'
+import type { TagTone } from '@/ui'
 
 const PAGE_SIZE = 20
+
+/** Post-redirect confirmation poll: every 3s, at most 40 tries (~2 minutes). */
+export const TOPUP_CONFIRM_POLL_INTERVAL_MS = 3_000
+export const TOPUP_CONFIRM_POLL_MAX_ATTEMPTS = 40
 
 export const Route = createFileRoute('/console/wallet')({
   validateSearch: (search: Record<string, unknown>): { page: number; topup?: string } => {
@@ -61,32 +65,91 @@ export const Route = createFileRoute('/console/wallet')({
 
 const page = copy.pages.consoleWallet
 
-/** Unified wallet stream copy. New strings live here instead of copy.ts. */
-const tx = {
-  title: '全部流水',
-  hint: '消费、退款与充值按时间倒序合并展示。',
-  tabs: {
-    all: '全部',
-    usage: '消费',
-    topup: '充值',
-  } as const,
-  columns: {
-    time: '时间',
-    type: '类型',
-    description: '说明',
-    amount: '金额',
-    status: '状态',
-    reference: '单号',
-  },
-  emptyTitle: page.ledger.emptyTitle,
-  emptyReason: page.ledger.emptyReason,
-  emptyNext: page.ledger.emptyNext,
-  emptyTopupReason: '这个账号还没有充值记录。',
-} as const
+/** Unified wallet stream copy (owned by consoleWallet.transactions). */
+const tx = page.transactions
 
-type WalletTab = keyof typeof tx.tabs
+type WalletTab = WalletFlowKind
 
-const WALLET_TABS: WalletTab[] = ['all', 'usage', 'topup']
+const WALLET_TABS: WalletTab[] = [
+  'all',
+  'usage',
+  'topup',
+  'earning',
+  'withdrawal',
+  'refund',
+]
+
+/** Type-column label; earning/withdrawal are not in the legacy label helper. */
+function flowKindLabel(kind: WalletFlowRow['kind']): string {
+  if (kind === 'earning') return tx.tabs.earning
+  if (kind === 'withdrawal') return tx.tabs.withdrawal
+  return walletKindLabel(kind)
+}
+
+/** Status label + tone for every flow kind, including seller payouts. */
+function flowStatusMeta(kind: WalletFlowRow['kind'], status: string): {
+  label: string
+  tone: TagTone
+} {
+  if (kind === 'earning') {
+    const labels = tx.statuses.earning as Record<string, string>
+    return {
+      label: labels[status] ?? labels.unknown,
+      tone: ledgerTone(status),
+    }
+  }
+  if (kind === 'withdrawal') {
+    const labels = tx.statuses.withdrawal as Record<string, string>
+    const tone: TagTone =
+      status === 'paid'
+        ? 'brand'
+        : status === 'rejected'
+          ? 'danger'
+          : status === 'pending' || status === 'approved'
+            ? 'neutral'
+            : 'neutral'
+    return { label: labels[status] ?? labels.unknown, tone }
+  }
+  if (kind === 'topup') {
+    const labels = copy.pages.consoleWallet.topups.statuses as Record<string, string>
+    const tone: TagTone =
+      status === 'success' ? 'brand' : status === 'pending' ? 'neutral' : 'danger'
+    return { label: labels[status] ?? labels.unknown, tone }
+  }
+  return { label: ledgerLabel(status), tone: ledgerTone(status) }
+}
+
+function ledgerLabel(status: string): string {
+  const labels = page.ledger.status as Record<string, string>
+  return labels[status] ?? labels.unknown
+}
+
+function ledgerTone(status: string): TagTone {
+  if (status === 'available') return 'brand'
+  if (status === 'pending') return 'neutral'
+  if (status === 'reversed') return 'danger'
+  return 'neutral'
+}
+
+/** Description column for every flow kind. */
+function flowDescription(entry: WalletFlowRow): string {
+  switch (entry.kind) {
+    case 'topup':
+      return entry.money !== undefined && entry.money !== null
+        ? `${tx.descriptions.topup} · 实付 ¥${Number(entry.money).toFixed(2)}`
+        : tx.descriptions.topup
+    case 'refund':
+      return tx.descriptions.refund
+    case 'usage':
+      return tx.descriptions.usage
+    case 'earning':
+      return tx.descriptions.earning
+    case 'withdrawal':
+      return tx.descriptions.withdrawal
+    default:
+      return tx.descriptions.unknown
+  }
+}
 
 /** Read the validated page/topup search values. */
 function useWalletSearch(): { page: number; topup?: string } {
@@ -102,9 +165,11 @@ function useWalletSearch(): { page: number; topup?: string } {
 export function WalletPage() {
   const { page: currentPage } = useWalletSearch()
   const navigate = useNavigate()
+  const toast = useToast()
   const [kind, setKind] = useState<WalletTab>('all')
+  const [exporting, setExporting] = useState(false)
   const wallet = useQuery(walletQuery())
-  const transactions = useQuery(walletTransactionsQuery(currentPage, kind))
+  const transactions = useQuery(walletFlowQuery(currentPage, kind))
 
   const total = transactions.data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
@@ -114,6 +179,18 @@ export function WalletPage() {
       to: '/console/wallet',
       search: { page: Math.min(Math.max(1, next), totalPages) },
     })
+  }
+
+  async function exportCsv() {
+    setExporting(true)
+    try {
+      const blob = await fetchWalletTransactionsCsv(kind)
+      saveCsvBlob(blob, `wallet-${kind}.csv`)
+    } catch {
+      toast.show({ title: tx.exportFailed, tone: 'error' })
+    } finally {
+      setExporting(false)
+    }
   }
 
   function selectKind(next: WalletTab) {
@@ -175,27 +252,44 @@ export function WalletPage() {
       </div>
 
       <Section className="mt-9" title={tx.title} hint={tx.hint}>
-        <div
-          role="tablist"
-          aria-label={tx.title}
-          className="mb-4 inline-flex rounded-md border border-line bg-bg-subtle p-1"
-        >
-          {WALLET_TABS.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              role="tab"
-              aria-selected={kind === tab}
-              onClick={() => selectKind(tab)}
-              className={
-                kind === tab
-                  ? 'rounded px-3 py-1.5 text-[13px] font-medium text-brand-ink'
-                  : 'rounded px-3 py-1.5 text-[13px] text-ink-2 transition-colors hover:text-ink'
-              }
-            >
-              {tx.tabs[tab]}
-            </button>
-          ))}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div
+            role="tablist"
+            aria-label={tx.title}
+            className="inline-flex flex-wrap rounded-md border border-line bg-bg-subtle p-1"
+          >
+            {WALLET_TABS.map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={kind === tab}
+                onClick={() => selectKind(tab)}
+                className={
+                  kind === tab
+                    ? 'rounded px-3 py-1.5 text-[13px] font-medium text-brand-ink'
+                    : 'rounded px-3 py-1.5 text-[13px] text-ink-2 transition-colors hover:text-ink'
+                }
+              >
+                {tx.tabs[tab]}
+              </button>
+            ))}
+          </div>
+          <a
+            href={walletTransactionsExportUrl(kind)}
+            download={`wallet-${kind}.csv`}
+            className={buttonClasses('secondary', 'sm')}
+            title={tx.exportHint}
+            aria-busy={exporting}
+            onClick={(event) => {
+              // This console authenticates with the Authorization header, so
+              // the download must go through fetch instead of navigation.
+              event.preventDefault()
+              if (!exporting) void exportCsv()
+            }}
+          >
+            {exporting ? tx.exporting : tx.export}
+          </a>
         </div>
 
         {transactions.isPending ? (
@@ -213,7 +307,6 @@ export function WalletPage() {
           <Empty
             title={tx.emptyTitle}
             reason={kind === 'topup' ? tx.emptyTopupReason : tx.emptyReason}
-            next={tx.emptyNext}
           />
         ) : (
           <>
@@ -230,14 +323,14 @@ export function WalletPage() {
               </TableHead>
               <TableBody>
                 {transactions.data.items.map((entry) => {
-                  const status = walletStatusMeta(entry.kind, entry.status)
-                  const description = walletDescription(entry)
+                  const status = flowStatusMeta(entry.kind, entry.status)
+                  const description = flowDescription(entry)
                   return (
                     <TableRow key={entry.id}>
                       <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
                         {formatDateTime(entry.created_at)}
                       </TableCell>
-                      <TableCell>{walletKindLabel(entry.kind)}</TableCell>
+                      <TableCell>{flowKindLabel(entry.kind)}</TableCell>
                       <TableCell
                         className="max-w-[240px] truncate text-[13px] text-ink-3"
                         title={description}
@@ -247,7 +340,9 @@ export function WalletPage() {
                       <TableCell
                         numeric
                         className={
-                          entry.kind === 'refund' || entry.kind === 'topup'
+                          entry.kind === 'refund' ||
+                          entry.kind === 'topup' ||
+                          entry.kind === 'earning'
                             ? 'text-brand-ink'
                             : undefined
                         }
@@ -297,6 +392,19 @@ export function WalletPage() {
       </Section>
     </>
   )
+}
+
+/** Trigger a client-side download of the exported CSV blob. */
+function saveCsvBlob(blob: Blob, filename: string) {
+  if (typeof URL.createObjectURL !== 'function') return
+  const objectUrl = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = objectUrl
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(objectUrl)
 }
 
 function RechargePanel() {
@@ -580,9 +688,10 @@ function TopupReturnWatcher() {
     setState('confirming')
     let cancelled = false
     let timer = 0
-    const started = Date.now()
+    let attempts = 0
 
     const tick = async () => {
+      attempts += 1
       try {
         const record = await fetchTopUpRecord(tradeNo)
         if (cancelled) return
@@ -599,11 +708,14 @@ function TopupReturnWatcher() {
         // Keep polling: a transient failure is not a payment verdict.
       }
       if (cancelled) return
-      if (Date.now() - started >= 30_000) {
+      if (attempts >= TOPUP_CONFIRM_POLL_MAX_ATTEMPTS) {
         setState('timeout')
         return
       }
-      timer = window.setTimeout(() => void tick(), 3000)
+      timer = window.setTimeout(
+        () => void tick(),
+        TOPUP_CONFIRM_POLL_INTERVAL_MS,
+      )
     }
     void tick()
 
@@ -616,7 +728,7 @@ function TopupReturnWatcher() {
   if (state === 'idle') return null
   if (state === 'confirming') {
     return (
-      <Notice tone="brand" className="mt-5">
+      <Notice tone="brand" title={page.topupReturn.confirmingTitle} className="mt-5">
         {page.topupReturn.confirming}
       </Notice>
     )

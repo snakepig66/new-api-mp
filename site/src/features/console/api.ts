@@ -14,6 +14,7 @@ import { queryOptions } from '@tanstack/react-query'
 
 import { copy } from '@/copy'
 import { ApiError, api } from '@/lib/api'
+import { getSession } from '@/lib/session'
 
 import type {
   ConsoleKey,
@@ -44,6 +45,27 @@ export type WalletTransactionPage = PageInfo<WalletTransaction>
 export type UsagePage = PageInfo<UsageRecord>
 export type TokenPage = PageInfo<TokenRecord>
 export type TopUpPage = PageInfo<TopUpRecord>
+
+/**
+ * Cost-breakdown fields added to GET /marketplace/records/usage (additive JSON
+ * fields, so older payloads without them still type-check at the edges).
+ */
+export interface UsageCostFields {
+  channel_type?: string
+  multiplier_milli: number
+  platform_fee_micro: number | string
+  seller_credit_micro: number | string
+}
+
+export type UsageCostRecord = UsageRecord & UsageCostFields
+export type UsageCostRecordDetail = UsageRecordDetail & UsageCostFields
+export type UsageCostPage = PageInfo<UsageCostRecord>
+
+/** Wallet flow filters: the buyer's consumption/refund plus seller income. */
+export type WalletFlowKind = WalletTransactionKind | 'earning' | 'withdrawal' | 'all'
+export type WalletFlowRowKind = Exclude<WalletFlowKind, 'all'>
+export type WalletFlowRow = Omit<WalletTransaction, 'kind'> & { kind: WalletFlowRowKind }
+export type WalletFlowPage = PageInfo<WalletFlowRow>
 
 async function listTokens(): Promise<TokenPage> {
   return api.get<TokenPage>('/token/', { query: { p: 1, page_size: 100 } })
@@ -121,6 +143,28 @@ export const usageRecordQuery = (requestId: string) =>
     staleTime: 60_000,
   })
 
+/** Usage list including the cost-breakdown fields (费用明细). */
+export const usageRecordsCostQuery = (page: number, pageSize = 20) =>
+  queryOptions({
+    queryKey: ['console', 'usage-records', page, pageSize, 'cost'],
+    queryFn: () =>
+      api.get<UsageCostPage>('/marketplace/records/usage', {
+        query: { page, page_size: pageSize },
+      }),
+    staleTime: 20_000,
+  })
+
+/** One usage record with channel type, fees and the retry chain. */
+export const usageRecordCostQuery = (requestId: string) =>
+  queryOptions({
+    queryKey: ['console', 'usage-record', requestId, 'cost'],
+    queryFn: () =>
+      api.get<UsageCostRecordDetail>(
+        `/marketplace/records/usage/${encodeURIComponent(requestId)}`,
+      ),
+    staleTime: 60_000,
+  })
+
 export const walletQuery = () =>
   queryOptions({
     queryKey: ['console', 'wallet'],
@@ -168,6 +212,66 @@ export const walletTransactionsQuery = (
       }),
     staleTime: 20_000,
   })
+
+/**
+ * Extended wallet stream used by the console: every kind the backend accepts
+ * (usage / refund / topup / earning / withdrawal / all). Kept beside the
+ * original query so existing imports keep working.
+ */
+export const walletFlowQuery = (
+  page: number,
+  kind: WalletFlowKind = 'all',
+  pageSize = 20,
+) =>
+  queryOptions({
+    queryKey: ['console', 'wallet-transactions', page, pageSize, kind],
+    queryFn: () =>
+      api.get<WalletFlowPage>('/marketplace/wallet/transactions', {
+        query: { p: page, page_size: pageSize, kind },
+      }),
+    staleTime: 20_000,
+  })
+
+/** Download URL for the ownership-scoped CSV export of one filter. */
+export function walletTransactionsExportUrl(kind: WalletFlowKind = 'all'): string {
+  return `/api/marketplace/wallet/transactions/export?kind=${encodeURIComponent(kind)}`
+}
+
+/**
+ * Fetch the CSV export with the dashboard bearer token. A plain navigation to
+ * the URL would only carry cookies, and this console authenticates with the
+ * Authorization header, so the download goes through fetch and returns a Blob
+ * the caller turns into an object URL.
+ */
+export async function fetchWalletTransactionsCsv(
+  kind: WalletFlowKind = 'all',
+): Promise<Blob> {
+  const headers = new Headers()
+  const token = getSession()?.accessToken
+  if (token) headers.set('authorization', `Bearer ${token}`)
+  const response = await fetch(walletTransactionsExportUrl(kind), {
+    method: 'GET',
+    headers,
+    credentials: 'include',
+  })
+  if (!response.ok) {
+    let code: string | undefined
+    let message: string | undefined
+    try {
+      const payload = (await response.json()) as {
+        code?: string
+        message?: string
+        error?: { code?: string; message?: string }
+      }
+      code = payload?.code ?? payload?.error?.code
+      message = payload?.message ?? payload?.error?.message
+    } catch {
+      // A non-JSON error body carries no extra detail.
+    }
+    throw new ApiError(response.status, code, message)
+  }
+  return response.blob()
+}
 
 /**
  * Create a key in one request: the backend writes the token, its routing

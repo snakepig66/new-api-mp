@@ -145,3 +145,32 @@ export function completedStepCount(progress: SellerProgress): number {
   if (progress.payout_account_bound) done += 1
   return done
 }
+
+// ---------------------------------------------------------------------------
+// 渠道健康度（P5）
+// ---------------------------------------------------------------------------
+
+export type ListingHealthLevel = 'healthy' | 'degraded' | 'offline' | 'unknown'
+
+export interface ListingHealthLike {
+  today_requests: number
+  today_success_rate_milli: number
+}
+
+/**
+ * Three-state health dot: ≥98% green(可用), ≥90% amber(降级), otherwise red
+ * (离线). A card with no requests today has no samples and stays grey.
+ */
+export function listingHealthLevel(health: ListingHealthLike | null | undefined): ListingHealthLevel {
+  if (!health || health.today_requests <= 0) return 'unknown'
+  if (health.today_success_rate_milli >= 980) return 'healthy'
+  if (health.today_success_rate_milli >= 900) return 'degraded'
+  return 'offline'
+}
+
+/** "666" milli → "66.6%"; no sample → "—". */
+export function successRateText(health: ListingHealthLike | null | undefined): string {
+  if (!health || health.today_requests <= 0) return '—'
+  const percent = health.today_success_rate_milli / 10
+  return `${Number.isInteger(percent) ? percent : percent.toFixed(1)}%`
+}

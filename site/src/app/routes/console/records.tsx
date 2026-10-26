@@ -21,7 +21,10 @@ import {
   buttonClasses,
 } from '@/ui'
 
-import { usageRecordQuery, usageRecordsQuery } from '@/features/console/api'
+import {
+  usageRecordCostQuery,
+  usageRecordsCostQuery,
+} from '@/features/console/api'
 import { meQuery } from '@/features/seller/api'
 import { ShareRecordsTable } from '@/features/seller/ShareRecordsTable'
 import { isSellerActive } from '@/features/seller/status'
@@ -33,7 +36,8 @@ import {
 } from '@/features/console/components/DataState'
 import { formatCount, prettyJson } from '@/features/console/format'
 import { toUsageRow, type UsageRow } from '@/features/console/records'
-import type { UsageRecordDetail, UsageTier } from '@/features/console/types'
+import type { UsageCostRecordDetail } from '@/features/console/api'
+import type { UsageTier } from '@/features/console/types'
 
 const PAGE_SIZE = 20
 
@@ -62,7 +66,7 @@ function RecordsPage() {
   const sellerActive = me.data ? isSellerActive(me.data.seller) : false
   const activeView = sellerActive ? (view ?? 'calls') : 'calls'
   const records = useQuery({
-    ...usageRecordsQuery(currentPage, PAGE_SIZE),
+    ...usageRecordsCostQuery(currentPage, PAGE_SIZE),
     enabled: activeView === 'calls',
   })
 
@@ -134,7 +138,7 @@ function RecordsPage() {
         />
       ) : (
         <Section className="mt-6" title={page.title}>
-          <Table minWidth={1080}>
+          <Table minWidth={1180}>
             <TableHead>
               <TableRow interactive={false}>
                 <TableHeaderCell>{page.columns.time}</TableHeaderCell>
@@ -147,6 +151,7 @@ function RecordsPage() {
                 <TableHeaderCell numeric>{page.columns.paid}</TableHeaderCell>
                 <TableHeaderCell numeric>{page.columns.saved}</TableHeaderCell>
                 <TableHeaderCell>{page.columns.status}</TableHeaderCell>
+                <TableHeaderCell>{page.columns.actions}</TableHeaderCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -261,6 +266,19 @@ function RecordRow({ row }: { row: UsageRow }) {
       <TableCell>
         <StatusTag status={row.status} />
       </TableCell>
+      <TableCell>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={(event) => {
+            event.stopPropagation()
+            open()
+          }}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          {page.detail.costAction}
+        </Button>
+      </TableCell>
     </tr>
   )
 }
@@ -279,14 +297,14 @@ function StatusTag({ status }: { status: string }) {
 // The detail dialog is opened by the `request` search parameter so a record
 // can be linked to directly and the back button closes it.
 function RecordDialog({ requestId, onClose }: { requestId: string; onClose: () => void }) {
-  const detail = useQuery(usageRecordQuery(requestId))
+  const detail = useQuery(usageRecordCostQuery(requestId))
   return (
     <Dialog
       open
       onOpenChange={(open) => {
         if (!open) onClose()
       }}
-      title={page.detail.title}
+      title={page.detail.costTitle}
       description={requestId}
       className="max-h-[calc(100vh-3rem)] max-w-2xl overflow-y-auto"
       footer={
@@ -311,15 +329,21 @@ function RecordDialog({ requestId, onClose }: { requestId: string; onClose: () =
   )
 }
 
-function RecordDetailBody({ detail }: { detail: UsageRecordDetail }) {
+export function RecordDetailBody({ detail }: { detail: UsageCostRecordDetail }) {
   const row = toUsageRow(detail)
   const retryText = prettyJson(detail.retry_chain)
+  const totalTokens =
+    row.inputTokens + row.outputTokens + row.cacheReadTokens + row.cacheWriteTokens
   return (
     <div className="space-y-5">
       <dl className="grid grid-cols-2 gap-x-5 gap-y-2 text-[13px]">
         <Info label={page.detail.requestId} value={row.requestId} mono />
         <Info label={page.detail.createdAt} value={formatDateTime(row.createdAt)} mono />
         <Info label={page.detail.model} value={row.model} mono />
+        <Info
+          label={page.detail.channelType}
+          value={channelTypeLabel(detail.channel_type)}
+        />
         <div>
           <dt className="text-ink-3">{page.detail.seller}</dt>
           <dd className="mt-0.5">
@@ -370,6 +394,23 @@ function RecordDetailBody({ detail }: { detail: UsageRecordDetail }) {
           <Info label={page.detail.paid} value={formatYuan(row.totalDebitMicro)} mono />
           <Info label={page.detail.saved} value={formatYuan(row.savedMicro)} mono />
           <Info label={page.detail.toolDebit} value={formatYuan(row.toolDebitMicro)} mono />
+          <Info
+            label={`${page.detail.officialUnitPrice}（${page.detail.unitPriceUnit}）`}
+            value={formatUnitPrice(row.officialCostMicro, totalTokens)}
+            mono
+          />
+          <Info
+            label={`${page.detail.paidUnitPrice}（${page.detail.unitPriceUnit}）`}
+            value={formatUnitPrice(row.totalDebitMicro, totalTokens)}
+            mono
+          />
+          <Info
+            label={page.detail.multiplier}
+            value={formatPriceRatio(detail.multiplier_milli)}
+            mono
+          />
+          <Info label={page.detail.platformFee} value={formatYuan(detail.platform_fee_micro)} mono />
+          <Info label={page.detail.sellerCredit} value={formatYuan(detail.seller_credit_micro)} mono />
         </dl>
       </div>
 
@@ -387,6 +428,44 @@ function RecordDetailBody({ detail }: { detail: UsageRecordDetail }) {
       </div>
     </div>
   )
+}
+
+/** 渠道类型 label; an unknown or missing supplier falls back to 分享渠道. */
+export function channelTypeLabel(channelType: string | undefined): string {
+  switch (channelType) {
+    case 'official':
+      return page.detail.channelTypes.official
+    case 'plan':
+      return page.detail.channelTypes.plan
+    case 'third_party':
+      return page.detail.channelTypes.thirdParty
+    case 'shared':
+      return page.detail.channelTypes.shared
+    case '':
+    case undefined:
+      return page.detail.channelTypes.shared
+    default:
+      return page.detail.channelTypes.unknown
+  }
+}
+
+/**
+ * Blended unit price in 元 per million tokens. The record does not store the
+ * four price-book unit prices, so the dialog shows the effective rate implied
+ * by the stored totals; zero tokens render as an em dash.
+ */
+export function formatUnitPrice(amountMicro: number, totalTokens: number): string {
+  if (!Number.isFinite(totalTokens) || totalTokens <= 0) return '—'
+  const perMillion = amountMicro / totalTokens
+  if (!Number.isFinite(perMillion)) return '—'
+  return `¥${perMillion.toFixed(perMillion >= 1 ? 2 : 4)}`
+}
+
+/** 计价比例 from milli (300 → "30%"); zero means "not recorded". */
+export function formatPriceRatio(multiplierMilli: number): string {
+  if (!Number.isFinite(multiplierMilli) || multiplierMilli <= 0) return '—'
+  const percent = multiplierMilli / 10
+  return `${percent.toFixed(percent % 1 === 0 ? 0 : 1)}%`
 }
 
 function Info({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {

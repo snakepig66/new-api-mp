@@ -8,7 +8,6 @@ import { formatYuan } from '@/lib/money'
 import {
   Button,
   Empty,
-  Multiplier,
   PageHeader,
   Stat,
   Table,
@@ -23,6 +22,7 @@ import {
 
 import {
   meQuery,
+  sellerListingsHealthQuery,
   sellerListingsQuery,
   sellerStatsQuery,
   vendorName,
@@ -31,7 +31,7 @@ import { AsyncError, PageSkeleton, SectionHeading } from '@/features/seller/comp
 import { IncomeChart } from '@/features/seller/IncomeChart'
 import { sellerErrorMessage } from '@/features/seller/errors'
 import { payoutGateState, type PayoutGateStepId } from '@/features/seller/payout-gate'
-import { listingStatusView } from '@/features/seller/status'
+import { listingStatusView, successRateText } from '@/features/seller/status'
 
 export const Route = createFileRoute('/console/earnings/')({
   component: SellerOverviewPage,
@@ -39,16 +39,7 @@ export const Route = createFileRoute('/console/earnings/')({
 
 const page = copy.pages.sellerConsole
 const common = copy.pages.sellerCommon
-
-function isZeroMicro(value: number | string): boolean {
-  return String(value) === '0'
-}
-
-function limitText(concurrency: number, rpm: number, dailyCapMicro: number | string): string {
-  const rpmText = rpm > 0 ? String(rpm) : common.unlimited
-  const capText = isZeroMicro(dailyCapMicro) ? common.unlimited : formatYuan(dailyCapMicro)
-  return `${concurrency} / ${rpmText} / ${capText}`
-}
+const earnings = copy.pages.consoleEarnings
 
 function StatCard({ children }: { children: ReactNode }) {
   return <div className="min-w-0 rounded-md border border-line bg-bg p-5">{children}</div>
@@ -154,9 +145,10 @@ function PayoutGate({
   )
 }
 
-function SellerOverviewPage() {
+export function SellerOverviewPage() {
   const stats = useQuery(sellerStatsQuery())
   const listings = useQuery(sellerListingsQuery())
+  const health = useQuery(sellerListingsHealthQuery())
   const me = useQuery(meQuery())
 
   if (stats.isPending || listings.isPending) return <PageSkeleton />
@@ -174,11 +166,12 @@ function SellerOverviewPage() {
 
   const data = stats.data
   const daily = data?.daily ?? []
-  const hasIncome = daily.some((day) => !isZeroMicro(day.income_micro))
+  const hasIncome = daily.some((day) => String(day.income_micro) !== '0')
+  const healthById = new Map((health.data ?? []).map((row) => [row.listing_id, row]))
 
   return (
     <>
-      <PageHeader title={copy.pages.consoleEarnings.title} lead={copy.pages.consoleEarnings.lead} />
+      <PageHeader title={earnings.title} lead={earnings.lead} />
 
       <PayoutGate
         realNameVerified={me.data?.seller.progress.real_name_verified ?? false}
@@ -187,37 +180,36 @@ function SellerOverviewPage() {
         pendingMicro={data?.pending_micro ?? 0}
       />
 
-      <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="mt-6 grid gap-4 md:grid-cols-3">
         <StatCard>
           <Stat
-            label={page.stats.pending}
+            label={earnings.balances.pending}
             value={data ? formatYuan(data.pending_micro) : copy.common.none}
-            hint={page.statsHints.pending}
+            hint={earnings.balances.pendingHint}
           />
         </StatCard>
         <StatCard>
           <Stat
-            label={page.stats.withdrawable}
+            label={earnings.balances.available}
             value={data ? formatYuan(data.available_micro) : copy.common.none}
-            hint={page.statsHints.withdrawable}
+            hint={earnings.balances.availableHint}
             tone="brand"
           />
         </StatCard>
         <StatCard>
           <Stat
-            label={page.stats.monthIncome}
-            value={data ? formatYuan(data.month_income_micro) : copy.common.none}
-            hint={page.statsHints.monthIncome}
-          />
-        </StatCard>
-        <StatCard>
-          <Stat
-            label={page.stats.platformFee}
-            value={data ? formatYuan(data.platform_fee_total_micro) : copy.common.none}
-            hint={page.statsHints.platformFee}
+            label={earnings.balances.paid}
+            value={data ? formatYuan(data.paid_micro) : copy.common.none}
+            hint={earnings.balances.paidHint}
           />
         </StatCard>
       </div>
+
+      <p className="mt-3 text-[13px] text-ink-3">
+        {page.stats.monthIncome} {data ? formatYuan(data.month_income_micro) : copy.common.none}
+        {' · '}
+        {page.stats.platformFee} {data ? formatYuan(data.platform_fee_total_micro) : copy.common.none}
+      </p>
 
       <section className="mt-6 rounded-md border border-line bg-bg p-6">
         <SectionHeading title={page.chart.title} lead={page.chart.lead} />
@@ -281,14 +273,15 @@ function SellerOverviewPage() {
                   <TableHeaderCell>{page.health.columns.listing}</TableHeaderCell>
                   <TableHeaderCell>{page.health.columns.models}</TableHeaderCell>
                   <TableHeaderCell>{page.health.columns.status}</TableHeaderCell>
-                  <TableHeaderCell numeric>{page.health.columns.multiplier}</TableHeaderCell>
-                  <TableHeaderCell numeric>{page.health.columns.limits}</TableHeaderCell>
+                  <TableHeaderCell numeric>{page.health.columns.todayIncome}</TableHeaderCell>
+                  <TableHeaderCell numeric>{page.health.columns.successRate}</TableHeaderCell>
                   <TableHeaderCell numeric>{page.health.columns.created}</TableHeaderCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {listings.data.map((listing) => {
                   const view = listingStatusView(listing.status)
+                  const row = healthById.get(listing.id)
                   return (
                     <TableRow key={listing.id} interactive>
                       <TableCell>
@@ -312,15 +305,11 @@ function SellerOverviewPage() {
                           {view.label}
                         </Tag>
                       </TableCell>
-                      <TableCell numeric>
-                        <Multiplier milli={listing.multiplier_milli} />
+                      <TableCell numeric className="tabular-nums">
+                        {formatYuan(row?.today_income_micro ?? 0)}
                       </TableCell>
-                      <TableCell numeric className="text-ink-3">
-                        {limitText(
-                          listing.concurrency_limit,
-                          listing.rpm_limit,
-                          listing.daily_cap_micro,
-                        )}
+                      <TableCell numeric className="tabular-nums text-ink-3">
+                        {successRateText(row)}
                       </TableCell>
                       <TableCell numeric className="text-ink-3">
                         {formatDate(listing.created_at)}

@@ -40,6 +40,7 @@ func SetApiRouter(router *gin.Engine) {
 			marketplace.RegisterSellerOnboardingRoutes(mpUser)
 			marketplace.RegisterWalletRoutes(mpUser)
 			marketplace.RegisterStatsRoutes(mpUser)
+			marketplace.RegisterNotificationRoutes(mpUser)
 			mpAdmin := apiRouter.Group("/marketplace", middleware.RootAuth())
 			marketplace.RegisterAdminRootRoutes(mpAdmin)
 		}

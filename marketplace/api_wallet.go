@@ -19,6 +19,7 @@ package marketplace
 // apiRouter.Group("/marketplace", middleware.UserAuth()).
 
 import (
+	"encoding/csv"
 	"errors"
 	"net/http"
 	"sort"
@@ -46,6 +47,7 @@ func registerWalletRoutes(g *gin.RouterGroup) {
 	g.GET("/wallet", getWallet)
 	g.GET("/wallet/ledger", listWalletLedger)
 	g.GET("/wallet/transactions", listWalletTransactions)
+	g.GET("/wallet/transactions/export", exportWalletTransactions)
 }
 
 // Wallet pagination follows the other console lists: page starts at 1,
@@ -249,23 +251,34 @@ func listWalletLedger(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
-// Unified wallet flow kinds. "usage" and "refund" are ledger rows, "topup"
-// comes from the upstream top_ups table.
+// Unified wallet flow kinds. The wallet is scoped to the logged-in user, so a
+// user who both buys and sells sees both sides of their own flow. Ledger entry
+// types map to a kind as follows:
+//
+//	buyer_debit / tool_debit          → usage
+//	refund                            → refund
+//	seller_credit / reversal          → earning
+//	withdraw / withdrawal / payout    → withdrawal (reserved; payouts are the
+//	                                    live source, see mp_payouts)
+//	top_ups                           → topup
 const (
-	walletTxKindAll    = "all"
-	walletTxKindUsage  = "usage"
-	walletTxKindRefund = "refund"
-	walletTxKindTopup  = "topup"
+	walletTxKindAll        = "all"
+	walletTxKindUsage      = "usage"
+	walletTxKindRefund     = "refund"
+	walletTxKindTopup      = "topup"
+	walletTxKindEarning    = "earning"
+	walletTxKindWithdrawal = "withdrawal"
 )
 
 // walletTransaction is one row of GET /wallet/transactions, merging the
-// marketplace ledger with the upstream top-up orders:
+// marketplace ledger, upstream top-up orders and seller payouts:
 //
-//	id            "ledger:<mp_ledger.id>" or "topup:<top_ups.id>"
-//	kind          usage | refund | topup
-//	amount_micro  signed ledger amount, or the credited quota of a top-up
-//	status        ledger status (available/pending/reversed) or top-up status
-//	reference     ledger request id or top-up trade number
+//	id            "ledger:<mp_ledger.id>" | "topup:<top_ups.id>" | "payout:<mp_payouts.id>"
+//	kind          usage | refund | topup | earning | withdrawal
+//	amount_micro  signed ledger amount, credited quota of a top-up, or the
+//	              negative amount of a payout
+//	status        ledger status, top-up status or payout status
+//	reference     ledger request id, top-up trade number or payout idempotency key
 //	money         what the buyer actually paid for a top-up, omitted for ledger
 //	created_at    row time (top_ups.create_time is Unix seconds)
 type walletTransaction struct {
@@ -277,8 +290,9 @@ type walletTransaction struct {
 	Money       float64   `json:"money,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 
-	// sourceID is the raw mp_ledger.id / top_ups.id, used only to break ties
-	// between two rows with the same second. It is never serialized.
+	// sourceID is the raw mp_ledger.id / top_ups.id / mp_payouts.id, used only
+	// to break ties between two rows with the same second. It is never
+	// serialized.
 	sourceID int64
 }
 
@@ -303,134 +317,245 @@ func topUpAmountMicro(amount int64) int64 {
 	return int64(quota)
 }
 
-// listWalletTransactions serves GET /wallet/transactions?p=&page_size=&kind=
-// with one merged, newest-first stream of the buyer's ledger rows and top-up
-// orders.
-//
-// Pagination is correct across both sources without an in-database union: each
-// source is read up to page*page_size rows (already sorted), the two slices
-// are merged in memory by created_at DESC then source id DESC, and the
-// requested page is cut out of the result. total is the sum of both source
-// counts, so the UI can size the paginator. kind=usage/topup restricts the
-// stream to one source; refund rows count as usage-source rows.
-func listWalletTransactions(c *gin.Context) {
-	userID := consoleUserID(c)
-	if userID <= 0 {
-		common.ApiErrorStatus(c, http.StatusUnauthorized, errors.New("unauthorized"))
-		return
-	}
-	db := consoleDB(c)
-	if db == nil {
-		return
-	}
-	page, pageSize := parseWalletPageQuery(c)
-	kind := strings.ToLower(strings.TrimSpace(c.Query("kind")))
-	switch kind {
-	case "":
-		kind = walletTxKindAll
-	case walletTxKindAll, walletTxKindUsage, walletTxKindTopup:
+// normalizeWalletTxKind maps the query value to a supported kind; unknown or
+// empty values behave like "all".
+func normalizeWalletTxKind(raw string) string {
+	switch kind := strings.ToLower(strings.TrimSpace(raw)); kind {
+	case walletTxKindUsage, walletTxKindRefund, walletTxKindTopup,
+		walletTxKindEarning, walletTxKindWithdrawal:
+		return kind
 	default:
-		// Unknown filters are ignored; the console only sends the three
-		// documented values, and "all" is the safe default.
-		kind = walletTxKindAll
+		return walletTxKindAll
 	}
+}
 
-	// Rows needed from each source before merging: the requested page ends at
-	// page*page_size, so no source can contribute a later row to an earlier
-	// page. Each source read is capped at its own row count, which keeps a
-	// deep page from asking the database for rows that do not exist. A
-	// multiplication overflow degrades to "read all rows" rather than a
-	// negative limit.
+// sellerWalletAccounts lists the ledger accounts a seller's income and
+// withdrawal rows may use. "seller:<id>" is the split convention and
+// "user:<id>" covers legacy rows written before the split.
+func sellerWalletAccounts(userID int64) []string {
+	id := strconv.FormatInt(userID, 10)
+	return []string{"seller:" + id, "user:" + id}
+}
+
+// earningLedgerEntryTypes are the seller-side income rows: the credit itself
+// and its reversal compensation.
+func earningLedgerEntryTypes() []string {
+	return []string{EntrySellerCredit, EntryReversal}
+}
+
+// withdrawalLedgerEntryTypes are the reserved ledger spellings for a payout.
+// Payouts live in mp_payouts today; accepting these names keeps the export
+// stable if the ledger starts recording withdrawals directly.
+func withdrawalLedgerEntryTypes() []string {
+	return []string{"withdraw", "withdrawal", "payout"}
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+// walletLedgerScope returns the ledger account and entry-type filters for one
+// kind. "all" takes the union of both sides of the user's own flow.
+func walletLedgerScope(userID int64, kind string) (accounts, types []string) {
+	switch kind {
+	case walletTxKindUsage:
+		return buyerLedgerAccounts(userID), []string{EntryBuyerDebit, EntryToolDebit}
+	case walletTxKindRefund:
+		return buyerLedgerAccounts(userID), []string{EntryRefund}
+	case walletTxKindEarning:
+		return sellerWalletAccounts(userID), earningLedgerEntryTypes()
+	case walletTxKindWithdrawal:
+		return sellerWalletAccounts(userID), withdrawalLedgerEntryTypes()
+	default:
+		accounts = uniqueStrings(append(buyerLedgerAccounts(userID), sellerWalletAccounts(userID)...))
+		types = uniqueStrings(append(
+			append(buyerLedgerEntryTypes(), earningLedgerEntryTypes()...),
+			withdrawalLedgerEntryTypes()...,
+		))
+		return accounts, types
+	}
+}
+
+// walletKindForLedgerEntry maps an mp_ledger entry_type to its wallet kind.
+func walletKindForLedgerEntry(entryType string) string {
+	switch entryType {
+	case EntryBuyerDebit, EntryToolDebit:
+		return walletTxKindUsage
+	case EntryRefund:
+		return walletTxKindRefund
+	case EntrySellerCredit, EntryReversal:
+		return walletTxKindEarning
+	case "withdraw", "withdrawal", "payout":
+		return walletTxKindWithdrawal
+	default:
+		return walletTxKindUsage
+	}
+}
+
+// walletFetchLimit is the number of rows to read per source: the requested
+// page ends at page*page_size, so no source can contribute a later row to an
+// earlier page. A non-positive value means "read every row" (the CSV export).
+func walletFetchLimit(page, pageSize int) int {
 	limit := page * pageSize
 	if limit < pageSize {
-		limit = 0
+		return 0
 	}
+	return limit
+}
+
+func limitRows(total int64, limit int) int {
+	if total <= 0 {
+		return 0
+	}
+	if limit <= 0 || int64(limit) > total {
+		return int(total)
+	}
+	return limit
+}
+
+func loadWalletLedgerRows(db *gorm.DB, userID int64, kind string, limit int) ([]walletTransaction, int64, error) {
+	accounts, types := walletLedgerScope(userID, kind)
+	var total int64
+	if err := db.Model(&LedgerEntry{}).
+		Where("account IN ? AND entry_type IN ?", accounts, types).
+		Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if total == 0 {
+		return nil, 0, nil
+	}
+	query := db.Where("account IN ? AND entry_type IN ?", accounts, types).
+		Order("created_at DESC").Order("id DESC")
+	if fetch := limitRows(total, limit); fetch < int(total) {
+		query = query.Limit(fetch)
+	}
+	var rows []LedgerEntry
+	if err := query.Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	items := make([]walletTransaction, 0, len(rows))
+	for i := range rows {
+		r := &rows[i]
+		items = append(items, walletTransaction{
+			ID:          "ledger:" + strconv.FormatInt(r.ID, 10),
+			Kind:        walletKindForLedgerEntry(r.EntryType),
+			AmountMicro: r.AmountMicro,
+			Status:      r.Status,
+			Reference:   r.RequestID,
+			CreatedAt:   r.CreatedAt,
+			sourceID:    r.ID,
+		})
+	}
+	return items, total, nil
+}
+
+func loadWalletTopUpRows(db *gorm.DB, userID int64, limit int) ([]walletTransaction, int64, error) {
+	var total int64
+	if err := db.Model(&model.TopUp{}).Where("user_id = ?", userID).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if total == 0 {
+		return nil, 0, nil
+	}
+	query := db.Where("user_id = ?", userID).Order("create_time DESC").Order("id DESC")
+	if fetch := limitRows(total, limit); fetch < int(total) {
+		query = query.Limit(fetch)
+	}
+	var rows []model.TopUp
+	if err := query.Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	items := make([]walletTransaction, 0, len(rows))
+	for i := range rows {
+		r := &rows[i]
+		items = append(items, walletTransaction{
+			ID:          "topup:" + strconv.Itoa(r.Id),
+			Kind:        walletTxKindTopup,
+			AmountMicro: topUpAmountMicro(r.Amount),
+			Status:      r.Status,
+			Reference:   r.TradeNo,
+			Money:       r.Money,
+			CreatedAt:   time.Unix(r.CreateTime, 0),
+			sourceID:    int64(r.Id),
+		})
+	}
+	return items, total, nil
+}
+
+func loadWalletPayoutRows(db *gorm.DB, userID int64, limit int) ([]walletTransaction, int64, error) {
+	var total int64
+	if err := db.Model(&Payout{}).Where("seller_id = ?", userID).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if total == 0 {
+		return nil, 0, nil
+	}
+	query := db.Where("seller_id = ?", userID).Order("created_at DESC").Order("id DESC")
+	if fetch := limitRows(total, limit); fetch < int(total) {
+		query = query.Limit(fetch)
+	}
+	var rows []Payout
+	if err := query.Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	items := make([]walletTransaction, 0, len(rows))
+	for i := range rows {
+		r := &rows[i]
+		items = append(items, walletTransaction{
+			ID:          "payout:" + strconv.FormatInt(r.ID, 10),
+			Kind:        walletTxKindWithdrawal,
+			AmountMicro: -r.AmountMicro,
+			Status:      r.Status,
+			Reference:   r.IdempotencyKey,
+			CreatedAt:   r.CreatedAt,
+			sourceID:    r.ID,
+		})
+	}
+	return items, total, nil
+}
+
+// loadWalletTransactions reads the sources selected by kind. limit <= 0 means
+// "every row" (export); otherwise each source is capped at page*page_size.
+// The result is merged newest-first.
+func loadWalletTransactions(db *gorm.DB, userID int64, kind string, limit int) ([]walletTransaction, int64, error) {
 	items := make([]walletTransaction, 0)
 	var total int64
 
-	if kind == walletTxKindAll || kind == walletTxKindUsage {
-		accounts := buyerLedgerAccounts(userID)
-		types := buyerLedgerEntryTypes()
-		var ledgerTotal int64
-		if err := db.Model(&LedgerEntry{}).
-			Where("account IN ? AND entry_type IN ?", accounts, types).
-			Count(&ledgerTotal).Error; err != nil {
-			common.SysError(common.LogText("marketplace wallet: count transactions ledger: %s", err.Error()))
-			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query wallet transactions"))
-			return
+	ledgerKind := kind == walletTxKindAll || kind == walletTxKindUsage ||
+		kind == walletTxKindRefund || kind == walletTxKindEarning ||
+		kind == walletTxKindWithdrawal
+	if ledgerKind {
+		rows, count, err := loadWalletLedgerRows(db, userID, kind, limit)
+		if err != nil {
+			return nil, 0, err
 		}
-		total += ledgerTotal
-		if ledgerTotal > 0 {
-			fetchLimit := limit
-			if fetchLimit <= 0 || int64(fetchLimit) > ledgerTotal {
-				fetchLimit = int(ledgerTotal)
-			}
-			var rows []LedgerEntry
-			if err := db.Where("account IN ? AND entry_type IN ?", accounts, types).
-				Order("created_at DESC").Order("id DESC").
-				Limit(fetchLimit).
-				Find(&rows).Error; err != nil {
-				common.SysError(common.LogText("marketplace wallet: query transactions ledger: %s", err.Error()))
-				common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query wallet transactions"))
-				return
-			}
-			for i := range rows {
-				r := &rows[i]
-				entryKind := walletTxKindUsage
-				if r.EntryType == EntryRefund {
-					entryKind = walletTxKindRefund
-				}
-				items = append(items, walletTransaction{
-					ID:          "ledger:" + strconv.FormatInt(r.ID, 10),
-					Kind:        entryKind,
-					AmountMicro: r.AmountMicro,
-					Status:      r.Status,
-					Reference:   r.RequestID,
-					CreatedAt:   r.CreatedAt,
-					sourceID:    r.ID,
-				})
-			}
-		}
+		items = append(items, rows...)
+		total += count
 	}
-
 	if kind == walletTxKindAll || kind == walletTxKindTopup {
-		var topupTotal int64
-		if err := db.Model(&model.TopUp{}).
-			Where("user_id = ?", userID).
-			Count(&topupTotal).Error; err != nil {
-			common.SysError(common.LogText("marketplace wallet: count transactions topups: %s", err.Error()))
-			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query wallet transactions"))
-			return
+		rows, count, err := loadWalletTopUpRows(db, userID, limit)
+		if err != nil {
+			return nil, 0, err
 		}
-		total += topupTotal
-		if topupTotal > 0 {
-			fetchLimit := limit
-			if fetchLimit <= 0 || int64(fetchLimit) > topupTotal {
-				fetchLimit = int(topupTotal)
-			}
-			var rows []model.TopUp
-			if err := db.Where("user_id = ?", userID).
-				Order("create_time DESC").Order("id DESC").
-				Limit(fetchLimit).
-				Find(&rows).Error; err != nil {
-				common.SysError(common.LogText("marketplace wallet: query transactions topups: %s", err.Error()))
-				common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query wallet transactions"))
-				return
-			}
-			for i := range rows {
-				r := &rows[i]
-				items = append(items, walletTransaction{
-					ID:          "topup:" + strconv.Itoa(r.Id),
-					Kind:        walletTxKindTopup,
-					AmountMicro: topUpAmountMicro(r.Amount),
-					Status:      r.Status,
-					Reference:   r.TradeNo,
-					Money:       r.Money,
-					CreatedAt:   time.Unix(r.CreateTime, 0),
-					sourceID:    int64(r.Id),
-				})
-			}
+		items = append(items, rows...)
+		total += count
+	}
+	if kind == walletTxKindAll || kind == walletTxKindWithdrawal {
+		rows, count, err := loadWalletPayoutRows(db, userID, limit)
+		if err != nil {
+			return nil, 0, err
 		}
+		items = append(items, rows...)
+		total += count
 	}
 
 	// Newest first; equal timestamps fall back to the higher source row id so
@@ -445,6 +570,34 @@ func listWalletTransactions(c *gin.Context) {
 		}
 		return items[i].ID > items[j].ID
 	})
+	return items, total, nil
+}
+
+// listWalletTransactions serves GET /wallet/transactions?p=&page_size=&kind=
+// with one merged, newest-first stream of the buyer's ledger rows, top-up
+// orders and (for a seller) payout rows.
+//
+// kind=all|usage|topup|earning|withdrawal|refund selects one slice; refund is
+// its own kind now that 消费 and 退款 are separate filters.
+func listWalletTransactions(c *gin.Context) {
+	userID := consoleUserID(c)
+	if userID <= 0 {
+		common.ApiErrorStatus(c, http.StatusUnauthorized, errors.New("unauthorized"))
+		return
+	}
+	db := consoleDB(c)
+	if db == nil {
+		return
+	}
+	page, pageSize := parseWalletPageQuery(c)
+	kind := normalizeWalletTxKind(c.Query("kind"))
+
+	items, total, err := loadWalletTransactions(db, userID, kind, walletFetchLimit(page, pageSize))
+	if err != nil {
+		common.SysError(common.LogText("marketplace wallet: query transactions: %s", err.Error()))
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query wallet transactions"))
+		return
+	}
 
 	start := (page - 1) * pageSize
 	if start < 0 || start >= len(items) {
@@ -461,4 +614,145 @@ func listWalletTransactions(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(items)
 	common.ApiSuccess(c, pageInfo)
+}
+
+// Wallet flow labels used by the CSV export. They mirror the console's
+// Chinese wording; the raw status/kind values stay untouched in JSON APIs.
+func walletCSVKindLabel(kind string) string {
+	switch kind {
+	case walletTxKindUsage:
+		return "消费"
+	case walletTxKindRefund:
+		return "退款"
+	case walletTxKindTopup:
+		return "充值"
+	case walletTxKindEarning:
+		return "收益"
+	case walletTxKindWithdrawal:
+		return "提现"
+	default:
+		return "其他"
+	}
+}
+
+func walletCSVDescription(kind string) string {
+	switch kind {
+	case walletTxKindUsage:
+		return "模型调用扣费"
+	case walletTxKindRefund:
+		return "退款入账"
+	case walletTxKindTopup:
+		return "在线充值"
+	case walletTxKindEarning:
+		return "分享收益"
+	case walletTxKindWithdrawal:
+		return "提现"
+	default:
+		return "其他"
+	}
+}
+
+func walletCSVStatus(kind, status string) string {
+	switch kind {
+	case walletTxKindTopup:
+		switch status {
+		case "success":
+			return "已到账"
+		case "pending":
+			return "待支付"
+		case "failed", "expired":
+			return "已关闭"
+		}
+	case walletTxKindWithdrawal:
+		switch status {
+		case PayoutPending:
+			return "审核中"
+		case PayoutApproved:
+			return "已通过"
+		case PayoutPaid:
+			return "已打款"
+		case PayoutRejected:
+			return "已驳回"
+		}
+	default:
+		switch status {
+		case LedgerAvailable:
+			return "已入账"
+		case LedgerPending:
+			return "待结算"
+		case LedgerReversed:
+			return "已冲正"
+		}
+	}
+	return "未知"
+}
+
+// csvYuan renders 微元 as a yuan string with at least two and at most six
+// decimals, trailing zeros trimmed. It never rounds to a cent, so sub-cent
+// ledger rows survive the export.
+func csvYuan(micro int64) string {
+	value := decimal.NewFromInt(micro).
+		Div(decimal.NewFromInt(1_000_000)).
+		StringFixed(6)
+	value = strings.TrimRight(value, "0")
+	if strings.HasSuffix(value, ".") {
+		value += "00"
+	} else if dot := strings.IndexByte(value, '.'); dot >= 0 && len(value)-dot-1 == 1 {
+		value += "0"
+	}
+	if value == "-0.00" {
+		value = "0.00"
+	}
+	return value
+}
+
+// exportWalletTransactions serves GET /wallet/transactions/export?kind=... as
+// a UTF-8 CSV (with BOM so Excel opens Chinese correctly). It exports every
+// row of the current user's filtered flow — never another user's — and reuses
+// the same ownership-scoped loader as the paginated endpoint.
+func exportWalletTransactions(c *gin.Context) {
+	userID := consoleUserID(c)
+	if userID <= 0 {
+		common.ApiErrorStatus(c, http.StatusUnauthorized, errors.New("unauthorized"))
+		return
+	}
+	db := consoleDB(c)
+	if db == nil {
+		return
+	}
+	kind := normalizeWalletTxKind(c.Query("kind"))
+	items, _, err := loadWalletTransactions(db, userID, kind, 0)
+	if err != nil {
+		common.SysError(common.LogText("marketplace wallet: export transactions: %s", err.Error()))
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to export wallet transactions"))
+		return
+	}
+
+	loc, err := time.LoadLocation(shanghaiTZ)
+	if err != nil {
+		loc = time.Local
+	}
+	filename := "wallet-" + kind + "-" + time.Now().In(loc).Format("20060102-150405") + ".csv"
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	c.Status(http.StatusOK)
+	// BOM: Excel on Windows needs it to detect UTF-8 for Chinese headers.
+	_, _ = c.Writer.Write([]byte{0xEF, 0xBB, 0xBF})
+	writer := csv.NewWriter(c.Writer)
+	_ = writer.Write([]string{"时间", "类型", "说明", "金额元", "状态", "单号"})
+	for i := range items {
+		item := &items[i]
+		_ = writer.Write([]string{
+			item.CreatedAt.In(loc).Format("2006-01-02 15:04:05"),
+			walletCSVKindLabel(item.Kind),
+			walletCSVDescription(item.Kind),
+			csvYuan(item.AmountMicro),
+			walletCSVStatus(item.Kind, item.Status),
+			item.Reference,
+		})
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		common.SysError(common.LogText("marketplace wallet: write export csv: %s", err.Error()))
+	}
 }

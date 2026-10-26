@@ -18,6 +18,39 @@ export type ChannelKind = 'official' | 'plan' | 'third_party'
 /** Where the buyer-facing price came from when no market supply exists. */
 export type BuyerPriceSource = 'market' | 'official'
 
+/** Three-state health dot (P0 palette): >=98% available, >=90% degraded. */
+export type SquareStatus = 'available' | 'degraded' | 'offline'
+
+/**
+ * Reliability summary derived from `mp_requests` (backend square_metrics.go).
+ * A `-1` rate means "no sample in this window" and must be hidden, never
+ * rendered as 0%.
+ */
+export interface SquareMetrics {
+  status: SquareStatus
+  success_rate_1h_milli: number
+  success_rate_24h_milli: number
+  success_rate_7d_milli: number
+  requests_24h: number
+  /** 24h average wall-clock relay duration; 0 = not measured. */
+  latency_ms: number
+  /** Output tokens per second ×1000; 0 = no sample. */
+  tps_permille: number
+  /** Cache reads / (input + cache reads) ×1000; -1 = no sample. */
+  cache_hit_permille: number
+  last_success_at: string | null
+  sampled_at: string
+}
+
+/** Per-channel reliability of one model. */
+export interface SquareChannelMetrics {
+  status: SquareStatus
+  success_rate_24h_milli: number
+  requests_24h: number
+  latency_ms: number
+  last_success_at: string | null
+}
+
 export interface SquareTierPrices {
   input_micro_per_mtok: number | string
   output_micro_per_mtok: number | string
@@ -48,6 +81,12 @@ export interface SquareModel {
   /** `official` when prices are the official price book (no market supply). */
   buyer_price_source: BuyerPriceSource
   generated_at: string
+  /** Capability tags from the model pool, e.g. ["text","tools","cache"]. */
+  capabilities?: string[]
+  /** Context window in tokens; 0/absent when the pool row has none. */
+  context_length?: number
+  /** 1h/24h/7d reliability; absent when the model has no request history. */
+  metrics?: SquareMetrics
 }
 
 /** One grouped channel listing on the model detail page. */
@@ -63,6 +102,8 @@ export interface SquareChannel {
   listing_count: number
   min_multiplier_milli: number
   max_multiplier_milli: number
+  /** 24h per-channel reliability; absent when it served no request. */
+  metrics?: SquareChannelMetrics
 }
 
 export interface SquareModelDetail extends SquareModel {

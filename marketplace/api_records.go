@@ -5,9 +5,10 @@ package marketplace
 // request_id.
 //
 // Privacy contract (§3.1/§3.8):
-//   - the buyer view never carries seller-side money fields (平台费/分享者收入),
-//     the listing id, the multiplier or any key material; the only seller-side
-//     datum is the 分享者编号 (SellerID as a plain number, §3.1);
+//   - the buyer view carries the per-request cost breakdown the buyer is shown
+//     in 费用明细 (official price, paid amount, platform fee, seller credit and
+//     the seller's price ratio), but never the listing id or any key material;
+//     the only seller-side identity is the 分享者编号 (SellerID, §3.1);
 //   - the seller view never carries the buyer's real user/token id — the buyer
 //     appears only as the per-seller 8-hex-digit anonymous code
 //     AnonBuyerCode(sellerID, buyerUserID) — and never any key material;
@@ -53,26 +54,36 @@ func registerRecordRoutes(g *gin.RouterGroup) {
 }
 
 // usageRecord is one row of the buyer's 使用记录 (§3.8). Amounts are 微元.
+//
+// The cost-breakdown fields (platform fee, seller credit, price ratio) were
+// added for the 费用明细 dialog. They are additive JSON fields, so existing
+// console clients keep working.
 type usageRecord struct {
-	RequestID         string    `json:"request_id"`
-	Model             string    `json:"model"`
-	SellerID          int64     `json:"seller_id"` // 分享者编号 (§3.1)
-	Tier              string    `json:"tier"`
-	TierLabel         string    `json:"tier_label"` // 高峰 / 空闲 / 标准
-	InputTokens       int64     `json:"input_tokens"`
-	OutputTokens      int64     `json:"output_tokens"`
-	CacheReadTokens   int64     `json:"cache_read_tokens"`
-	CacheWriteTokens  int64     `json:"cache_write_tokens"`
-	CacheHitTokens    int64     `json:"cache_hit_tokens"` // 缓存命中 (= cache_read_tokens)
-	SearchCount       int64     `json:"search_count"`
-	FetchCount        int64     `json:"fetch_count"`
-	ToolDebitMicro    int64     `json:"tool_debit_micro"` // 搜索/抓取费用
-	OfficialCostMicro int64     `json:"official_cost_micro"`
-	TotalDebitMicro   int64     `json:"total_debit_micro"`
-	SavedMicro        int64     `json:"saved_micro"` // 省了多少 = 官方价 − 实付
-	UsageEstimated    bool      `json:"usage_estimated"`
-	Status            string    `json:"status"`
-	CreatedAt         time.Time `json:"created_at"`
+	RequestID        string `json:"request_id"`
+	Model            string `json:"model"`
+	SellerID         int64  `json:"seller_id"`    // 分享者编号 (§3.1)
+	ChannelType      string `json:"channel_type"` // official / plan / third_party
+	Tier             string `json:"tier"`
+	TierLabel        string `json:"tier_label"` // 高峰 / 空闲 / 标准
+	InputTokens      int64  `json:"input_tokens"`
+	OutputTokens     int64  `json:"output_tokens"`
+	CacheReadTokens  int64  `json:"cache_read_tokens"`
+	CacheWriteTokens int64  `json:"cache_write_tokens"`
+	CacheHitTokens   int64  `json:"cache_hit_tokens"` // 缓存命中 (= cache_read_tokens)
+	SearchCount      int64  `json:"search_count"`
+	FetchCount       int64  `json:"fetch_count"`
+	ToolDebitMicro   int64  `json:"tool_debit_micro"` // 搜索/抓取费用
+
+	MultiplierMilli   int64 `json:"multiplier_milli"`    // 分享者设定的计价比例 (1000 = 100%)
+	PlatformFeeMicro  int64 `json:"platform_fee_micro"`  // 平台服务费
+	SellerCreditMicro int64 `json:"seller_credit_micro"` // 分享者到手
+	OfficialCostMicro int64 `json:"official_cost_micro"`
+	TotalDebitMicro   int64 `json:"total_debit_micro"`
+	SavedMicro        int64 `json:"saved_micro"` // 省了多少 = 官方价 − 实付
+
+	UsageEstimated bool      `json:"usage_estimated"`
+	Status         string    `json:"status"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // usageRecordDetail adds the retry chain to the buyer's detail view (§3.8:
@@ -122,11 +133,12 @@ func tierLabel(tier string) string {
 	}
 }
 
-func newUsageRecord(r *Request) usageRecord {
+func newUsageRecord(r *Request, channelType string) usageRecord {
 	return usageRecord{
 		RequestID:         r.RequestID,
 		Model:             r.Model,
 		SellerID:          r.SellerID,
+		ChannelType:       channelType,
 		Tier:              r.Tier,
 		TierLabel:         tierLabel(r.Tier),
 		InputTokens:       r.InputTokens,
@@ -137,6 +149,9 @@ func newUsageRecord(r *Request) usageRecord {
 		SearchCount:       r.SearchCount,
 		FetchCount:        r.FetchCount,
 		ToolDebitMicro:    r.ToolDebitMicro,
+		MultiplierMilli:   r.MultiplierMilli,
+		PlatformFeeMicro:  r.PlatformFeeMicro,
+		SellerCreditMicro: r.SellerCreditMicro,
 		OfficialCostMicro: r.OfficialCostMicro,
 		TotalDebitMicro:   r.TotalDebitMicro,
 		SavedMicro:        r.OfficialCostMicro - r.TotalDebitMicro,
@@ -201,10 +216,82 @@ func recordDB(c *gin.Context) *gorm.DB {
 	return db
 }
 
+// usageChannelKinds resolves the supplier kind (official / plan / third_party)
+// of each request's listing in two batched reads, keyed by listing id. A
+// request whose listing is gone (or whose vendor is unknown) gets "" and the
+// console renders the generic 分享渠道 label instead of guessing.
+func usageChannelKinds(db *gorm.DB, rows []Request) map[int64]string {
+	kinds := make(map[int64]string)
+	ids := make([]int64, 0, len(rows))
+	seen := make(map[int64]struct{}, len(rows))
+	for i := range rows {
+		id := rows[i].ListingID
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return kinds
+	}
+	var listings []Listing
+	if err := db.Select("id", "vendor").Where("id IN ?", ids).Find(&listings).Error; err != nil {
+		return kinds
+	}
+	vendorByListing := make(map[int64]string, len(listings))
+	slugs := make([]string, 0, len(listings))
+	seenSlug := make(map[string]struct{}, len(listings))
+	for i := range listings {
+		vendor := listings[i].Vendor
+		if vendor == "" {
+			continue
+		}
+		vendorByListing[listings[i].ID] = vendor
+		if _, ok := seenSlug[vendor]; ok {
+			continue
+		}
+		seenSlug[vendor] = struct{}{}
+		slugs = append(slugs, vendor)
+	}
+	kindBySlug := make(map[string]string, len(slugs))
+	if len(slugs) > 0 {
+		var pools []ChannelPool
+		if err := db.Select("slug", "kind").Where("slug IN ?", slugs).Find(&pools).Error; err == nil {
+			for i := range pools {
+				kindBySlug[pools[i].Slug] = pools[i].Kind
+			}
+		}
+	}
+	for listingID, vendor := range vendorByListing {
+		kind := kindBySlug[vendor]
+		if kind == "" {
+			// Static vendors (MP_EXTRA_VENDORS and the built-in table) are not
+			// rows in mp_channels; Vendor.Tier carries the same kind value.
+			if v, ok := lookupVendorForDB(db, vendor); ok {
+				kind = v.Tier
+			}
+		}
+		kinds[listingID] = kind
+	}
+	return kinds
+}
+
+func usageChannelKind(db *gorm.DB, listingID int64) string {
+	if listingID <= 0 {
+		return ""
+	}
+	return usageChannelKinds(db, []Request{{ListingID: listingID}})[listingID]
+}
+
 // listRecords runs one paginated mp_requests query (newest first, id as the
 // tie-break so pages are stable) and answers with the upstream console
-// PageInfo envelope.
-func listRecords(c *gin.Context, filter string, arg int64, build func(*Request) any) {
+// PageInfo envelope. build receives the resolved channel kind so the buyer
+// view can show 渠道类型 without an extra query per row.
+func listRecords(c *gin.Context, filter string, arg int64, build func(*Request, string) any) {
 	page, pageSize := parseRecordPageQuery(c)
 	db := recordDB(c)
 	if db == nil {
@@ -223,9 +310,10 @@ func listRecords(c *gin.Context, filter string, arg int64, build func(*Request) 
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query records"))
 		return
 	}
+	channelKinds := usageChannelKinds(db, rows)
 	items := make([]any, 0, len(rows))
 	for i := range rows {
-		if item := build(&rows[i]); item != nil {
+		if item := build(&rows[i], channelKinds[rows[i].ListingID]); item != nil {
 			items = append(items, item)
 		}
 	}
@@ -237,7 +325,7 @@ func listRecords(c *gin.Context, filter string, arg int64, build func(*Request) 
 
 // getRecord loads one mp_requests row scoped to the owner; any other row —
 // including a nonexistent id — answers 404 so existence is not leaked (§3.1).
-func getRecord(c *gin.Context, filter string, arg int64, build func(*Request) any) {
+func getRecord(c *gin.Context, filter string, arg int64, build func(*Request, string) any) {
 	db := recordDB(c)
 	if db == nil {
 		return
@@ -252,7 +340,7 @@ func getRecord(c *gin.Context, filter string, arg int64, build func(*Request) an
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query record"))
 		return
 	}
-	item := build(&row)
+	item := build(&row, usageChannelKind(db, row.ListingID))
 	if item == nil {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to render record"))
 		return
@@ -267,9 +355,8 @@ func listUsageRecords(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusUnauthorized, errors.New("unauthorized"))
 		return
 	}
-	listRecords(c, "buyer_user_id = ?", userID, func(r *Request) any {
-		rec := newUsageRecord(r)
-		return rec
+	listRecords(c, "buyer_user_id = ?", userID, func(r *Request, channelType string) any {
+		return newUsageRecord(r, channelType)
 	})
 }
 
@@ -280,8 +367,8 @@ func getUsageRecord(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusUnauthorized, errors.New("unauthorized"))
 		return
 	}
-	getRecord(c, "buyer_user_id = ?", userID, func(r *Request) any {
-		return usageRecordDetail{usageRecord: newUsageRecord(r), RetryChain: r.RetryChain}
+	getRecord(c, "buyer_user_id = ?", userID, func(r *Request, channelType string) any {
+		return usageRecordDetail{usageRecord: newUsageRecord(r, channelType), RetryChain: r.RetryChain}
 	})
 }
 
@@ -304,7 +391,7 @@ func listShareRecords(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("marketplace is not initialized"))
 		return
 	}
-	listRecords(c, "seller_id = ?", userID, func(r *Request) any {
+	listRecords(c, "seller_id = ?", userID, func(r *Request, _ string) any {
 		code, err := AnonBuyerCode(r.SellerID, r.BuyerUserID)
 		if err != nil {
 			return nil
@@ -325,7 +412,7 @@ func getShareRecord(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("marketplace is not initialized"))
 		return
 	}
-	getRecord(c, "seller_id = ?", userID, func(r *Request) any {
+	getRecord(c, "seller_id = ?", userID, func(r *Request, _ string) any {
 		code, err := AnonBuyerCode(r.SellerID, r.BuyerUserID)
 		if err != nil {
 			return nil

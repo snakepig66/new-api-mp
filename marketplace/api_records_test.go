@@ -139,6 +139,14 @@ func TestApiRecordUsageList(t *testing.T) {
 	f := newRecordFixture(t)
 	const buyerA, buyerB, seller = int64(7001), int64(7002), int64(8001)
 
+	// A live listing on the seeded official deepseek channel gives the buyer
+	// view a 渠道类型 without exposing the listing id itself.
+	require.NoError(t, f.db.Create(&Listing{
+		ID: 901, SellerID: seller, ChannelID: 1, Vendor: "deepseek",
+		Models: []string{"deepseek-flash"}, MultiplierMilli: 300,
+		Status: ListingLive, KeyFingerprint: "fp-records-901",
+	}).Error)
+
 	seedRequest(t, f.db, Request{
 		RequestID: "req-a1", BuyerUserID: buyerA, BuyerTokenID: 501, SellerID: seller, ListingID: 901,
 		Model: "deepseek-flash", Tier: TierPeak, PriceVersion: 1, MultiplierMilli: 300,
@@ -180,6 +188,7 @@ func TestApiRecordUsageList(t *testing.T) {
 	rec := findByRequestID(t, items, "req-a1")
 	assert.Equal(t, "deepseek-flash", rec["model"])
 	assert.Equal(t, int64(seller), apiNum(t, rec, "seller_id"), "§3.1: 买家能看到分享者编号")
+	assert.Equal(t, "official", rec["channel_type"], "官方渠道性质来自 listing 的 vendor")
 	assert.Equal(t, "peak", rec["tier"])
 	assert.Equal(t, "高峰", rec["tier_label"], "时段文案化")
 	assert.Equal(t, int64(1000), apiNum(t, rec, "input_tokens"))
@@ -193,15 +202,19 @@ func TestApiRecordUsageList(t *testing.T) {
 	assert.Equal(t, int64(66000), apiNum(t, rec, "official_cost_micro"), "官方价")
 	assert.Equal(t, int64(20000), apiNum(t, rec, "total_debit_micro"), "实付")
 	assert.Equal(t, int64(46000), apiNum(t, rec, "saved_micro"), "省了多少 = OfficialCost − TotalDebit")
+	assert.Equal(t, int64(300), apiNum(t, rec, "multiplier_milli"), "费用明细的计价比例")
+	assert.Equal(t, int64(1400), apiNum(t, rec, "platform_fee_micro"), "平台服务费")
+	assert.Equal(t, int64(18600), apiNum(t, rec, "seller_credit_micro"), "分享者到手")
 	assert.Equal(t, "success", rec["status"])
 	assert.Equal(t, false, rec["usage_estimated"])
 	assert.NotContains(t, rec, "retry_chain", "the list view carries no retry chain (detail only)")
 
-	// The buyer view must not carry seller-side money fields or internals.
+	// The buyer view must not carry internal routing/key fields. The
+	// cost-breakdown fields themselves are intentionally part of 费用明细.
 	raw := w.Body.String()
 	for _, absent := range []string{
-		"seller_credit", "platform_fee", "listing_id", "multiplier",
-		"price_version", "buyer_token_id", "key_fingerprint", "key_ciphertext",
+		"listing_id", "price_version", "buyer_token_id",
+		"key_fingerprint", "key_ciphertext",
 	} {
 		assert.NotContains(t, raw, absent, "buyer view leaks %s", absent)
 	}
@@ -310,6 +323,9 @@ func TestApiRecordDetailPermissions(t *testing.T) {
 	assert.Equal(t, "req-d1", detail["request_id"])
 	assert.Equal(t, chain, detail["retry_chain"])
 	assert.Equal(t, int64(46000), apiNum(t, detail, "saved_micro"))
+	assert.Equal(t, int64(300), apiNum(t, detail, "multiplier_milli"))
+	assert.Equal(t, int64(1400), apiNum(t, detail, "platform_fee_micro"))
+	assert.Equal(t, int64(18600), apiNum(t, detail, "seller_credit_micro"))
 
 	// Anyone else on the buyer view: 404, not 403 — existence must not leak.
 	assert.Equal(t, http.StatusNotFound, f.get(t, "/api/marketplace/records/usage/req-d1", otherBuyer).Code,

@@ -212,7 +212,11 @@ type Request struct {
 	UsageEstimated    bool      // upstream returned no usage; tokens estimated (§3.7)
 	Status            string    `gorm:"size:16;not null;index"`
 	RetryChain        string    `gorm:"type:text"` // JSON array of hop events
-	CreatedAt         time.Time `gorm:"index"`
+	// LatencyMs is the wall-clock duration of the relay attempt (request
+	// received → response body finished). The public square reports its 24h
+	// average; 0 means "not measured" (rows written before the field existed).
+	LatencyMs int64     `gorm:"not null;default:0"`
+	CreatedAt time.Time `gorm:"index"`
 }
 
 func (Request) TableName() string { return "mp_requests" }

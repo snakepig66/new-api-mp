@@ -29,6 +29,8 @@
   --color-cta-hover: #2a2d34;
   --color-danger: #e5484d;
   --color-warn: #f59e0b;
+  /* Status-only green: appears in health dots, never as a surface or accent. */
+  --color-ok: #16a34a;
 
   --radius-sm: 8px;
   --radius-md: 12px;

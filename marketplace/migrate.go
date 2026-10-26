@@ -28,6 +28,7 @@ func Migrate(db *gorm.DB) error {
 		&Request{},
 		&LedgerEntry{},
 		&Payout{},
+		&Notification{},
 	); err != nil {
 		return fmt.Errorf("marketplace migrate: %w", err)
 	}

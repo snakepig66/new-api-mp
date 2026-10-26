@@ -4,8 +4,7 @@ import { useEffect, useState } from 'react'
 
 import { copy } from '@/copy'
 import { ApiError } from '@/lib/api'
-import { formatYuan } from '@/lib/money'
-import { formatCountdown, formatDateTime } from '@/lib/time'
+import { formatCountdown } from '@/lib/time'
 import {
   Button,
   Dialog,
@@ -14,13 +13,6 @@ import {
   Multiplier,
   PageHeader,
   PasswordInput,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  Tag,
   buttonClasses,
   useToast,
 } from '@/ui'
@@ -29,6 +21,7 @@ import {
   pauseListing,
   replaceListingKey,
   resumeListing,
+  sellerListingsHealthQuery,
   sellerListingsQuery,
   updateListingMultiplier,
   verifyListing,
@@ -42,15 +35,13 @@ import {
   remainingSeconds,
 } from '@/features/seller/cooldown'
 import { sellerErrorMessage } from '@/features/seller/errors'
+import { ListingHealthCard } from '@/features/seller/ListingHealthCard'
 import {
   isListingKeyReplaceable,
   isListingPausable,
   isListingReverifiable,
   isListingSellerResumable,
-  listingStatusView,
-  pauseReasonView,
 } from '@/features/seller/status'
-import { VerificationSummary } from '@/features/seller/verification'
 
 export const Route = createFileRoute('/console/listings/')({
   component: SellerListingsPage,
@@ -58,34 +49,6 @@ export const Route = createFileRoute('/console/listings/')({
 
 const page = copy.pages.sellerListings
 const common = copy.pages.sellerCommon
-
-function isZeroMicro(value: number | string): boolean {
-  return String(value) === '0'
-}
-
-function limitsText(listing: SellerListing): string {
-  const rpm = listing.rpm_limit > 0 ? String(listing.rpm_limit) : common.unlimited
-  const cap = isZeroMicro(listing.daily_cap_micro)
-    ? common.unlimited
-    : formatYuan(listing.daily_cap_micro)
-  return `${listing.concurrency_limit} / ${rpm} / ${cap}`
-}
-
-function PauseCell({ listing }: { listing: SellerListing }) {
-  if (listing.status !== 'paused') return <span className="text-ink-3">—</span>
-  return (
-    <div className="space-y-1">
-      <div className="text-[13px] text-warn">
-        {pauseReasonView(listing.pause_reason || 'manual')}
-      </div>
-      {listing.resume_at ? (
-        <div className="tabular-nums text-[13px] text-ink-3">
-          {page.resumeAt(formatDateTime(listing.resume_at))}
-        </div>
-      ) : null}
-    </div>
-  )
-}
 
 function useCooldown(listingId: number) {
   const [until, setUntil] = useState(() => readCooldownUntil(listingId))
@@ -319,10 +282,11 @@ function KeyDialog({
   )
 }
 
-function SellerListingsPage() {
+export function SellerListingsPage() {
   const toast = useToast()
   const queryClient = useQueryClient()
   const listings = useQuery(sellerListingsQuery())
+  const health = useQuery(sellerListingsHealthQuery())
   const [multiplierTarget, setMultiplierTarget] = useState<SellerListing | null>(null)
   const [keyTarget, setKeyTarget] = useState<SellerListing | null>(null)
 
@@ -378,6 +342,7 @@ function SellerListingsPage() {
   }
 
   const rows = listings.data ?? []
+  const healthById = new Map((health.data ?? []).map((row) => [row.listing_id, row]))
 
   return (
     <>
@@ -416,138 +381,86 @@ function SellerListingsPage() {
         />
       ) : (
         <>
-          <p className="mt-4 text-[13px] text-ink-3">{page.pausedNote}</p>
-          <div className="mt-4 rounded-md border border-line bg-bg p-6">
-            <Table minWidth={1040}>
-              <TableHead>
-                <TableRow>
-                  <TableHeaderCell>{page.columns.listing}</TableHeaderCell>
-                  <TableHeaderCell>{page.columns.models}</TableHeaderCell>
-                  <TableHeaderCell>{page.columns.verification}</TableHeaderCell>
-                  <TableHeaderCell>{page.columns.status}</TableHeaderCell>
-                  <TableHeaderCell numeric>{page.columns.multiplier}</TableHeaderCell>
-                  <TableHeaderCell numeric>{page.columns.limits}</TableHeaderCell>
-                  <TableHeaderCell>{page.columns.pauseReason}</TableHeaderCell>
-                  <TableHeaderCell className="text-right">
-                    {page.columns.actions}
-                  </TableHeaderCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {rows.map((listing) => {
-                  const view = listingStatusView(listing.status)
-                  const pausingThis = pause.isPending && pause.variables === listing.id
-                  const resumingThis = resume.isPending && resume.variables === listing.id
-                  const verifyingThis = verify.isPending && verify.variables === listing.id
-                  const verifying = listing.status === 'verifying'
-                  return (
-                    <TableRow key={listing.id}>
-                      <TableCell>
-                        <div className="font-medium text-ink">{vendorName(listing.vendor)}</div>
-                        <div className="tabular-nums text-[13px] text-ink-3">
-                          <Link
-                            to="/console/listings/$id"
-                            params={{ id: String(listing.id) }}
-                            className="hover:text-brand-ink hover:underline"
-                          >
-                            #{listing.id}
-                          </Link>{' '}
-                          · {common.keyFingerprint} {listing.key_fingerprint8 || '—'}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex max-w-[220px] flex-wrap gap-1">
-                          {listing.models.map((model) => (
-                            <Tag key={model}>{model}</Tag>
-                          ))}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {verifying ? (
-                          <span className="text-[13px] text-ink-3">
-                            {copy.pages.sellerVerification.pending}
-                          </span>
-                        ) : (
-                          <div className="max-w-[260px]">
-                            <VerificationSummary verification={listing.verification} compact />
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Tag tone={view.tone} dot>
-                          {view.label}
-                        </Tag>
-                      </TableCell>
-                      <TableCell numeric>
-                        <Multiplier milli={listing.multiplier_milli} />
-                      </TableCell>
-                      <TableCell numeric className="whitespace-nowrap text-ink-3">
-                        {limitsText(listing)}
-                      </TableCell>
-                      <TableCell>
-                        <PauseCell listing={listing} />
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap justify-end gap-1.5">
-                          {isListingPausable(listing.status) ? (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              loading={pausingThis}
-                              onClick={() => pause.mutate(listing.id)}
-                            >
-                              {page.actions.pause}
-                            </Button>
-                          ) : null}
-                          {isListingSellerResumable(listing) ? (
-                            <Button
-                              variant="primary"
-                              size="sm"
-                              loading={resumingThis}
-                              onClick={() => resume.mutate(listing.id)}
-                            >
-                              {page.actions.resume}
-                            </Button>
-                          ) : null}
-                          {isListingReverifiable(listing) || verifying ? (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              loading={verifyingThis}
-                              disabled={verifying}
-                              title={verifying ? page.actions.rechecking : page.recheckHint}
-                              onClick={() => verify.mutate(listing.id)}
-                            >
-                              {verifyingThis
-                                ? page.actions.rechecking
-                                : page.actions.recheck}
-                            </Button>
-                          ) : null}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            disabled={listing.status === 'banned'}
-                            onClick={() => setMultiplierTarget(listing)}
-                          >
-                            {page.actions.multiplier}
-                          </Button>
-                          {isListingKeyReplaceable(listing.status) ? (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setKeyTarget(listing)}
-                            >
-                              {page.actions.replaceKey}
-                            </Button>
-                          ) : null}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
+          <p className="mt-4 text-[13px] text-ink-3">{page.health.successRateHint}</p>
+          {health.isError ? (
+            <p className="mt-2 text-[13px] text-ink-3">{sellerErrorMessage(health.error)}</p>
+          ) : null}
+          <div className="mt-4 grid gap-4 xl:grid-cols-2">
+            {rows.map((listing) => {
+              const pausingThis = pause.isPending && pause.variables === listing.id
+              const resumingThis = resume.isPending && resume.variables === listing.id
+              const verifyingThis = verify.isPending && verify.variables === listing.id
+              const verifying = listing.status === 'verifying'
+              return (
+                <ListingHealthCard
+                  key={listing.id}
+                  listing={listing}
+                  health={healthById.get(listing.id)}
+                  actions={
+                    <>
+                      {isListingPausable(listing.status) ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          loading={pausingThis}
+                          onClick={() => pause.mutate(listing.id)}
+                        >
+                          {page.actions.pause}
+                        </Button>
+                      ) : null}
+                      {isListingSellerResumable(listing) ? (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          loading={resumingThis}
+                          onClick={() => resume.mutate(listing.id)}
+                        >
+                          {page.actions.resume}
+                        </Button>
+                      ) : null}
+                      {isListingReverifiable(listing) || verifying ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          loading={verifyingThis}
+                          disabled={verifying}
+                          title={verifying ? page.actions.rechecking : page.recheckHint}
+                          onClick={() => verify.mutate(listing.id)}
+                        >
+                          {verifyingThis ? page.actions.rechecking : page.actions.recheck}
+                        </Button>
+                      ) : null}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={listing.status === 'banned'}
+                        onClick={() => setMultiplierTarget(listing)}
+                      >
+                        {page.actions.multiplier}
+                      </Button>
+                      {isListingKeyReplaceable(listing.status) ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setKeyTarget(listing)}
+                        >
+                          {page.actions.replaceKey}
+                        </Button>
+                      ) : null}
+                      <Link
+                        to="/console/listings/$id"
+                        params={{ id: String(listing.id) }}
+                        className="inline-flex h-8 items-center rounded-md px-3 text-[13px] font-medium text-brand-ink transition-colors hover:bg-brand-soft"
+                      >
+                        {page.health.detailLink}
+                      </Link>
+                    </>
+                  }
+                />
+              )
+            })}
           </div>
+          <p className="mt-3 text-[13px] text-ink-3">{page.pausedNote}</p>
         </>
       )}
 

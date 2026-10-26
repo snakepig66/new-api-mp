@@ -759,6 +759,10 @@ func AutoPauseListing(db *gorm.DB, listingID int64, reason string) error {
 	if err := db.Create(&probe).Error; err != nil {
 		return fmt.Errorf("marketplace: record auto-pause probe: %w", err)
 	}
+	notifySeller(db, listingID, NotificationKindListingDegraded,
+		"渠道已自动暂停",
+		"系统巡检未通过，渠道已暂停接单。检查上游 Key 后可在「我的渠道」恢复。",
+		"/console/listings")
 	common.SysLog(fmt.Sprintf("marketplace: listing %d auto-paused: %s", listingID, reason))
 	return nil
 }

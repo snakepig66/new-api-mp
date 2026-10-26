@@ -416,7 +416,12 @@ func (s *RelaySession) insertRecord(db *gorm.DB, u marketplaceUsage, searchCount
 		official = s.preFreeze.OfficialCost
 	}
 	listing := s.listing
+	startedAt := s.startedAt
 	s.mu.Unlock()
+	latencyMs := int64(0)
+	if !startedAt.IsZero() {
+		latencyMs = time.Since(startedAt).Milliseconds()
+	}
 
 	hops, merr := common.Marshal(s.HopEvents())
 	if merr != nil {
@@ -447,6 +452,7 @@ func (s *RelaySession) insertRecord(db *gorm.DB, u marketplaceUsage, searchCount
 		UsageEstimated:    u.estimated,
 		Status:            status,
 		RetryChain:        string(hops),
+		LatencyMs:         latencyMs,
 	}
 	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rec).Error
 }

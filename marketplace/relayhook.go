@@ -130,6 +130,9 @@ type RelaySession struct {
 	planQuotaExhausted bool
 	recordWritten      bool
 	finished           bool
+	// startedAt is when the marketplace took the request; the request record
+	// stores the elapsed wall-clock duration for the square's latency metric.
+	startedAt time.Time
 }
 
 // ---------------------------------------------------------------------------
@@ -570,6 +573,7 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 		slotListingID:      listing.ID,
 		slotHeld:           true,
 		tookProbe:          tookProbe,
+		startedAt:          time.Now(),
 	}
 	// MODEL-CHANNEL-POOL §3.4: rewrite the response's upstream model name back
 	// to the standard id. The set is refreshed on every channel switch.

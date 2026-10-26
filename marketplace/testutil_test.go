@@ -220,6 +220,9 @@ func NewIntegrationDSN(t *testing.T) (sqlDSN string, isSQLite bool) {
 // emits for model.User on each dialect.
 func migrateAll(t *testing.T, db *gorm.DB) {
 	t.Helper()
+	// The public square metrics cache is process-wide; a fresh test database
+	// must never read a snapshot computed from a previous fixture.
+	resetSquareMetricsCache()
 	switch db.Dialector.Name() {
 	case "mysql":
 		require.NoError(t, db.Exec("CREATE TABLE IF NOT EXISTS users (id BIGINT AUTO_INCREMENT PRIMARY KEY)").Error)

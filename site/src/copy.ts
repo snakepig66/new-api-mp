@@ -17,12 +17,34 @@ export const copy = {
     home: '首页',
     models: '模型广场',
     docs: '文档',
+    leaderboard: '排行榜',
     seller: '分享额度',
     console: '控制台',
     admin: '运营后台',
     login: '登录',
     register: '注册',
     logout: '退出登录',
+  },
+
+  notifications: {
+    aria: '通知',
+    title: '通知',
+    empty: '暂时没有通知',
+    loading: '正在加载通知',
+    loadError: '通知加载失败',
+    retry: '重试',
+    markAll: '全部已读',
+    marking: '正在标记',
+    unread: (count: number) => `${count} 条未读`,
+    kinds: {
+      review: '审核',
+      listing_degraded: '渠道降级',
+      balance_low: '余额不足',
+      topup: '充值到账',
+      withdrawal: '提现',
+      key_expiring: 'Key 过期',
+      system: '系统',
+    },
   },
 
   actions: {
@@ -106,8 +128,8 @@ export const copy = {
 
   footer: {
     copyright: '© 2026 LLM Jar',
-    company: '运营主体：待定',
-    icp: 'ICP 备案号：待填',
+    company: '',
+    icp: '',
     terms: '用户协议',
     privacy: '隐私政策',
     note: '充值余额不可提现。',
@@ -179,6 +201,147 @@ export const copy = {
       stepsKeyAction: '去控制台创建',
       firstCurl: (baseUrl: string, model: string) =>
         `curl "${baseUrl}/v1/chat/completions" \\\n  -H "Authorization: Bearer <你的Key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${model}","messages":[{"role":"user","content":"你好"}]}'`,
+      ctaShare: '分享额度',
+      logoWall: {
+        title: '已接入的官方模型渠道',
+        aria: '已接入的模型厂商',
+      },
+      flow: {
+        title: '一次请求怎么走',
+        hint: '从你的 Key 出发，平台自动选路，最终调用官方模型。',
+        items: [
+          { title: '买家 Key', body: '同一个 Key 发起请求，不用为每家厂商单独申请。' },
+          { title: '平台选路', body: '按当前价格与可用率，自动选择可用渠道。' },
+          { title: '分享者渠道', body: '请求转发到已认证的分享额度，按量结算。' },
+          { title: '官方模型', body: '最终调用官方模型接口，失败调用不计费。' },
+        ],
+      },
+      audience: {
+        title: '使用者与分享者',
+        hint: '同一个市场，两种用法。按需调用，或者把闲置额度分享出来。',
+        buyer: {
+          label: '使用者',
+          title: '按量调用官方模型',
+          points: [
+            '一个 Key 调用全部模型，不用逐家申请账号。',
+            '官方价与市场价同屏，统一按 ¥ / 百万 tokens 计费。',
+            '失败调用不计费，每一笔都能在记录里查到。',
+          ],
+          cta: '开始使用',
+        },
+        seller: {
+          label: '分享者',
+          title: '把闲置额度分享出来',
+          points: [
+            '闲置的官方额度可以分享，按实际调用获得收益。',
+            '价格由你设定，市场实时展示当前报价。',
+            'T+7 结算，收入与提现记录在控制台可查。',
+          ],
+          cta: '分享额度',
+        },
+      },
+      examples: {
+        title: '接入示例',
+        hint: 'curl、Python、Node.js 都指向同一个 base_url 和模型名，复制即可运行。',
+        labels: { curl: 'curl', python: 'Python', node: 'Node.js' },
+        python: (baseUrl: string, model: string) =>
+          `from openai import OpenAI
+
+client = OpenAI(
+    base_url="${baseUrl}/v1",
+    api_key="<你的Key>",
+)
+
+resp = client.chat.completions.create(
+    model="${model}",
+    messages=[{"role": "user", "content": "你好"}],
+)
+print(resp.choices[0].message.content)`,
+        node: (baseUrl: string, model: string) =>
+          `import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "${baseUrl}/v1",
+  apiKey: "<你的Key>",
+});
+
+const resp = await client.chat.completions.create({
+  model: "${model}",
+  messages: [{ role: "user", content: "你好" }],
+});
+console.log(resp.choices[0].message.content);`,
+      },
+      faq: {
+        title: '常见问题',
+        hint: '计费、Key、结算和客户端配置，先看这里。',
+        items: [
+          {
+            q: '怎么计费？',
+            a: '按实际输入与输出 tokens 计费，价格统一为 ¥ / 百万 tokens；调用失败不收费。',
+          },
+          {
+            q: 'Key 怎么创建？',
+            a: '注册并登录后，在控制台创建 Key。一把 Key 可以用于市场里的所有模型。',
+          },
+          {
+            q: '分享者怎么结算？',
+            a: '分享者按 T+7 结算，收入和提现记录都可以在控制台查看。',
+          },
+          {
+            q: '支持哪些客户端？',
+            a: '接口兼容 OpenAI 协议，curl、官方 Python / Node.js SDK 以及常见客户端填好 base_url 即可使用。',
+          },
+        ],
+      },
+    },
+
+    leaderboard: {
+      title: '排行榜',
+      lead24h: '数据来源：近 24 小时的平台调用记录；每 60 秒更新',
+      lead7d: '数据来源：近 7 天的平台调用记录；每 60 秒更新',
+      rangeAria: '统计时间范围',
+      range24h: '24 小时',
+      range7d: '7 天',
+      loading: '正在读取排行榜',
+      noData: '暂无数据',
+      models: {
+        title: '模型榜',
+        hint: '按调用量排序，最多展示 20 个模型。',
+        rank: '排名',
+        model: '模型',
+        requests: '调用量',
+        success: '成功率',
+        latency: '平均延迟',
+        tokens: 'Tokens',
+        emptyTitle: '暂无模型数据',
+        emptyReason: '所选时间范围内还没有模型调用记录。',
+        errorTitle: '模型榜加载失败',
+        errorReason: '排行榜接口没有返回数据，请稍后重试。',
+      },
+      sellers: {
+        title: '分享者榜',
+        hint: '按调用量排序，分享者以匿名代号展示。',
+        rank: '排名',
+        alias: '匿名代号',
+        requests: '调用量',
+        success: '成功率',
+        income: '收益',
+        emptyTitle: '暂无分享者数据',
+        emptyReason: '所选时间范围内还没有分享者接单记录。',
+        errorTitle: '分享者榜加载失败',
+        errorReason: '排行榜接口没有返回数据，请稍后重试。',
+      },
+      trend: {
+        title: '近 30 天调用量',
+        hint: '按北京时间自然日统计。',
+        aria: '近 30 天每日调用量柱状图',
+        range: (start: string, end: string) => `${start} 至 ${end}`,
+        emptyTitle: '暂无趋势数据',
+        emptyReason: '近 30 天还没有产生调用记录。',
+        errorTitle: '趋势数据加载失败',
+        errorReason: '趋势接口没有返回数据，请稍后重试。',
+        barTitle: (date: string, requests: string) => `${date}：${requests} 次调用`,
+      },
     },
 
     models: {
@@ -194,8 +357,11 @@ export const copy = {
       vendorAria: '按厂家筛选',
       sellerUnit: '位',
       outputPrefix: '出',
+      perMillion: '/M',
+      savingShort: (percent: number) => `省 ${percent}%`,
       columns: {
         model: '模型',
+        price: '最低价（输入 / 输出）',
         input: '输入价',
         output: '输出价',
         multiplier: '最低价',
@@ -203,7 +369,63 @@ export const copy = {
         channels: '渠道数',
         sellers: '分享者',
         tier: '当前时段',
+        saving: '比官方省',
+        success: '24h 成功率',
+        latency: '延迟',
         actions: '操作',
+      },
+      expand: {
+        metric: '项目',
+        official: '官方价',
+        market: '渠道最低价',
+        input: '输入',
+        cacheRead: '缓存读',
+        cacheWrite: '缓存写',
+        output: '输出',
+        priceTable: '价格对比（¥ / 百万 tokens）',
+        channelsTitle: '渠道',
+        noChannels: '暂时没有已认证的渠道。',
+        channel: '渠道',
+        success: '24h 成功率',
+        latency: '延迟',
+        listings: '在售',
+        channelPrice: '最低输入价',
+        officialTag: '官方',
+        planTag: '套餐',
+        thirdPartyTag: '第三方',
+        reliability: '可靠性',
+        realtime: '实时',
+        day24: '24 小时',
+        day7: '7 天',
+        requests: '24h 请求量',
+        tps: 'TPS',
+        cache: '缓存命中',
+        lastSuccess: '最近成功',
+        noSample: '暂无数据',
+        context: '上下文',
+        protocols: '协议',
+        detailLink: '查看趋势与代码示例',
+      },
+      peakBanner: {
+        peak: '当前是高峰时段，按高峰价结算',
+        offpeak: '当前是平价时段，按平价价结算',
+        flat: '当前为统一价，不区分时段',
+        next: (time: string) => `下次切换 ${time}`,
+      },
+      filters: {
+        clear: '清除筛选',
+        billing: '计费类型',
+        billingAll: '全部',
+        billingFlat: '统一价',
+        billingTiered: '峰谷价',
+        sort: '排序',
+        sortSaving: '省最多',
+        sortPrice: '价格最低',
+        sortSuccess: '成功率最高',
+        sortLatency: '延迟最低',
+        officialOnly: '只看官方',
+        freeOnly: '只看免费',
+        free: '免费',
       },
       vendorCount: (count: number) => `${count} 个模型`,
       modelRow: {
@@ -245,9 +467,6 @@ export const copy = {
       count: (count: number) => `共 ${count} 个模型`,
       filteredCount: (shown: number, total: number) => `筛选后 ${shown} / ${total} 个模型`,
       priceNote: '官方价与到手价均为 ¥ / 百万 tokens；到手价按当前最低价计算。',
-      filters: {
-        clear: '清除筛选',
-      },
       capabilities: {
         reasoning: '推理',
         vision: '视觉',
@@ -422,72 +641,202 @@ console.log(response.choices[0].message.content)
 
     docs: {
       title: '文档',
-      lead: '一页讲清接入、计费与错误处理。每段代码都可以直接粘贴。',
+      lead: '从第一笔调用到分享额度：接入、计价、错误处理与客户端配置，都可以直接复制。',
       toc: '文档导航',
       onThisPage: '本页目录',
       searchPlaceholder: '搜索文档',
       searchAria: '搜索文档导航',
       searchEmpty: '没有匹配的章节',
+      baseUrlLabel: 'Base URL',
+      baseUrl: 'https://llmjar.com/v1',
+      baseUrlHint: '/v1 是 OpenAI 兼容接口前缀；SDK 里直接把它填到 base_url。',
+      baseUrlCopy: '复制',
+      baseUrlCopied: '已复制',
+      baseUrlFailed: '复制失败，请手动选择。',
+      codeTabs: { curl: 'curl', python: 'Python', node: 'Node.js' },
       sections: {
         quickstart: '快速开始',
-        streaming: '流式输出',
-        billing: '计费规则',
+        text: '文本生成',
+        images: '图像',
+        embeddings: '向量 / Embeddings',
         errors: '错误码',
+        billing: '计费说明',
+        clients: '客户端接入',
+        seller: '分享者指南',
       },
       quickstart: {
-        body: '把请求地址指向本站的 /v1，模型名使用模型广场里的完整 ID，Authorization 使用控制台创建的 Key。',
-        note: 'base_url 已按当前站点填好；<你的Key> 只显示一次，请立即保存。',
+        body: '三步即可发出第一笔请求：注册账号、在控制台创建 Key、把下面的示例粘贴到终端。模型名使用模型广场里的完整 ID，Key 放在 Authorization 头里。',
+        steps: [
+          { title: '创建 Key', body: '进入控制台创建 Key，按需勾选模型并设置价格上限。' },
+          { title: '选择模型', body: '在模型广场复制完整模型 ID，例如 deepseek-flash。' },
+          { title: '发出请求', body: 'Base URL 指向本站 /v1，运行下面任意一个示例。' },
+        ],
         modelsLabel: '当前可用模型（自动同步自模型池）',
-        code: `curl "$BASE_URL/v1/chat/completions" \\
-  -H "Authorization: Bearer $API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{"model": "deepseek-v3", "messages": [{"role": "user", "content": "你好"}]}'`,
-        codeWithBase: (baseUrl: string, model: string) =>
-          `curl "${baseUrl}/v1/chat/completions" \\\n  -H "Authorization: Bearer <你的Key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${model}","messages":[{"role":"user","content":"你好"}]}'`,
+        note: '<你的Key> 只在创建时显示一次，请立即保存；示例里的模型 ID 可以换成广场里的任意在售模型。',
+        code: {
+          curl: (baseUrl: string, model: string) =>
+            `curl "${baseUrl}/chat/completions" \\\n  -H "Authorization: Bearer <你的Key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${model}","messages":[{"role":"user","content":"你好"}]}'`,
+          python: (baseUrl: string, model: string) =>
+            `from openai import OpenAI\n\nclient = OpenAI(base_url="${baseUrl}", api_key="<你的Key>")\nresponse = client.chat.completions.create(\n    model="${model}",\n    messages=[{"role": "user", "content": "你好"}],\n)\nprint(response.choices[0].message.content)`,
+          node: (baseUrl: string, model: string) =>
+            `import OpenAI from "openai"\n\nconst client = new OpenAI({\n  baseURL: "${baseUrl}",\n  apiKey: "<你的Key>",\n})\n\nconst response = await client.chat.completions.create({\n  model: "${model}",\n  messages: [{ role: "user", content: "你好" }],\n})\n\nconsole.log(response.choices[0].message.content)`,
+        },
       },
-      streaming: {
-        body: '请求体加上 "stream": true，服务端会以 SSE 逐块返回。首字节到达就开始计费链路，断流不会重复扣费。',
-        note: '用 -N 关闭 curl 的输出缓冲，才能看到逐块内容。',
-        codeWithBase: (baseUrl: string, model: string) =>
-          `curl -N "${baseUrl}/v1/chat/completions" \\\n  -H "Authorization: Bearer <你的Key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${model}","stream":true,"messages":[{"role":"user","content":"你好"}]}'`,
+      text: {
+        body: '文本生成走 OpenAI 兼容的 /chat/completions。messages 按 role 传入，temperature、max_tokens 等参数原样透传。',
+        note: '多轮对话把历史消息一并放进 messages；系统提示词用 role: "system"。',
+        streamTitle: '流式输出',
+        streamBody: '请求体加 "stream": true，响应会以 SSE 逐块返回。curl 需要 -N 关闭输出缓冲；SDK 里直接遍历 stream。',
+        streamNote: '首字节到达后开始计费链路，断流不会重复扣费。',
+        code: {
+          curl: (baseUrl: string, model: string) =>
+            `curl "${baseUrl}/chat/completions" \\\n  -H "Authorization: Bearer <你的Key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${model}","messages":[{"role":"user","content":"你好"}]}'`,
+          python: (baseUrl: string, model: string) =>
+            `from openai import OpenAI\n\nclient = OpenAI(base_url="${baseUrl}", api_key="<你的Key>")\nresponse = client.chat.completions.create(\n    model="${model}",\n    messages=[{"role": "user", "content": "你好"}],\n)\nprint(response.choices[0].message.content)`,
+          node: (baseUrl: string, model: string) =>
+            `import OpenAI from "openai"\n\nconst client = new OpenAI({\n  baseURL: "${baseUrl}",\n  apiKey: "<你的Key>",\n})\n\nconst response = await client.chat.completions.create({\n  model: "${model}",\n  messages: [{ role: "user", content: "你好" }],\n})\n\nconsole.log(response.choices[0].message.content)`,
+        },
+        streamCode: {
+          curl: (baseUrl: string, model: string) =>
+            `curl -N "${baseUrl}/chat/completions" \\\n  -H "Authorization: Bearer <你的Key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${model}","stream":true,"messages":[{"role":"user","content":"你好"}]}'`,
+          python: (baseUrl: string, model: string) =>
+            `from openai import OpenAI\n\nclient = OpenAI(base_url="${baseUrl}", api_key="<你的Key>")\nstream = client.chat.completions.create(\n    model="${model}",\n    messages=[{"role": "user", "content": "你好"}],\n    stream=True,\n)\nfor chunk in stream:\n    print(chunk.choices[0].delta.content or "", end="")`,
+          node: (baseUrl: string, model: string) =>
+            `import OpenAI from "openai"\n\nconst client = new OpenAI({\n  baseURL: "${baseUrl}",\n  apiKey: "<你的Key>",\n})\n\nconst stream = await client.chat.completions.create({\n  model: "${model}",\n  messages: [{ role: "user", content: "你好" }],\n  stream: true,\n})\n\nfor await (const chunk of stream) {\n  process.stdout.write(chunk.choices[0]?.delta?.content ?? "")\n}`,
+        },
+      },
+      images: {
+        body: '图像生成走 /images/generations。prompt 描述画面，size 指定分辨率，n 指定张数。',
+        note: 'response_format 可选 url 或 b64_json；图像按张计价，单价以模型详情页为准。',
+        code: {
+          curl: (baseUrl: string) =>
+            `curl "${baseUrl}/images/generations" \\\n  -H "Authorization: Bearer <你的Key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"gpt-image-1","prompt":"一只戴着围巾的橘猫，扁平插画风格","size":"1024x1024","n":1}'`,
+          python: (baseUrl: string) =>
+            `from openai import OpenAI\n\nclient = OpenAI(base_url="${baseUrl}", api_key="<你的Key>")\nresult = client.images.generate(\n    model="gpt-image-1",\n    prompt="一只戴着围巾的橘猫，扁平插画风格",\n    size="1024x1024",\n    n=1,\n)\nprint(result.data[0].url or result.data[0].b64_json)`,
+          node: (baseUrl: string) =>
+            `import OpenAI from "openai"\n\nconst client = new OpenAI({\n  baseURL: "${baseUrl}",\n  apiKey: "<你的Key>",\n})\n\nconst result = await client.images.generate({\n  model: "gpt-image-1",\n  prompt: "一只戴着围巾的橘猫，扁平插画风格",\n  size: "1024x1024",\n  n: 1,\n})\n\nconsole.log(result.data[0]?.url ?? result.data[0]?.b64_json)`,
+        },
+      },
+      embeddings: {
+        body: '向量接口 /embeddings 接收单个字符串或字符串数组，返回等长的向量列表。',
+        note: 'input 按顺序返回；向量维度以模型详情页为准，写入索引前请先确认维度。',
+        code: {
+          curl: (baseUrl: string) =>
+            `curl "${baseUrl}/embeddings" \\\n  -H "Authorization: Bearer <你的Key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"text-embedding-3-small","input":["你好","LLM Jar"]}'`,
+          python: (baseUrl: string) =>
+            `from openai import OpenAI\n\nclient = OpenAI(base_url="${baseUrl}", api_key="<你的Key>")\nresponse = client.embeddings.create(\n    model="text-embedding-3-small",\n    input=["你好", "LLM Jar"],\n)\nfor item in response.data:\n    print(len(item.embedding))`,
+          node: (baseUrl: string) =>
+            `import OpenAI from "openai"\n\nconst client = new OpenAI({\n  baseURL: "${baseUrl}",\n  apiKey: "<你的Key>",\n})\n\nconst response = await client.embeddings.create({\n  model: "text-embedding-3-small",\n  input: ["你好", "LLM Jar"],\n})\n\nconsole.log(response.data.map((item) => item.embedding.length))`,
+        },
+      },
+      errors: {
+        body: '错误响应统一为 {"error":{"message":"...","type":"...","code":"..."}}，HTTP 状态码与 code 一一对应。',
+        columns: { code: 'code', meaning: '含义', action: '处理建议' },
+        rows: [
+          {
+            code: '400',
+            meaning: '请求参数错误，或模型不在当前 Key 的可用范围',
+            action: '核对模型 ID、messages 结构与 Key 已勾选的模型。',
+          },
+          {
+            code: '401',
+            meaning: 'Key 无效、已删除或已过期',
+            action: '检查 Authorization: Bearer 后的 Key，必要时在控制台新建。',
+          },
+          {
+            code: '402',
+            meaning: '余额不足，或超出 Key 的价格上限',
+            action: '充值，或在 Key 详情里调整模型价格上限后重试。',
+          },
+          {
+            code: '429',
+            meaning: '请求过于频繁，触发限流',
+            action: '按响应头或 message 的提示指数退避，避免并发突增。',
+          },
+          {
+            code: '503',
+            meaning: '当前没有可用渠道，或渠道正在巡检暂停',
+            action: '稍后重试；持续出现时换用广场里其他在售模型。',
+          },
+        ],
+        testNote: '用一个不存在的 Key 可以复现 401：',
+        code: {
+          curl: (baseUrl: string, model: string) =>
+            `curl -i "${baseUrl}/chat/completions" \\\n  -H "Authorization: Bearer invalid-key" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${model}","messages":[{"role":"user","content":"你好"}]}'`,
+          python: (baseUrl: string, model: string) =>
+            `from openai import OpenAI\n\nclient = OpenAI(base_url="${baseUrl}", api_key="invalid-key")\ntry:\n    client.chat.completions.create(\n        model="${model}",\n        messages=[{"role": "user", "content": "你好"}],\n    )\nexcept Exception as error:\n    print(error)`,
+          node: (baseUrl: string, model: string) =>
+            `import OpenAI from "openai"\n\nconst client = new OpenAI({\n  baseURL: "${baseUrl}",\n  apiKey: "invalid-key",\n})\n\ntry {\n  await client.chat.completions.create({\n    model: "${model}",\n    messages: [{ role: "user", content: "你好" }],\n  })\n} catch (error) {\n  console.log(error)\n}`,
+        },
       },
       billing: {
-        body: '高峰与空闲两档价格以模型详情页的当前档为准，页面同时给出下次切换时间。输入、输出、缓存读写分别计价，价格按百万 tokens 展示。',
-        items: [
-          '只有成功的请求计费，失败的请求不计费。',
-          '搜索结果与工具调用按次计价，具体单价在模型详情页列出。',
-          '充值余额不可提现，提现仅适用于分享者收入。',
-        ],
+        body: '价格由三层相乘得到，最终按请求实际消耗的输入、输出与缓存 tokens 结算。',
+        formulaTitle: '计价公式',
+        formula: '官方价 × 渠道价格比例 × 分享者价格倍数',
+        formulaNote: '官方价是模型厂商公开的价目；渠道价格比例由渠道成本与时段决定；分享者价格倍数由分享者设定。模型广场与模型详情页展示的到手价已经把三层算好，直接比较即可。',
+        sellerFeeTitle: '分享者到手',
+        sellerFee: '每笔完成订单平台收取 7% 平台费，分享者到手 93%；订单完成 7 天后（T+7）进入可提现余额，提现记录可在分享者控制台查询。',
+        cacheTitle: '缓存读写',
+        cacheBody: '缓存命中时按缓存读价计费，写入缓存按缓存写价计费，未命中则按普通输入价计费。三个单价都在模型详情页分列展示。',
         peakTitle: '峰谷时段',
-        peakNote: '时段按 Asia/Shanghai（北京时间）计算。法定节假日全天按空闲计费，调休上班日按工作日时段计算。',
+        peakNote: '时段按 Asia/Shanghai（北京时间）计算。法定节假日全天按空闲计费，调休上班日按工作日时段计算；页面会给出下次切换时间。',
         peakColumns: { tier: '时段', window: '计费窗口', rule: '说明' },
         peakRows: [
           { tier: '高峰', window: '周一至周五 09:00–12:00、14:00–18:00', rule: '按高峰价目计费' },
           { tier: '空闲', window: '其余时段、周末与法定节假日', rule: '按空闲价目计费' },
         ],
-        perCallTitle: '按次计费',
-        perCall: '搜索、抓取等按次计费项会并入当次请求账单，和 token 费用分开列出。',
-        failureTitle: '失败不收费',
-        failure: '只有成功的调用计费。重试只对最终成功的一次收费，失败的重试不产生费用。',
-        settlementTitle: '分享者结算',
-        settlement: '分享者收入按 T+7 结算：订单完成 7 天后进入可提现余额，平台费在明细中单独列示。',
-        sniff: '查询广场实时行情：',
-        codeWithBase: (baseUrl: string) =>
-          `curl "${baseUrl}/api/marketplace/square/models"`,
-      },
-      errors: {
-        body: '错误码使用稳定的错误码，界面按错误码显示中文提示。',
-        rows: [
-          { code: '400', meaning: '参数错误或模型未加入 Key', action: '核对模型 ID，并把模型加到当前 Key。' },
-          { code: '401', meaning: 'Key 无效或已失效', action: '检查 Authorization，必要时新建 Key。' },
-          { code: '402', meaning: '余额不足', action: '充值后重试。' },
-          { code: '429', meaning: '触发限流', action: '按响应中的提示退避重试。' },
-          { code: '503', meaning: '暂无可用供应商', action: '稍后重试，或换一个时段。' },
+        items: [
+          '只有成功的请求计费，失败的请求与失败的重试都不计费。',
+          '搜索结果、工具调用等按次计费项会并入当次账单，和 token 费用分开列出。',
+          '充值余额不可提现；提现仅适用于分享者收入。',
         ],
-        columns: { code: '错误码', meaning: '含义', action: '处理方式' },
-        testNote: '用一个不存在的 Key 可以复现 401 响应：',
-        codeWithBase: (baseUrl: string, model: string) =>
-          `curl -i "${baseUrl}/v1/chat/completions" \\\n  -H "Authorization: Bearer invalid-key" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${model}","messages":[{"role":"user","content":"你好"}]}'`,
+      },
+      clients: {
+        body: '任何支持 OpenAI 兼容接口的客户端都能接入。下面三段配置可以直接复制，把 <你的Key> 换成控制台里的 Key。',
+        note: '客户端若提示模型不存在，先在模型广场确认完整模型 ID，并确认它在当前 Key 的可用范围内。',
+        items: [
+          {
+            name: 'Cherry Studio',
+            body: '在「设置 → 模型服务」里添加 OpenAI 兼容服务，填入 Base URL 与 Key，然后添加模型。',
+            code: `Base URL: https://llmjar.com/v1\nAPI Key: <你的Key>\n模型: deepseek-flash`,
+          },
+          {
+            name: 'Claude Code',
+            body: 'Claude Code 会在 Base URL 后追加 /v1/messages，所以这里填站点根地址，不要带 /v1。把下面两行写进 shell 配置后重启终端。',
+            code: `export ANTHROPIC_BASE_URL="https://llmjar.com"\nexport ANTHROPIC_AUTH_TOKEN="<你的Key>"`,
+          },
+          {
+            name: 'Cursor',
+            body: '在「Settings → Models → OpenAI API」里打开 Override OpenAI Base URL，填入 Base URL、Key 和模型名。',
+            code: `Override OpenAI Base URL: https://llmjar.com/v1\nAPI Key: <你的Key>\nModel: deepseek-flash`,
+          },
+        ],
+      },
+      seller: {
+        body: '有闲置的官方额度，可以把它接入市场，按自己设定的价格接单。开通、验真、巡检与结算都集中在分享者控制台。',
+        openTitle: '开通四步',
+        steps: [
+          { title: '进入分享者控制台', body: '登录后切换到分享者身份，阅读并确认分享规则。' },
+          { title: '添加渠道', body: '填入上游官方 Key、接口地址与可用模型，保存为待验真渠道。' },
+          {
+            title: '完成验真',
+            body: '平台会发起真实请求，核对模型 ID、能力与可用性，通过后才对买家展示。',
+          },
+          {
+            title: '设置价格并上架',
+            body: '在渠道价格比例的基础上设定售卖价格，确认峰谷档位后上架。',
+          },
+        ],
+        verifyTitle: '验真规则',
+        verifyBody:
+          '验真由平台自动执行：用渠道配置发起一次最小请求，校验鉴权、模型是否存在、响应结构是否符合官方接口。验真不通过会给出具体原因，修改后可重新提交；未通过验真的渠道不会出现在模型广场。',
+        patrolTitle: '巡检与暂停',
+        patrolBody:
+          '已上架渠道会持续巡检成功率和延迟。连续失败或超时的渠道会自动暂停，恢复稳定后自动重新上架；你也可以在分享者控制台手动暂停或下架，买家侧会立即停止分发。',
+        payoutTitle: '收益与提现',
+        payoutBody:
+          '收益按「官方价 × 渠道价格比例 × 分享者价格倍数」计算，再扣除 7% 平台费。订单完成 7 天后（T+7）进入可提现余额；提现门槛、到账时间与记录以分享者控制台展示为准。',
+        note: '渠道必须使用正规来源的官方额度；来源不明的 Key 会导致渠道下架与收益冻结。',
       },
     },
 
@@ -668,10 +1017,18 @@ console.log(response.choices[0].message.content)
 
     consoleEarnings: {
       title: '收益与提现',
-      lead: '待结算、可提现、本月收益与提现记录。',
+      lead: '待结算、可提现与已提现分开看，本月收益和提现记录都在这里。',
       tabs: {
         overview: '收益概览',
         payouts: '提现记录',
+      },
+      balances: {
+        pending: '待结算',
+        pendingHint: '买家付款后 T+7 结算，到期自动转入可提现。',
+        available: '可提现',
+        availableHint: '已结算金额，单笔满 ¥50 可申请提现。',
+        paid: '已提现',
+        paidHint: '已打款到绑定支付宝的累计金额。',
       },
     },
 
@@ -1065,10 +1422,20 @@ console.log(response.choices[0].message.content)
       },
       detail: {
         title: '请求详情',
+        costTitle: '费用明细',
+        costAction: '费用明细',
         requestId: '请求编号',
         createdAt: '时间',
         model: '模型',
         seller: '分享者',
+        channelType: '渠道类型',
+        channelTypes: {
+          official: '官方渠道',
+          plan: '套餐渠道',
+          thirdParty: '第三方渠道',
+          shared: '分享渠道',
+          unknown: '其他渠道',
+        },
         tier: '时段',
         status: '状态',
         tokens: 'tokens 明细',
@@ -1084,6 +1451,13 @@ console.log(response.choices[0].message.content)
         official: '官方价',
         paid: '实付',
         saved: '省了',
+        unitPrice: '单价',
+        officialUnitPrice: '官方综合单价',
+        paidUnitPrice: '实付综合单价',
+        unitPriceUnit: '元/百万 tokens',
+        multiplier: '计价比例',
+        platformFee: '平台服务费',
+        sellerCredit: '分享者到手',
         estimated: 'tokens 为估算值',
         retry: '重试链',
         retryEmpty: '这次请求没有重试，第一次就结束了。',
@@ -1165,7 +1539,8 @@ console.log(response.choices[0].message.content)
         },
       },
       topupReturn: {
-        confirming: '支付确认中，正在核对订单，请稍候…',
+        confirmingTitle: '确认中',
+        confirming: '支付已完成，正在等待平台确认，到账后会自动刷新余额与流水。',
         success: '充值已到账，余额已更新。',
         timeoutTitle: '已付款但尚未到账',
         timeout: '如果已经扣款，请联系客服并提供订单号：',
@@ -1183,10 +1558,61 @@ console.log(response.choices[0].message.content)
         emptyReason: '在线支付产生的充值订单会显示在这里。',
         statuses: {
           pending: '待支付',
+          confirming: '确认中',
           success: '已到账',
           failed: '已关闭',
           expired: '已关闭',
           unknown: '未知',
+        },
+      },
+      transactions: {
+        title: '全部流水',
+        hint: '充值、消费、收益、提现与退款按时间倒序合并展示。',
+        tabs: {
+          all: '全部',
+          usage: '消费',
+          topup: '充值',
+          earning: '收益',
+          withdrawal: '提现',
+          refund: '退款',
+        },
+        export: '导出 CSV',
+        exporting: '正在导出…',
+        exportFailed: '导出失败，请稍后重试。',
+        exportHint: '导出当前筛选的全部流水，文件为 UTF-8 CSV。',
+        columns: {
+          time: '时间',
+          type: '类型',
+          description: '说明',
+          amount: '金额',
+          status: '状态',
+          reference: '单号',
+        },
+        emptyTitle: '还没有流水',
+        emptyReason: '这个账号还没有符合当前筛选条件的流水。',
+        emptyTopupReason: '这个账号还没有充值记录。',
+        statuses: {
+          earning: {
+            pending: '待结算',
+            available: '已入账',
+            reversed: '已冲正',
+            unknown: '未知',
+          },
+          withdrawal: {
+            pending: '审核中',
+            approved: '已通过',
+            paid: '已打款',
+            rejected: '已驳回',
+            unknown: '未知',
+          },
+        },
+        descriptions: {
+          usage: '模型调用扣费',
+          refund: '退款入账',
+          earning: '分享收益',
+          withdrawal: '提现',
+          topup: '在线充值',
+          unknown: '其他',
         },
       },
       redeem: {
@@ -1261,7 +1687,7 @@ console.log(response.choices[0].message.content)
       },
       empty: {
         title: '还没有开通分享者',
-        reason: '开通后才能渠道、查看收入与申请提现。',
+        reason: '开通后才能分享渠道、查看收入与申请提现。',
         next: '开通流程包含协议签署、实名认证和收款账户绑定，全程约五分钟。',
       },
       onboardingSoon: '开通流程将在分享者阶段开放。',
@@ -1398,7 +1824,7 @@ console.log(response.choices[0].message.content)
       },
       health: {
         title: '渠道健康度',
-        lead: '状态、倍率与限额；暂停的渠道会同时显示原因。',
+        lead: '状态、限额与今日表现；暂停的渠道会同时显示原因。',
         columns: {
           listing: '渠道',
           models: '模型',
@@ -1406,6 +1832,8 @@ console.log(response.choices[0].message.content)
           multiplier: '倍率',
           limits: '并发 / RPM / 日限额',
           created: '创建时间',
+          todayIncome: '今日收益',
+          successRate: '成功率',
         },
         emptyTitle: '还没有渠道',
         emptyReason: '当前账号没有在市场上的渠道，所以没有健康度可看。',
@@ -1437,21 +1865,22 @@ console.log(response.choices[0].message.content)
 
     sellerOnboarding: {
       title: '开通分享',
-      lead: '每个账号都可以分享：签完协议即可渠道。实名与支付宝收款账户只在提现前需要。',
+      lead: '每个账号都可以分享：签完协议即可分享渠道。实名与支付宝收款账户只在提现前需要。',
       progress: '开通进度',
       state: {
         done: '已完成',
-        current: '进行中',
-        todo: '待完成',
+        current: '当前',
+        todo: '未开始',
         optional: '提现前',
       },
-      stepTitles: ['签署分享者协议', '实名认证', '支付宝收款账户'],
+      stepTitles: ['签署分享者协议', '完善资料', '绑定收款', '完成'],
       stepHints: [
-        '签完即可渠道，开通不收费。',
+        '签完即可分享渠道，开通不收费。',
         '可选：提现前完成。只做格式校验，姓名与证件号不会保存明文。',
         '可选：提现前绑定。提现只打到这个支付宝账号。',
+        '全部就绪后即可去分享渠道，收益按 T+7 结算。',
       ],
-      optionalHint: '实名与收款账户不影响渠道；准备提现时再来补齐即可。',
+      optionalHint: '实名与收款账户不影响分享渠道；准备提现时再来补齐即可。',
       payoutNotice: '还没有绑定支付宝收款账户，提现前需要先补齐。',
       bindAccount: '去绑定',
       agreement: {
@@ -1502,11 +1931,11 @@ console.log(response.choices[0].message.content)
         done: '收款账户已绑定',
       },
       done: {
-        title: '已开通，可以渠道了',
-        reason: '协议已生效，现在就能渠道。实名和收款账户是提现前的可选步骤，随时可以补。',
-        next: '先去挂一个 Key，探测通过后就能出现在模型广场。',
+        title: '已开通，可以分享渠道了',
+        reason: '协议已生效，现在就能分享渠道。实名和收款账户是提现前的可选步骤，随时可以补。',
+        next: '先添加一个 Key，检测通过后就能出现在模型广场。',
         overview: '查看概览',
-        newListing: '去渠道',
+        newListing: '去新建渠道',
       },
       blocked: {
         title: '分享者账号已被停用',
@@ -1572,6 +2001,31 @@ console.log(response.choices[0].message.content)
       loadError: '渠道列表加载失败。',
       resumeAt: (time: string) => `预计 ${time} 自动恢复`,
       recheckHint: '重新检测会再次调用上游，检测期间渠道不会接单。',
+      health: {
+        ariaLabel: '渠道健康卡',
+        available: '可用',
+        degraded: '降级',
+        offline: '离线',
+        noSample: '无样本',
+        successRateHint: '按今日请求计算：≥98% 可用，≥90% 降级，否则离线。',
+        todayIncome: '今日收益',
+        successRate: '成功率',
+        latency: '延迟',
+        noSamples: '暂无样本',
+        lastProbe: '最近巡检',
+        noProbe: '还没有巡检记录',
+        probePassed: '通过',
+        probeFailed: '未通过',
+        probeTypes: {
+          patrol: '巡检',
+          verify: '验真',
+          report: '上报',
+        } as Record<string, string>,
+        failReason: '失败原因',
+        checkedAt: (time: string) => `检测于 ${time}`,
+        requests: (count: number) => `今日 ${count} 次请求`,
+        detailLink: '查看详情',
+      },
     },
 
     sellerListingDetail: {

@@ -6,7 +6,7 @@ import {
   createRoute,
   createRouter,
 } from '@tanstack/react-router'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { HomePage } from './index'
@@ -164,5 +164,49 @@ describe('home page', () => {
     await waitFor(() => {
       expect(document.querySelector('pre code')?.textContent).toContain('curl "')
     })
+  })
+
+  it('renders the vendor logo wall from the vendors present in the square', async () => {
+    renderHome()
+
+    expect(await screen.findByTestId('vendor-logo-wall')).toBeTruthy()
+    const logo = screen.getByRole('img', { name: 'DeepSeek' })
+    expect(logo.getAttribute('src')).toBe('/vendors/deepseek.svg')
+  })
+
+  it('expands and collapses a FAQ answer on click', async () => {
+    renderHome()
+    await screen.findByText('deepseek-chat')
+
+    const question = screen.getByRole('button', { name: '怎么计费？' })
+    const answer =
+      '按实际输入与输出 tokens 计费，价格统一为 ¥ / 百万 tokens；调用失败不收费。'
+
+    expect(question.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByText(answer)).toBeNull()
+
+    fireEvent.click(question)
+    expect(question.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText(answer)).toBeTruthy()
+
+    fireEvent.click(question)
+    expect(question.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByText(answer)).toBeNull()
+  })
+
+  it('links the buyer and seller CTAs to register and share', async () => {
+    renderHome()
+    await screen.findByText('deepseek-chat')
+
+    const startHrefs = screen
+      .getAllByRole('link', { name: /开始使用/ })
+      .map((link) => link.getAttribute('href'))
+    expect(startHrefs).toContain('/register')
+
+    const shareHrefs = screen
+      .getAllByRole('link', { name: '分享额度' })
+      .map((link) => link.getAttribute('href'))
+    expect(shareHrefs.length).toBeGreaterThanOrEqual(1)
+    expect(shareHrefs.every((href) => href === '/share')).toBe(true)
   })
 })

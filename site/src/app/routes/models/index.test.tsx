@@ -6,7 +6,7 @@ import {
   createRoute,
   createRouter,
 } from '@tanstack/react-router'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ToastProvider } from '@/ui'
@@ -38,6 +38,21 @@ const squareItems = [
     next_switch: '2030-01-01T10:00:00+08:00',
     listing_count: 2,
     channel_count: 2,
+    official_available: true,
+    capabilities: ['text', 'tools', 'cache'],
+    context_length: 131072,
+    metrics: {
+      status: 'available',
+      success_rate_1h_milli: 1000,
+      success_rate_24h_milli: 995,
+      success_rate_7d_milli: 990,
+      requests_24h: 321,
+      latency_ms: 420,
+      tps_permille: 51200,
+      cache_hit_permille: 640,
+      last_success_at: '2030-01-01T00:00:00+08:00',
+      sampled_at: '2030-01-01T00:00:00+08:00',
+    },
     buyer_price_source: 'market',
     generated_at: '2030-01-01T00:00:00+08:00',
   },
@@ -58,6 +73,19 @@ const squareItems = [
     next_switch: '2030-01-01T18:00:00+08:00',
     listing_count: 1,
     channel_count: 1,
+    official_available: true,
+    metrics: {
+      status: 'degraded',
+      success_rate_1h_milli: 800,
+      success_rate_24h_milli: 800,
+      success_rate_7d_milli: 850,
+      requests_24h: 12,
+      latency_ms: 1800,
+      tps_permille: 0,
+      cache_hit_permille: -1,
+      last_success_at: null,
+      sampled_at: '2030-01-01T00:00:00+08:00',
+    },
     buyer_price_source: 'market',
     generated_at: '2030-01-01T00:00:00+08:00',
   },
@@ -78,6 +106,7 @@ const squareItems = [
     next_switch: null,
     listing_count: 0,
     channel_count: 0,
+    official_available: false,
     buyer_price_source: 'official',
     generated_at: '2030-01-01T00:00:00+08:00',
   },
@@ -98,6 +127,7 @@ const squareItems = [
     next_switch: null,
     listing_count: 1,
     channel_count: 1,
+    official_available: false,
     buyer_price_source: 'market',
     generated_at: '2030-01-01T00:00:00+08:00',
   },
@@ -146,7 +176,29 @@ function detailFor(model: string) {
     multiplier_min_milli: model === 'deepseek-r1' ? 520 : model === 'glm-4-plus' ? 680 : 300,
     multiplier_max_milli: model === 'deepseek-r1' ? 650 : 480,
     official_prices: officialPrices,
-    channels: [],
+    channels:
+      model === 'deepseek-chat'
+        ? [
+            {
+              channel_slug: 'deepseek',
+              name: 'DeepSeek',
+              kind: 'official',
+              verified: true,
+              coefficient_milli: 1000,
+              differences: {},
+              listing_count: 1,
+              min_multiplier_milli: 300,
+              max_multiplier_milli: 400,
+              metrics: {
+                status: 'available',
+                success_rate_24h_milli: 998,
+                requests_24h: 120,
+                latency_ms: 380,
+                last_success_at: null,
+              },
+            },
+          ]
+        : [],
   }
 }
 
@@ -190,6 +242,7 @@ function renderPage(initialEntry = '/models') {
   const modelsRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/models',
+    validateSearch: (search: Record<string, unknown>) => search,
     component: ModelsPage,
   })
   const detailRoute = createRoute({
@@ -201,49 +254,25 @@ function renderPage(initialEntry = '/models') {
     routeTree: rootRoute.addChildren([modelsRoute, detailRoute]),
     history: createMemoryHistory({ initialEntries: [initialEntry] }),
   })
-
-  const view = render(
+  render(
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
         <RouterProvider router={router} />
       </ToastProvider>
     </QueryClientProvider>,
   )
-  return { ...view, router }
+  return { router }
 }
 
 describe('models page', () => {
-  it('renders live rows and enriches them with official prices', async () => {
-    renderPage()
-
-    expect(await screen.findByText('deepseek-chat')).toBeTruthy()
-    expect(screen.getByText('deepseek-r1')).toBeTruthy()
-    expect(screen.getByText('glm-4-plus')).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: '加入 Key' })).toHaveLength(4)
-
-    // Detail enrichment: the list endpoint has no multiplier/official price.
-    await waitFor(() => {
-      expect(screen.getAllByText('¥3.00').length).toBeGreaterThan(0)
-    })
-
-    // The whole row is one link to the detail page.
-    const link = screen.getByRole('link', { name: /deepseek-chat/ })
-    expect(link.getAttribute('href')).toBe('/models/deepseek-chat')
-  })
-
-  it('filters by model name or alias from the search field', async () => {
+  it('renders one row per standard model with buyer prices', async () => {
     renderPage()
     await screen.findByText('deepseek-chat')
 
-    fireEvent.change(screen.getByLabelText('按模型名称或别名搜索'), {
-      target: { value: 'v3' },
-    })
-
-    await waitFor(() => {
-      expect(screen.queryByText('doubao-pro')).toBeNull()
-    })
-    expect(screen.getByText('deepseek-chat')).toBeTruthy()
-    expect(screen.queryByText('glm-4-plus')).toBeNull()
+    expect(screen.getByText('glm-4-plus')).toBeTruthy()
+    const row = screen.getByText('deepseek-chat').closest('tr')
+    expect(row?.textContent).toContain('¥2.00')
+    expect(row?.textContent).toContain('出 ¥8.00')
   })
 
   it('marks a model with no supply as official price', async () => {
@@ -266,11 +295,11 @@ describe('models page', () => {
     expect(screen.getAllByText('glm-4-plus').length).toBeGreaterThan(0)
     expect(router.state.location.search).toEqual({ vendor: 'zhipu' })
 
-    const chips = screen.getByTestId('vendor-model-chips')
-    expect(within(chips).getByRole('link', { name: /glm-4-plus/ }).getAttribute('href')).toBe(
-      '/models/glm-4-plus',
-    )
-    expect(chips.textContent).toContain('最低输入价 ¥3.00/M')
+    // The duplicate per-vendor mini cards are gone; the table row is the
+    // single source of truth for the filtered model.
+    const link = screen.getByRole('link', { name: 'glm-4-plus' })
+    expect(link.getAttribute('href')).toBe('/models/glm-4-plus')
+    expect(link.closest('tr')?.textContent).toContain('¥3.00')
     expect(screen.getByRole('button', { name: /智谱/ }).getAttribute('aria-pressed')).toBe(
       'true',
     )
@@ -285,6 +314,44 @@ describe('models page', () => {
     )
     expect(screen.queryByText('deepseek-chat')).toBeNull()
     expect(screen.queryByText('doubao-pro')).toBeNull()
-    expect(screen.getByTestId('vendor-model-chips')).toBeTruthy()
+    expect(screen.getAllByText('glm-4-plus').length).toBeGreaterThan(0)
+  })
+
+  it('expands a row in place with price comparison, channels and reliability', async () => {
+    renderPage()
+    await screen.findByText('deepseek-chat')
+
+    fireEvent.click(screen.getByText('deepseek-chat').closest('tr')!)
+
+    expect(await screen.findByText('价格对比（¥ / 百万 tokens）')).toBeTruthy()
+    expect(screen.getByText('渠道最低价')).toBeTruthy()
+    expect(screen.getByText('可靠性')).toBeTruthy()
+    expect(screen.getAllByText('99.5%').length).toBeGreaterThan(0)
+    expect(screen.getByText('99.8%')).toBeTruthy()
+    expect(screen.getByText('64%')).toBeTruthy()
+    expect(screen.getByText('131K')).toBeTruthy()
+  })
+
+  it('shows the 24h success column when request metrics exist', async () => {
+    renderPage()
+    await screen.findByText('deepseek-chat')
+    expect(screen.getAllByText('24h 成功率').length).toBeGreaterThan(0)
+  })
+
+  it('filters to official supply from the URL', async () => {
+    renderPage('/models?official=true')
+    await screen.findByText('deepseek-chat')
+    expect(screen.queryByText('glm-4-plus')).toBeNull()
+    expect(screen.queryByText('doubao-pro')).toBeNull()
+  })
+
+  it('sorts by success rate from the URL', async () => {
+    renderPage('/models?sort=success')
+    await screen.findByText('deepseek-chat')
+    const names = screen
+      .getAllByRole('link', { name: /deepseek-(chat|r1)/ })
+      .map((link) => link.textContent)
+    expect(names[0]).toBe('deepseek-chat')
+    expect(names[1]).toBe('deepseek-r1')
   })
 })

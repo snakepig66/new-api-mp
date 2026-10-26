@@ -555,6 +555,8 @@ func adminBanListing(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
 		return
 	}
+	notifySeller(db, id, NotificationKindReview, "渠道已下架",
+		"渠道因审核未通过被下架。如有疑问请联系运营。", "/console/listings")
 	common.ApiSuccess(c, gin.H{"id": id, "status": ListingBanned})
 }
 
@@ -573,6 +575,8 @@ func adminUnbanListing(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
 		return
 	}
+	notifySeller(db, id, NotificationKindReview, "渠道已恢复",
+		"渠道已恢复为暂停状态，请重新检测后恢复接单。", "/console/listings")
 	common.ApiSuccess(c, gin.H{"id": id, "status": ListingPaused})
 }
 
@@ -647,6 +651,17 @@ func adminPayoutAction(c *gin.Context, fn func(db *gorm.DB, payoutID, reviewerID
 		}
 		return
 	}
+	var payout Payout
+	if err := db.Select("status").Where("id = ?", id).Take(&payout).Error; err == nil {
+		switch payout.Status {
+		case PayoutApproved:
+			notifyUser(db, sellerID, NotificationKindWithdrawal, "提现已通过",
+				"提现申请已通过审核，等待打款。", "/console/earnings")
+		case PayoutRejected:
+			notifyUser(db, sellerID, NotificationKindWithdrawal, "提现未通过",
+				"提现申请未通过审核，金额已回到可提现余额。", "/console/earnings")
+		}
+	}
 	common.ApiSuccess(c, gin.H{"id": id})
 }
 
@@ -690,6 +705,8 @@ func adminMarkPayoutPaid(c *gin.Context) {
 		}
 		return
 	}
+	notifyUser(db, sellerID, NotificationKindWithdrawal, "提现已打款",
+		"提现金额已打款，请留意收款账户。", "/console/earnings")
 	common.ApiSuccess(c, gin.H{"id": id})
 }
 

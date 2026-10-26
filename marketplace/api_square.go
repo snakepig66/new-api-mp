@@ -93,6 +93,13 @@ type squareModelEntry struct {
 	OfficialAvailable bool      `json:"official_available"`
 	BuyerPriceSource  string    `json:"buyer_price_source"`
 	GeneratedAt       time.Time `json:"generated_at"`
+	// Public model metadata (mp_models): capability tags and context window.
+	Capabilities  []string `json:"capabilities,omitempty"`
+	ContextLength int      `json:"context_length,omitempty"`
+	// Metrics is the 1h/24h/7d reliability summary derived from mp_requests
+	// (see square_metrics.go). Nil when the model has no request history at
+	// all — the UI then hides the reliability columns instead of showing 0.
+	Metrics *squareMetrics `json:"metrics,omitempty"`
 }
 
 // squareOfficialPrices is one tier's raw official price-book row (no flat
@@ -115,6 +122,9 @@ type squareChannelView struct {
 	ListingCount       int            `json:"listing_count"`
 	MinMultiplierMilli int64          `json:"min_multiplier_milli"`
 	MaxMultiplierMilli int64          `json:"max_multiplier_milli"`
+	// Metrics is the channel's 24h success rate/latency; nil when it served
+	// no marketplace request in the window.
+	Metrics *squareChannelMetrics `json:"metrics,omitempty"`
 }
 
 // squareModelDetail is the single-model square view: the list entry plus the
@@ -455,6 +465,8 @@ func buildSquareEntry(db *gorm.DB, cal *Calendar, model ModelPool, s *squareSupp
 		Prices:           make(map[string]squareTierPrices, 2),
 		BuyerPriceSource: BuyerPriceSourceOfficial,
 		GeneratedAt:      now,
+		Capabilities:     parseStringList(model.Capabilities),
+		ContextLength:    model.ContextLength,
 	}
 	mult, coeff, vendor := int64(1000), int64(1000), origin
 	if s != nil {
@@ -515,6 +527,13 @@ func listSquareModels(c *gin.Context) {
 		return
 	}
 	now := time.Now()
+	metrics, err := cachedSquareModelMetrics(db, now)
+	if err != nil {
+		// Reliability is decorative: a metrics failure must not take the
+		// price list down. The columns are simply absent.
+		common.SysError(common.LogText("marketplace: square metrics: %s", err.Error()))
+		metrics = nil
+	}
 	items := make([]squareModelEntry, 0, len(pool))
 	for _, model := range pool {
 		entry, ok := buildSquareEntry(db, cal, model, supply[model.Name], now)
@@ -523,6 +542,9 @@ func listSquareModels(c *gin.Context) {
 			// the whole page (§3.2).
 			common.SysError(common.LogText("marketplace: square: no covering price for %s, hidden from square", model.Name))
 			continue
+		}
+		if metrics != nil {
+			entry.Metrics = metrics[model.Name]
 		}
 		items = append(items, entry)
 	}
@@ -565,6 +587,13 @@ func getSquareModel(c *gin.Context) {
 		OfficialPrices:     make(map[string]squareOfficialPrices, 3),
 		Channels:           loadSquareChannels(db, model.Name, s),
 	}
+	now := time.Now()
+	detail.Channels = attachChannelMetrics(db, model.Name, detail.Channels, now)
+	if all, err := loadSquareModelMetrics(db, now); err == nil {
+		detail.Metrics = all[model.Name]
+	} else {
+		common.SysError(common.LogText("marketplace: square metrics: %s", err.Error()))
+	}
 	if s != nil && s.count > 0 {
 		detail.MultiplierMinMilli = s.minMult
 		detail.MultiplierMaxMilli = s.maxMult
@@ -594,8 +623,7 @@ func getSquareModel(c *gin.Context) {
 // qualification for the standard model and an active channel definition.
 // Channels are returned in stable slug order; listing aggregates come from
 // live/canary supply (zero when the channel has no listing right now).
-func loadSquareChannels(db *gorm.DB, model string, s *squareSupply) []squareChannelView {
-	var rows []ChannelModel
+func loadSquareChannels(db *gorm.DB, model string, s *squareSupply) []squareChannelView {	var rows []ChannelModel
 	if err := db.Where("model = ? AND verified = ? AND status = ?", model, true, PoolStatusActive).
 		Order("channel_slug ASC").
 		Find(&rows).Error; err != nil {
@@ -637,4 +665,19 @@ func loadSquareChannels(db *gorm.DB, model string, s *squareSupply) []squareChan
 		out = append(out, view)
 	}
 	return out
+}
+
+// attachChannelMetrics merges the 24h per-channel reliability into the channel
+// views. A query failure leaves Metrics nil (the columns hide) instead of
+// failing the detail page.
+func attachChannelMetrics(db *gorm.DB, model string, channels []squareChannelView, now time.Time) []squareChannelView {
+	metrics, err := loadSquareChannelMetrics(db, model, now)
+	if err != nil {
+		common.SysError(common.LogText("marketplace: square channel metrics: %s", err.Error()))
+		return channels
+	}
+	for i := range channels {
+		channels[i].Metrics = metrics[channels[i].ChannelSlug]
+	}
+	return channels
 }

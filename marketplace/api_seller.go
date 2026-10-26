@@ -83,6 +83,10 @@ func RegisterSellerRoutes(g *gin.RouterGroup) { registerSellerRoutes(g) }
 func registerSellerRoutes(g *gin.RouterGroup) {
 	g.POST("/seller/listings", postSellerListing)
 	g.GET("/seller/listings", listSellerListings)
+	// Static route, registered before the :id parameter route on purpose: gin
+	// matches static segments first, so /listings/health never parses "health"
+	// as a listing id.
+	g.GET("/seller/listings/health", getSellerListingsHealth)
 	g.POST("/seller/listings/:id/multiplier", updateSellerMultiplier)
 	g.POST("/seller/listings/:id/key", replaceSellerKey)
 	g.POST("/seller/listings/:id/verify", verifySellerListing)
@@ -173,14 +177,14 @@ func requireOwnListing(c *gin.Context, db *gorm.DB, id, sellerID int64) (Listing
 // sellerListingRequest is the POST /seller/listings body — the seller-facing
 // subset of CreateListingInput (seller_id is taken from the session).
 type sellerListingRequest struct {
-	VendorID        string `json:"vendor_id"`
-	APIKey          string `json:"api_key"`
+	VendorID        string   `json:"vendor_id"`
+	APIKey          string   `json:"api_key"`
 	Models          []string `json:"models"`
-	MultiplierMilli int64  `json:"multiplier_milli"`
-	Concurrency     int    `json:"concurrency"`
-	RPM             int    `json:"rpm"`
-	DailyCapMicro   int64  `json:"daily_cap_micro"`
-	Hours           string `json:"hours"`
+	MultiplierMilli int64    `json:"multiplier_milli"`
+	Concurrency     int      `json:"concurrency"`
+	RPM             int      `json:"rpm"`
+	DailyCapMicro   int64    `json:"daily_cap_micro"`
+	Hours           string   `json:"hours"`
 	// PlanTermsAccepted is required (true) for plan channels; it is the
 	// seller's explicit confirmation that the plan terms allow sharing.
 	PlanTermsAccepted bool `json:"plan_terms_accepted"`
@@ -645,9 +649,17 @@ func getSellerBalance(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query payouts"))
 		return
 	}
+	var paid int64
+	if err := db.Model(&Payout{}).
+		Where("seller_id = ? AND status = ?", sellerID, PayoutPaid).
+		Select("COALESCE(SUM(amount_micro), 0)").Scan(&paid).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query paid payouts"))
+		return
+	}
 	common.ApiSuccess(c, gin.H{
 		"available_micro": int64(available),
 		"pending_micro":   int64(pending),
+		"paid_micro":      paid,
 		"payouts":         payouts,
 	})
 }
@@ -770,8 +782,8 @@ func postSellerOnboarding(c *gin.Context) {
 // ---------------------------------------------------------------------------
 
 type sellerProbeRequest struct {
-	VendorID string `json:"vendor_id"`
-	APIKey   string `json:"api_key"`
+	VendorID string   `json:"vendor_id"`
+	APIKey   string   `json:"api_key"`
 	Models   []string `json:"models"`
 	// CustomBaseURL probes a seller-defined upstream instead of a registered
 	// channel; VendorID is ignored when set (custom_channel.go).
@@ -1110,6 +1122,170 @@ func getSellerListingDetail(c *gin.Context) {
 }
 
 // ---------------------------------------------------------------------------
+// 渠道健康聚合 (§5): 每个渠道的最近一次巡检 + 今日请求/成功率/收入.
+// ---------------------------------------------------------------------------
+
+// sellerHealthProbe is the latest probe summary on a seller health card. It
+// carries the probe's own ok/latency plus fail_reason and per-model results
+// decoded from detail; no key material is ever present in a probe.
+type sellerHealthProbe struct {
+	Type         string              `json:"type"`
+	OK           bool                `json:"ok"`
+	LatencyMs    int64               `json:"latency_ms"`
+	FailReason   string              `json:"fail_reason"`
+	ModelResults []ModelVerifyResult `json:"model_results"`
+	CreatedAt    time.Time           `json:"created_at"`
+}
+
+// sellerListingHealth is one row of GET /seller/listings/health. Today is the
+// Asia/Shanghai calendar day, matching seller stats.
+type sellerListingHealth struct {
+	ListingID             int64              `json:"listing_id"`
+	LatestProbe           *sellerHealthProbe `json:"latest_probe"`
+	TodayRequests         int64              `json:"today_requests"`
+	TodaySuccessRateMilli int64              `json:"today_success_rate_milli"`
+	TodayIncomeMicro      int64              `json:"today_income_micro"`
+}
+
+// latestProbesByListing maps each listing to its newest probe of any type in
+// two queries (max id per listing, then the rows), so health cards never load
+// the full probe history.
+func latestProbesByListing(db *gorm.DB, listingIDs []int64) map[int64]Probe {
+	out := make(map[int64]Probe, len(listingIDs))
+	if len(listingIDs) == 0 {
+		return out
+	}
+	var probeIDs []int64
+	if err := db.Model(&Probe{}).
+		Where("listing_id IN ?", listingIDs).
+		Group("listing_id").Pluck("MAX(id)", &probeIDs).Error; err != nil || len(probeIDs) == 0 {
+		return out
+	}
+	var rows []Probe
+	if err := db.Where("id IN ?", probeIDs).Find(&rows).Error; err != nil {
+		return out
+	}
+	for _, p := range rows {
+		out[p.ListingID] = p
+	}
+	return out
+}
+
+// sellerHealthProbeView decodes a probe's detail into the health-card shape.
+func sellerHealthProbeView(p Probe) *sellerHealthProbe {
+	var detail struct {
+		FailReason   string              `json:"fail_reason"`
+		ModelResults []ModelVerifyResult `json:"model_results"`
+	}
+	_ = common.Unmarshal([]byte(p.Detail), &detail)
+	results := detail.ModelResults
+	if results == nil {
+		results = []ModelVerifyResult{}
+	}
+	return &sellerHealthProbe{
+		Type:         p.Type,
+		OK:           p.OK,
+		LatencyMs:    p.LatencyMs,
+		FailReason:   detail.FailReason,
+		ModelResults: results,
+		CreatedAt:    p.CreatedAt,
+	}
+}
+
+// getSellerListingsHealth serves GET /seller/listings/health — one health row
+// per own listing: latest probe, today's request count and success rate, and
+// today's seller credit. Queries are grouped by listing so the endpoint keeps
+// a constant query count regardless of listing count.
+func getSellerListingsHealth(c *gin.Context) {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	rows, err := ListListingsBySeller(db, sellerID)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query listings"))
+		return
+	}
+	ids := make([]int64, 0, len(rows))
+	for i := range rows {
+		ids = append(ids, rows[i].ID)
+	}
+	latest := latestProbesByListing(db, ids)
+
+	loc, err := time.LoadLocation(shanghaiTZ)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to load timezone"))
+		return
+	}
+	now := time.Now().In(loc)
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+
+	type requestAgg struct {
+		ListingID int64
+		Total     int64
+		Success   int64
+	}
+	reqByListing := make(map[int64]requestAgg, len(ids))
+	if len(ids) > 0 {
+		var aggs []requestAgg
+		if err := db.Table("mp_requests").
+			Select("listing_id, COUNT(*) AS total, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS success", RequestSuccess).
+			Where("seller_id = ? AND listing_id IN ? AND created_at >= ?", sellerID, ids, todayStart).
+			Group("listing_id").Scan(&aggs).Error; err != nil {
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query today's requests"))
+			return
+		}
+		for _, agg := range aggs {
+			reqByListing[agg.ListingID] = agg
+		}
+	}
+
+	type incomeAgg struct {
+		ListingID   int64
+		IncomeMicro int64
+	}
+	incomeByListing := make(map[int64]int64, len(ids))
+	if len(ids) > 0 {
+		var aggs []incomeAgg
+		if err := db.Table("mp_ledger AS l").
+			Select("r.listing_id AS listing_id, COALESCE(SUM(l.amount_micro), 0) AS income_micro").
+			Joins("JOIN mp_requests AS r ON r.request_id = l.request_id").
+			Where("r.seller_id = ? AND r.listing_id IN ? AND l.entry_type = ? AND l.status <> ? AND l.created_at >= ?",
+				sellerID, ids, EntrySellerCredit, LedgerReversed, todayStart).
+			Group("r.listing_id").Scan(&aggs).Error; err != nil {
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query today's income"))
+			return
+		}
+		for _, agg := range aggs {
+			incomeByListing[agg.ListingID] = agg.IncomeMicro
+		}
+	}
+
+	out := make([]sellerListingHealth, 0, len(rows))
+	for _, listing := range rows {
+		row := sellerListingHealth{
+			ListingID:        listing.ID,
+			TodayIncomeMicro: incomeByListing[listing.ID],
+		}
+		if agg, ok := reqByListing[listing.ID]; ok {
+			row.TodayRequests = agg.Total
+			if agg.Total > 0 {
+				row.TodaySuccessRateMilli = agg.Success * 1000 / agg.Total
+			}
+		}
+		if p, ok := latest[listing.ID]; ok {
+			row.LatestProbe = sellerHealthProbeView(p)
+		}
+		out = append(out, row)
+	}
+	common.ApiSuccess(c, out)
+}
+
+// ---------------------------------------------------------------------------
 // 收益统计 (§5): 待结算 / 可提现 / 本月收入 / 平台费 / 近 30 天按日收入.
 // ---------------------------------------------------------------------------
 
@@ -1179,6 +1355,15 @@ func getSellerStats(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query platform fees"))
 		return
 	}
+	// paid is the cumulative amount already disbursed (only the paid status
+	// counts; pending/approved requests are still reserved, see balance).
+	var paid int64
+	if err := db.Model(&Payout{}).
+		Where("seller_id = ? AND status = ?", sellerID, PayoutPaid).
+		Select("COALESCE(SUM(amount_micro), 0)").Scan(&paid).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query paid payouts"))
+		return
+	}
 
 	type dailyRow struct {
 		CreatedAt   time.Time
@@ -1207,6 +1392,7 @@ func getSellerStats(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{
 		"pending_micro":            pending,
 		"available_micro":          int64(available),
+		"paid_micro":               paid,
 		"month_income_micro":       monthIncome,
 		"platform_fee_total_micro": fees,
 		"daily":                    series,

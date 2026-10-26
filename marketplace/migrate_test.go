@@ -33,6 +33,7 @@ func TestMigrateCreatesTables(t *testing.T) {
 		"mp_models",
 		"mp_channels",
 		"mp_channel_models",
+		"mp_notifications",
 	}
 	var tables []string
 	switch db.Dialector.Name() {

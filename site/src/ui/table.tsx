@@ -1,6 +1,7 @@
 import {
   createContext,
   useContext,
+  type HTMLAttributes,
   type ReactNode,
   type ThHTMLAttributes,
   type TdHTMLAttributes,
@@ -56,9 +57,9 @@ export function TableRow({
   children,
   className,
   interactive = false,
-}: {
+  ...props
+}: HTMLAttributes<HTMLTableRowElement> & {
   children: ReactNode
-  className?: string
   interactive?: boolean
 }) {
   return (
@@ -68,6 +69,7 @@ export function TableRow({
         interactive && 'cursor-pointer',
         className,
       )}
+      {...props}
     >
       {children}
     </tr>

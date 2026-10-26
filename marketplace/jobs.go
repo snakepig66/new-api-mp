@@ -238,16 +238,54 @@ func patrolOneListingWithClient(db *gorm.DB, limiter *VerifyLimiter, client *htt
 		limiter.Release()
 		return ErrVendorNotWhitelisted
 	}
-	modelName := ""
-	probeModel := ""
+	// Probe every listed model, not just the first: a channel is only as
+	// reliable as its worst listed model, and the old first-model probe hid
+	// failures on everything after it. The /models key check runs once; each
+	// model then gets its own real max_tokens=1 call.
+	base := VendorOpenAIBase(vendor)
+	keyRes := VerifyListingKeyWithModel(ctx, client, vendor, apiKey, "")
+	firstModel := ""
+	firstUpstream := ""
+	passed := 0
+	modelResults := make([]ModelVerifyResult, 0, len(l.Models))
 	for _, m := range l.Models {
-		if cm, mapped := ChannelModelFor(db, l.Vendor, m); mapped {
-			modelName = m
-			probeModel = cm.UpstreamModel
-			break
+		cm, mapped := ChannelModelFor(db, l.Vendor, m)
+		if !mapped {
+			continue
+		}
+		if firstModel == "" {
+			firstModel, firstUpstream = m, cm.UpstreamModel
+		}
+		mr := ModelVerifyResult{Model: m, UpstreamModel: cm.UpstreamModel}
+		switch {
+		case !keyRes.KeyValid || len(keyRes.Models) == 0:
+			mr.FailReason = "Key 未能读取模型列表，未进行调用检测"
+		case !keyExposesModel(keyRes.Models, cm.UpstreamModel):
+			mr.FailReason = "该模型不在这个 Key 的可用模型列表中"
+		default:
+			mr.OK, mr.PromptCacheSupport, mr.LatencyMs, mr.FailReason =
+				probeModelCall(ctx, client, base, cm.UpstreamModel, apiKey)
+		}
+		if mr.OK {
+			passed++
+		}
+		modelResults = append(modelResults, mr)
+	}
+	res := keyRes
+	res.ModelResults = modelResults
+	res.OK = keyRes.KeyValid && passed > 0
+	if !res.OK && res.FailReason == "" {
+		for _, mr := range modelResults {
+			if !mr.OK && mr.FailReason != "" {
+				res.FailReason = mr.FailReason
+				break
+			}
+		}
+		if res.FailReason == "" {
+			res.FailReason = "no listed model could be called"
 		}
 	}
-	res := VerifyListingKeyWithModel(ctx, client, vendor, apiKey, probeModel)
+	modelName, probeModel := firstModel, firstUpstream
 	// Fingerprint spot check (only when the platform holds a key for the
 	// origin vendor). A mismatch is not a key failure; it is counted below.
 	fingerprintChecked := false
@@ -289,6 +327,7 @@ func patrolOneListingWithClient(db *gorm.DB, limiter *VerifyLimiter, client *htt
 		"prompt_cache":        res.PromptCacheSupport,
 		"fail_reason":         res.FailReason,
 		"fingerprint_checked": fingerprintChecked,
+		"model_results":       modelResults,
 	}
 	if fingerprintChecked {
 		detailMap["fingerprint_ok"] = fingerprintOK

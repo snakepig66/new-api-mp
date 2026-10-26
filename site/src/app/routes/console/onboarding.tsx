@@ -19,7 +19,7 @@ import {
 import { Field } from '@/features/seller/components'
 import { notify } from '@/features/seller/components'
 import { sellerErrorMessage } from '@/features/seller/errors'
-import { completedStepCount, isSellerActive, sellerStepIndex } from '@/features/seller/status'
+import { isSellerActive } from '@/features/seller/status'
 
 export const Route = createFileRoute('/console/onboarding')({
   component: SellerOnboardingPage,
@@ -73,23 +73,39 @@ const alipaySchema = z.object({
 type AlipayForm = z.infer<typeof alipaySchema>
 
 function StepRail({ seller }: { seller: SellerIdentity }) {
-  const current = sellerStepIndex(seller.progress)
-  const done = completedStepCount(seller.progress)
+  const progress = seller.progress
+  const agreementDone = progress.agreement_signed
+  const realNameDone = progress.real_name_verified
+  const payoutDone = progress.payout_account_bound
+  // 协议 → 资料 → 收款 → 完成. 资料/收款 stay optional for sharing but are
+  // required before withdrawal, so the rail always shows them.
+  const steps = [
+    { title: page.stepTitles[0], hint: page.stepHints[0], done: agreementDone, optional: false },
+    { title: page.stepTitles[1], hint: page.stepHints[1], done: realNameDone, optional: true },
+    { title: page.stepTitles[2], hint: page.stepHints[2], done: payoutDone, optional: true },
+    {
+      title: page.stepTitles[3],
+      hint: page.stepHints[3],
+      done: agreementDone && realNameDone && payoutDone,
+      optional: false,
+    },
+  ]
+  const done = steps.filter((step) => step.done).length
+  const current = steps.findIndex((step) => !step.done)
 
   return (
     <section aria-label={page.progress} className="mt-6 rounded-md border border-line bg-bg p-6">
       <div className="flex items-baseline justify-between">
         <h2 className="text-[16px] font-semibold tracking-tight text-ink">{page.progress}</h2>
-        <span className="tabular-nums text-[13px] text-ink-3">{done}/3</span>
+        <span className="tabular-nums text-[13px] text-ink-3">{done}/4</span>
       </div>
-      <ol className="mt-5 grid gap-3 sm:grid-cols-3">
-        {page.stepTitles.map((title, index) => {
-          const completed = index < current
-          const active = index === current && current < 3
-          const optional = index > 0
+      <ol className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {steps.map((step, index) => {
+          const completed = step.done
+          const active = index === current
           return (
             <li
-              key={title}
+              key={step.title}
               aria-current={active ? 'step' : undefined}
               className={cn(
                 'relative rounded-md border p-4',
@@ -128,11 +144,11 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
                     completed || active ? 'text-ink' : 'text-ink-3',
                   )}
                 >
-                  {title}
+                  {step.title}
                 </span>
-                {optional ? <Tag>{page.state.optional}</Tag> : null}
+                {step.optional ? <Tag>{page.state.optional}</Tag> : null}
               </div>
-              <p className="mt-2 text-[13px] leading-5 text-ink-3">{page.stepHints[index]}</p>
+              <p className="mt-2 text-[13px] leading-5 text-ink-3">{step.hint}</p>
               <p className="mt-1 text-[13px] text-ink-3">
                 {completed ? page.state.done : active ? page.state.current : page.state.todo}
               </p>
@@ -296,7 +312,7 @@ function OptionalDone({ label }: { label: string }) {
   )
 }
 
-function SellerOnboardingPage() {
+export function SellerOnboardingPage() {
   const toast = useToast()
   const queryClient = useQueryClient()
   const { data } = useQuery(meQuery())

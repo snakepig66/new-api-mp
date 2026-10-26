@@ -108,6 +108,29 @@ export interface SellerListingDetail extends SellerListing {
   probes: SellerProbe[]
 }
 
+/** Newest patrol/verify probe summarised on a health card. */
+export interface SellerHealthProbe {
+  type: string
+  ok: boolean
+  latency_ms: number
+  fail_reason: string
+  model_results: VerifyModelResult[]
+  created_at: string
+}
+
+/**
+ * One row of GET /marketplace/seller/listings/health. Today is the
+ * Asia/Shanghai calendar day; today_requests = 0 means the card has no sample.
+ */
+export interface SellerListingHealth {
+  listing_id: number
+  latest_probe: SellerHealthProbe | null
+  today_requests: number
+  /** 0..1000; 980 = 98%, 900 = 90%. */
+  today_success_rate_milli: number
+  today_income_micro: number | string
+}
+
 export interface CreateListingInput {
   vendor_id: string
   api_key: string
@@ -167,6 +190,8 @@ export interface SellerDailyIncome {
 export interface SellerStats {
   pending_micro: number | string
   available_micro: number | string
+  /** Cumulative disbursed withdrawals (paid payouts only). */
+  paid_micro: number | string
   month_income_micro: number | string
   platform_fee_total_micro: number | string
   daily: SellerDailyIncome[]
@@ -243,6 +268,8 @@ export function normalizePayout(raw: unknown): Payout {
 export interface SellerBalance {
   available_micro: number | string
   pending_micro: number | string
+  /** Cumulative disbursed withdrawals (paid payouts only). */
+  paid_micro: number | string
   payouts: Payout[]
 }
 
@@ -371,6 +398,13 @@ export const sellerListingsQuery = () =>
     refetchInterval: (query) => verifyingRefetchInterval(query.state.data),
   })
 
+export const sellerListingsHealthQuery = () =>
+  queryOptions({
+    queryKey: ['marketplace', 'seller', 'listings', 'health'],
+    queryFn: () => api.get<SellerListingHealth[]>(`${sellerBase}/listings/health`),
+    staleTime: 30_000,
+  })
+
 export const sellerListingDetailQuery = (id: number) =>
   queryOptions({
     queryKey: ['marketplace', 'seller', 'listing', id],
@@ -394,11 +428,13 @@ export const sellerBalanceQuery = () =>
       const raw = await api.get<{
         available_micro: number | string
         pending_micro: number | string
+        paid_micro?: number | string
         payouts: unknown[]
       }>(`${sellerBase}/balance`)
       return {
         available_micro: raw.available_micro,
         pending_micro: raw.pending_micro,
+        paid_micro: raw.paid_micro ?? 0,
         payouts: (raw.payouts ?? []).map(normalizePayout),
       }
     },
