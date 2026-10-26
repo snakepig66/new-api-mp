@@ -159,6 +159,10 @@ type CreateListingInput struct {
 	// PlanTermsAccepted is the seller's explicit acknowledgement that a plan
 	// channel's terms allow sharing (required for kind=plan, §4).
 	PlanTermsAccepted bool
+	// CustomBaseURL opens a seller-defined third-party channel when VendorID
+	// is empty: the platform provisions a private channel row for the URL and
+	// derives the vendor id from it (custom_channel.go).
+	CustomBaseURL string
 }
 
 // validate checks every field that does not need the database. The vendor is
@@ -235,6 +239,22 @@ func dedupModels(models []string) []string {
 // column holds only the "mp-managed:<fp8>" placeholder — the real key lives
 // solely in Listing.KeyCiphertext.
 func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
+	// Seller-defined upstream: provision the private third-party channel first
+	// and derive the vendor id from it, then run the standard flow unchanged.
+	if strings.TrimSpace(in.VendorID) == "" && strings.TrimSpace(in.CustomBaseURL) != "" {
+		slug, err := ensureCustomChannel(db, in.SellerID, in.CustomBaseURL, in.Models)
+		if err != nil {
+			return Listing{}, err
+		}
+		in.VendorID = slug
+	}
+	// A custom channel is private to its owner: a slug that names another
+	// seller's upstream is refused even though the hash makes it unguessable.
+	if isCustomChannelSlug(in.VendorID) {
+		if owner, ok := customChannelOwner(in.VendorID); !ok || owner != in.SellerID {
+			return Listing{}, fmt.Errorf("%w: %q", ErrVendorNotWhitelisted, in.VendorID)
+		}
+	}
 	vendor, ok := lookupVendorForDB(db, in.VendorID)
 	if !ok {
 		return Listing{}, fmt.Errorf("%w: %q", ErrVendorNotWhitelisted, in.VendorID)

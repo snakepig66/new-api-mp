@@ -9,6 +9,7 @@ package marketplace
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"gorm.io/gorm"
@@ -44,12 +45,19 @@ func Init(db *gorm.DB) error {
 	if err := LoadExtraVendorsFromEnv(); err != nil {
 		return fmt.Errorf("marketplace init: %w", err)
 	}
-	// Egress whitelist (§3.11/§4.5): MP_EGRESS_DOMAINS overrides the built-in
-	// host list derived from the whitelisted vendors' protocol URLs; the
+	// Egress whitelist (§3.11/§4.5): MP_EGRESS_DOMAINS adds deployment hosts
+	// on top of the pool-derived list — seller-defined custom channels extend
+	// the pool at runtime, so the env no longer replaces the pool set; the
 	// vendor-declared subdomain patterns (Bailian workspace domains) always
 	// apply and are anchored by SetEgressPatterns.
 	if domains := os.Getenv("MP_EGRESS_DOMAINS"); domains != "" {
-		SetEgressDomains(strings.Split(domains, ","))
+		merged := VendorHosts()
+		for _, d := range strings.Split(domains, ",") {
+			if d = strings.TrimSpace(d); d != "" && !slices.Contains(merged, d) {
+				merged = append(merged, d)
+			}
+		}
+		SetEgressDomains(merged)
 	} else {
 		SetEgressDomains(VendorHosts())
 	}

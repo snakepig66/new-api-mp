@@ -172,17 +172,20 @@ func requireOwnListing(c *gin.Context, db *gorm.DB, id, sellerID int64) (Listing
 // sellerListingRequest is the POST /seller/listings body — the seller-facing
 // subset of CreateListingInput (seller_id is taken from the session).
 type sellerListingRequest struct {
-	VendorID        string   `json:"vendor_id"`
-	APIKey          string   `json:"api_key"`
+	VendorID        string `json:"vendor_id"`
+	APIKey          string `json:"api_key"`
 	Models          []string `json:"models"`
-	MultiplierMilli int64    `json:"multiplier_milli"`
-	Concurrency     int      `json:"concurrency"`
-	RPM             int      `json:"rpm"`
-	DailyCapMicro   int64    `json:"daily_cap_micro"`
-	Hours           string   `json:"hours"`
+	MultiplierMilli int64  `json:"multiplier_milli"`
+	Concurrency     int    `json:"concurrency"`
+	RPM             int    `json:"rpm"`
+	DailyCapMicro   int64  `json:"daily_cap_micro"`
+	Hours           string `json:"hours"`
 	// PlanTermsAccepted is required (true) for plan channels; it is the
 	// seller's explicit confirmation that the plan terms allow sharing.
 	PlanTermsAccepted bool `json:"plan_terms_accepted"`
+	// CustomBaseURL opens a seller-defined third-party channel; VendorID is
+	// ignored when set (custom_channel.go).
+	CustomBaseURL string `json:"custom_base_url"`
 }
 
 // sellerListingView is one row of the seller's own listing list. It carries
@@ -333,6 +336,7 @@ func postSellerListing(c *gin.Context) {
 		DailyCapMicro:     req.DailyCapMicro,
 		Hours:             req.Hours,
 		PlanTermsAccepted: req.PlanTermsAccepted,
+		CustomBaseURL:     req.CustomBaseURL,
 	}
 	listing, err := CreateListing(db, in)
 	if err != nil {
@@ -765,9 +769,12 @@ func postSellerOnboarding(c *gin.Context) {
 // ---------------------------------------------------------------------------
 
 type sellerProbeRequest struct {
-	VendorID string   `json:"vendor_id"`
-	APIKey   string   `json:"api_key"`
+	VendorID string `json:"vendor_id"`
+	APIKey   string `json:"api_key"`
 	Models   []string `json:"models"`
+	// CustomBaseURL probes a seller-defined upstream instead of a registered
+	// channel; VendorID is ignored when set (custom_channel.go).
+	CustomBaseURL string `json:"custom_base_url"`
 }
 
 // sellerVerifyResources returns the async-verification client and limiter
@@ -794,7 +801,8 @@ func sellerVerifyResources() (*http.Client, *VerifyLimiter) {
 // probe names the first certified qualification's upstream model. No
 // mp_listings / mp_probes row is written and the key is never echoed.
 func postSellerListingProbe(c *gin.Context) {
-	if _, ok := sellerUserID(c); !ok {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
 		return
 	}
 	db := sellerDB(c)
@@ -811,11 +819,6 @@ func postSellerListingProbe(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("api_key is required"))
 		return
 	}
-	vendor, ok := lookupVendorForDB(db, req.VendorID)
-	if !ok {
-		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("vendor is not whitelisted"))
-		return
-	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
@@ -825,6 +828,64 @@ func postSellerListingProbe(c *gin.Context) {
 		return
 	}
 	defer limiter.Release()
+
+	// Seller-defined upstream: register the channel row (the host must pass
+	// the §3.11 egress guard on these dials), then probe the raw URL and
+	// intersect the upstream's model names with the platform catalogue.
+	if strings.TrimSpace(req.CustomBaseURL) != "" {
+		if _, err := ensureCustomChannel(db, sellerID, req.CustomBaseURL, nil); err != nil {
+			common.ApiErrorStatus(c, http.StatusBadRequest, err)
+			return
+		}
+		detected, keyRes, sellable := probeCustomChannelKey(ctx, client, db, req.CustomBaseURL, apiKey)
+		coefficients := make(map[string]int64, len(sellable))
+		for _, m := range sellable {
+			coefficients[m] = 1000
+		}
+		var balance *int64
+		promptCache := false
+		if keyRes.KeyValid && len(sellable) > 0 && detected != "" {
+			balance = fetchBalanceMicro(ctx, client, detected, apiKey)
+			promptCache = probePromptCacheSupport(ctx, client, detected, sellable[0], apiKey)
+		}
+		missing := make([]string, 0)
+		for _, m := range req.Models {
+			if !containsString(sellable, m) && !containsString(missing, m) {
+				missing = append(missing, m)
+			}
+		}
+		probeOK := keyRes.KeyValid && len(sellable) > 0 && len(missing) == 0
+		failReason := stripKey(keyRes.FailReason, apiKey)
+		if keyRes.KeyValid && len(sellable) == 0 {
+			failReason = "上游没有平台在售的模型（模型名需要与平台一致）"
+		}
+		common.ApiSuccess(c, gin.H{
+			"ok":              probeOK,
+			"models":          sellable,
+			"verified_models": sellable,
+			"coefficients":    coefficients,
+			"missing_models":  missing,
+			"latency_ms":      keyRes.LatencyMs,
+			"prompt_cache":    promptCache,
+			"balance_micro":   balance,
+			"key_valid":       keyRes.KeyValid,
+			"fail_reason":     failReason,
+		})
+		return
+	}
+	vendor, ok := lookupVendorForDB(db, req.VendorID)
+	if !ok {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("vendor is not whitelisted"))
+		return
+	}
+	// A custom channel is private to its owner; probing someone else's slug
+	// would leak their upstream address.
+	if isCustomChannelSlug(req.VendorID) {
+		if owner, owned := customChannelOwner(req.VendorID); !owned || owner != sellerID {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("vendor is not whitelisted"))
+			return
+		}
+	}
 
 	// §4 channel path: which upstream names can this key see on the channel?
 	keyRes := VerifyChannelKey(ctx, client, vendor, apiKey)

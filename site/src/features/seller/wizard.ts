@@ -11,11 +11,16 @@ import { parseYuanToMicro } from './money-input'
 export const WIZARD_STEP_COUNT = 4
 export const WIZARD_LAST_STEP = 3
 
+/** Sentinel vendor id for a seller-defined custom upstream (custom_channel.go). */
+export const CUSTOM_VENDOR_ID = 'custom'
+
 export type WizardStep = 0 | 1 | 2 | 3
 
 export interface WizardSnapshot {
   vendorId: string
   apiKey: string
+  /** Seller-defined upstream URL; required when vendorId is the custom sentinel. */
+  customBaseURL?: string
   probe: ProbeResult | null
   selectedModels: string[]
   multiplierMilli: number
@@ -45,6 +50,30 @@ function validKey(key: string): boolean {
   return key.trim().length >= 8 && !/\s/.test(key.trim())
 }
 
+/**
+ * A custom upstream must be an absolute https URL with a hostname and no
+ * query/fragment/userinfo. The backend re-validates (and the egress guard
+ * still judges every dial); this only keeps the wizard's own gate in step 0
+ * consistent with what the API accepts.
+ */
+export function validCustomURL(raw: string): boolean {
+  const text = raw.trim()
+  if (!/^https:\/\/[a-zA-Z0-9][a-zA-Z0-9.-]*(:\d+)?(\/[^\s?#]*)?$/.test(text)) return false
+  try {
+    const parsed = new URL(text)
+    return (
+      parsed.protocol === 'https:' &&
+      Boolean(parsed.hostname) &&
+      !parsed.username &&
+      !parsed.password &&
+      !parsed.search &&
+      !parsed.hash
+    )
+  } catch {
+    return false
+  }
+}
+
 function validMultiplier(milli: number): boolean {
   return Number.isInteger(milli) && milli >= 1 && milli <= 1000
 }
@@ -57,6 +86,9 @@ function validModels(snapshot: WizardSnapshot): boolean {
 export function canLeaveStep(step: WizardStep, snapshot: WizardSnapshot): boolean {
   switch (step) {
     case 0:
+      if (snapshot.vendorId === CUSTOM_VENDOR_ID) {
+        return validCustomURL(snapshot.customBaseURL ?? '')
+      }
       return snapshot.vendorId.trim().length > 0
     case 1:
       return validKey(snapshot.apiKey)

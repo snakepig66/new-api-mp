@@ -235,7 +235,7 @@ describe('new listing wizard', () => {
       await screen.findByText('你自己已上架过这个 Key（渠道 #77）。'),
     ).toBeTruthy()
     const link = screen.getByRole('link', { name: '查看已有渠道' }) as HTMLAnchorElement
-    expect(link.getAttribute('href')).toBe('/seller/listings/77')
+    expect(link.getAttribute('href')).toBe('/console/listings/77')
   })
 
   it('lists only the selected channel models after probing', async () => {
@@ -260,6 +260,58 @@ describe('new listing wizard', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '下一步' })).toHaveProperty('disabled', false)
+    })
+  })
+})
+
+describe('new listing wizard: custom upstream', () => {
+  it('gates step 0 on a valid custom URL and submits custom_base_url', async () => {
+    renderPage()
+    await screen.findByText('DeepSeek')
+
+    const customRadio = screen
+      .getAllByRole('radio')
+      .find((radio) => (radio as HTMLInputElement).value === 'custom') as HTMLInputElement
+    fireEvent.click(customRadio)
+
+    const urlInput = (await screen.findByLabelText('自定义上游地址')) as HTMLInputElement
+    fireEvent.change(urlInput, { target: { value: 'http://api.example.com' } })
+    fireEvent.blur(urlInput)
+    expect(
+      await screen.findByText('请填写 https 开头的完整域名地址（可带 /v1 等路径）。'),
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: '下一步' })).toHaveProperty('disabled', true)
+
+    fireEvent.change(urlInput, { target: { value: 'https://api.example.com/v1' } })
+    fireEvent.blur(urlInput)
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
+
+    const keyInput = (await screen.findByLabelText(/上游 API Key/)) as HTMLInputElement
+    fireEvent.change(keyInput, { target: { value: 'sk-custom-12345678' } })
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
+
+    // The probe names the custom upstream, not a registered channel.
+    await waitFor(() => {
+      const probeCall = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).includes('/listings/probe') && init?.method === 'POST',
+      )
+      const body = JSON.parse(String(probeCall?.[1]?.body))
+      expect(body.custom_base_url).toBe('https://api.example.com/v1')
+    })
+
+    // The probe's callable model is auto-selected; advance to the pricing step.
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }))
+    fireEvent.click(await screen.findByRole('button', { name: '提交渠道' }))
+
+    await waitFor(() => {
+      const createCall = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          String(url) === '/api/marketplace/seller/listings' && init?.method === 'POST',
+      )
+      const body = JSON.parse(String(createCall?.[1]?.body))
+      expect(body.custom_base_url).toBe('https://api.example.com/v1')
+      expect(body.vendor_id).toBe('')
+      expect(body.models).toEqual(['deepseek-flash'])
     })
   })
 })

@@ -241,13 +241,13 @@ function SellerOverviewPage() {
           actions={
             <>
               <Link
-                to="/seller/listings"
+                to="/console/listings"
                 className={buttonClasses('secondary', 'sm')}
               >
                 {copy.pages.sellerCommon.nav.listings}
               </Link>
               <Link
-                to="/seller/listings/new"
+                to="/console/listings/new"
                 className={buttonClasses('primary', 'sm')}
               >
                 {page.newListing}
@@ -337,7 +337,7 @@ function SellerOverviewPage() {
               next={page.health.emptyNext}
               action={
                 <Link
-                  to="/seller/listings/new"
+                  to="/console/listings/new"
                   className={buttonClasses('primary', 'md')}
                 >
                   {page.newListing}

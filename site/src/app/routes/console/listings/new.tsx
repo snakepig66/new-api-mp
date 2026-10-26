@@ -49,7 +49,9 @@ import {
 import {
   canLeaveStep,
   canSubmit,
+  CUSTOM_VENDOR_ID,
   previousWizardStep,
+  validCustomURL,
   type WizardSnapshot,
   type WizardStep,
 } from '@/features/seller/wizard'
@@ -70,6 +72,7 @@ const hourWindowSchema = z.object({
 const wizardSchema = z
   .object({
     vendor_id: z.string().min(1, validation.vendor),
+    custom_base_url: z.string(),
     api_key: z
       .string()
       .trim()
@@ -96,6 +99,13 @@ const wizardSchema = z
     plan_terms_accepted: z.boolean(),
   })
   .superRefine((value, ctx) => {
+    if (value.vendor_id === CUSTOM_VENDOR_ID && !validCustomURL(value.custom_base_url)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['custom_base_url'],
+        message: validation.customURL,
+      })
+    }
     if (!value.use_hours) return
     value.hours.forEach((window, index) => {
       if (!timeRe.test(window.start)) {
@@ -348,6 +358,7 @@ export function NewListingPage() {
     mode: 'onTouched',
     defaultValues: {
       vendor_id: '',
+      custom_base_url: '',
       api_key: '',
       models: [],
       multiplier_milli: 500,
@@ -374,9 +385,20 @@ export function NewListingPage() {
     (vendor) => sellerChannelKind(vendor) === 'third_party',
   )
   const vendorList = [...officialVendors, ...planVendors, ...thirdPartyVendors]
+  const isCustomVendor = values.vendor_id === CUSTOM_VENDOR_ID
   const selectedVendor = vendorList.find((vendor) => vendor.id === values.vendor_id)
-  const vendorModels = selectedVendor?.models ?? []
-  const vendorHasModels = Boolean(selectedVendor && vendorModels.length > 0)
+  // A custom upstream serves the platform catalogue verbatim (identity
+  // mapping), so the picker offers every model any channel can sell.
+  const customCatalogModels = Array.from(
+    new Set(allVendors.flatMap((vendor) => vendor.models)),
+  ).sort()
+  const vendorModels = isCustomVendor
+    ? customCatalogModels
+    : selectedVendor?.models ?? []
+  const vendorHasModels = Boolean(
+    (isCustomVendor && customCatalogModels.length > 0) ||
+      (selectedVendor && vendorModels.length > 0),
+  )
   const requiresPlanTerms = Boolean(
     selectedVendor && sellerChannelKind(selectedVendor) === 'plan',
   )
@@ -410,6 +432,7 @@ export function NewListingPage() {
   const snapshot: WizardSnapshot = {
     vendorId: values.vendor_id,
     apiKey: values.api_key,
+    customBaseURL: values.custom_base_url,
     probe: probe.data ?? null,
     selectedModels: values.models,
     multiplierMilli: values.multiplier_milli,
@@ -451,13 +474,18 @@ export function NewListingPage() {
       vendor_id: current.vendor_id,
       api_key: current.api_key.trim(),
       models: [],
+      custom_base_url:
+        current.vendor_id === CUSTOM_VENDOR_ID ? current.custom_base_url.trim() : undefined,
     })
   }
 
   async function handleNext() {
     if (step === 0) {
       if (!vendorHasModels) return
-      if (!(await form.trigger(['vendor_id']))) return
+      const valid = isCustomVendor
+        ? await form.trigger(['vendor_id', 'custom_base_url'])
+        : await form.trigger(['vendor_id'])
+      if (!valid) return
       setStep(1)
       return
     }
@@ -488,7 +516,7 @@ export function NewListingPage() {
     const hours =
       data.use_hours && data.hours.length > 0 ? JSON.stringify(data.hours) : ''
     create.mutate({
-      vendor_id: data.vendor_id,
+      vendor_id: data.vendor_id === CUSTOM_VENDOR_ID ? '' : data.vendor_id,
       api_key: data.api_key.trim(),
       models: data.models,
       multiplier_milli: data.multiplier_milli,
@@ -497,6 +525,8 @@ export function NewListingPage() {
       daily_cap_micro: Number(dailyCap),
       hours,
       plan_terms_accepted: requiresPlanTerms ? data.plan_terms_accepted : false,
+      custom_base_url:
+        data.vendor_id === CUSTOM_VENDOR_ID ? data.custom_base_url.trim() : undefined,
     })
   }
 
@@ -605,6 +635,60 @@ export function NewListingPage() {
                       emptyLabel={page.channel.thirdParty.description}
                       onSelect={selectVendor}
                     />
+                    <div>
+                      <h4 className="text-[13px] font-medium text-ink-3">
+                        {page.channel.custom.title}
+                      </h4>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                        <label
+                          className={cn(
+                            'flex cursor-pointer items-center justify-between gap-3 rounded-md border px-4 py-3.5 transition-colors',
+                            isCustomVendor
+                              ? 'border-brand bg-brand-soft/60'
+                              : 'border-line bg-bg hover:border-brand/40',
+                          )}
+                        >
+                          <span className="min-w-0">
+                            <span className="flex items-center gap-1.5">
+                              <span className="block truncate text-[13px] font-medium text-ink">
+                                {page.channel.custom.title}
+                              </span>
+                              <Tag>{page.channel.custom.badge}</Tag>
+                            </span>
+                            <span className="block truncate text-[13px] text-ink-3">
+                              {page.channel.custom.description}
+                            </span>
+                          </span>
+                          <input
+                            type="radio"
+                            name="vendor_id"
+                            value={CUSTOM_VENDOR_ID}
+                            checked={isCustomVendor}
+                            onChange={() => selectVendor(CUSTOM_VENDOR_ID)}
+                            className="h-4 w-4 shrink-0 accent-brand"
+                          />
+                        </label>
+                      </div>
+                      {isCustomVendor ? (
+                        <div className="mt-3 max-w-xl">
+                          <Field
+                            label={page.channel.custom.label}
+                            htmlFor="new-listing-custom-url"
+                            hint={page.channel.custom.hint}
+                            error={form.formState.errors.custom_base_url?.message}
+                          >
+                            <Input
+                              id="new-listing-custom-url"
+                              type="url"
+                              spellCheck={false}
+                              placeholder={page.channel.custom.placeholder}
+                              invalid={Boolean(form.formState.errors.custom_base_url)}
+                              {...form.register('custom_base_url')}
+                            />
+                          </Field>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 )}
               </Field>

@@ -7,6 +7,7 @@ import {
   canSubmit,
   nextWizardStep,
   previousWizardStep,
+  validCustomURL,
   type WizardSnapshot,
 } from './wizard'
 
@@ -98,5 +99,26 @@ describe('wizard submission gate', () => {
     expect(previousWizardStep(0)).toBe(0)
     expect(previousWizardStep(2)).toBe(1)
     expect(nextWizardStep(3, snapshot())).toBe(3)
+  })
+})
+
+describe('wizard custom-channel gate', () => {
+  it('requires a valid https URL before leaving step 0 on the custom sentinel', () => {
+    const custom = (url: string) => snapshot({ vendorId: 'custom', customBaseURL: url })
+    expect(canLeaveStep(0, custom(''))).toBe(false)
+    expect(canLeaveStep(0, custom('api.example.com'))).toBe(false)
+    expect(canLeaveStep(0, custom('http://api.example.com'))).toBe(false)
+    expect(canLeaveStep(0, custom('https://api.example.com'))).toBe(true)
+    expect(canLeaveStep(0, custom('https://api.example.com/v1'))).toBe(true)
+    expect(nextWizardStep(0, custom('http://api.example.com'))).toBe(0)
+    expect(nextWizardStep(0, custom('https://api.example.com'))).toBe(1)
+  })
+
+  it('validCustomURL refuses userinfo, query and whitespace', () => {
+    expect(validCustomURL('https://user:pass@api.example.com')).toBe(false)
+    expect(validCustomURL('https://api.example.com/v1?x=1')).toBe(false)
+    expect(validCustomURL('  https://api.example.com  ')).toBe(true)
+    expect(validCustomURL('https://api.example.com#frag')).toBe(false)
+    expect(validCustomURL('https://')).toBe(false)
   })
 })

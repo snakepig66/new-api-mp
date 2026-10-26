@@ -20,6 +20,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 )
 
 // vendorView is the public shape of one channel. No key material, no secret
@@ -75,17 +76,27 @@ func RegisterVendorsRoutes(g *gin.RouterGroup) {
 // listVendors serves the channel pool (status=active) with the currently
 // listable models. The database handle comes from the relay state; before
 // Init it answers 500 like every other marketplace endpoint.
+//
+// Seller-defined custom channels (slug "custom-…") are private to their
+// owner: an anonymous or third-party caller never sees them, while the owner
+// sees their own so a second listing can reuse the upstream.
 func listVendors(c *gin.Context) {
 	db, _ := relayState()
 	if db == nil {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("marketplace is not initialized"))
 		return
 	}
+	viewerID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
 	channels := ChannelPoolAll(db)
 	views := make([]vendorView, 0, len(channels))
 	for _, ch := range channels {
 		if ch.Status != PoolStatusActive {
 			continue
+		}
+		if isCustomChannelSlug(ch.Slug) {
+			if owner, ok := customChannelOwner(ch.Slug); !ok || owner != viewerID {
+				continue
+			}
 		}
 		vendor, ok := ChannelPoolAsVendor(db, ch.Slug)
 		if !ok {

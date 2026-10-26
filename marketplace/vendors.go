@@ -274,11 +274,18 @@ func refreshVendorRegistry(force bool) {
 	vendorRegistryDB = db
 	vendorRegistryAt = time.Now()
 	vendorRegistryMu.Unlock()
-	// Keep egress in step with admin channel edits. MP_EGRESS_DOMAINS remains
-	// the deployment override; patterns always come from the pool.
-	if os.Getenv("MP_EGRESS_DOMAINS") == "" {
-		SetEgressDomains(hosts)
+	// Keep egress in step with the pool. MP_EGRESS_DOMAINS adds deployment
+	// hosts on top of the pool (it no longer replaces the pool set, because
+	// seller-defined custom channels extend the pool at runtime); patterns
+	// always come from the pool.
+	if extra := strings.TrimSpace(os.Getenv("MP_EGRESS_DOMAINS")); extra != "" {
+		for _, d := range strings.Split(extra, ",") {
+			if d = strings.TrimSpace(d); d != "" && !slices.Contains(hosts, d) {
+				hosts = append(hosts, d)
+			}
+		}
 	}
+	SetEgressDomains(hosts)
 	if err := SetEgressPatterns(patterns); err != nil {
 		common.SysError(common.LogText("marketplace: vendor registry egress patterns: %s", err.Error()))
 	}

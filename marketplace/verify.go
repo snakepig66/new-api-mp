@@ -455,6 +455,15 @@ func VerifyListing(ctx context.Context, db *gorm.DB, client *http.Client, limite
 	if err := limiter.Acquire(ctx); err != nil {
 		return VerifyResult{}, errors.Join(err, revertVerificationToDraft(db, listingID))
 	}
+	// Seller-defined upstreams mount /models either at the base or under /v1;
+	// detect the answering form once and pin it (base + strip flag) so both
+	// this verification and the relay dial the same path.
+	if isCustomChannelSlug(listing.Vendor) {
+		vendor, err = normalizeCustomChannel(ctx, client, db, &listing, vendor, apiKey)
+		if err != nil {
+			return VerifyResult{}, errors.Join(err, revertVerificationToDraft(db, listingID))
+		}
+	}
 	// The key check itself (models + balance) runs without its single paid
 	// probe; every selected model gets its own real max_tokens=1 call below.
 	res := VerifyListingKeyWithModel(ctx, client, vendor, apiKey, "")

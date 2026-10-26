@@ -362,7 +362,7 @@ function SellerOnboardingPage() {
                 </h2>
                 <p className="mt-2 text-[14px] leading-6 text-ink-2">{page.done.reason}</p>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Link to="/seller/listings/new" className={buttonClasses('primary', 'md')}>
+                  <Link to="/console/listings/new" className={buttonClasses('primary', 'md')}>
                     {page.done.newListing}
                   </Link>
                   <Link to="/seller" className={buttonClasses('secondary', 'md')}>

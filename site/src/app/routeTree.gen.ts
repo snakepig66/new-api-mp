@@ -58,9 +58,6 @@ import { Route as ConsoleOpsModelsRouteImport } from './routes/console/ops/model
 import { Route as ConsoleOpsPricingRouteImport } from './routes/console/ops/pricing'
 import { Route as ConsoleOpsReviewRouteImport } from './routes/console/ops/review'
 import { Route as ConsoleOpsToolsRouteImport } from './routes/console/ops/tools'
-import { Route as SellerListingsIndexRouteImport } from './routes/seller/listings/index'
-import { Route as SellerListingsIdRouteImport } from './routes/seller/listings/$id'
-import { Route as SellerListingsNewRouteImport } from './routes/seller/listings/new'
 import { Route as ConsoleOpsPricingIndexRouteImport } from './routes/console/ops/pricing/index'
 import { Route as ConsoleOpsPricingPerCallRouteImport } from './routes/console/ops/pricing/per-call'
 import { Route as ConsoleOpsReviewIndexRouteImport } from './routes/console/ops/review/index'
@@ -313,21 +310,6 @@ const ConsoleOpsToolsRoute = ConsoleOpsToolsRouteImport.update({
   path: '/tools',
   getParentRoute: () => ConsoleOpsRoute,
 } as any)
-const SellerListingsIndexRoute = SellerListingsIndexRouteImport.update({
-  id: '/listings/',
-  path: '/listings/',
-  getParentRoute: () => SellerRoute,
-} as any)
-const SellerListingsIdRoute = SellerListingsIdRouteImport.update({
-  id: '/listings/$id',
-  path: '/listings/$id',
-  getParentRoute: () => SellerRoute,
-} as any)
-const SellerListingsNewRoute = SellerListingsNewRouteImport.update({
-  id: '/listings/new',
-  path: '/listings/new',
-  getParentRoute: () => SellerRoute,
-} as any)
 const ConsoleOpsPricingIndexRoute = ConsoleOpsPricingIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -406,13 +388,10 @@ export interface FileRoutesByFullPath {
   '/console/ops/pricing': typeof ConsoleOpsPricingRouteWithChildren
   '/console/ops/review': typeof ConsoleOpsReviewRouteWithChildren
   '/console/ops/tools': typeof ConsoleOpsToolsRouteWithChildren
-  '/seller/listings/$id': typeof SellerListingsIdRoute
-  '/seller/listings/new': typeof SellerListingsNewRoute
   '/console/earnings/': typeof ConsoleEarningsIndexRoute
   '/console/keys/': typeof ConsoleKeysIndexRoute
   '/console/listings/': typeof ConsoleListingsIndexRoute
   '/console/ops/': typeof ConsoleOpsIndexRoute
-  '/seller/listings/': typeof SellerListingsIndexRoute
   '/console/ops/pricing/per-call': typeof ConsoleOpsPricingPerCallRoute
   '/console/ops/review/payouts': typeof ConsoleOpsReviewPayoutsRoute
   '/console/ops/tools/reversal': typeof ConsoleOpsToolsReversalRoute
@@ -457,13 +436,10 @@ export interface FileRoutesByTo {
   '/console/listings/$id': typeof ConsoleListingsIdRoute
   '/console/listings/new': typeof ConsoleListingsNewRoute
   '/console/ops/models': typeof ConsoleOpsModelsRoute
-  '/seller/listings/$id': typeof SellerListingsIdRoute
-  '/seller/listings/new': typeof SellerListingsNewRoute
   '/console/earnings': typeof ConsoleEarningsIndexRoute
   '/console/keys': typeof ConsoleKeysIndexRoute
   '/console/listings': typeof ConsoleListingsIndexRoute
   '/console/ops': typeof ConsoleOpsIndexRoute
-  '/seller/listings': typeof SellerListingsIndexRoute
   '/console/ops/pricing/per-call': typeof ConsoleOpsPricingPerCallRoute
   '/console/ops/review/payouts': typeof ConsoleOpsReviewPayoutsRoute
   '/console/ops/tools/reversal': typeof ConsoleOpsToolsReversalRoute
@@ -518,13 +494,10 @@ export interface FileRoutesById {
   '/console/ops/pricing': typeof ConsoleOpsPricingRouteWithChildren
   '/console/ops/review': typeof ConsoleOpsReviewRouteWithChildren
   '/console/ops/tools': typeof ConsoleOpsToolsRouteWithChildren
-  '/seller/listings/$id': typeof SellerListingsIdRoute
-  '/seller/listings/new': typeof SellerListingsNewRoute
   '/console/earnings/': typeof ConsoleEarningsIndexRoute
   '/console/keys/': typeof ConsoleKeysIndexRoute
   '/console/listings/': typeof ConsoleListingsIndexRoute
   '/console/ops/': typeof ConsoleOpsIndexRoute
-  '/seller/listings/': typeof SellerListingsIndexRoute
   '/console/ops/pricing/per-call': typeof ConsoleOpsPricingPerCallRoute
   '/console/ops/review/payouts': typeof ConsoleOpsReviewPayoutsRoute
   '/console/ops/tools/reversal': typeof ConsoleOpsToolsReversalRoute
@@ -580,13 +553,10 @@ export interface FileRouteTypes {
     | '/console/ops/pricing'
     | '/console/ops/review'
     | '/console/ops/tools'
-    | '/seller/listings/$id'
-    | '/seller/listings/new'
     | '/console/earnings/'
     | '/console/keys/'
     | '/console/listings/'
     | '/console/ops/'
-    | '/seller/listings/'
     | '/console/ops/pricing/per-call'
     | '/console/ops/review/payouts'
     | '/console/ops/tools/reversal'
@@ -631,13 +601,10 @@ export interface FileRouteTypes {
     | '/console/listings/$id'
     | '/console/listings/new'
     | '/console/ops/models'
-    | '/seller/listings/$id'
-    | '/seller/listings/new'
     | '/console/earnings'
     | '/console/keys'
     | '/console/listings'
     | '/console/ops'
-    | '/seller/listings'
     | '/console/ops/pricing/per-call'
     | '/console/ops/review/payouts'
     | '/console/ops/tools/reversal'
@@ -691,13 +658,10 @@ export interface FileRouteTypes {
     | '/console/ops/pricing'
     | '/console/ops/review'
     | '/console/ops/tools'
-    | '/seller/listings/$id'
-    | '/seller/listings/new'
     | '/console/earnings/'
     | '/console/keys/'
     | '/console/listings/'
     | '/console/ops/'
-    | '/seller/listings/'
     | '/console/ops/pricing/per-call'
     | '/console/ops/review/payouts'
     | '/console/ops/tools/reversal'
@@ -1070,27 +1034,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleOpsToolsRouteImport
       parentRoute: typeof ConsoleOpsRoute
     }
-    '/seller/listings/': {
-      id: '/seller/listings/'
-      path: '/listings'
-      fullPath: '/seller/listings/'
-      preLoaderRoute: typeof SellerListingsIndexRouteImport
-      parentRoute: typeof SellerRoute
-    }
-    '/seller/listings/$id': {
-      id: '/seller/listings/$id'
-      path: '/listings/$id'
-      fullPath: '/seller/listings/$id'
-      preLoaderRoute: typeof SellerListingsIdRouteImport
-      parentRoute: typeof SellerRoute
-    }
-    '/seller/listings/new': {
-      id: '/seller/listings/new'
-      path: '/listings/new'
-      fullPath: '/seller/listings/new'
-      preLoaderRoute: typeof SellerListingsNewRouteImport
-      parentRoute: typeof SellerRoute
-    }
     '/console/ops/pricing/': {
       id: '/console/ops/pricing/'
       path: '/'
@@ -1286,9 +1229,6 @@ interface SellerRouteChildren {
   SellerPayoutsRoute: typeof SellerPayoutsRoute
   SellerRecordsRoute: typeof SellerRecordsRoute
   SellerIndexRoute: typeof SellerIndexRoute
-  SellerListingsIdRoute: typeof SellerListingsIdRoute
-  SellerListingsNewRoute: typeof SellerListingsNewRoute
-  SellerListingsIndexRoute: typeof SellerListingsIndexRoute
 }
 
 const SellerRouteChildren: SellerRouteChildren = {
@@ -1296,9 +1236,6 @@ const SellerRouteChildren: SellerRouteChildren = {
   SellerPayoutsRoute: SellerPayoutsRoute,
   SellerRecordsRoute: SellerRecordsRoute,
   SellerIndexRoute: SellerIndexRoute,
-  SellerListingsIdRoute: SellerListingsIdRoute,
-  SellerListingsNewRoute: SellerListingsNewRoute,
-  SellerListingsIndexRoute: SellerListingsIndexRoute,
 }
 
 const SellerRouteWithChildren =

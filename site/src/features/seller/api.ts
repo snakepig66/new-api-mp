@@ -119,6 +119,8 @@ export interface CreateListingInput {
   hours: string
   /** Required (true) for plan channels; the seller confirms the plan terms. */
   plan_terms_accepted?: boolean
+  /** Seller-defined upstream URL; opens a private third-party channel. */
+  custom_base_url?: string
 }
 
 export interface CreateListingResponse {
@@ -130,6 +132,8 @@ export interface ProbeInput {
   vendor_id: string
   api_key: string
   models: string[]
+  /** Seller-defined upstream URL; probes it instead of vendor_id. */
+  custom_base_url?: string
 }
 
 export interface ProbeResult {

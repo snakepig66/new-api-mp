@@ -1643,6 +1643,14 @@ console.log(response.choices[0].message.content)
           description: '由第三方服务商提供接入与路由。',
           badge: '第三方',
         },
+        custom: {
+          title: '自定义渠道',
+          badge: '自定义',
+          description: '填你自己的 OpenAI 兼容上游地址。',
+          label: '自定义上游地址',
+          placeholder: 'https://api.example.com 或 https://api.example.com/v1',
+          hint: '上游需提供 OpenAI 兼容接口，模型名需与平台一致；提交后平台会逐个模型真实调用验真。',
+        },
       },
       plan: {
         title: '套餐额度说明',
@@ -1659,7 +1667,7 @@ console.log(response.choices[0].message.content)
       },
       vendor: {
         label: '上游渠道',
-        hint: '渠道列表由平台下发，按官方 / 套餐 / 第三方分组展示。',
+        hint: '按官方 / 套餐 / 第三方分组选择；也可以填自己的上游地址。',
         loading: '正在加载渠道',
         loadFailed: '渠道列表加载失败，请重试。',
         empty: '暂时没有开放的渠道。',
@@ -1752,6 +1760,7 @@ console.log(response.choices[0].message.content)
       success: '渠道已创建，正在后台验真。',
       validation: {
         vendor: '请选择官方渠道。',
+        customURL: '请填写 https 开头的完整域名地址（可带 /v1 等路径）。',
         key: '请粘贴完整的 API Key。',
         models: '请至少勾选一个上架模型。',
         multiplier: '倍率需在 0.001x 到 1.000x 之间。',
