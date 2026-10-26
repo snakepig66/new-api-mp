@@ -683,3 +683,22 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 ### 端到端验收
 - 用 e2ebuyer（10012）的临时 Key 分别调用 glm-5.3（codely）与 deepseek-v4.1-flash-1017（clinepass）：HTTP 200，mp_requests 记录成功，账本三向一致（buyer_debit = platform_fee + seller_credit，卖家收益 7 天后可提）。
 - 公开模型广场 `/api/marketplace/square/models` 已列出三个模型及其渠道数；canary 挂单按 10% 灰度放量，24h 成功率 ≥98% 后由任务自动转 live。
+
+## 卖家自定义第三方渠道（2026-10-26）
+
+### 功能
+- 挂单向导新增「自定义渠道」：卖家填任意 OpenAI 兼容上游地址（https、域名、可带 /v1 等路径）+ Key 即可上架，无需运营预先注册渠道。
+- 平台自动开通私有渠道行（mp_channels，kind=third_party，slug `custom-<seller>-<hash>`），同一 (卖家, 地址) 幂等复用；每账号上限 10 个。
+- 模型映射为身份映射：上游必须用与平台一致的模型名；探针把上游 /models 与平台目录取交集，只允许卖平台在售模型。
+- 验真自动探测 `base/models` 与 `base/v1/models` 两种挂载形态，把归一化后的 base 和 `strip_v1_prefix` 写回池行与中继占位渠道行，买家请求路径与验真路径一致（修复 codely 同类 502 的通用化）。
+- 每个模型仍逐个真实调用（max_tokens=1）验真，调不通的模型不会上架。
+
+### 安全（§3.11 不变）
+- 地址校验：https、域名（拒绝公网 IP 字面量/userinfo/query/fragment/.internal）；出网白名单经 registry 刷新动态纳入自定义域名，`ValidateEgressIP` 仍在拨号层拒绝环回/内网/CGNAT——自定义地址不可能成为 SSRF 入口。
+- `MP_EGRESS_DOMAINS` 语义从「覆盖」改为「与池内域名合并」。
+- 隔离：公开目录 `/marketplace/vendors` 永不返回 custom 渠道；新增 `GET /marketplace/seller/vendors`（登录态）= 公开渠道 + 本人 custom 渠道；CreateListing/探针校验 slug 所有权，猜不到也用不了别人的渠道。
+
+### 验收
+- Go：custom_channel_test.go 覆盖 URL 校验、幂等/上限、CreateListing、验真归一化（/v1 探测）、目录隔离、探针交集；全量 marketplace 测试通过。
+- 前端：向导卡片 + URL 校验 + 提交 custom_base_url；vitest 30 文件 167 测试通过；顺带删除重构遗留的 /seller/listings 死页面（测试迁至 console）。
+- 生产端到端：自定义渠道上游指向 llmjar 自身（嵌套市场调用），买家调用 HTTP 200，自成交排除正确防止回环（外层买家选测试号的自定义挂单，内层选 snake 的 codely 挂单），账本三向一致（312 = 22 + 290）；测试数据已清理。
