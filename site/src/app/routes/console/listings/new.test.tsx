@@ -68,8 +68,11 @@ function jsonResponse(body: unknown): Response {
 
 const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input)
-  if (url.startsWith('/api/marketplace/vendors')) {
+  if (url.startsWith('/api/marketplace/seller/vendors')) {
     return jsonResponse({ success: true, data: vendors })
+  }
+  if (url.startsWith('/api/marketplace/vendors')) {
+    return jsonResponse({ success: true, data: vendors.filter((v) => !v.id.startsWith('custom-')) })
   }
   if (url.startsWith('/api/marketplace/status')) {
     return jsonResponse({

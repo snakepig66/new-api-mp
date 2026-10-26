@@ -302,6 +302,14 @@ export const vendorsQuery = () =>
     staleTime: 60_000,
   })
 
+/** Seller-scoped catalogue: public channels plus the seller's own custom upstreams. */
+export const sellerVendorsQuery = () =>
+  queryOptions({
+    queryKey: ['marketplace', 'seller', 'vendors'],
+    queryFn: () => api.get<SellerVendor[]>('/marketplace/seller/vendors'),
+    staleTime: 60_000,
+  })
+
 /**
  * Display name for a vendor slug. Prefers the vendors list already in the
  * query cache; callers that already fetched it can pass it directly. Falls

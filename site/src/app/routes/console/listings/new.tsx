@@ -27,8 +27,8 @@ import {
   probeListing,
   sellerChannelKind,
   sellerListingsQuery,
+  sellerVendorsQuery,
   squareModelForSeller,
-  vendorsQuery,
   type ProbeResult,
   type SellerQuotaWindow,
   type SellerVendor,
@@ -373,7 +373,7 @@ export function NewListingPage() {
   const values = form.watch()
   const { fields, append, remove } = useFieldArray({ control: form.control, name: 'hours' })
 
-  const vendors = useQuery(vendorsQuery())
+  const vendors = useQuery(sellerVendorsQuery())
   const marketplaceStatus = useQuery(marketplaceStatusQuery())
   // The backend is the single source for the split; the fallback only covers
   // the brief window before the status query resolves.

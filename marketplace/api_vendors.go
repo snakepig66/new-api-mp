@@ -73,20 +73,39 @@ func RegisterVendorsRoutes(g *gin.RouterGroup) {
 	g.GET("/vendors", listVendors)
 }
 
-// listVendors serves the channel pool (status=active) with the currently
-// listable models. The database handle comes from the relay state; before
-// Init it answers 500 like every other marketplace endpoint.
+// listVendors serves the PUBLIC channel pool (status=active) with the
+// currently listable models. The database handle comes from the relay state;
+// before Init it answers 500 like every other marketplace endpoint.
 //
 // Seller-defined custom channels (slug "custom-…") are private to their
-// owner: an anonymous or third-party caller never sees them, while the owner
-// sees their own so a second listing can reuse the upstream.
+// owner and never appear in the public catalogue; the owner's wizard reads
+// listSellerVendors on the authenticated group instead.
 func listVendors(c *gin.Context) {
 	db, _ := relayState()
 	if db == nil {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("marketplace is not initialized"))
 		return
 	}
+	views := vendorCatalogue(db, 0)
+	common.ApiSuccess(c, views)
+}
+
+// listSellerVendors serves the catalogue for the logged-in seller: the public
+// channels plus the seller's own custom upstreams, so a second listing can
+// reuse the same upstream.
+func listSellerVendors(c *gin.Context) {
+	db, _ := relayState()
+	if db == nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("marketplace is not initialized"))
+		return
+	}
 	viewerID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	common.ApiSuccess(c, vendorCatalogue(db, viewerID))
+}
+
+// vendorCatalogue builds the channel list for one viewer. Custom channels
+// appear only when viewerID is their owner; viewerID 0 (public) sees none.
+func vendorCatalogue(db *gorm.DB, viewerID int64) []vendorView {
 	channels := ChannelPoolAll(db)
 	views := make([]vendorView, 0, len(channels))
 	for _, ch := range channels {
@@ -94,7 +113,8 @@ func listVendors(c *gin.Context) {
 			continue
 		}
 		if isCustomChannelSlug(ch.Slug) {
-			if owner, ok := customChannelOwner(ch.Slug); !ok || owner != viewerID {
+			owner, ok := customChannelOwner(ch.Slug)
+			if !ok || owner != viewerID {
 				continue
 			}
 		}
@@ -104,7 +124,7 @@ func listVendors(c *gin.Context) {
 		}
 		views = append(views, vendorView{
 			ID:              vendor.ID,
-			DisplayName:     vendor.DisplayName,
+			DisplayName:      vendor.DisplayName,
 			Tier:            vendor.Tier,
 			Kind:            vendor.Tier,
 			LogoURL:         vendorLogoURL(vendor.ID),
@@ -115,7 +135,7 @@ func listVendors(c *gin.Context) {
 			TermsURL:        ch.TermsURL,
 		})
 	}
-	common.ApiSuccess(c, views)
+	return views
 }
 
 // quotaWindowView decodes a channel's quota_window JSON for the seller UI. A

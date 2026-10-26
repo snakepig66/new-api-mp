@@ -112,6 +112,7 @@ func RegisterSellerOnboardingRoutes(g *gin.RouterGroup) {
 func registerSellerOnboardingRoutes(g *gin.RouterGroup) {
 	g.POST("/seller/onboarding", postSellerOnboarding)
 	g.POST("/seller/listings/probe", postSellerListingProbe)
+	g.GET("/seller/vendors", listSellerVendors)
 	g.GET("/seller/listings/:id", getSellerListingDetail)
 	g.GET("/seller/stats", getSellerStats)
 	g.GET("/seller/payouts", listSellerPayouts)

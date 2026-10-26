@@ -261,8 +261,8 @@ func TestListVendorsHidesCustomChannelsFromOthers(t *testing.T) {
 	slug, err := ensureCustomChannel(fixture.db, fixture.sellerID, "https://private-upstream.example.com", []string{"deepseek-flash"})
 	require.NoError(t, err)
 
-	// The owner sees their custom channel.
-	w := fixture.do(t, http.MethodGet, "/api/marketplace/vendors", nil, int(fixture.sellerID))
+	// The owner sees their custom channel on the seller catalogue.
+	w := fixture.do(t, http.MethodGet, "/api/marketplace/seller/vendors", nil, int(fixture.sellerID))
 	require.Equal(t, http.StatusOK, w.Code)
 	var payload struct {
 		Data []struct {
@@ -281,11 +281,19 @@ func TestListVendorsHidesCustomChannelsFromOthers(t *testing.T) {
 	assert.True(t, found, "the owner must see their own custom channel")
 
 	// A stranger does not.
-	w = fixture.do(t, http.MethodGet, "/api/marketplace/vendors", nil, int(fixture.stranger))
+	w = fixture.do(t, http.MethodGet, "/api/marketplace/seller/vendors", nil, int(fixture.stranger))
 	require.Equal(t, http.StatusOK, w.Code)
 	require.NoError(t, common.DecodeJson(w.Body, &payload))
 	for _, v := range payload.Data {
 		assert.NotEqual(t, slug, v.ID, "custom channels must stay private to their owner")
+	}
+
+	// The public catalogue never carries custom channels.
+	w = fixture.do(t, http.MethodGet, "/api/marketplace/vendors", nil, int(fixture.sellerID))
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NoError(t, common.DecodeJson(w.Body, &payload))
+	for _, v := range payload.Data {
+		assert.NotEqual(t, slug, v.ID, "the public catalogue must never carry custom channels")
 	}
 }
 
