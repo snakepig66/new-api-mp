@@ -13,7 +13,9 @@ import (
 	"gorm.io/gorm"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 
 	"github.com/QuantumNous/new-api/model"
 )
@@ -37,6 +39,40 @@ func settleFixtureWithGift(t *testing.T, buyerQuota, buyerGift int, multiplierMi
 	require.True(t, handled)
 	maxTokens := uint(100)
 	info := newChatInfo("deepseek-flash", &maxTokens)
+	require.Nil(t, PrepareBilling(c, info, stubEstimator(1000)))
+	return f, c, info, l
+}
+
+// newResponsesInfo builds the relay info of a /v1/responses buyer request.
+func newResponsesInfo(modelName string, maxTokens *uint) *relaycommon.RelayInfo {
+	return &relaycommon.RelayInfo{
+		OriginModelName: modelName,
+		RelayFormat:     types.RelayFormatOpenAIResponses,
+		Request:         &dto.OpenAIResponsesRequest{Model: modelName, MaxOutputTokens: maxTokens},
+	}
+}
+
+// newMessagesInfo builds the relay info of a /v1/messages buyer request.
+func newMessagesInfo(modelName string, maxTokens *uint) *relaycommon.RelayInfo {
+	return &relaycommon.RelayInfo{
+		OriginModelName: modelName,
+		RelayFormat:     types.RelayFormatClaude,
+		Request:         &dto.ClaudeRequest{Model: modelName, MaxTokens: maxTokens},
+	}
+}
+
+// settleFixtureEndpoint runs the BeginDistribute → PrepareBilling prefix on
+// path, so settlement can be exercised per protocol.
+func settleFixtureEndpoint(t *testing.T, path string, info *relaycommon.RelayInfo, body []byte) (*relayFixture, *gin.Context, *relaycommon.RelayInfo, Listing) {
+	t.Helper()
+	f := newRelayFixture(t, 10_000_000)
+	l := f.addListing(t, 500)
+	f.addKeyModel(t, 77, "deepseek-flash", 0)
+	c := f.newRelayContext(t, body)
+	c.Request.URL.Path = path
+	_, handled, _, err := BeginDistribute(c, "deepseek-flash")
+	require.NoError(t, err)
+	require.True(t, handled)
 	require.Nil(t, PrepareBilling(c, info, stubEstimator(1000)))
 	return f, c, info, l
 }
@@ -154,6 +190,43 @@ func TestSettleRelaySuccess(t *testing.T) {
 	assert.Equal(t, micro, again)
 	assert.Equal(t, int64(1), countRequests(t, f.db, "req_relayhook_test"))
 	assert.Len(t, ledgerRows(t, f.db, "req_relayhook_test"), 3)
+}
+
+// The raw upstream model returned in the response body is persisted in
+// mp_requests.upstream_model before the writer rewrites it to the standard id
+// (§3.4).
+func TestSettleRelayRecordsUpstreamModel(t *testing.T) {
+	f, c, info, _ := settleFixture(t, 10_000_000, 500)
+
+	_, err := c.Writer.Write([]byte(`{"model":"deepseek-flash-20251025","choices":[]}`))
+	require.NoError(t, err)
+
+	micro := SettleRelay(c, info, &dto.Usage{PromptTokens: 900, CompletionTokens: 80})
+	require.Greater(t, micro, 0)
+
+	var rec Request
+	require.NoError(t, f.db.Where("request_id = ?", "req_relayhook_test").Take(&rec).Error)
+	assert.Equal(t, "deepseek-flash", rec.Model, "the public model stays the standard id")
+	assert.Equal(t, "deepseek-flash-20251025", rec.UpstreamModel)
+	assert.False(t, rec.ModelFingerprintAnomaly)
+}
+
+// A response model that is neither the selected upstream name nor a
+// date-suffixed variant is not rewritten and is flagged in mp_requests.
+func TestSettleRelayRecordsModelFingerprintAnomaly(t *testing.T) {
+	f, c, info, _ := settleFixture(t, 10_000_000, 500)
+
+	_, err := c.Writer.Write([]byte(`{"model":"some-other-upstream-id","choices":[]}`))
+	require.NoError(t, err)
+
+	micro := SettleRelay(c, info, &dto.Usage{PromptTokens: 900, CompletionTokens: 80})
+	require.Greater(t, micro, 0)
+
+	var rec Request
+	require.NoError(t, f.db.Where("request_id = ?", "req_relayhook_test").Take(&rec).Error)
+	assert.Equal(t, "deepseek-flash", rec.Model)
+	assert.Equal(t, "some-other-upstream-id", rec.UpstreamModel)
+	assert.True(t, rec.ModelFingerprintAnomaly)
 }
 
 // A hosted channel settles through the standard model's original vendor price
@@ -453,34 +526,276 @@ func TestFailRelayThenSettleKeepsFailed(t *testing.T) {
 	assert.Equal(t, RequestFailed, rec.Status)
 }
 
-// Usage extraction: cache read/write split out of plain input; reasoning
-// folds into output only when completion is empty (§3.2).
+// Usage extraction per protocol: the semantic recorded on the usage decides
+// how the totals are read (Anthropic excludes cache from input_tokens, the
+// OpenAI protocols include it), so a converted response settles on its
+// upstream protocol's accounting (§3.2). The endpoint is only the fallback.
 func TestExtractMarketplaceUsage(t *testing.T) {
-	usage := &dto.Usage{PromptTokens: 1000, CompletionTokens: 50}
-	usage.PromptTokensDetails.CachedTokens = 300
-	usage.PromptTokensDetails.CachedCreationTokens = 100
-	u := extractMarketplaceUsage(nil, usage)
+	// Chat Completions: cache read/write split out of the inclusive prompt.
+	chat := &dto.Usage{PromptTokens: 1000, CompletionTokens: 50}
+	chat.PromptTokensDetails.CachedTokens = 300
+	chat.PromptTokensDetails.CachedCreationTokens = 100
+	u := extractMarketplaceUsage(nil, chat, relayconstant.EndpointOpenAIChat)
 	assert.Equal(t, int64(600), u.inputTokens)
 	assert.Equal(t, int64(50), u.outputTokens)
 	assert.Equal(t, int64(300), u.cacheRead)
 	assert.Equal(t, int64(100), u.cacheWrite)
 	assert.False(t, u.estimated)
 
-	// DeepSeek native cache-hit field fallback.
-	usage2 := &dto.Usage{PromptTokens: 1000, CompletionTokens: 50, PromptCacheHitTokens: 400}
-	u2 := extractMarketplaceUsage(nil, usage2)
-	assert.Equal(t, int64(600), u2.inputTokens)
-	assert.Equal(t, int64(400), u2.cacheRead)
+	// DeepSeek native prompt_cache_hit_tokens fallback.
+	deepseek := &dto.Usage{PromptTokens: 1000, CompletionTokens: 50, PromptCacheHitTokens: 400}
+	u = extractMarketplaceUsage(nil, deepseek, relayconstant.EndpointOpenAIChat)
+	assert.Equal(t, int64(600), u.inputTokens)
+	assert.Equal(t, int64(400), u.cacheRead)
 
-	// Reasoning-only completion (§3.2 推理 tokens 并入输出价).
-	usage3 := &dto.Usage{PromptTokens: 10, CompletionTokens: 0}
-	usage3.CompletionTokenDetails.ReasoningTokens = 42
-	u3 := extractMarketplaceUsage(nil, usage3)
-	assert.Equal(t, int64(42), u3.outputTokens)
+	// OpenAI Responses: input_tokens/output_tokens with the cache under
+	// input_tokens_details, and no PromptTokens/CompletionTokens set.
+	responses := &dto.Usage{InputTokens: 1000, OutputTokens: 50}
+	responses.InputTokensDetails = &dto.InputTokenDetails{CachedTokens: 300, CachedCreationTokens: 100}
+	u = extractMarketplaceUsage(nil, responses, relayconstant.EndpointOpenAIResponses)
+	assert.Equal(t, int64(600), u.inputTokens)
+	assert.Equal(t, int64(50), u.outputTokens)
+	assert.Equal(t, int64(300), u.cacheRead)
+	assert.Equal(t, int64(100), u.cacheWrite)
+
+	// Anthropic Messages: PromptTokens already excludes cache_read and
+	// cache_creation, while InputTokens is the inclusive total. Reading it with
+	// OpenAI semantics would subtract twice and under-bill (200 instead of 600).
+	anthropic := &dto.Usage{
+		PromptTokens: 600, InputTokens: 1000, CompletionTokens: 50,
+		UsageSemantic: dto.BillingUsageSemanticAnthropic,
+	}
+	anthropic.PromptTokensDetails.CachedTokens = 300
+	anthropic.PromptTokensDetails.CachedCreationTokens = 100
+	u = extractMarketplaceUsage(nil, anthropic, relayconstant.EndpointAnthropicMessages)
+	assert.Equal(t, int64(600), u.inputTokens)
+	assert.Equal(t, int64(50), u.outputTokens)
+	assert.Equal(t, int64(300), u.cacheRead)
+	assert.Equal(t, int64(100), u.cacheWrite)
+
+	// Converted anthropic usage behind a chat endpoint keeps Anthropic
+	// semantics: the buyer's protocol must not change the upstream accounting.
+	u = extractMarketplaceUsage(nil, anthropic, relayconstant.EndpointOpenAIChat)
+	assert.Equal(t, int64(600), u.inputTokens, "anthropic semantics win over the chat endpoint")
+
+	// Converted openai usage behind a messages endpoint keeps OpenAI semantics:
+	// the inclusive total is the one that gets the cache subtraction.
+	converted := &dto.Usage{
+		PromptTokens: 1000, CompletionTokens: 50,
+		UsageSemantic: dto.BillingUsageSemanticOpenAI,
+	}
+	converted.PromptTokensDetails.CachedTokens = 300
+	converted.PromptTokensDetails.CachedCreationTokens = 100
+	u = extractMarketplaceUsage(nil, converted, relayconstant.EndpointAnthropicMessages)
+	assert.Equal(t, int64(600), u.inputTokens, "openai semantics win over the messages endpoint")
+
+	// An unwrapped snapshot with only the BillingUsage semantic marker.
+	sidecar := &dto.Usage{
+		PromptTokens: 600, InputTokens: 1000, CompletionTokens: 50,
+		BillingUsage: &dto.BillingUsage{Semantic: dto.BillingUsageSemanticAnthropic},
+	}
+	u = extractMarketplaceUsage(nil, sidecar, relayconstant.EndpointOpenAIChat)
+	assert.Equal(t, int64(600), u.inputTokens)
+
+	// Reasoning-only completion bills at the output price (§3.2).
+	reasoning := &dto.Usage{PromptTokens: 10}
+	reasoning.CompletionTokenDetails.ReasoningTokens = 42
+	u = extractMarketplaceUsage(nil, reasoning, relayconstant.EndpointOpenAIResponses)
+	assert.Equal(t, int64(42), u.outputTokens)
 
 	// Overlapping cache counts never drive input negative.
-	usage4 := &dto.Usage{PromptTokens: 100, CompletionTokens: 1}
-	usage4.PromptTokensDetails.CachedTokens = 150
-	u4 := extractMarketplaceUsage(nil, usage4)
-	assert.Equal(t, int64(0), u4.inputTokens)
+	overlap := &dto.Usage{PromptTokens: 100, CompletionTokens: 1}
+	overlap.PromptTokensDetails.CachedTokens = 150
+	u = extractMarketplaceUsage(nil, overlap, relayconstant.EndpointOpenAIChat)
+	assert.Equal(t, int64(0), u.inputTokens)
+
+	// A nil usage keeps the pre-freeze prompt estimate (§3.7).
+	info := newChatInfo("deepseek-flash", nil)
+	info.SetEstimatePromptTokens(1234)
+	u = extractMarketplaceUsage(info, nil, relayconstant.EndpointOpenAIChat)
+	assert.True(t, u.estimated)
+	assert.Equal(t, int64(1234), u.inputTokens)
+	assert.Zero(t, u.outputTokens)
+}
+
+// Every v1 endpoint settles through the same Quote at the freeze instant, with
+// the protocol's own usage fields read into the same price dimensions (§3.2).
+func TestSettleRelayPerEndpointUsage(t *testing.T) {
+	cases := []struct {
+		name       string
+		path       string
+		body       string
+		info       func(*uint) *relaycommon.RelayInfo
+		kind       relayconstant.EndpointKind
+		usage      func() *dto.Usage
+		wantInput  int64
+		wantOutput int64
+		wantCacheR int64
+		wantCacheW int64
+	}{
+		{
+			name: "openai chat native",
+			path: "/v1/chat/completions", body: `{"model":"deepseek-flash","max_tokens":100}`,
+			info: func(n *uint) *relaycommon.RelayInfo { return newChatInfo("deepseek-flash", n) },
+			kind: relayconstant.EndpointOpenAIChat,
+			usage: func() *dto.Usage {
+				u := &dto.Usage{PromptTokens: 900, CompletionTokens: 80}
+				u.PromptTokensDetails.CachedTokens = 100
+				return u
+			},
+			wantInput: 800, wantOutput: 80, wantCacheR: 100,
+		},
+		{
+			name: "openai responses native",
+			path: "/v1/responses", body: `{"model":"deepseek-flash","max_output_tokens":100}`,
+			info: func(n *uint) *relaycommon.RelayInfo { return newResponsesInfo("deepseek-flash", n) },
+			kind: relayconstant.EndpointOpenAIResponses,
+			usage: func() *dto.Usage {
+				u := &dto.Usage{InputTokens: 900, OutputTokens: 80}
+				u.InputTokensDetails = &dto.InputTokenDetails{CachedTokens: 100}
+				return u
+			},
+			wantInput: 800, wantOutput: 80, wantCacheR: 100,
+		},
+		{
+			name: "anthropic messages native",
+			path: "/v1/messages", body: `{"model":"deepseek-flash","max_tokens":100,"messages":[]}`,
+			info: func(n *uint) *relaycommon.RelayInfo { return newMessagesInfo("deepseek-flash", n) },
+			kind: relayconstant.EndpointAnthropicMessages,
+			usage: func() *dto.Usage {
+				u := &dto.Usage{
+					PromptTokens: 800, InputTokens: 950, CompletionTokens: 80,
+					UsageSemantic: dto.BillingUsageSemanticAnthropic,
+				}
+				u.PromptTokensDetails.CachedTokens = 100
+				u.PromptTokensDetails.CachedCreationTokens = 50
+				return u
+			},
+			wantInput: 800, wantOutput: 80, wantCacheR: 100, wantCacheW: 50,
+		},
+		{
+			name: "anthropic usage converted to a chat endpoint",
+			path: "/v1/chat/completions", body: `{"model":"deepseek-flash","max_tokens":100}`,
+			info: func(n *uint) *relaycommon.RelayInfo { return newChatInfo("deepseek-flash", n) },
+			kind: relayconstant.EndpointOpenAIChat,
+			usage: func() *dto.Usage {
+				u := &dto.Usage{
+					PromptTokens: 800, InputTokens: 950, CompletionTokens: 80,
+					UsageSemantic: dto.BillingUsageSemanticAnthropic,
+				}
+				u.PromptTokensDetails.CachedTokens = 100
+				u.PromptTokensDetails.CachedCreationTokens = 50
+				return u
+			},
+			wantInput: 800, wantOutput: 80, wantCacheR: 100, wantCacheW: 50,
+		},
+		{
+			name: "openai usage converted to a messages endpoint",
+			path: "/v1/messages", body: `{"model":"deepseek-flash","max_tokens":100,"messages":[]}`,
+			info: func(n *uint) *relaycommon.RelayInfo { return newMessagesInfo("deepseek-flash", n) },
+			kind: relayconstant.EndpointAnthropicMessages,
+			usage: func() *dto.Usage {
+				u := &dto.Usage{
+					PromptTokens: 900, CompletionTokens: 80,
+					UsageSemantic: dto.BillingUsageSemanticOpenAI,
+				}
+				u.PromptTokensDetails.CachedTokens = 100
+				return u
+			},
+			wantInput: 800, wantOutput: 80, wantCacheR: 100,
+		},
+		{
+			name: "deepseek prompt_cache_hit_tokens",
+			path: "/v1/chat/completions", body: `{"model":"deepseek-flash","max_tokens":100}`,
+			info: func(n *uint) *relaycommon.RelayInfo { return newChatInfo("deepseek-flash", n) },
+			kind: relayconstant.EndpointOpenAIChat,
+			usage: func() *dto.Usage {
+				return &dto.Usage{PromptTokens: 900, CompletionTokens: 80, PromptCacheHitTokens: 100}
+			},
+			wantInput: 800, wantOutput: 80, wantCacheR: 100,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			maxTokens := uint(100)
+			info := tc.info(&maxTokens)
+			f, c, info, l := settleFixtureEndpoint(t, tc.path, info, []byte(tc.body))
+			s := CurrentRelaySession(c)
+			require.Equal(t, tc.kind, s.EndpointKind())
+
+			micro := SettleRelay(c, info, tc.usage())
+			require.Greater(t, micro, 0)
+
+			expected, err := Quote(f.db, f.cal, QuoteInput{
+				Model: "deepseek-flash", Vendor: l.Vendor, MultiplierMilli: 500, At: s.FreezeAt(),
+				InputTokens: tc.wantInput, OutputTokens: tc.wantOutput,
+				CacheReadTokens: tc.wantCacheR, CacheWriteTokens: tc.wantCacheW,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, int(expected.TotalDebit), micro)
+
+			var rec Request
+			require.NoError(t, f.db.Where("request_id = ?", "req_relayhook_test").Take(&rec).Error)
+			assert.Equal(t, RequestSuccess, rec.Status)
+			assert.Equal(t, tc.wantInput, rec.InputTokens)
+			assert.Equal(t, tc.wantOutput, rec.OutputTokens)
+			assert.Equal(t, tc.wantCacheR, rec.CacheReadTokens)
+			assert.Equal(t, tc.wantCacheW, rec.CacheWriteTokens)
+		})
+	}
+}
+
+// §3.7's zero-output rule is endpoint-aware: every v1 text endpoint bills
+// generated output, so a zero-output response is free on all three.
+func TestSettleRelayZeroOutputPerEndpoint(t *testing.T) {
+	cases := []struct {
+		name  string
+		path  string
+		body  string
+		info  func(*uint) *relaycommon.RelayInfo
+		kind  relayconstant.EndpointKind
+		usage *dto.Usage
+	}{
+		{
+			name: "openai chat",
+			path: "/v1/chat/completions", body: `{"model":"deepseek-flash","max_tokens":100}`,
+			info:  func(n *uint) *relaycommon.RelayInfo { return newChatInfo("deepseek-flash", n) },
+			kind:  relayconstant.EndpointOpenAIChat,
+			usage: &dto.Usage{PromptTokens: 900},
+		},
+		{
+			name: "openai responses",
+			path: "/v1/responses", body: `{"model":"deepseek-flash","max_output_tokens":100}`,
+			info:  func(n *uint) *relaycommon.RelayInfo { return newResponsesInfo("deepseek-flash", n) },
+			kind:  relayconstant.EndpointOpenAIResponses,
+			usage: &dto.Usage{InputTokens: 900},
+		},
+		{
+			name: "anthropic messages",
+			path: "/v1/messages", body: `{"model":"deepseek-flash","max_tokens":100,"messages":[]}`,
+			info:  func(n *uint) *relaycommon.RelayInfo { return newMessagesInfo("deepseek-flash", n) },
+			kind:  relayconstant.EndpointAnthropicMessages,
+			usage: &dto.Usage{PromptTokens: 900, UsageSemantic: dto.BillingUsageSemanticAnthropic},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			maxTokens := uint(100)
+			info := tc.info(&maxTokens)
+			f, c, info, l := settleFixtureEndpoint(t, tc.path, info, []byte(tc.body))
+			require.Equal(t, tc.kind, CurrentRelaySession(c).EndpointKind())
+
+			assert.Zero(t, SettleRelay(c, info, tc.usage))
+			require.NoError(t, info.Billing.Settle(0))
+			assert.Equal(t, 10_000_000, buyerQuota(t, int64(f.buyerID)))
+
+			var rec Request
+			require.NoError(t, f.db.Where("request_id = ?", "req_relayhook_test").Take(&rec).Error)
+			assert.Equal(t, RequestFailed, rec.Status)
+			assert.Zero(t, rec.TotalDebitMicro)
+			assert.Contains(t, rec.RetryChain, HopEventZeroOutput)
+			assert.Empty(t, ledgerRows(t, f.db, "req_relayhook_test"))
+			assert.Equal(t, 0, f.selector.Slots.InFlight(l.ID))
+		})
+	}
 }

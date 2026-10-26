@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 )
 
 // newQuoteFixture migrates an isolated database, seeds the DeepSeek price
@@ -278,6 +281,55 @@ func TestQuoteOfficialCostEqualsFullPriceQuote(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, full.TotalDebit, discounted.OfficialCost,
 		"OfficialCost at 0.3x must equal the full-price TotalDebit of the same usage")
+}
+
+// Protocol choice never changes the price: OpenAI-style (inclusive) and
+// Anthropic-style (exclusive) usage describing the same consumption extract to
+// the same token buckets, so Quote charges the same amount (§3.2).
+func TestQuoteSameConsumptionAcrossEndpoints(t *testing.T) {
+	db, cal := newQuoteFixture(t)
+	at := shTime(2026, time.October, 21, 20, 0, 0) // off-peak
+
+	chat := &dto.Usage{PromptTokens: 1_000_000, CompletionTokens: 500_000}
+	chat.PromptTokensDetails.CachedTokens = 200_000
+
+	responses := &dto.Usage{InputTokens: 1_000_000, OutputTokens: 500_000}
+	responses.InputTokensDetails = &dto.InputTokenDetails{CachedTokens: 200_000}
+
+	messages := &dto.Usage{
+		PromptTokens: 800_000, InputTokens: 1_000_000, CompletionTokens: 500_000,
+		UsageSemantic: dto.BillingUsageSemanticAnthropic,
+	}
+	messages.PromptTokensDetails.CachedTokens = 200_000
+
+	cases := []struct {
+		name  string
+		usage *dto.Usage
+		kind  relayconstant.EndpointKind
+	}{
+		{"openai chat", chat, relayconstant.EndpointOpenAIChat},
+		{"openai responses", responses, relayconstant.EndpointOpenAIResponses},
+		{"anthropic messages", messages, relayconstant.EndpointAnthropicMessages},
+	}
+	var want Micro
+	for i, tc := range cases {
+		u := extractMarketplaceUsage(nil, tc.usage, tc.kind)
+		res, err := Quote(db, cal, QuoteInput{
+			Model: "deepseek-flash", Vendor: SeedVendorDeepSeek,
+			MultiplierMilli: 1000, At: at,
+			InputTokens:      u.inputTokens,
+			OutputTokens:     u.outputTokens,
+			CacheReadTokens:  u.cacheRead,
+			CacheWriteTokens: u.cacheWrite,
+		})
+		require.NoError(t, err, tc.name)
+		assert.Equal(t, int64(800_000), u.inputTokens, tc.name)
+		if i == 0 {
+			want = res.TotalDebit
+			continue
+		}
+		assert.Equal(t, want, res.TotalDebit, "%s prices the same consumption identically", tc.name)
+	}
 }
 
 func TestQuoteRejectsNegativeUsage(t *testing.T) {

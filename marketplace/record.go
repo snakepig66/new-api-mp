@@ -18,6 +18,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
@@ -41,10 +42,12 @@ type marketplaceUsage struct {
 // empty response): the prompt is estimated from the pre-freeze estimate and
 // the output is 0, which the caller treats as a failed request (§3.7).
 //
-// Anthropic semantics report input_tokens EXCLUDING cache_read and
-// cache_creation (H4): the subtraction below must not run for them, or a
-// cache-heavy /v1/messages request would be billed for almost no input.
-func extractMarketplaceUsage(info *relaycommon.RelayInfo, usage *dto.Usage) marketplaceUsage {
+// The usage semantics decide which extractor runs, not the buyer's endpoint:
+// a converted response keeps its upstream protocol's totals (the relay carries
+// a BillingUsage sidecar that service.effectiveBillingUsage canonicalizes
+// before settlement), so a /v1/chat/completions request answered by a Claude
+// upstream is read with Anthropic semantics.
+func extractMarketplaceUsage(info *relaycommon.RelayInfo, usage *dto.Usage, kind relayconstant.EndpointKind) marketplaceUsage {
 	if usage == nil {
 		estimated := int64(0)
 		if info != nil {
@@ -52,38 +55,163 @@ func extractMarketplaceUsage(info *relaycommon.RelayInfo, usage *dto.Usage) mark
 		}
 		return marketplaceUsage{inputTokens: estimated, estimated: true}
 	}
-	cacheRead := int64(usage.PromptTokensDetails.CachedTokens)
-	if cacheRead == 0 {
-		// DeepSeek's native prompt_cache_hit_tokens, normalized by the
-		// adaptor into CachedTokens; keep the raw field as a fallback.
-		cacheRead = int64(usage.PromptCacheHitTokens)
-	}
-	cacheWrite := int64(usage.PromptTokensDetails.CacheCreationTokensTotal())
-	anthropic := usage.UsageSemantic == "anthropic" ||
-		(usage.UsageSemantic == "" && info != nil && info.GetFinalRequestRelayFormat() == types.RelayFormatClaude)
-	var input int64
-	if anthropic {
-		// PromptTokens already excludes both cache counts for anthropic. Only
-		// fall back to InputTokens when it is the plain total (no cache data).
-		input = int64(usage.PromptTokens)
-		if input == 0 && cacheRead == 0 && cacheWrite == 0 {
-			input = int64(usage.InputTokens)
+	switch marketplaceUsageSemantic(info, usage, kind) {
+	case dto.BillingUsageSemanticAnthropic:
+		return extractAnthropicMarketplaceUsage(usage)
+	default:
+		if kind == relayconstant.EndpointOpenAIResponses {
+			return extractResponsesMarketplaceUsage(usage)
 		}
-	} else {
-		input = int64(usage.PromptTokens) - cacheRead - cacheWrite
+		return extractChatMarketplaceUsage(usage)
 	}
-	if input < 0 {
-		input = 0
+}
+
+// marketplaceUsageSemantic picks the token semantics of a usage snapshot.
+// Anthropic reports input_tokens EXCLUDING cache_read and cache_creation (H4),
+// while the OpenAI protocols report prompt/input totals that INCLUDE them.
+// The recorded semantic wins, then the final upstream format (which tracks a
+// conversion); the buyer's endpoint is only the fallback when neither is
+// recorded.
+func marketplaceUsageSemantic(info *relaycommon.RelayInfo, usage *dto.Usage, kind relayconstant.EndpointKind) string {
+	if usage != nil {
+		if usage.UsageSemantic != "" {
+			return usage.UsageSemantic
+		}
+		if usage.BillingUsage != nil && usage.BillingUsage.Semantic != "" {
+			return usage.BillingUsage.Semantic
+		}
 	}
+	if info != nil && info.GetFinalRequestRelayFormat() == types.RelayFormatClaude {
+		return dto.BillingUsageSemanticAnthropic
+	}
+	if kind == relayconstant.EndpointAnthropicMessages {
+		return dto.BillingUsageSemanticAnthropic
+	}
+	return dto.BillingUsageSemanticOpenAI
+}
+
+// extractChatMarketplaceUsage reads Chat Completions usage: prompt_tokens and
+// completion_tokens are inclusive totals, so cached_tokens (or DeepSeek's
+// native prompt_cache_hit_tokens) and the cache-write count are split out of
+// the plain-input remainder (§3.2).
+func extractChatMarketplaceUsage(usage *dto.Usage) marketplaceUsage {
+	cacheRead := usageCacheRead(usage)
+	cacheWrite := usageCacheWrite(usage)
+	input := int64(usage.PromptTokens)
+	if input == 0 {
+		// A converted usage may only carry the Responses-style total.
+		input = int64(usage.InputTokens)
+	}
+	input = max(input-cacheRead-cacheWrite, 0)
+	return marketplaceUsage{
+		inputTokens:  input,
+		outputTokens: usageOutputTokens(usage),
+		cacheRead:    cacheRead,
+		cacheWrite:   cacheWrite,
+	}
+}
+
+// extractResponsesMarketplaceUsage reads OpenAI Responses usage: input_tokens
+// and output_tokens are the totals, with cached tokens reported under
+// input_tokens_details.cached_tokens. output_tokens already includes reasoning
+// and generated tool arguments, so it is billed as-is.
+func extractResponsesMarketplaceUsage(usage *dto.Usage) marketplaceUsage {
+	cacheRead := usageCacheRead(usage)
+	cacheWrite := usageCacheWrite(usage)
+	input := int64(usage.InputTokens)
+	if input == 0 {
+		input = int64(usage.PromptTokens)
+	}
+	input = max(input-cacheRead-cacheWrite, 0)
+	return marketplaceUsage{
+		inputTokens:  input,
+		outputTokens: usageOutputTokens(usage),
+		cacheRead:    cacheRead,
+		cacheWrite:   cacheWrite,
+	}
+}
+
+// extractAnthropicMarketplaceUsage reads Anthropic Messages usage, where
+// input_tokens excludes cache reads and writes and output_tokens is the whole
+// output. The relay merges message_start (input_tokens, cache_read_input_tokens,
+// cache_creation_input_tokens) and message_delta (output_tokens) into one
+// usage before settlement, so both halves are present here.
+func extractAnthropicMarketplaceUsage(usage *dto.Usage) marketplaceUsage {
+	cacheRead := usageCacheRead(usage)
+	cacheWrite := usageCacheWrite(usage)
+	input := int64(usage.PromptTokens)
+	if input == 0 && cacheRead == 0 && cacheWrite == 0 {
+		// Legacy/unwrapped usage that only carries the inclusive total.
+		input = int64(usage.InputTokens)
+	}
+	return marketplaceUsage{
+		inputTokens:  max(input, 0),
+		outputTokens: usageOutputTokens(usage),
+		cacheRead:    cacheRead,
+		cacheWrite:   cacheWrite,
+	}
+}
+
+// usageCacheRead normalizes the cache-read count across protocols:
+// prompt_tokens_details.cached_tokens (Chat), input_tokens_details.cached_tokens
+// (Responses), and DeepSeek's native prompt_cache_hit_tokens.
+func usageCacheRead(usage *dto.Usage) int64 {
+	cached := usage.PromptTokensDetails.CachedTokens
+	if cached == 0 && usage.InputTokensDetails != nil {
+		cached = usage.InputTokensDetails.CachedTokens
+	}
+	if cached == 0 {
+		cached = usage.PromptCacheHitTokens
+	}
+	return max(int64(cached), 0)
+}
+
+// usageCacheWrite normalizes the cache-write count: Claude reports it as
+// cache_creation_input_tokens, OpenAI as cache_write_tokens /
+// cached_creation_tokens. CacheCreationTokensTotal picks one encoding, so the
+// same tokens are never counted twice.
+func usageCacheWrite(usage *dto.Usage) int64 {
+	total := usage.PromptTokensDetails.CacheCreationTokensTotal()
+	if total == 0 && usage.InputTokensDetails != nil {
+		total = usage.InputTokensDetails.CacheCreationTokensTotal()
+	}
+	return int64(total)
+}
+
+// usageOutputTokens normalizes the generated-output count: completion_tokens
+// (Chat) or output_tokens (Responses/Messages). Reasoning tokens were already
+// folded into the inclusive total by the protocol adaptors; they are only
+// substituted when the total is missing and reasoning was reported standalone.
+func usageOutputTokens(usage *dto.Usage) int64 {
 	output := int64(usage.CompletionTokens)
+	if output == 0 {
+		output = int64(usage.OutputTokens)
+	}
 	if output == 0 {
 		output = int64(usage.CompletionTokenDetails.ReasoningTokens)
 	}
-	return marketplaceUsage{
-		inputTokens:  input,
-		outputTokens: output,
-		cacheRead:    cacheRead,
-		cacheWrite:   cacheWrite,
+	return max(output, 0)
+}
+
+// zeroOutputFails applies §3.7's free-failure rule to an endpoint. Every v1
+// text endpoint bills generated output: Chat and Messages report
+// completion_tokens/output_tokens, and Responses reports output_tokens (which
+// additionally includes reasoning and generated tool arguments). A zero output
+// therefore always means the buyer received nothing billable, for all three.
+func zeroOutputFails(kind relayconstant.EndpointKind, u marketplaceUsage) bool {
+	if u.outputTokens > 0 {
+		return false
+	}
+	switch kind {
+	case relayconstant.EndpointOpenAIChat,
+		relayconstant.EndpointOpenAIResponses,
+		relayconstant.EndpointAnthropicMessages:
+		return true
+	default:
+		// "" is the legacy /v1/completions path, billed like chat. Embedding
+		// and image are not marketplace v1 endpoints; if one ever reaches
+		// settlement, charge nothing rather than apply an unpriced rule.
+		return true
 	}
 }
 
@@ -122,7 +250,21 @@ func SettleRelay(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage
 	s.mu.Unlock()
 
 	db, cal := relayState()
-	u := extractMarketplaceUsage(info, usage)
+	// The buyer's protocol is fixed for the whole retry chain by BeginDistribute
+	// (group 1). Fall back to the request format for the legacy unrestricted
+	// /v1/completions path and for genuinely unwrapped callers.
+	kind := s.EndpointKind()
+	if kind == "" && info != nil {
+		switch info.RelayFormat {
+		case types.RelayFormatOpenAIResponses:
+			kind = relayconstant.EndpointOpenAIResponses
+		case types.RelayFormatClaude:
+			kind = relayconstant.EndpointAnthropicMessages
+		default:
+			kind = relayconstant.EndpointOpenAIChat
+		}
+	}
+	u := extractMarketplaceUsage(info, usage, kind)
 
 	// §3.4: per-call counts come from the usage JSON only when they are
 	// readable (读到才计, 读不到则 0); inbound stripping (hook G) keeps
@@ -137,7 +279,7 @@ func SettleRelay(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage
 	listing := s.CurrentListing()
 	freezeAt := s.FreezeAt()
 
-	failed := u.outputTokens <= 0
+	failed := zeroOutputFails(kind, u)
 	failEvent := HopEventZeroOutput
 	if !failed {
 		// §10-1 暂定: 流式中途断开（客户端取消）不收费; §3.7: 截断的流判失
@@ -236,7 +378,7 @@ func SettleRelay(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage
 	charged := total
 	if db != nil {
 		var settleErr error
-		charged, settleErr = s.settleAtomic(db, u, searchCount, fetchCount, quote, total, platformCapped, status, listing)
+		charged, settleErr = s.settleAtomic(ctx, db, u, searchCount, fetchCount, quote, total, platformCapped, status, listing)
 		if settleErr != nil {
 			common.SysError(common.LogText("marketplace: settle transaction (request %s): %s", s.RequestID(), settleErr.Error()))
 			// The transaction rolled back. Leave the upstream seam to settle the
@@ -286,7 +428,7 @@ func (s *RelaySession) currentPreConsumed() Micro {
 // request is recorded as failed), while 0 < charged < total means the buyer's
 // balance covered only part of the settle top-up — the ledger books charged
 // and the shortfall is recorded in the retry chain.
-func (s *RelaySession) settleAtomic(db *gorm.DB, u marketplaceUsage, searchCount, fetchCount int64, quote QuoteResult, total, platformCapped Micro, status string, listing Listing) (Micro, error) {
+func (s *RelaySession) settleAtomic(c *gin.Context, db *gorm.DB, u marketplaceUsage, searchCount, fetchCount int64, quote QuoteResult, total, platformCapped Micro, status string, listing Listing) (Micro, error) {
 	charged := total
 	err := db.Transaction(func(tx *gorm.DB) error {
 		if status != RequestSuccess || total <= 0 {
@@ -298,22 +440,22 @@ func (s *RelaySession) settleAtomic(db *gorm.DB, u marketplaceUsage, searchCount
 					return err
 				}
 			}
-			return s.insertRecord(tx, u, searchCount, fetchCount, quote, 0, 0, 0, 0, 0, RequestFailed)
+			return s.insertRecord(c, tx, u, searchCount, fetchCount, quote, 0, 0, 0, 0, 0, RequestFailed)
 		}
 		var giftUsed Micro
 		if s.billing != nil {
-			c, err := s.billing.SettleAtomic(tx, total)
+			collected, err := s.billing.SettleAtomic(tx, total)
 			if err != nil {
 				return err
 			}
-			charged = c
+			charged = collected
 			giftUsed = s.billing.SettledGift()
 		}
 		if charged <= 0 {
 			// Nothing could be collected: SettleAtomic already refunded the whole
 			// pre-freeze, so this request is a failure (§3.7).
 			s.addHop(HopEventSettleShortfall, fmt.Sprintf("actual=%d charged=0", int64(total)))
-			return s.insertRecord(tx, u, searchCount, fetchCount, quote, 0, 0, 0, 0, platformCapped, RequestFailed)
+			return s.insertRecord(c, tx, u, searchCount, fetchCount, quote, 0, 0, 0, 0, platformCapped, RequestFailed)
 		}
 		if giftUsed > charged {
 			// Defensive: a gifted portion can never exceed the booked charge.
@@ -324,7 +466,7 @@ func (s *RelaySession) settleAtomic(db *gorm.DB, u marketplaceUsage, searchCount
 			s.addHop(HopEventSettleShortfall, fmt.Sprintf("actual=%d charged=%d", int64(total), int64(charged)))
 			tokenDebit, toolDebit = scaleDebits(charged, total, tokenDebit, toolDebit)
 		}
-		if err := s.insertRecord(tx, u, searchCount, fetchCount, quote, tokenDebit, toolDebit, charged, giftUsed, platformCapped, RequestSuccess); err != nil {
+		if err := s.insertRecord(c, tx, u, searchCount, fetchCount, quote, tokenDebit, toolDebit, charged, giftUsed, platformCapped, RequestSuccess); err != nil {
 			return err
 		}
 		settlement := Settlement{
@@ -397,7 +539,7 @@ func FailRelay(c *gin.Context, info *relaycommon.RelayInfo) {
 	}
 	db, _ := relayState()
 	if db != nil {
-		s.writeRecordOnce(db, marketplaceUsage{}, 0, 0, QuoteResult{}, 0, RequestFailed)
+		s.writeRecordOnceCtx(c, db, marketplaceUsage{}, 0, 0, QuoteResult{}, 0, RequestFailed)
 	}
 	// H2: a failed attempt never keeps the half-open probe. A 429 has already
 	// reset the breaker via ProcessRelayChannelError (releaseProbe then no-ops),
@@ -408,15 +550,24 @@ func FailRelay(c *gin.Context, info *relaycommon.RelayInfo) {
 
 // writeRecordOnce persists the single mp_requests row of the request (§3.8) at
 // most once per session. It is idempotent: the request_id unique index is the
-// database backstop for a settle racing a failure path.
+// database backstop for a settle racing a failure path. It carries no Gin
+// context because the early-exit path in relayhook has no response body to
+// inspect; use writeRecordOnceCtx when one is available.
 func (s *RelaySession) writeRecordOnce(db *gorm.DB, u marketplaceUsage, searchCount, fetchCount int64, quote QuoteResult, total Micro, status string) {
+	s.writeRecordOnceCtx(nil, db, u, searchCount, fetchCount, quote, total, status)
+}
+
+// writeRecordOnceCtx is writeRecordOnce for a path that still has the request
+// context, so the raw upstream model and the fingerprint-anomaly flag can be
+// read from the installed response writer.
+func (s *RelaySession) writeRecordOnceCtx(c *gin.Context, db *gorm.DB, u marketplaceUsage, searchCount, fetchCount int64, quote QuoteResult, total Micro, status string) {
 	s.mu.Lock()
 	if s.recordWritten {
 		s.mu.Unlock()
 		return
 	}
 	s.mu.Unlock()
-	if err := s.insertRecord(db, u, searchCount, fetchCount, quote, quote.TokenDebit, quote.ToolDebit, total, 0, 0, status); err != nil {
+	if err := s.insertRecord(c, db, u, searchCount, fetchCount, quote, quote.TokenDebit, quote.ToolDebit, total, 0, 0, status); err != nil {
 		common.SysError(common.LogText("marketplace: write request record (request %s): %s", s.RequestID(), err.Error()))
 		return
 	}
@@ -428,7 +579,7 @@ func (s *RelaySession) writeRecordOnce(db *gorm.DB, u marketplaceUsage, searchCo
 // insertRecord writes the request's mp_requests row through db (which may be a
 // transaction). Conflict with the request_id unique index is ignored: the
 // first writer wins.
-func (s *RelaySession) insertRecord(db *gorm.DB, u marketplaceUsage, searchCount, fetchCount int64, quote QuoteResult, tokenDebit, toolDebit, total, giftUsed, platformCapped Micro, status string) error {
+func (s *RelaySession) insertRecord(c *gin.Context, db *gorm.DB, u marketplaceUsage, searchCount, fetchCount int64, quote QuoteResult, tokenDebit, toolDebit, total, giftUsed, platformCapped Micro, status string) error {
 	fee, credit, err := SplitPlatformFee(total)
 	if err != nil {
 		fee, credit = 0, 0
@@ -461,34 +612,41 @@ func (s *RelaySession) insertRecord(db *gorm.DB, u marketplaceUsage, searchCount
 	if merr != nil {
 		hops = []byte("[]")
 	}
+	upstreamModel, modelAnomaly := responseIdentityFromContext(c)
+	if len(upstreamModel) > 128 {
+		// The column is size:128; MySQL strict mode would reject a longer id.
+		upstreamModel = upstreamModel[:128]
+	}
 	rec := Request{
-		RequestID:         s.RequestID(),
-		BuyerUserID:       int64(s.buyerUserID),
-		BuyerTokenID:      int64(s.tokenID),
-		SellerID:          listing.SellerID,
-		ListingID:         listing.ID,
-		Model:             s.model,
-		Tier:              tier,
-		PriceVersion:      priceVersion,
-		MultiplierMilli:   listing.MultiplierMilli,
-		InputTokens:       u.inputTokens,
-		OutputTokens:      u.outputTokens,
-		CacheReadTokens:   u.cacheRead,
-		CacheWriteTokens:  u.cacheWrite,
-		SearchCount:       searchCount,
-		FetchCount:        fetchCount,
-		TokenDebitMicro:   int64(tokenDebit),
-		ToolDebitMicro:    int64(toolDebit),
-		TotalDebitMicro:   int64(total),
-		GiftDebitMicro:    int64(giftUsed),
-		CappedMicro:       int64(platformCapped),
-		PlatformFeeMicro:  int64(fee),
-		SellerCreditMicro: int64(credit),
-		OfficialCostMicro: int64(official),
-		UsageEstimated:    u.estimated,
-		Status:            status,
-		RetryChain:        string(hops),
-		LatencyMs:         latencyMs,
+		RequestID:               s.RequestID(),
+		BuyerUserID:             int64(s.buyerUserID),
+		BuyerTokenID:            int64(s.tokenID),
+		SellerID:                listing.SellerID,
+		ListingID:               listing.ID,
+		Model:                   s.model,
+		UpstreamModel:           upstreamModel,
+		ModelFingerprintAnomaly: modelAnomaly,
+		Tier:                    tier,
+		PriceVersion:            priceVersion,
+		MultiplierMilli:         listing.MultiplierMilli,
+		InputTokens:             u.inputTokens,
+		OutputTokens:            u.outputTokens,
+		CacheReadTokens:         u.cacheRead,
+		CacheWriteTokens:        u.cacheWrite,
+		SearchCount:             searchCount,
+		FetchCount:              fetchCount,
+		TokenDebitMicro:         int64(tokenDebit),
+		ToolDebitMicro:          int64(toolDebit),
+		TotalDebitMicro:         int64(total),
+		GiftDebitMicro:          int64(giftUsed),
+		CappedMicro:             int64(platformCapped),
+		PlatformFeeMicro:        int64(fee),
+		SellerCreditMicro:       int64(credit),
+		OfficialCostMicro:       int64(official),
+		UsageEstimated:          u.estimated,
+		Status:                  status,
+		RetryChain:              string(hops),
+		LatencyMs:               latencyMs,
 	}
 	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rec).Error
 }

@@ -367,6 +367,63 @@ func (s *BillingSession) ReserveBeforeSubmit(targetQuota int) error {
 	return s.reserve(targetQuota)
 }
 
+// RefundDelta releases amount 微元 of the outstanding pre-freeze back to
+// users.quota, for a retry hop that landed on a cheaper listing (§3.7 换家按
+// 差额调整冻结: no full refund + re-freeze). It never releases more than the
+// freeze still outstanding and is a no-op once the session settled or
+// refunded. amount <= 0 is ignored.
+//
+// The quota credit is a conditional UPDATE inside its own transaction, using
+// the same connection-then-mutex order as Refund/Settle, so a concurrent
+// settle cannot race the release.
+func (s *BillingSession) RefundDelta(amount int) error {
+	if amount <= 0 {
+		return nil
+	}
+	db := s.quotaDB()
+	if db == nil {
+		return errors.New("marketplace: refund delta: no database handle")
+	}
+	tx := db.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("marketplace: refund delta: %w", tx.Error)
+	}
+	s.mu.Lock()
+	if s.settled || s.refunded {
+		s.mu.Unlock()
+		_ = tx.Rollback().Error
+		return nil
+	}
+	if Micro(amount) > s.preConsumed {
+		amount = int(s.preConsumed)
+	}
+	if amount <= 0 {
+		s.mu.Unlock()
+		_ = tx.Rollback().Error
+		return nil
+	}
+	res := tx.Model(&model.User{}).
+		Where("id = ?", s.buyerUserID).
+		Update("quota", gorm.Expr("quota + ?", int64(amount)))
+	if res.Error != nil {
+		s.mu.Unlock()
+		_ = tx.Rollback().Error
+		return fmt.Errorf("marketplace: refund delta credit: %w", res.Error)
+	}
+	if res.RowsAffected != 1 {
+		s.mu.Unlock()
+		_ = tx.Rollback().Error
+		return fmt.Errorf("marketplace: refund delta credit: user %d not found", s.buyerUserID)
+	}
+	if err := tx.Commit().Error; err != nil {
+		s.mu.Unlock()
+		return fmt.Errorf("marketplace: refund delta commit: %w", err)
+	}
+	s.preConsumed -= Micro(amount)
+	s.mu.Unlock()
+	return nil
+}
+
 func (s *BillingSession) reserve(targetQuota int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

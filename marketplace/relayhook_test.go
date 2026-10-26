@@ -2,11 +2,13 @@ package marketplace
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,12 +16,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 	"gorm.io/gorm"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
@@ -118,9 +122,16 @@ func (f *relayFixture) addKeyModel(t *testing.T, tokenID int, modelName string, 
 // request carrying the given body.
 func (f *relayFixture) newRelayContext(t *testing.T, body []byte) *gin.Context {
 	t.Helper()
+	return f.newRelayContextAt(t, "/v1/chat/completions", body)
+}
+
+// newRelayContextAt is newRelayContext for an explicit buyer path, so a test
+// can exercise the Responses/Messages endpoints.
+func (f *relayFixture) newRelayContextAt(t *testing.T, path string, body []byte) *gin.Context {
+	t.Helper()
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request = httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set("token_id", 77)
 	common.SetContextKey(c, constant.ContextKeyUserId, f.buyerID)
@@ -558,13 +569,16 @@ func TestReselectChannelSwitchesAndRefreezes(t *testing.T) {
 	assert.Equal(t, 0, f.selector.Slots.InFlight(l1.ID))
 	assert.Equal(t, 1, f.selector.Slots.InFlight(l2.ID))
 
-	// The old session was refunded and a new one frozen at the new multiplier.
-	assert.NotEqual(t, billingBefore, info.Billing)
+	// §3.7: the same session adjusts its freeze by the difference instead of a
+	// full refund + re-freeze.
+	assert.Same(t, billingBefore, info.Billing)
 	expected, qerr := PreFreezeQuote(f.db, f.cal, l2.Vendor, "deepseek-flash", 800, 1000, 100, 0, 0, freezeAt)
 	require.NoError(t, qerr)
 	assert.Equal(t, int(expected.TotalDebit), info.Billing.GetPreConsumedQuota())
 	assert.Equal(t, 10_000_000-int(expected.TotalDebit), buyerQuota(t, int64(f.buyerID)))
 	assert.Greater(t, info.Billing.GetPreConsumedQuota(), firstFreeze)
+	assert.Equal(t, 1, s.channelRetries, "a supplier switch is a channel-level retry")
+	assert.Equal(t, 0, s.keyRetries)
 
 	// Real key of the second listing pinned.
 	realKey2, derr := DecryptListingKey(l2.KeyCiphertext)
@@ -596,6 +610,9 @@ func TestReselectChannelInPlaceRetry(t *testing.T) {
 	assert.Equal(t, int(l.ChannelID), ch.Id)
 	assert.True(t, s.inPlaceRetried)
 	assert.Equal(t, 0, s.hopCount)
+
+	assert.Equal(t, 1, s.keyRetries, "an in-place retry is a key-level retry")
+	assert.Equal(t, 0, s.channelRetries)
 
 	// A second in-place retry is refused with 503 暂无可用供应商.
 	info.LastError = apiErrorWithStatus(500)
@@ -798,10 +815,48 @@ func TestRelayHTTPClientTimeout(t *testing.T) {
 	require.True(t, ok, "marketplace client must enforce the first-data-block timeout on the body (M1)")
 	base, ok := transport.base.(*http.Transport)
 	require.True(t, ok)
-	assert.Equal(t, RelayHeaderTimeout, base.ResponseHeaderTimeout,
-		"headers get the long timeout: a non-stream upstream may generate before sending anything (M1)")
-	assert.Equal(t, RelayFirstByteTimeout, transport.timeout,
-		"the 20s budget applies to the first usable data block, not the headers (M1)")
+	assert.Zero(t, base.ResponseHeaderTimeout,
+		"the header timeout is enforced per request so reasoning models can wait longer")
+	assert.Equal(t, defaultRelayFirstByteTimeout, transport.timeout,
+		"the fallback first-byte budget applies when no request profile is present (M1)")
+}
+
+// TestRelayTimeoutForEndpoint locks the per-endpoint/model timeout policy: the
+// default is 60s/20s and reasoning models are widened (§3.7).
+func TestRelayTimeoutForEndpoint(t *testing.T) {
+	cases := []struct {
+		model      string
+		wantHeader time.Duration
+		wantFirst  time.Duration
+	}{
+		{"deepseek-flash", defaultRelayHeaderTimeout, defaultRelayFirstByteTimeout},
+		{"gpt-4o-mini", defaultRelayHeaderTimeout, defaultRelayFirstByteTimeout},
+		{"o3-mini", reasoningRelayHeaderTimeout, reasoningRelayFirstByteTimeout},
+		{"o1", reasoningRelayHeaderTimeout, reasoningRelayFirstByteTimeout},
+		{"deepseek-r1", reasoningRelayHeaderTimeout, reasoningRelayFirstByteTimeout},
+		{"claude-4-thinking", reasoningRelayHeaderTimeout, reasoningRelayFirstByteTimeout},
+		{"", defaultRelayHeaderTimeout, defaultRelayFirstByteTimeout},
+	}
+	for _, tc := range cases {
+		t.Run(tc.model, func(t *testing.T) {
+			assert.Equal(t, tc.wantHeader, RelayHeaderTimeoutForEndpoint("", tc.model))
+			assert.Equal(t, tc.wantFirst, RelayFirstByteTimeoutForEndpoint("", tc.model))
+		})
+	}
+}
+
+// A request profile attached to the inbound context must reach the shared
+// transport so the per-model budget is used instead of the fallback.
+func TestFirstByteTransportUsesRequestProfile(t *testing.T) {
+	transport := &firstByteTransport{timeout: 5 * time.Second}
+	ctx := context.WithValue(context.Background(), relayTimeoutProfileKey{}, relayTimeoutProfile{Model: "o3-mini"})
+	header, first := transport.timeouts(ctx)
+	assert.Equal(t, reasoningRelayHeaderTimeout, header)
+	assert.Equal(t, reasoningRelayFirstByteTimeout, first)
+
+	header, first = transport.timeouts(context.Background())
+	assert.Equal(t, defaultRelayHeaderTimeout, header)
+	assert.Equal(t, 5*time.Second, first, "an explicit fallback is kept for tests")
 }
 
 // slowStreamingUpstream sends response headers immediately and then only SSE
@@ -932,4 +987,513 @@ func TestInitDisabledKeepsUpstream(t *testing.T) {
 	require.NoError(t, Init(nil))
 	assert.False(t, Enabled())
 	assert.Equal(t, 5, common.RetryTimes)
+}
+
+// --- pass-through body rewrite (P1) ----------------------------------------
+
+func TestRewritePassthroughJSON(t *testing.T) {
+	tests := []struct {
+		name  string
+		body  string
+		in    passthroughRewrite
+		check func(t *testing.T, got []byte)
+	}{
+		{
+			name: "chat rewrite covers every billable field",
+			body: `{"model":"buyer-model","stream":true,"user":"buyer-1","metadata":{"user":"buyer-1"},"messages":[]}`,
+			in: passthroughRewrite{UpstreamModel: "upstream-model", MaxOutputTokens: 321, Stream: true,
+				ForceStoreFalse: true, UserPseudonym: "mp_pseudo"},
+			check: func(t *testing.T, got []byte) {
+				assert.Equal(t, "upstream-model", gjson.GetBytes(got, "model").String())
+				assert.True(t, gjson.GetBytes(got, "stream_options.include_usage").Bool())
+				assert.Equal(t, int64(321), gjson.GetBytes(got, "max_tokens").Int())
+				assert.False(t, gjson.GetBytes(got, "store").Bool())
+				assert.Equal(t, "mp_pseudo", gjson.GetBytes(got, "user").String())
+				assert.Equal(t, "mp_pseudo", gjson.GetBytes(got, "metadata.user").String())
+			},
+		},
+		{
+			name: "max_completion_tokens dialect is kept",
+			body: `{"model":"m","max_completion_tokens":10}`,
+			in:   passthroughRewrite{MaxOutputTokens: 99, RelayFormat: types.RelayFormatOpenAI},
+			check: func(t *testing.T, got []byte) {
+				assert.Equal(t, int64(99), gjson.GetBytes(got, "max_completion_tokens").Int())
+				assert.False(t, gjson.GetBytes(got, "max_tokens").Exists())
+			},
+		},
+		{
+			name: "responses uses max_output_tokens and no chat usage switch",
+			body: `{"model":"m","stream":true}`,
+			in:   passthroughRewrite{MaxOutputTokens: 55, Stream: true, RelayFormat: types.RelayFormatOpenAIResponses},
+			check: func(t *testing.T, got []byte) {
+				assert.Equal(t, int64(55), gjson.GetBytes(got, "max_output_tokens").Int())
+				assert.False(t, gjson.GetBytes(got, "stream_options").Exists())
+			},
+		},
+		{
+			name: "claude uses max_tokens",
+			body: `{"model":"m","stream":true,"max_tokens":5}`,
+			in:   passthroughRewrite{MaxOutputTokens: 77, Stream: true, RelayFormat: types.RelayFormatClaude},
+			check: func(t *testing.T, got []byte) {
+				assert.Equal(t, int64(77), gjson.GetBytes(got, "max_tokens").Int())
+				assert.False(t, gjson.GetBytes(got, "stream_options").Exists())
+			},
+		},
+		{
+			name: "absent user is not invented",
+			body: `{"model":"m"}`,
+			in:   passthroughRewrite{UpstreamModel: "u", UserPseudonym: "mp_x"},
+			check: func(t *testing.T, got []byte) {
+				assert.False(t, gjson.GetBytes(got, "user").Exists())
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := rewritePassthroughJSON([]byte(tt.body), tt.in)
+			require.NoError(t, err)
+			tt.check(t, got)
+		})
+	}
+
+	_, err := rewritePassthroughJSON([]byte(`{"model":`), passthroughRewrite{UpstreamModel: "u"})
+	require.Error(t, err, "a malformed raw body must be rejected, not forwarded")
+}
+
+func TestRequestUserPseudonym(t *testing.T) {
+	preserveAnonSecret(t)
+	SetAnonSecret("pseudonym-test-secret")
+	first, err := RequestUserPseudonym(1, 2)
+	require.NoError(t, err)
+	again, err := RequestUserPseudonym(1, 2)
+	require.NoError(t, err)
+	otherSeller, err := RequestUserPseudonym(2, 2)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(first, "mp_"))
+	assert.Equal(t, first, again, "the same pair is stable")
+	assert.NotEqual(t, first, otherSeller, "each seller sees a different value")
+
+	SetAnonSecret("")
+	_, err = RequestUserPseudonym(1, 2)
+	assert.ErrorIs(t, err, ErrNoAnonSecret)
+}
+
+func TestPrepareBillingRewritesPassthroughBody(t *testing.T) {
+	f := newRelayFixture(t, 10_000_000)
+	f.addListing(t, 500)
+	f.addKeyModel(t, 77, "deepseek-flash", 0)
+	require.NoError(t, f.db.Model(&ChannelModel{}).
+		Where("channel_slug = ? AND model = ?", SeedVendorDeepSeek, "deepseek-flash").
+		Update("upstream_model", "deepseek-flash-renamed").Error)
+
+	body := `{"model":"deepseek-flash","stream":true,"user":"buyer-1","metadata":{"user":"buyer-1"},"messages":[{"role":"user","content":"hi"}]}`
+	c := f.newRelayContext(t, []byte(body))
+	_, handled, _, err := BeginDistribute(c, "deepseek-flash")
+	require.NoError(t, err)
+	require.True(t, handled)
+
+	// The channel setting override enables raw-body forwarding per model.
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{})
+	ApplyRelayChannelKey(c)
+	settings, ok := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting)
+	require.True(t, ok)
+	assert.True(t, settings.PassThroughBodyEnabled, "deepseek forwards raw bodies and this model has a mapping")
+
+	info := newChatInfo("deepseek-flash", nil)
+	info.RelayFormat = types.RelayFormatOpenAI
+	info.IsStream = true
+	require.Nil(t, PrepareBilling(c, info, stubEstimator(1000)))
+
+	storage, gerr := common.GetBodyStorage(c)
+	require.NoError(t, gerr)
+	raw, berr := storage.Bytes()
+	require.NoError(t, berr)
+	assert.Equal(t, "deepseek-flash-renamed", gjson.GetBytes(raw, "model").String())
+	assert.True(t, gjson.GetBytes(raw, "stream_options.include_usage").Bool())
+	assert.Equal(t, CurrentRelaySession(c).maxOutputTokens, gjson.GetBytes(raw, "max_tokens").Int())
+	pseudo := gjson.GetBytes(raw, "user").String()
+	assert.True(t, strings.HasPrefix(pseudo, "mp_"))
+	assert.Equal(t, pseudo, gjson.GetBytes(raw, "metadata.user").String())
+	assert.NotContains(t, string(raw), "buyer-1")
+
+	// A model without a mapping goes back to conversion on the same channel.
+	require.NoError(t, f.db.Where("channel_slug = ? AND model = ?", SeedVendorDeepSeek, "deepseek-flash").
+		Delete(&ChannelModel{}).Error)
+	ApplyRelayChannelKey(c)
+	settings, _ = common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting)
+	assert.False(t, settings.PassThroughBodyEnabled)
+}
+
+func TestPrepareBillingRejectsMalformedPassthroughBody(t *testing.T) {
+	f := newRelayFixture(t, 10_000_000)
+	f.addListing(t, 500)
+	f.addKeyModel(t, 77, "deepseek-flash", 0)
+	c := f.newRelayContext(t, []byte(`{"model":`))
+	_, handled, _, err := BeginDistribute(c, "deepseek-flash")
+	require.NoError(t, err)
+	require.True(t, handled)
+
+	info := newChatInfo("deepseek-flash", nil)
+	info.RelayFormat = types.RelayFormatOpenAI
+	apiErr := PrepareBilling(c, info, stubEstimator(10))
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	assert.Nil(t, info.Billing)
+}
+
+func TestFilterAnthropicBeta(t *testing.T) {
+	f := newRelayFixture(t, 0)
+	_ = f
+	s := &RelaySession{}
+	newCtx := func() *gin.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		c.Request.Header.Add("anthropic-beta", "context-1m-2025-08-07")
+		c.Request.Header.Add("anthropic-beta", "extended-cache-ttl-2025-04-11")
+		c.Request.Header.Add("anthropic-beta", "made-up-beta-2099-01-01")
+		return c
+	}
+
+	// deepseek-flash advertises a 128K window, so the 1M beta is not priced.
+	c := newCtx()
+	s.filterAnthropicBeta(c, "deepseek-flash")
+	assert.Equal(t, "extended-cache-ttl-2025-04-11", c.Request.Header.Get("anthropic-beta"))
+
+	// kimi-k3 advertises a 1M window, so the 1M beta is allowed.
+	c = newCtx()
+	s.filterAnthropicBeta(c, "kimi-k3")
+	assert.Contains(t, c.Request.Header.Get("anthropic-beta"), "context-1m-2025-08-07")
+	assert.Contains(t, c.Request.Header.Get("anthropic-beta"), "extended-cache-ttl-2025-04-11")
+	assert.NotContains(t, c.Request.Header.Get("anthropic-beta"), "made-up")
+}
+
+func TestForceClaudeAdaptor(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatClaude,
+		ChannelMeta: &relaycommon.ChannelMeta{ApiType: constant.APITypeOpenAI},
+	}
+	ForceClaudeAdaptor(c, info)
+	assert.Equal(t, constant.APITypeOpenAI, info.ApiType, "no marketplace session → untouched")
+
+	c.Set(relaySessionContextKey, &RelaySession{})
+	ForceClaudeAdaptor(c, info)
+	assert.Equal(t, constant.APITypeAnthropic, info.ApiType)
+
+	chat := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatOpenAI,
+		ChannelMeta: &relaycommon.ChannelMeta{ApiType: constant.APITypeOpenAI},
+	}
+	ForceClaudeAdaptor(c, chat)
+	assert.Equal(t, constant.APITypeOpenAI, chat.ApiType, "only /v1/messages is forced")
+}
+
+// TestProcessRelayChannelErrorClassification locks the §3.5 vendor error-code
+// matrix: only a dead key or an exhausted upstream balance pauses the listing;
+// a rate limit cools the circuit down; moderation and buyer errors leave the
+// seller untouched.
+func TestProcessRelayChannelErrorClassification(t *testing.T) {
+	cases := []struct {
+		name        string
+		status      int
+		errType     string
+		code        any
+		message     string
+		wantPaused  bool
+		wantBreaker bool
+	}{
+		{
+			name: "401 invalid_api_key pauses", status: http.StatusUnauthorized,
+			errType: "invalid_request_error", code: "invalid_api_key",
+			message: "Incorrect API key provided", wantPaused: true,
+		},
+		{
+			name: "anthropic authentication_error pauses", status: http.StatusUnauthorized,
+			errType: "authentication_error", code: nil,
+			message: "invalid x-api-key", wantPaused: true,
+		},
+		{
+			name: "402 insufficient_quota pauses", status: http.StatusPaymentRequired,
+			errType: "insufficient_quota", code: "insufficient_quota",
+			message: "You exceeded your current quota", wantPaused: true,
+		},
+		{
+			name: "deepseek insufficient_balance pauses", status: http.StatusPaymentRequired,
+			errType: "unknown_error", code: "insufficient_balance",
+			message: "Insufficient Balance", wantPaused: true,
+		},
+		{
+			name: "zhipu 1113 is a balance failure", status: http.StatusBadRequest,
+			errType: "unknown_error", code: 1113,
+			message: "余额不足", wantPaused: true,
+		},
+		{
+			name: "429 rate_limit_exceeded only cools down", status: http.StatusTooManyRequests,
+			errType: "rate_limit_error", code: "rate_limit_exceeded",
+			message: "Rate limit reached", wantBreaker: true,
+		},
+		{
+			name: "400 content_filter does not pause", status: http.StatusBadRequest,
+			errType: "invalid_request_error", code: "content_filter",
+			message: "Content filter triggered",
+		},
+		{
+			name: "403 permission_error does not pause", status: http.StatusForbidden,
+			errType: "permission_error", code: nil,
+			message: "permission denied for this model",
+		},
+		{
+			name: "generic 403 does not pause", status: http.StatusForbidden,
+			errType: "unknown_error", code: nil,
+			message: "forbidden",
+		},
+		{
+			name: "403 invalid_api_key still pauses", status: http.StatusForbidden,
+			errType: "invalid_request_error", code: "invalid_api_key",
+			message: "invalid api key", wantPaused: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRelayFixture(t, 10_000_000)
+			listing := f.addListing(t, 500)
+			f.addKeyModel(t, 77, "deepseek-flash", 0)
+			c := f.newRelayContext(t, []byte(`{"model":"deepseek-flash"}`))
+			_, handled, _, err := BeginDistribute(c, "deepseek-flash")
+			require.NoError(t, err)
+			require.True(t, handled)
+
+			apiErr := types.WithOpenAIError(types.OpenAIError{
+				Message: tc.message, Type: tc.errType, Code: tc.code,
+			}, tc.status)
+			ProcessRelayChannelError(c, apiErr)
+
+			reloaded, gerr := GetListing(f.db, listing.ID)
+			require.NoError(t, gerr)
+			if tc.wantPaused {
+				assert.Equal(t, ListingPaused, reloaded.Status)
+			} else {
+				assert.Equal(t, ListingLive, reloaded.Status, "the listing must stay in rotation")
+			}
+			breakerOpen := !f.selector.Breaker.Allow(listing.ID, time.Now())
+			assert.Equal(t, tc.wantBreaker, breakerOpen)
+		})
+	}
+}
+
+// --- Responses state binding (P1) -------------------------------------------
+
+// TestResponseBindingRecordAndResume locks the §3.7 binding contract: a
+// delivered response id is recorded with its routing, a follow-up
+// previous_response_id is forced onto that listing even when a cheaper supplier
+// exists, and an unavailable bound key produces the fixed 503 instead of a
+// silent re-route.
+func TestResponseBindingRecordAndResume(t *testing.T) {
+	f := newRelayFixture(t, 10_000_000)
+	bound := f.addListing(t, 800)
+	f.addKeyModel(t, 77, "deepseek-flash", 0)
+	c := f.newRelayContextAt(t, "/v1/responses", []byte(`{"model":"deepseek-flash","max_output_tokens":10}`))
+	_, handled, _, err := BeginDistribute(c, "deepseek-flash")
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, bound.ID, CurrentRelaySession(c).CurrentListing().ID)
+
+	// Simulate the upstream Responses stream reaching the buyer.
+	_, werr := c.Writer.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_bind_1\"}}\n\n"))
+	require.NoError(t, werr)
+	CurrentRelaySession(c).recordResponseBinding(c, f.db)
+
+	var row ResponseBinding
+	require.NoError(t, f.db.Where("response_id = ?", "resp_bind_1").Take(&row).Error)
+	assert.Equal(t, bound.ID, row.ListingID)
+	assert.Equal(t, bound.ChannelID, row.ChannelID)
+	assert.Equal(t, string(relayconstant.EndpointOpenAIResponses), row.Endpoint)
+	assert.Equal(t, bound.KeyFingerprint, row.KeyFingerprint)
+	assert.Equal(t, BackendTypeOpenAI, row.BackendType)
+	assert.True(t, row.ExpiresAt.After(time.Now().Add(29*24*time.Hour)),
+		"a Responses binding follows the upstream 30-day retention")
+
+	// A cheaper listing appears, but the follow-up must stay on the bound one.
+	cheaper := f.addListing(t, 400)
+	c2 := f.newRelayContextAt(t, "/v1/responses", []byte(`{"model":"deepseek-flash","previous_response_id":"resp_bind_1"}`))
+	ch, handled, _, err := BeginDistribute(c2, "deepseek-flash")
+	require.NoError(t, err)
+	require.True(t, handled)
+	assert.Equal(t, int(bound.ChannelID), ch.Id)
+	assert.Equal(t, bound.ID, CurrentRelaySession(c2).CurrentListing().ID)
+	assert.NotEqual(t, cheaper.ID, CurrentRelaySession(c2).CurrentListing().ID)
+
+	// The bound key becomes unusable (paused) → the fixed 503, never a switch.
+	require.NoError(t, f.db.Model(&Listing{}).Where("id = ?", bound.ID).Update("status", ListingPaused).Error)
+	c3 := f.newRelayContextAt(t, "/v1/responses", []byte(`{"model":"deepseek-flash","previous_response_id":"resp_bind_1"}`))
+	_, handled, status, err := BeginDistribute(c3, "deepseek-flash")
+	require.Error(t, err)
+	assert.True(t, handled)
+	assert.Equal(t, http.StatusServiceUnavailable, status)
+	assert.Contains(t, err.Error(), "previous response's upstream is unavailable")
+
+	// An unknown id cannot be pinned to any supplier either.
+	c4 := f.newRelayContextAt(t, "/v1/responses", []byte(`{"model":"deepseek-flash","previous_response_id":"resp_unknown"}`))
+	_, handled, status, err = BeginDistribute(c4, "deepseek-flash")
+	require.Error(t, err)
+	assert.True(t, handled)
+	assert.Equal(t, http.StatusServiceUnavailable, status)
+	assert.Contains(t, err.Error(), "previous response's upstream is unavailable")
+}
+
+// TestResponseBindingExpiresLazily covers the TTL cleanup: an expired row is
+// ignored and removed on lookup, with the endpoint-specific retention window.
+func TestResponseBindingExpiresLazily(t *testing.T) {
+	f := newRelayFixture(t, 0)
+	require.NoError(t, f.db.Create(&ResponseBinding{
+		ResponseID: "resp_expired", ListingID: 1, ChannelID: 1,
+		Endpoint:    string(relayconstant.EndpointOpenAIResponses),
+		BackendType: BackendTypeOpenAI,
+		CreatedAt:   time.Now().Add(-31 * 24 * time.Hour),
+		ExpiresAt:   time.Now().Add(-time.Hour),
+	}).Error)
+
+	_, found, err := lookupResponseBinding(f.db, "resp_expired", time.Now())
+	require.NoError(t, err)
+	assert.False(t, found)
+
+	var count int64
+	require.NoError(t, f.db.Model(&ResponseBinding{}).Where("response_id = ?", "resp_expired").Count(&count).Error)
+	assert.Zero(t, count, "the expired row is deleted on lookup")
+
+	assert.Equal(t, 30*24*time.Hour, responseBindingTTL(relayconstant.EndpointOpenAIResponses))
+	assert.Equal(t, time.Hour, responseBindingTTL(relayconstant.EndpointAnthropicMessages))
+}
+
+// TestThinkingSignatureConstraint locks the backend-family rule: a signature
+// may only be replayed inside its own family, and empty legacy state stays
+// unrestrained.
+func TestThinkingSignatureConstraint(t *testing.T) {
+	assert.False(t, thinkingSignatureCompatible(BackendTypeAnthropic, relayconstant.EndpointOpenAIChat))
+	assert.True(t, thinkingSignatureCompatible(BackendTypeAnthropic, relayconstant.EndpointAnthropicMessages))
+	assert.True(t, thinkingSignatureCompatible(BackendTypeOpenAI, relayconstant.EndpointOpenAIResponses))
+	assert.True(t, thinkingSignatureCompatible("", relayconstant.EndpointOpenAIChat),
+		"a binding/session written before the field existed stays unrestrained")
+
+	assert.Equal(t, BackendTypeAnthropic, BackendTypeForEndpoint(relayconstant.EndpointAnthropicMessages))
+	assert.Equal(t, BackendTypeOpenAI, BackendTypeForEndpoint(relayconstant.EndpointOpenAIResponses))
+}
+
+// TestRelayRequestMetadataDetectsPreviousResponseAndSignature reads both
+// signals from the raw inbound body.
+func TestRelayRequestMetadataDetectsPreviousResponseAndSignature(t *testing.T) {
+	body := `{"model":"m","previous_response_id":"resp_1","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"sig-123"}]}]}`
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader([]byte(body)))
+
+	prev, sig := relayRequestMetadata(c)
+	assert.Equal(t, "resp_1", prev)
+	assert.True(t, sig)
+
+	plain, _ := gin.CreateTestContext(httptest.NewRecorder())
+	plain.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"m"}`)))
+	prev, sig = relayRequestMetadata(plain)
+	assert.Empty(t, prev)
+	assert.False(t, sig)
+}
+
+// --- retry rules (P1) --------------------------------------------------------
+
+// TestIsTransientUpstreamErrorSwitchable locks the marketplace retry matrix:
+// timeouts and 5xx switch suppliers, and a 400 naming a channel/model
+// incompatibility does too, while ordinary buyer 400s and 401s stop.
+func TestIsTransientUpstreamErrorSwitchable(t *testing.T) {
+	cases := []struct {
+		name string
+		err  *types.NewAPIError
+		want bool
+	}{
+		{"nil", nil, false},
+		{"500", apiErrorWithStatus(500), true},
+		{"504", apiErrorWithStatus(504), true},
+		{"524", apiErrorWithStatus(524), true},
+		{"408", apiErrorWithStatus(408), true},
+		{"network error (no status)", types.NewError(errors.New("dial failed"), types.ErrorCodeDoRequestFailed), true},
+		{"400 generic", apiErrorWithStatus(400), false},
+		{"401", apiErrorWithStatus(401), false},
+		{"400 channel_incompatible", types.WithOpenAIError(types.OpenAIError{
+			Message: "the selected channel is not compatible", Code: "channel_incompatible",
+		}, http.StatusBadRequest), true},
+		{"400 model_not_supported", types.WithOpenAIError(types.OpenAIError{
+			Message: "model is not supported here", Code: "model_not_supported",
+		}, http.StatusBadRequest), true},
+		{"400 message wording", types.WithOpenAIError(types.OpenAIError{
+			Message: "channel incompatible with this request", Code: "unknown_error",
+		}, http.StatusBadRequest), true},
+		{"400 content filter", types.WithOpenAIError(types.OpenAIError{
+			Message: "content filter triggered", Code: "content_filter",
+		}, http.StatusBadRequest), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, isTransientUpstreamError(tc.err))
+		})
+	}
+}
+
+// TestReselectChannelRefusesAfterResponseCommitted is the first-byte guard: a
+// response already written to the buyer must never be retried on another
+// supplier (§3.7).
+func TestReselectChannelRefusesAfterResponseCommitted(t *testing.T) {
+	f := newRelayFixture(t, 10_000_000)
+	f.addListing(t, 500)
+	f.addKeyModel(t, 77, "deepseek-flash", 0)
+	c := f.newRelayContext(t, []byte(`{"model":"deepseek-flash","max_tokens":10}`))
+	_, handled, _, err := BeginDistribute(c, "deepseek-flash")
+	require.NoError(t, err)
+	require.True(t, handled)
+	maxTokens := uint(10)
+	info := newChatInfo("deepseek-flash", &maxTokens)
+	require.Nil(t, PrepareBilling(c, info, stubEstimator(100)))
+
+	_, werr := c.Writer.Write([]byte("partial"))
+	require.NoError(t, werr)
+
+	info.LastError = apiErrorWithStatus(500)
+	_, apiErr := ReselectChannel(c, info, func(*gin.Context, *model.Channel, string) *types.NewAPIError { return nil })
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
+	assert.Contains(t, apiErr.Error(), "already started")
+}
+
+// TestReselectChannelReleasesFreezeDifference covers a hop to a cheaper
+// listing: the same billing session releases only the difference, and the
+// buyer's balance reflects that exact release.
+func TestReselectChannelReleasesFreezeDifference(t *testing.T) {
+	f := newRelayFixture(t, 10_000_000)
+	f.addListing(t, 800) // initially the only supplier
+	f.addKeyModel(t, 77, "deepseek-flash", 0)
+	c := f.newRelayContext(t, []byte(`{"model":"deepseek-flash","max_tokens":100}`))
+	_, handled, _, err := BeginDistribute(c, "deepseek-flash")
+	require.NoError(t, err)
+	require.True(t, handled)
+	maxTokens := uint(100)
+	info := newChatInfo("deepseek-flash", &maxTokens)
+	require.Nil(t, PrepareBilling(c, info, stubEstimator(1000)))
+
+	s := CurrentRelaySession(c)
+	billing := info.Billing
+	frozenBefore := billing.GetPreConsumedQuota()
+	quotaBefore := buyerQuota(t, int64(f.buyerID))
+
+	cheaper := f.addListing(t, 400)
+	info.LastError = apiErrorWithStatus(500)
+	ch, apiErr := ReselectChannel(c, info, func(*gin.Context, *model.Channel, string) *types.NewAPIError { return nil })
+	require.Nil(t, apiErr)
+	require.NotNil(t, ch)
+	assert.Equal(t, int(cheaper.ChannelID), ch.Id)
+	assert.Same(t, billing, info.Billing, "the retry chain keeps one billing session")
+
+	expected, qerr := PreFreezeQuote(f.db, f.cal, cheaper.Vendor, "deepseek-flash", 400, 1000, 100, 0, 0, s.FreezeAt())
+	require.NoError(t, qerr)
+	frozenAfter := info.Billing.GetPreConsumedQuota()
+	assert.Equal(t, int(expected.TotalDebit), frozenAfter)
+	assert.Less(t, frozenAfter, frozenBefore, "the cheaper quote released the difference")
+	assert.Equal(t, quotaBefore+(frozenBefore-frozenAfter), buyerQuota(t, int64(f.buyerID)))
 }

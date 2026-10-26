@@ -180,25 +180,33 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		url = strings.Replace(url, "{model}", info.UpstreamModelName, -1)
 		return url, nil
 	default:
-		// MP-HOOK: a marketplace pass-through channel answers Claude-format
-		// requests at the vendor's native Messages endpoint. The body is
-		// forwarded verbatim (claude_handler honors PassThroughBodyEnabled), so
-		// the vendor sees its own Anthropic protocol instead of a conversion.
-		if info.RelayFormat == types.RelayFormatClaude &&
-			info.ChannelSetting.PassThroughBodyEnabled &&
-			info.ChannelSetting.MPAnthropicMessagesURL != "" &&
-			info.RelayMode != relayconstant.RelayModeResponses &&
-			info.RelayMode != relayconstant.RelayModeResponsesCompact {
-			return info.ChannelSetting.MPAnthropicMessagesURL, nil
+		// The two marketplace v1 endpoints use a fixed path appended to the
+		// endpoint base; the buyer's request path and the strip setting no
+		// longer decide the upstream URL. RelayMode wins over RelayFormat: a
+		// Claude/OpenAI request converted to the Responses API keeps its
+		// Claude entry format but must reach /v1/responses.
+		switch info.RelayMode {
+		case relayconstant.RelayModeResponses:
+			return relayconstant.BuildEndpointURL(info.ChannelBaseUrl, relayconstant.EndpointOpenAIResponses), nil
+		case relayconstant.RelayModeChatCompletions:
+			return relayconstant.BuildEndpointURL(info.ChannelBaseUrl, relayconstant.EndpointOpenAIChat), nil
 		}
-		if (info.RelayFormat == types.RelayFormatClaude || info.RelayFormat == types.RelayFormatGemini) &&
-			info.RelayMode != relayconstant.RelayModeResponses &&
-			info.RelayMode != relayconstant.RelayModeResponsesCompact {
-			return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
+		// MP-HOOK: a Claude-format request goes to the vendor-native Messages
+		// endpoint. A marketplace /v1/messages request is served by the Claude
+		// adaptor (marketplace.ForceClaudeAdaptor), but this branch keeps the
+		// OpenAI adaptor correct for any caller that still reaches it.
+		if info.RelayFormat == types.RelayFormatClaude {
+			if info.ChannelSetting.MPAnthropicMessagesURL != "" {
+				return info.ChannelSetting.MPAnthropicMessagesURL, nil
+			}
+			return relayconstant.BuildEndpointURL(info.ChannelBaseUrl, relayconstant.EndpointAnthropicMessages), nil
 		}
-		// MP-HOOK: marketplace vendor bases such as Ark /api/v3 or Bailian
-		// /compatible-mode/v1 already carry the version segment; dropping the
-		// buyer's /v1 keeps the upstream path at /chat/completions.
+		if info.RelayFormat == types.RelayFormatGemini {
+			return relayconstant.BuildEndpointURL(info.ChannelBaseUrl, relayconstant.EndpointOpenAIChat), nil
+		}
+		// Every other OpenAI-compatible endpoint (completions, embeddings, image,
+		// audio, compact, ...) keeps the legacy buyer-path mapping. Marketplace
+		// v1 only serves chat/responses/messages, covered above.
 		requestPath := info.RequestURLPath
 		if info.ChannelSetting.MPStripV1Prefix {
 			requestPath = strings.TrimPrefix(requestPath, "/v1")

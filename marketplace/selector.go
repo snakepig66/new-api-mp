@@ -23,6 +23,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/QuantumNous/new-api/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 )
 
 // SlotTimeout is how long a held concurrency slot lives without an explicit
@@ -59,6 +60,27 @@ func (m *SlotManager) Acquire(listingID int64, limit int, now time.Time) bool {
 	}
 	m.slots[listingID] = append(m.slots[listingID], now)
 	return true
+}
+
+// SlotRenewInterval is how often a long-running (streaming) attempt extends
+// its concurrency slot's expiry, so a request that exceeds SlotTimeout does
+// not silently lose the slot while its upstream is still producing (§3.5).
+const SlotRenewInterval = 30 * time.Second
+
+// Renew extends one outstanding slot of listingID to now. The oldest slot is
+// renewed because Release also frees the oldest one and because a long stream
+// is the attempt most likely to be the oldest outstanding slot. Renewing a
+// listing with nothing held is a no-op. The refreshed timestamp moves to the
+// end of the chronological slice, keeping sweepLocked's ordering invariant.
+func (m *SlotManager) Renew(listingID int64, now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	times := m.slots[listingID]
+	if len(times) == 0 {
+		return
+	}
+	times = append(times[1:], now)
+	m.slots[listingID] = times
 }
 
 // Release returns one slot — the oldest outstanding one. Releasing a listing
@@ -447,12 +469,18 @@ type SelectInput struct {
 	// OfficialOnly restricts selection to official channels
 	// (MODEL-CHANNEL-POOL §3.2: the buyer's "只用官方渠道" switch).
 	OfficialOnly bool
+	// EndpointKind is the upstream protocol the buyer's request maps to
+	// (openai_chat / openai_responses / anthropic_messages). Only channels
+	// configured to serve it are candidates. Empty means no restriction, which
+	// keeps callers that route outside the three v1 protocols unchanged.
+	EndpointKind relayconstant.EndpointKind
 }
 
 // loadVerifiedChannels returns the active channels that have a verified,
-// active sellable qualification for the model. A missing or paused entry means
-// the channel cannot serve this model right now.
-func loadVerifiedChannels(db *gorm.DB, model string) map[string]ChannelPool {
+// active sellable qualification for the model and can relay endpointKind. A
+// missing, paused or protocol-incompatible entry means the channel cannot
+// serve this request right now.
+func loadVerifiedChannels(db *gorm.DB, model string, endpointKind relayconstant.EndpointKind) map[string]ChannelPool {
 	out := make(map[string]ChannelPool)
 	var cms []ChannelModel
 	if err := db.Select("channel_slug").
@@ -475,6 +503,9 @@ func loadVerifiedChannels(db *gorm.DB, model string) map[string]ChannelPool {
 		return out
 	}
 	for _, ch := range channels {
+		if !ParseChannelEndpointBases(ch.Protocols).ServesEndpoint(endpointKind) {
+			continue
+		}
 		out[ch.Slug] = ch
 	}
 	return out
@@ -532,8 +563,11 @@ func effectiveMultiplierMilli(multiplierMilli, coefficientMilli int64) int64 {
 // inside its 可接单时段, under its daily spend cap, and circuit not broken.
 // Scoring (§4.3 综合价格、可用率、延迟): effective multiplier ascending first;
 // ties break on the most recent verify/patrol mp_probes latency ascending,
-// with never-probed listings last; the final tie-break is listing id
-// ascending.
+// with never-probed listings last; candidates still tied are drawn at random
+// (listing id is only the deterministic fallback when the draw repeats).
+//
+// Only channels whose configured endpoint bases serve in.EndpointKind are
+// candidates; an empty EndpointKind leaves the protocol unrestricted.
 //
 // Side-effecting limits (RPM, half-open probe, concurrency slot) are applied
 // only to candidates in ranked order, and only the eventual winner keeps
@@ -562,7 +596,7 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 	// Only certified, sellable channel-model pairs are selectable, and the
 	// plan channels paused by a quota window never receive traffic
 	// (MODEL-CHANNEL-POOL §3.2/§4). Loaded once per selection.
-	verifiedChannels := loadVerifiedChannels(db, in.Model)
+	verifiedChannels := loadVerifiedChannels(db, in.Model, in.EndpointKind)
 	coefficients := loadVerifiedCoefficients(db, in.Model)
 	// effectiveByID is the buyer-facing price factor (multiplier × channel
 	// coefficient) used for the cap and for ranking. A coefficient above 1000
@@ -634,6 +668,18 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 	if err != nil {
 		return Listing{}, false, err
 	}
+	// Candidates that tie on effective price, raw multiplier and probe latency
+	// are drawn at random instead of always preferring the lowest id, so
+	// traffic spreads across equally good supply. The draw uses the injected
+	// source, so tests stay reproducible. Probe latency is already a hard
+	// ordering key above, so an equal-latency tie has equal weights.
+	var draws map[int64]float64
+	if len(cands) > 1 {
+		draws = make(map[int64]float64, len(cands))
+		for i := range cands {
+			draws[cands[i].ID] = s.randomFloat()
+		}
+	}
 	slices.SortFunc(cands, func(a, b Listing) int {
 		if ea, eb := effectiveByID[a.ID], effectiveByID[b.ID]; ea != eb {
 			return cmp.Compare(ea, eb)
@@ -651,6 +697,9 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 		}
 		if la != lb {
 			return cmp.Compare(la, lb)
+		}
+		if da, db := draws[a.ID], draws[b.ID]; da != db {
+			return cmp.Compare(da, db)
 		}
 		return cmp.Compare(a.ID, b.ID)
 	})
@@ -685,12 +734,19 @@ func (s *Selector) canaryAdmit() bool {
 	if f >= 1 {
 		return true
 	}
+	return s.randomFloat() < f
+}
+
+// randomFloat draws one value from the selector's injected random source,
+// serialized because rand.Rand is not goroutine-safe. A nil source falls back
+// to the global generator.
+func (s *Selector) randomFloat() float64 {
 	s.randMu.Lock()
 	defer s.randMu.Unlock()
 	if s.Rand == nil {
-		return rand.Float64() < f
+		return rand.Float64()
 	}
-	return s.Rand.Float64() < f
+	return s.Rand.Float64()
 }
 
 // latestProbeLatencies returns the LatencyMs of each listing's most recent

@@ -329,6 +329,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 
 		// Closing the upstream body is part of stopping the scanner. Its EOF or
 		// read error must not replace the actual stop reason or add a false error.
+		// A bare EOF is recorded after every goroutine has joined (see below): the
+		// handler may still be draining the final buffered event, and the protocol
+		// terminal it reports (sr.Done) must win over the transport's EOF.
 		if ctx.Err() != nil {
 			return
 		}
@@ -338,7 +341,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, err)
 			}
 		}
-		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonEOF, nil)
 	})
 
 	// 主循环等待完成或超时
@@ -354,6 +356,14 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	}
 
 	cleanup()
+	// Every goroutine has joined, so the handler has drained and processed all
+	// buffered events. An end reason still unset means the upstream closed
+	// without any terminal signal (no [DONE], no handler Done/Stop, no read
+	// error): a truncated stream. Setting EOF only now keeps it from racing a
+	// protocol terminal the handler records while the scanner is at EOF.
+	if info.StreamStatus.EndReason == relaycommon.StreamEndReasonNone {
+		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonEOF, nil)
+	}
 	// All stream goroutines have joined. Done from a successfully delivered
 	// protocol completion can now correct a cancellation that won while its
 	// callback was still running. Bare EOF and failed writes never qualify.

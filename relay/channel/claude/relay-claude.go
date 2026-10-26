@@ -107,6 +107,11 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	}
 	if claudeResponse.Type == "message_stop" {
 		info.StreamStatus.MarkCompleted()
+		// The real Anthropic SSE protocol ends with message_stop and has no
+		// [DONE] terminator. Record the normal end here so the scanner's bare
+		// EOF after it is not classified as a truncated stream. Message_stop is
+		// the last event, so no later output is suppressed.
+		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
 	}
 	if info.RelayFormat == types.RelayFormatClaude {
 		FormatClaudeResponseInfo(&claudeResponse, nil, claudeInfo)

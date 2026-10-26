@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -74,7 +75,15 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	requestURL := fmt.Sprintf("%s/v1/messages", info.ChannelBaseUrl)
+	// A marketplace channel stores the vendor-native Messages endpoint in its
+	// setting; other channels use their base plus the fixed endpoint path.
+	requestURL := strings.TrimSpace(info.ChannelSetting.MPAnthropicMessagesURL)
+	if requestURL == "" {
+		requestURL = relayconstant.BuildEndpointURL(info.ChannelBaseUrl, relayconstant.EndpointAnthropicMessages)
+	}
+	if requestURL == "" {
+		requestURL = relayconstant.EndpointPath(relayconstant.EndpointAnthropicMessages)
+	}
 	if !shouldAppendClaudeBetaQuery(info) {
 		return requestURL, nil
 	}
@@ -105,10 +114,12 @@ func shouldAppendClaudeBetaQuery(info *relaycommon.RelayInfo) bool {
 func CommonClaudeHeadersOperation(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) {
 	// common headers operation
 	// A client may send several anthropic-beta lines; the API reads one
-	// comma-separated list, so forward all of them.
-	anthropicBeta := strings.Join(c.Request.Header.Values("anthropic-beta"), ",")
-	if anthropicBeta != "" {
-		req.Set("anthropic-beta", anthropicBeta)
+	// comma-separated list. Only allowlisted betas are forwarded: an unknown
+	// beta changes billing/protocol semantics and must not pass through
+	// blindly. The marketplace additionally prunes context-1m when the price
+	// table does not cover a 1M window.
+	if betas := relayconstant.FilterAnthropicBetaValues(c.Request.Header.Values("anthropic-beta"), true); len(betas) > 0 {
+		req.Set("anthropic-beta", strings.Join(betas, ","))
 	}
 	model_setting.GetClaudeSettings().WriteHeaders(info.OriginModelName, req)
 }

@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"gorm.io/gorm"
 )
 
@@ -820,6 +821,94 @@ func ChannelPoolAll(db *gorm.DB) []ChannelPool {
 	return out
 }
 
+// ChannelEndpointBases holds the fixed upstream base of each relay endpoint a
+// channel may serve. openai_chat / openai_responses / anthropic_messages are
+// the endpoint-specific keys; openai / anthropic are the legacy bases and stay
+// the fallback for rows seeded before the endpoint split.
+type ChannelEndpointBases struct {
+	OpenAIChat        string `json:"openai_chat,omitempty"`
+	OpenAIResponses   string `json:"openai_responses,omitempty"`
+	AnthropicMessages string `json:"anthropic_messages,omitempty"`
+	OpenAI            string `json:"openai,omitempty"`
+	Anthropic         string `json:"anthropic,omitempty"`
+}
+
+// ParseChannelEndpointBases decodes the mp_channels.protocols JSON. Malformed
+// data yields empty values rather than an error, matching the pool's other
+// defensive JSON helpers.
+func ParseChannelEndpointBases(raw string) ChannelEndpointBases {
+	var bases ChannelEndpointBases
+	if strings.TrimSpace(raw) == "" {
+		return bases
+	}
+	if err := common.Unmarshal([]byte(raw), &bases); err != nil {
+		return ChannelEndpointBases{}
+	}
+	return bases
+}
+
+// ChatBase is the base of the OpenAI chat/completions endpoint.
+func (b ChannelEndpointBases) ChatBase() string {
+	if b.OpenAIChat != "" {
+		return b.OpenAIChat
+	}
+	return b.OpenAI
+}
+
+// ResponsesBase is the base of the OpenAI responses endpoint; it falls back to
+// the chat base when no separate responses base is configured.
+func (b ChannelEndpointBases) ResponsesBase() string {
+	if b.OpenAIResponses != "" {
+		return b.OpenAIResponses
+	}
+	return b.ChatBase()
+}
+
+// MessagesBase is the base of the Anthropic messages endpoint.
+func (b ChannelEndpointBases) MessagesBase() string {
+	if b.AnthropicMessages != "" {
+		return b.AnthropicMessages
+	}
+	return b.Anthropic
+}
+
+// ServesEndpoint reports whether the channel has an upstream base for kind.
+// Endpoint-specific keys take precedence and fall back to the legacy
+// openai/anthropic keys, so a row written before the endpoint split still
+// serves the protocols it always did (an openai-only channel serves chat and
+// responses but not messages). A row with no endpoint data at all is left
+// unrestricted: it predates the split and the egress guard, not the selector,
+// decides whether it is usable.
+func (b ChannelEndpointBases) ServesEndpoint(kind relayconstant.EndpointKind) bool {
+	if kind == "" {
+		return true
+	}
+	empty := b.OpenAIChat == "" && b.OpenAIResponses == "" && b.AnthropicMessages == "" &&
+		b.OpenAI == "" && b.Anthropic == ""
+	if empty {
+		return true
+	}
+	switch kind {
+	case relayconstant.EndpointOpenAIChat:
+		return strings.TrimSpace(b.ChatBase()) != ""
+	case relayconstant.EndpointOpenAIResponses:
+		return strings.TrimSpace(b.ResponsesBase()) != ""
+	case relayconstant.EndpointAnthropicMessages:
+		return strings.TrimSpace(b.MessagesBase()) != ""
+	default:
+		return true
+	}
+}
+
+// ChannelPoolEndpointBases returns the endpoint bases of one channel row.
+func ChannelPoolEndpointBases(db *gorm.DB, slug string) (ChannelEndpointBases, bool) {
+	ch, ok := ChannelPoolBySlug(db, slug)
+	if !ok {
+		return ChannelEndpointBases{}, false
+	}
+	return ParseChannelEndpointBases(ch.Protocols), true
+}
+
 // ChannelPoolCreateOrUpdate validates ch and upserts it by slug. Validation:
 // slug is required, kind is one of official/plan/third_party, an optional
 // key_pattern must compile, and status is active/disabled.
@@ -901,11 +990,14 @@ func validateChannelProtocolURLs(raw string) error {
 	if raw == "" || raw == "{}" {
 		return nil
 	}
-	var protocols VendorProtocols
-	if err := json.Unmarshal([]byte(raw), &protocols); err != nil {
+	var protocols ChannelEndpointBases
+	if err := common.Unmarshal([]byte(raw), &protocols); err != nil {
 		return ErrChannelPoolProtocolURL
 	}
-	for _, value := range []string{protocols.OpenAI, protocols.Anthropic} {
+	for _, value := range []string{
+		protocols.OpenAI, protocols.Anthropic,
+		protocols.OpenAIChat, protocols.OpenAIResponses, protocols.AnthropicMessages,
+	} {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
@@ -1182,9 +1274,13 @@ func ChannelPoolAsVendor(db *gorm.DB, slug string) (Vendor, bool) {
 	if !ok {
 		return Vendor{}, false
 	}
-	var protocols VendorProtocols
-	if strings.TrimSpace(ch.Protocols) != "" {
-		_ = json.Unmarshal([]byte(ch.Protocols), &protocols)
+	// Endpoint-specific bases take precedence over the legacy openai/anthropic
+	// keys, so a channel may point chat, responses and messages at different
+	// upstream paths.
+	bases := ParseChannelEndpointBases(ch.Protocols)
+	protocols := VendorProtocols{
+		OpenAI:    bases.ChatBase(),
+		Anthropic: bases.MessagesBase(),
 	}
 	adaptor := strings.TrimSpace(ch.Adaptor)
 	if adaptor == "" {

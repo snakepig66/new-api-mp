@@ -67,6 +67,7 @@ type mpHarness struct {
 	t          *testing.T
 	db         *gorm.DB
 	server     *httptest.Server
+	client     *http.Client
 	buyerID    int
 	tokenID    int64
 	tokenKey   string
@@ -159,10 +160,28 @@ func newMPHarness(t *testing.T, buyerQuota int) *mpHarness {
 	v1.POST("/chat/completions", func(c *gin.Context) {
 		controller.Relay(c, types.RelayFormatOpenAI)
 	})
+	// The other two marketplace v1 protocols (P1 group 5) use the same relay
+	// chain; only the entry format differs (production registers them the same
+	// way in router/relay-router.go and the task-plugin protocol router).
+	v1.POST("/messages", func(c *gin.Context) {
+		controller.Relay(c, types.RelayFormatClaude)
+	})
+	v1.POST("/responses", func(c *gin.Context) {
+		controller.Relay(c, types.RelayFormatOpenAIResponses)
+	})
 	server := httptest.NewServer(engine)
 	t.Cleanup(server.Close)
 
-	h := &mpHarness{t: t, db: db, server: server}
+	// One client per test: CloseIdleConnections at cleanup (LIFO, before the
+	// server closes) keeps the dozens of per-test loopback listeners from
+	// accumulating idle sockets across the suite.
+	client := &http.Client{Transport: &http.Transport{
+		MaxIdleConns:    4,
+		IdleConnTimeout: 5 * time.Second,
+	}}
+	t.Cleanup(client.CloseIdleConnections)
+
+	h := &mpHarness{t: t, db: db, server: server, client: client}
 	h.addBuyer(buyerQuota)
 	return h
 }
@@ -207,6 +226,15 @@ func (h *mpHarness) addBuyer(quota int) {
 // is sellerKey. The selector always picks the lowest multiplier first, so
 // tests control the pick order through the multipliers they hand out.
 func (h *mpHarness) addListing(mockBaseURL, sellerKey string, multiplierMilli int64) marketplace.Listing {
+	h.t.Helper()
+	return h.addListingAs(itVendor, itModel, mockBaseURL, sellerKey, multiplierMilli)
+}
+
+// addListingAs is addListing with an explicit vendor and standard model, used
+// by the cases that need a different supplier channel (for example the OpenAI
+// official channel whose requests must carry store=false).
+func (h *mpHarness) addListingAs(vendor, modelName, mockBaseURL, sellerKey string, multiplierMilli int64) marketplace.Listing {
+	h.t.Helper()
 	h.userSeq++
 	suffix := fmt.Sprintf("%d-%d", time.Now().UnixNano(), h.userSeq)
 	seller := model.User{
@@ -225,7 +253,7 @@ func (h *mpHarness) addListing(mockBaseURL, sellerKey string, multiplierMilli in
 		Key:     "placeholder-key",
 		BaseURL: &baseURL,
 		Status:  common.ChannelStatusManuallyDisabled, // traffic is gated by the listing, never the channel
-		Models:  itModel,
+		Models:  modelName,
 		Group:   "default",
 	}
 	require.NoError(h.t, h.db.Create(&channel).Error)
@@ -236,8 +264,8 @@ func (h *mpHarness) addListing(mockBaseURL, sellerKey string, multiplierMilli in
 	listing := marketplace.Listing{
 		SellerID:         int64(seller.Id),
 		ChannelID:        int64(channel.Id),
-		Vendor:           itVendor,
-		Models:           []string{itModel},
+		Vendor:           vendor,
+		Models:           []string{modelName},
 		MultiplierMilli:  multiplierMilli,
 		ConcurrencyLimit: 5,
 		Status:           marketplace.ListingLive,
@@ -261,6 +289,8 @@ type mockUpstream struct {
 	mu      sync.Mutex
 	bodies  []string
 	auths   []string
+	paths   []string
+	headers []http.Header
 	handler http.HandlerFunc
 }
 
@@ -276,6 +306,8 @@ func newMockUpstream(t *testing.T, handler http.HandlerFunc) *mockUpstream {
 		m.mu.Lock()
 		m.bodies = append(m.bodies, string(body))
 		m.auths = append(m.auths, r.Header.Get("Authorization"))
+		m.paths = append(m.paths, r.URL.Path)
+		m.headers = append(m.headers, r.Header.Clone())
 		m.mu.Unlock()
 		m.handler(w, r)
 	}))
@@ -301,6 +333,18 @@ func (m *mockUpstream) auth(i int) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.auths[i]
+}
+
+func (m *mockUpstream) path(i int) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.paths[i]
+}
+
+func (m *mockUpstream) header(i int, name string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.headers[i].Get(name)
 }
 
 // --- canned responses --------------------------------------------------------
@@ -379,6 +423,137 @@ func streamSuccessFrames(content string, usage chatUsageJSON) []string {
 	}
 }
 
+// writeChatSuccessFor is writeChatSuccess with an explicit upstream model id,
+// used by the alias-rewrite case where the upstream name differs from the
+// standard model.
+func writeChatSuccessFor(modelName, content string, usage chatUsageJSON) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"id":"chatcmpl-mock","object":"chat.completion","created":1730000000,"model":%q,`+
+			`"choices":[{"index":0,"message":{"role":"assistant","content":%q},"finish_reason":"stop"}],`+
+			`"usage":{%s}}`, modelName, content, usage.json())
+	}
+}
+
+// writeSSELines writes pre-formatted SSE frames (each already carrying its
+// event/data lines and trailing blank line) and flushes every one.
+func writeSSELines(w http.ResponseWriter, frames []string) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.WriteHeader(http.StatusOK)
+	fl, _ := w.(http.Flusher)
+	for _, f := range frames {
+		_, _ = io.WriteString(w, f)
+		if fl != nil {
+			fl.Flush()
+		}
+	}
+}
+
+// anthropicUsageJSON is the Anthropic Messages usage object of a mock reply.
+type anthropicUsageJSON struct {
+	InputTokens              int
+	OutputTokens             int
+	CacheReadInputTokens     int
+	CacheCreationInputTokens int
+}
+
+func (u anthropicUsageJSON) json() string {
+	return fmt.Sprintf(`"input_tokens":%d,"output_tokens":%d,`+
+		`"cache_read_input_tokens":%d,"cache_creation_input_tokens":%d`,
+		u.InputTokens, u.OutputTokens, u.CacheReadInputTokens, u.CacheCreationInputTokens)
+}
+
+// writeAnthropicMessage answers a non-streaming Messages request. contentJSON
+// is the raw content-block array, so a case can return text, thinking, or a
+// tool_use block without another helper.
+func writeAnthropicMessage(modelName, contentJSON string, usage anthropicUsageJSON) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"id":"msg_mock123","type":"message","role":"assistant","model":%q,`+
+			`"content":%s,"stop_reason":"end_turn","usage":{%s}}`, modelName, contentJSON, usage.json())
+	}
+}
+
+// anthropicSSEFrame renders one event/data frame.
+func anthropicSSEFrame(eventType, data string) string {
+	return "event: " + eventType + "\ndata: " + data + "\n\n"
+}
+
+// writeAnthropicStream answers a Messages request with a well-formed SSE
+// stream: message_start (input/cache usage), one text delta, message_delta
+// (output usage), message_stop. There is no [DONE] terminator: the real
+// Anthropic protocol ends at message_stop, and the relay must classify the
+// stream as complete from that event alone.
+func writeAnthropicStream(modelName, text string, usage anthropicUsageJSON) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeSSELines(w, []string{
+			anthropicSSEFrame("message_start", fmt.Sprintf(
+				`{"type":"message_start","message":{"id":"msg_mock123","type":"message","role":"assistant","model":%q,"content":[],`+
+					`"usage":{"input_tokens":%d,"output_tokens":0,"cache_read_input_tokens":%d,"cache_creation_input_tokens":%d}}}`,
+				modelName, usage.InputTokens, usage.CacheReadInputTokens, usage.CacheCreationInputTokens)),
+			anthropicSSEFrame("content_block_start",
+				`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`),
+			anthropicSSEFrame("content_block_delta", fmt.Sprintf(
+				`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":%q}}`, text)),
+			anthropicSSEFrame("content_block_stop", `{"type":"content_block_stop","index":0}`),
+			anthropicSSEFrame("message_delta", fmt.Sprintf(
+				`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":%d}}`,
+				usage.OutputTokens)),
+			anthropicSSEFrame("message_stop", `{"type":"message_stop"}`),
+		})
+	}
+}
+
+// responsesUsageJSON is the Responses usage object of a mock reply.
+type responsesUsageJSON struct {
+	InputTokens  int
+	OutputTokens int
+	CachedTokens int
+}
+
+func (u responsesUsageJSON) json() string {
+	return fmt.Sprintf(`"input_tokens":%d,"input_tokens_details":{"cached_tokens":%d},`+
+		`"output_tokens":%d,"total_tokens":%d`,
+		u.InputTokens, u.CachedTokens, u.OutputTokens, u.InputTokens+u.OutputTokens)
+}
+
+// writeResponsesSuccess answers a non-streaming Responses request. outputJSON
+// is the raw output-item array.
+func writeResponsesSuccess(modelName, outputJSON string, usage responsesUsageJSON) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"id":"resp_abc123","object":"response","created_at":1730000000,`+
+			`"status":"completed","model":%q,"output":%s,"usage":{%s}}`, modelName, outputJSON, usage.json())
+	}
+}
+
+// responsesSSEFrame renders one event/data frame of the Responses API.
+func responsesSSEFrame(eventType, data string) string {
+	return "event: " + eventType + "\ndata: " + data + "\n\n"
+}
+
+// writeResponsesStream answers a Responses request with the canonical SSE
+// sequence: response.created, one output_text delta, response.completed with
+// usage. There is no [DONE] terminator: the real OpenAI Responses protocol
+// ends at response.completed, and the relay must classify the stream as
+// complete from that event alone (the scanner's EOF must not win the race).
+func writeResponsesStream(modelName, text string, usage responsesUsageJSON) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeSSELines(w, []string{
+			responsesSSEFrame("response.created", fmt.Sprintf(
+				`{"type":"response.created","response":{"id":"resp_abc123","object":"response","status":"in_progress","model":%q,"output":[]}}`,
+				modelName)),
+			responsesSSEFrame("response.output_text.delta", fmt.Sprintf(
+				`{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":%q}`, text)),
+			responsesSSEFrame("response.completed", fmt.Sprintf(
+				`{"type":"response.completed","response":{"id":"resp_abc123","object":"response","status":"completed","model":%q,`+
+					`"output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":%q}]}],`+
+					`"usage":{%s}}}`,
+				modelName, text, usage.json())),
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // drivers
 // ---------------------------------------------------------------------------
@@ -405,11 +580,36 @@ func (h *mpHarness) doChatTo(url string, body ...string) chatResult {
 	if len(body) > 0 {
 		payload = body[0]
 	}
+	return h.doRelayURL(url, payload, nil)
+}
+
+// doMessages posts one Anthropic Messages request through the whole relay
+// chain. extra headers (anthropic-version, anthropic-beta) are optional.
+func (h *mpHarness) doMessages(body string, extra http.Header) chatResult {
+	h.t.Helper()
+	return h.doRelayURL(h.server.URL+"/v1/messages", body, extra)
+}
+
+// doResponses posts one OpenAI Responses request through the whole relay chain.
+func (h *mpHarness) doResponses(body string) chatResult {
+	h.t.Helper()
+	return h.doRelayURL(h.server.URL+"/v1/responses", body, nil)
+}
+
+// doRelayURL posts payload with the buyer token and reads the response to the
+// end (for streams: until the server closes the body, after settlement ran).
+func (h *mpHarness) doRelayURL(url, payload string, extra http.Header) chatResult {
+	h.t.Helper()
 	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(payload))
 	require.NoError(h.t, err)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer sk-"+h.tokenKey)
-	resp, err := http.DefaultClient.Do(req)
+	for name, values := range extra {
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
+	}
+	resp, err := h.client.Do(req)
 	require.NoError(h.t, err)
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
@@ -501,22 +701,53 @@ func (h *mpHarness) buyerQuota() int {
 	return quota
 }
 
+// expectedUsage is the normalized token breakdown a success case expects on
+// mp_requests: the plain-input remainder plus the separately priced cache
+// dimensions and the per-call search count.
+type expectedUsage struct {
+	input      int64
+	output     int64
+	cacheRead  int64
+	cacheWrite int64
+	search     int64
+}
+
+// pricingContextFor mirrors marketplace.pricingContext: the standard model's
+// origin vendor owns the official price book and the sellable qualification
+// supplies the channel coefficient.
+func (h *mpHarness) pricingContextFor(listing marketplace.Listing) (originVendor string, coefficientMilli int64) {
+	h.t.Helper()
+	originVendor, coefficientMilli = listing.Vendor, 1000
+	if m, ok := marketplace.ModelPoolByName(h.db, itModel); ok && m.OriginVendor != "" {
+		originVendor = m.OriginVendor
+	}
+	if cm, ok := marketplace.ChannelModelFor(h.db, listing.Vendor, itModel); ok && cm.CoefficientMilli > 0 {
+		coefficientMilli = cm.CoefficientMilli
+	}
+	return originVendor, coefficientMilli
+}
+
 // expectQuote recomputes the single pricing function's answer for the recorded
 // request — the same Quote the display price, the debit and the record share
 // (§3.7). Pricing at the record's creation instant keeps the assertion
 // independent of the wall-clock tier boundary.
-func (h *mpHarness) expectQuote(t *testing.T, rec marketplace.Request, inputTokens, outputTokens, searchCount int64) marketplace.QuoteResult {
+func (h *mpHarness) expectQuote(t *testing.T, rec marketplace.Request, listing marketplace.Listing, u expectedUsage) marketplace.QuoteResult {
 	t.Helper()
 	cal, err := marketplace.LoadCalendar(h.db)
 	require.NoError(t, err)
+	origin, coefficient := h.pricingContextFor(listing)
 	quote, err := marketplace.Quote(h.db, cal, marketplace.QuoteInput{
-		Model:           itModel,
-		Vendor:          itVendor,
-		MultiplierMilli: rec.MultiplierMilli,
-		At:              rec.CreatedAt,
-		InputTokens:     inputTokens,
-		OutputTokens:    outputTokens,
-		SearchCount:     searchCount,
+		Model:            itModel,
+		Vendor:           listing.Vendor,
+		OriginVendor:     origin,
+		CoefficientMilli: coefficient,
+		MultiplierMilli:  rec.MultiplierMilli,
+		At:               rec.CreatedAt,
+		InputTokens:      u.input,
+		OutputTokens:     u.output,
+		CacheReadTokens:  u.cacheRead,
+		CacheWriteTokens: u.cacheWrite,
+		SearchCount:      u.search,
 	})
 	require.NoError(t, err)
 	return quote
@@ -530,6 +761,13 @@ func (h *mpHarness) expectQuote(t *testing.T, rec marketplace.Request, inputToke
 //   - users.quota: exactly initial − Quote total (no residual pre-freeze).
 func (h *mpHarness) reconcileSuccess(requestID string, listing marketplace.Listing, inputTokens, outputTokens, searchCount int64) {
 	h.t.Helper()
+	h.reconcileSuccessUsage(requestID, listing, expectedUsage{input: inputTokens, output: outputTokens, search: searchCount})
+}
+
+// reconcileSuccessUsage is reconcileSuccess for a usage snapshot that carries
+// cache dimensions as well as plain input/output.
+func (h *mpHarness) reconcileSuccessUsage(requestID string, listing marketplace.Listing, u expectedUsage) {
+	h.t.Helper()
 	rec := h.recordOf(requestID)
 	assert.Equal(h.t, marketplace.RequestSuccess, rec.Status)
 	assert.Equal(h.t, listing.ID, rec.ListingID)
@@ -537,9 +775,11 @@ func (h *mpHarness) reconcileSuccess(requestID string, listing marketplace.Listi
 	assert.Equal(h.t, int64(h.buyerID), rec.BuyerUserID)
 	assert.Equal(h.t, itModel, rec.Model)
 	assert.Equal(h.t, listing.MultiplierMilli, rec.MultiplierMilli)
-	assert.Equal(h.t, inputTokens, rec.InputTokens)
-	assert.Equal(h.t, outputTokens, rec.OutputTokens)
-	assert.Equal(h.t, searchCount, rec.SearchCount)
+	assert.Equal(h.t, u.input, rec.InputTokens)
+	assert.Equal(h.t, u.output, rec.OutputTokens)
+	assert.Equal(h.t, u.cacheRead, rec.CacheReadTokens)
+	assert.Equal(h.t, u.cacheWrite, rec.CacheWriteTokens)
+	assert.Equal(h.t, u.search, rec.SearchCount)
 	assert.False(h.t, rec.UsageEstimated)
 	// The recorded tier must be the calendar's tier at the pricing instant (§3.3).
 	cal, err := marketplace.LoadCalendar(h.db)
@@ -547,7 +787,7 @@ func (h *mpHarness) reconcileSuccess(requestID string, listing marketplace.Listi
 	assert.Equal(h.t, cal.TierAt(rec.CreatedAt), rec.Tier)
 	assert.Equal(h.t, int64(1), rec.PriceVersion)
 
-	quote := h.expectQuote(h.t, rec, inputTokens, outputTokens, searchCount)
+	quote := h.expectQuote(h.t, rec, listing, u)
 	assert.Equal(h.t, int64(quote.TokenDebit), rec.TokenDebitMicro)
 	assert.Equal(h.t, int64(quote.ToolDebit), rec.ToolDebitMicro)
 	assert.Equal(h.t, int64(quote.TotalDebit), rec.TotalDebitMicro)
@@ -634,6 +874,50 @@ func chatBody(stream bool, maxTokens int) string {
 		itModel, maxTokens, stream)
 }
 
+func messagesBody(stream bool, maxTokens int) string {
+	return fmt.Sprintf(`{"model":%q,"max_tokens":%d,"messages":[{"role":"user","content":"hi"}],"stream":%t}`,
+		itModel, maxTokens, stream)
+}
+
+func responsesBody(stream bool, maxOutputTokens int) string {
+	return fmt.Sprintf(`{"model":%q,"input":"hi","max_output_tokens":%d,"stream":%t}`,
+		itModel, maxOutputTokens, stream)
+}
+
+// responseBindingOf polls for the §3.7 binding row of an upstream response id
+// (EndRelay persists it after settlement returns).
+func (h *mpHarness) responseBindingOf(responseID string) (marketplace.ResponseBinding, bool) {
+	h.t.Helper()
+	var binding marketplace.ResponseBinding
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		err := h.db.Where("response_id = ?", responseID).Take(&binding).Error
+		if err == nil {
+			return binding, true
+		}
+		if time.Now().After(deadline) {
+			return marketplace.ResponseBinding{}, false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// addOpenAIOfficialChannel seeds the OpenAI official channel pool entry and a
+// verified qualification for the standard model, so a listing of vendor
+// "openai" is selectable and its requests must carry store=false.
+func (h *mpHarness) addOpenAIOfficialChannel() {
+	h.t.Helper()
+	require.NoError(h.t, h.db.Create(&marketplace.ChannelPool{
+		Slug: "openai", Name: "OpenAI", Kind: marketplace.ChannelKindOfficial,
+		Protocols: `{"openai":"https://api.openai.com/v1"}`, Adaptor: marketplace.VendorAdaptorOpenAI,
+		PassthroughBody: true, Status: marketplace.PoolStatusActive,
+	}).Error)
+	require.NoError(h.t, h.db.Create(&marketplace.ChannelModel{
+		ChannelSlug: "openai", UpstreamModel: "gpt-5.2-mini", Model: itModel,
+		CoefficientMilli: 1000, Verified: true, FingerprintRatio: 1.0, Status: marketplace.PoolStatusActive,
+	}).Error)
+}
+
 // ---------------------------------------------------------------------------
 // §5 阶段 4 cases
 // ---------------------------------------------------------------------------
@@ -675,7 +959,10 @@ func TestRelayIT_StreamSuccess(t *testing.T) {
 	assert.Contains(h.t, bodyStr, "data: [DONE]")
 	assert.Contains(h.t, bodyStr, "hello stream")
 	require.Equal(h.t, 1, upstream.callCount())
-	// §3.7: the relay forced stream_options.include_usage onto the upstream request.
+	// §3.7: the relay forced stream_options.include_usage onto the upstream
+	// request. The buyer body below carries no stream_options at all, so the
+	// switch is the relay's, not the client's.
+	assert.NotContains(h.t, chatBody(true, 1000), "stream_options")
 	assert.Contains(h.t, upstream.body(0), `"include_usage":true`)
 
 	h.reconcileSuccess(res.requestID, listing, 1000, 500, 0)
@@ -774,7 +1061,7 @@ func TestRelayIT_StreamClientCancel(t *testing.T) {
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer sk-"+h.tokenKey)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := h.client.Do(req)
 	require.NoError(t, err)
 	requestID := resp.Header.Get(common.RequestIdKey)
 	// Read the first SSE frame, then abandon the request.
@@ -1034,4 +1321,386 @@ func TestRelayIT_NoKeyLeakageToUpstream(t *testing.T) {
 	assert.Equal(t, "Bearer "+sellerKey, auth)
 	assert.NotContains(t, auth, h.tokenKey)
 	assert.NotContains(t, auth, "placeholder")
+}
+
+// ---------------------------------------------------------------------------
+// P1 group 5 — chat format supplements
+// ---------------------------------------------------------------------------
+
+// The vendor's upstream model name is rewritten onto the outbound request and
+// the response model is rewritten back to the standard id (§3.4).
+func TestRelayIT_ChatModelAliasRewritten(t *testing.T) {
+	h := newMPHarness(t, itBuyerQuota)
+	require.NoError(t, h.db.Model(&marketplace.ChannelModel{}).
+		Where("channel_slug = ? AND model = ?", itVendor, itModel).
+		Update("upstream_model", "codely-flash").Error)
+	usage := chatUsageJSON{PromptTokens: 1000, CompletionTokens: 500}
+	upstream := newMockUpstream(t, writeChatSuccessFor("codely-flash", "aliased answer", usage))
+	listing := h.addListing(upstream.url(), "sk-seller-alias", 1000)
+
+	res := h.doChat(chatBody(false, 1000))
+	require.Equal(t, http.StatusOK, res.status, string(res.body))
+	require.Equal(t, 1, upstream.callCount())
+	assert.Contains(t, upstream.body(0), `"model":"codely-flash"`, "the upstream must receive the mapped model id")
+	assert.NotContains(t, upstream.body(0), `"model":"`+itModel+`"`)
+	assert.Contains(t, string(res.body), `"model":"`+itModel+`"`, "the buyer must see the standard model id")
+	assert.NotContains(t, string(res.body), "codely-flash")
+
+	rec := h.recordOf(res.requestID)
+	assert.Equal(t, "codely-flash", rec.UpstreamModel)
+	h.reconcileSuccess(res.requestID, listing, 1000, 500, 0)
+}
+
+// Buyer identity fields are replaced by the per-(seller,buyer) HMAC pseudonym
+// before the request leaves the platform (§3.1).
+func TestRelayIT_ChatUserPseudonymized(t *testing.T) {
+	h := newMPHarness(t, itBuyerQuota)
+	usage := chatUsageJSON{PromptTokens: 100, CompletionTokens: 50}
+	upstream := newMockUpstream(t, writeChatSuccess("pseudonymous", usage))
+	listing := h.addListing(upstream.url(), "sk-seller-pseudonym", 1000)
+
+	body := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hi"}],"max_tokens":100,`+
+		`"user":"buyer-alice","metadata":{"user":"buyer-alice-meta"}}`, itModel)
+	res := h.doChat(body)
+	require.Equal(t, http.StatusOK, res.status, string(res.body))
+	require.Equal(t, 1, upstream.callCount())
+
+	pseudonym, err := marketplace.RequestUserPseudonym(listing.SellerID, int64(h.buyerID))
+	require.NoError(t, err)
+	upstreamBody := upstream.body(0)
+	assert.Contains(t, upstreamBody, `"user":"`+pseudonym+`"`)
+	assert.Contains(t, upstreamBody, `"metadata":{"user":"`+pseudonym+`"}`)
+	assert.NotContains(t, upstreamBody, "buyer-alice", "the buyer's identity fields must never reach the upstream")
+	assert.NotContains(t, upstreamBody, h.tokenKey)
+
+	h.reconcileSuccess(res.requestID, listing, 100, 50, 0)
+}
+
+// A listing on OpenAI's own channel forces store=false so the seller's key
+// cannot retain buyer conversation data (§3.10).
+func TestRelayIT_OpenAIOfficialStoreFalse(t *testing.T) {
+	h := newMPHarness(t, itBuyerQuota)
+	h.addOpenAIOfficialChannel()
+	usage := chatUsageJSON{PromptTokens: 100, CompletionTokens: 50}
+	upstream := newMockUpstream(t, writeChatSuccessFor("gpt-5.2-mini", "official answer", usage))
+	listing := h.addListingAs("openai", itModel, upstream.url(), "sk-openai-seller", 1000)
+
+	body := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hi"}],"max_tokens":100}`, itModel)
+	res := h.doChat(body)
+	require.Equal(t, http.StatusOK, res.status, string(res.body))
+	require.Equal(t, 1, upstream.callCount())
+	assert.Equal(t, "/v1/chat/completions", upstream.path(0))
+	assert.Contains(t, upstream.body(0), `"store":false`)
+	assert.Contains(t, string(res.body), `"model":"`+itModel+`"`)
+
+	h.reconcileSuccess(res.requestID, listing, 100, 50, 0)
+}
+
+// Cached prompt tokens are split out of the inclusive Chat prompt_tokens and
+// priced at the cache-read rate (§3.2).
+func TestRelayIT_ChatCacheReadBilling(t *testing.T) {
+	h := newMPHarness(t, itBuyerQuota)
+	usage := chatUsageJSON{
+		PromptTokens: 1000, CompletionTokens: 500,
+		extraFields: `"prompt_tokens_details":{"cached_tokens":200}`,
+	}
+	upstream := newMockUpstream(t, writeChatSuccess("cached", usage))
+	listing := h.addListing(upstream.url(), "sk-seller-cache", 1000)
+
+	res := h.doChat(chatBody(false, 1000))
+	require.Equal(t, http.StatusOK, res.status, string(res.body))
+
+	// prompt_tokens is the inclusive total: the plain-input remainder is 800.
+	h.reconcileSuccessUsage(res.requestID, listing, expectedUsage{input: 800, output: 500, cacheRead: 200})
+}
+
+// ---------------------------------------------------------------------------
+// P1 group 5 — Anthropic Messages format
+// ---------------------------------------------------------------------------
+
+// Non-streaming Messages: usage extraction (including both cache dimensions),
+// billing, and the upstream -> standard model rewrite.
+func TestRelayIT_MessagesNonStream(t *testing.T) {
+	h := newMPHarness(t, itBuyerQuota)
+	require.NoError(t, h.db.Model(&marketplace.ChannelModel{}).
+		Where("channel_slug = ? AND model = ?", itVendor, itModel).
+		Update("upstream_model", "ds-flash-upstream").Error)
+	usage := anthropicUsageJSON{
+		InputTokens: 1000, OutputTokens: 500,
+		CacheReadInputTokens: 200, CacheCreationInputTokens: 100,
+	}
+	upstream := newMockUpstream(t, writeAnthropicMessage("ds-flash-upstream",
+		`[{"type":"text","text":"bonjour"}]`, usage))
+	sellerKey := "sk-seller-messages"
+	listing := h.addListing(upstream.url(), sellerKey, 1000)
+
+	headers := http.Header{}
+	headers.Set("anthropic-version", "2024-01-01")
+	res := h.doMessages(messagesBody(false, 1000), headers)
+	require.Equal(t, http.StatusOK, res.status, string(res.body))
+	require.Equal(t, 1, upstream.callCount())
+
+	assert.Equal(t, "/v1/messages", upstream.path(0))
+	assert.Equal(t, sellerKey, upstream.header(0, "x-api-key"))
+	assert.Equal(t, "2024-01-01", upstream.header(0, "anthropic-version"))
+	assert.Contains(t, upstream.body(0), `"model":"ds-flash-upstream"`)
+	assert.Contains(t, string(res.body), "bonjour")
+	assert.Contains(t, string(res.body), `"model":"`+itModel+`"`, "the response model must be the standard id")
+	assert.NotContains(t, string(res.body), "ds-flash-upstream")
+
+	// Anthropic input_tokens EXCLUDES the cache counts (§3.2).
+	h.reconcileSuccessUsage(res.requestID, listing,
+		expectedUsage{input: 1000, output: 500, cacheRead: 200, cacheWrite: 100})
+}
+
+// Streaming Messages: SSE passthrough, usage merged from message_start
+// (input/cache) and message_delta (output), billed like the non-stream case.
+func TestRelayIT_MessagesStream(t *testing.T) {
+	h := newMPHarness(t, itBuyerQuota)
+	usage := anthropicUsageJSON{
+		InputTokens: 1000, OutputTokens: 500,
+		CacheReadInputTokens: 200, CacheCreationInputTokens: 100,
+	}
+	upstream := newMockUpstream(t, writeAnthropicStream(itModel, "stream hello", usage))
+	listing := h.addListing(upstream.url(), "sk-seller-messages-stream", 1000)
+
+	res := h.doMessages(messagesBody(true, 1000), nil)
+	require.Equal(t, http.StatusOK, res.status, string(res.body))
+	require.Equal(t, 1, upstream.callCount())
+	assert.Equal(t, "/v1/messages", upstream.path(0))
+
+	bodyStr := string(res.body)
+	assert.Contains(t, bodyStr, "event: message_start")
+	assert.Contains(t, bodyStr, "event: message_delta")
+	assert.Contains(t, bodyStr, "event: message_stop")
+	assert.Contains(t, bodyStr, "stream hello")
+	assert.NotContains(t, bodyStr, "[DONE]", "the scanner's terminator is not part of the Anthropic protocol")
+
+	h.reconcileSuccessUsage(res.requestID, listing,
+		expectedUsage{input: 1000, output: 500, cacheRead: 200, cacheWrite: 100})
+}
+
+// Thinking blocks (and their signatures) pass through untouched, and the
+// thinking request field reaches the upstream verbatim.
+func TestRelayIT_MessagesThinkingSignature(t *testing.T) {
+	h := newMPHarness(t, itBuyerQuota)
+	usage := anthropicUsageJSON{InputTokens: 100, OutputTokens: 50}
+	upstream := newMockUpstream(t, writeAnthropicMessage(itModel,
+		`[{"type":"thinking","thinking":"reasoning here","signature":"sig-abc123"},`+
+			`{"type":"text","text":"answer"}]`, usage))
+	listing := h.addListing(upstream.url(), "sk-seller-think", 1000)
+
+	body := fmt.Sprintf(`{"model":%q,"max_tokens":2048,`+
+		`"thinking":{"type":"enabled","budget_tokens":1024},`+
+		`"messages":[{"role":"user","content":"think"}],"stream":false}`, itModel)
+	res := h.doMessages(body, nil)
+	require.Equal(t, http.StatusOK, res.status, string(res.body))
+
+	assert.Contains(t, upstream.body(0), `"budget_tokens":1024`)
+	assert.Contains(t, string(res.body), `"type":"thinking"`)
+	assert.Contains(t, string(res.body), `"thinking":"reasoning here"`)
+	assert.Contains(t, string(res.body), `"signature":"sig-abc123"`, "the thinking signature must survive the proxy")
+
+	h.reconcileSuccess(res.requestID, listing, 100, 50, 0)
+}
+
+// Only allowlisted anthropic-beta values reach the upstream, and context-1m is
+// pruned for a model whose pooled window is smaller than 1M (§3.10).
+func TestRelayIT_MessagesAnthropicBetaFilter(t *testing.T) {
+	h := newMPHarness(t, itBuyerQuota)
+	usage := anthropicUsageJSON{InputTokens: 100, OutputTokens: 50}
+	upstream := newMockUpstream(t, writeAnthropicMessage(itModel, `[{"type":"text","text":"ok"}]`, usage))
+	listing := h.addListing(upstream.url(), "sk-seller-beta", 1000)
+
+	headers := http.Header{}
+	headers.Set("anthropic-version", "2024-01-01")
+	headers.Add("anthropic-beta", "context-1m-2025-08-07,interleaved-thinking-2025-05-14,not-a-real-beta")
+	res := h.doMessages(messagesBody(false, 1000), headers)
+	require.Equal(t, http.StatusOK, res.status, string(res.body))
+	require.Equal(t, 1, upstream.callCount())
+
+	assert.Equal(t, "2024-01-01", upstream.header(0, "anthropic-version"))
+	beta := upstream.header(0, "anthropic-beta")
+	assert.Contains(t, beta, "interleaved-thinking-2025-05-14", "allowlisted betas must pass")
+	assert.NotContains(t, beta, "context-1m-2025-08-07", "the 1M beta is not covered by the 131k context window")
+	assert.NotContains(t, beta, "not-a-real-beta")
+
+	h.reconcileSuccess(res.requestID, listing, 100, 50, 0)
+}
+
+// Client-defined tools survive the inbound server-tool strip, and a tool_use
+// block is returned intact. A buyer-defined function call has no per-call
+// marketplace price, so the charge is the reported token usage only.
+func TestRelayIT_MessagesToolUse(t *testing.T) {
+	h := newMPHarness(t, itBuyerQuota)
+	usage := anthropicUsageJSON{InputTokens: 1000, OutputTokens: 200}
+	upstream := newMockUpstream(t, writeAnthropicMessage(itModel,
+		`[{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{"city":"Paris"}}]`, usage))
+	listing := h.addListing(upstream.url(), "sk-seller-tool", 1000)
+
+	body := fmt.Sprintf(`{"model":%q,"max_tokens":512,`+
+		`"tools":[{"name":"get_weather","description":"weather",`+
+		`"input_schema":{"type":"object","properties":{"city":{"type":"string"}}}}],`+
+		`"messages":[{"role":"user","content":"weather?"}],"stream":false}`, itModel)
+	res := h.doMessages(body, nil)
+	require.Equal(t, http.StatusOK, res.status, string(res.body))
+	require.Equal(t, 1, upstream.callCount())
+
+	assert.Contains(t, upstream.body(0), `"name":"get_weather"`, "a buyer tool declaration must reach the upstream")
+	assert.Contains(t, string(res.body), `"type":"tool_use"`)
+	assert.Contains(t, string(res.body), `"name":"get_weather"`)
+	assert.Contains(t, string(res.body), `"input":{"city":"Paris"}`)
+
+	h.reconcileSuccess(res.requestID, listing, 1000, 200, 0)
+	rec := h.recordOf(res.requestID)
+	assert.Zero(t, rec.ToolDebitMicro, "a client-side function call is not a priced server tool")
+}
+
+// ---------------------------------------------------------------------------
+// P1 group 5 — OpenAI Responses format
+// ---------------------------------------------------------------------------
+
+// Non-streaming Responses: usage extraction (input_tokens_details.cached_tokens
+// is inclusive in input_tokens), billing, and the model rewrite.
+func TestRelayIT_ResponsesNonStream(t *testing.T) {
+	h := newMPHarness(t, itBuyerQuota)
+	usage := responsesUsageJSON{InputTokens: 1000, OutputTokens: 500, CachedTokens: 200}
+	upstream := newMockUpstream(t, writeResponsesSuccess(itModel,
+		`[{"type":"message","id":"msg_1","role":"assistant","status":"completed",`+
+			`"content":[{"type":"output_text","text":"salut"}]}]`, usage))
+	sellerKey := "sk-seller-responses"
+	listing := h.addListing(upstream.url(), sellerKey, 1000)
+
+	res := h.doResponses(responsesBody(false, 1000))
+	require.Equal(t, http.StatusOK, res.status, string(res.body))
+	require.Equal(t, 1, upstream.callCount())
+
+	assert.Equal(t, "/v1/responses", upstream.path(0))
+	assert.Equal(t, "Bearer "+sellerKey, upstream.auth(0))
+	assert.Contains(t, string(res.body), "salut")
+	assert.Contains(t, string(res.body), `"model":"`+itModel+`"`)
+
+	h.reconcileSuccessUsage(res.requestID, listing,
+		expectedUsage{input: 800, output: 500, cacheRead: 200})
+}
+
+// Streaming Responses: SSE events reach the buyer and usage is taken from
+// response.completed.
+func TestRelayIT_ResponsesStream(t *testing.T) {
+	h := newMPHarness(t, itBuyerQuota)
+	usage := responsesUsageJSON{InputTokens: 1000, OutputTokens: 500, CachedTokens: 200}
+	upstream := newMockUpstream(t, writeResponsesStream(itModel, "salut stream", usage))
+	listing := h.addListing(upstream.url(), "sk-seller-resp-stream", 1000)
+
+	res := h.doResponses(responsesBody(true, 1000))
+	require.Equal(t, http.StatusOK, res.status, string(res.body))
+	require.Equal(t, 1, upstream.callCount())
+	assert.Equal(t, "/v1/responses", upstream.path(0))
+
+	bodyStr := string(res.body)
+	assert.Contains(t, bodyStr, "response.created")
+	assert.Contains(t, bodyStr, "response.output_text.delta")
+	assert.Contains(t, bodyStr, "response.completed")
+	assert.Contains(t, bodyStr, "salut stream")
+
+	h.reconcileSuccessUsage(res.requestID, listing,
+		expectedUsage{input: 800, output: 500, cacheRead: 200})
+}
+
+// A previous_response_id follow-up is pinned to the listing/key/endpoint that
+// created the response (§3.7).
+func TestRelayIT_ResponsesPreviousResponseID(t *testing.T) {
+	h := newMPHarness(t, itBuyerQuota)
+	usage := responsesUsageJSON{InputTokens: 1000, OutputTokens: 500, CachedTokens: 200}
+	upstream := newMockUpstream(t, writeResponsesSuccess(itModel,
+		`[{"type":"message","id":"msg_1","role":"assistant","status":"completed",`+
+			`"content":[{"type":"output_text","text":"first"}]}]`, usage))
+	sellerKey := "sk-seller-binding"
+	listing := h.addListing(upstream.url(), sellerKey, 1000)
+
+	first := h.doResponses(responsesBody(false, 1000))
+	require.Equal(t, http.StatusOK, first.status, string(first.body))
+	h.reconcileSuccessUsage(first.requestID, listing,
+		expectedUsage{input: 800, output: 500, cacheRead: 200})
+	// reconcileSuccessUsage asserts the wallet against h.startQuota; the
+	// follow-up below is a second charged request, so rebase the baseline on
+	// the balance the first request already settled to.
+	h.startQuota = h.buyerQuota()
+
+	binding, ok := h.responseBindingOf("resp_abc123")
+	require.True(t, ok, "the first response must be bound")
+	assert.Equal(t, listing.ID, binding.ListingID)
+	assert.Equal(t, listing.ChannelID, binding.ChannelID)
+	assert.Equal(t, "openai_responses", binding.Endpoint)
+	assert.Equal(t, listing.KeyFingerprint, binding.KeyFingerprint)
+
+	secondBody := fmt.Sprintf(`{"model":%q,"input":"again","max_output_tokens":1000,`+
+		`"previous_response_id":"resp_abc123"}`, itModel)
+	second := h.doResponses(secondBody)
+	require.Equal(t, http.StatusOK, second.status, string(second.body))
+	require.Equal(t, 2, upstream.callCount(), "the follow-up must reach the bound upstream")
+	assert.Equal(t, "Bearer "+sellerKey, upstream.auth(1))
+	assert.Contains(t, upstream.body(1), `"previous_response_id":"resp_abc123"`)
+	assert.Equal(t, "/v1/responses", upstream.path(1))
+
+	rec := h.recordOf(second.requestID)
+	assert.Equal(t, listing.ID, rec.ListingID)
+	assert.Contains(t, hopEvents(hopsOf(t, rec)), marketplace.HopEventSelect)
+	assert.Contains(t, rec.RetryChain, "previous_response_id")
+	h.reconcileSuccessUsage(second.requestID, listing,
+		expectedUsage{input: 800, output: 500, cacheRead: 200})
+}
+
+// A bound response whose listing key was rotated can no longer be replayed; the
+// marketplace refuses to silently route the id to another supplier (§3.7).
+func TestRelayIT_ResponsesPreviousResponseIDKeyUnavailable(t *testing.T) {
+	h := newMPHarness(t, itBuyerQuota)
+	usage := responsesUsageJSON{InputTokens: 100, OutputTokens: 50}
+	upstream := newMockUpstream(t, writeResponsesSuccess(itModel,
+		`[{"type":"message","id":"msg_1","role":"assistant","status":"completed",`+
+			`"content":[{"type":"output_text","text":"first"}]}]`, usage))
+	listing := h.addListing(upstream.url(), "sk-seller-binding-gone", 1000)
+
+	first := h.doResponses(responsesBody(false, 1000))
+	require.Equal(t, http.StatusOK, first.status, string(first.body))
+	_, ok := h.responseBindingOf("resp_abc123")
+	require.True(t, ok)
+
+	require.NoError(t, h.db.Model(&marketplace.Listing{}).
+		Where("id = ?", listing.ID).Update("key_fingerprint", "rotated").Error)
+
+	secondBody := fmt.Sprintf(`{"model":%q,"input":"again","max_output_tokens":1000,`+
+		`"previous_response_id":"resp_abc123"}`, itModel)
+	second := h.doResponses(secondBody)
+	assert.Equal(t, http.StatusServiceUnavailable, second.status, string(second.body))
+	assert.Contains(t, string(second.body), "previous response's upstream is unavailable")
+	assert.Equal(t, 1, upstream.callCount(), "an unavailable binding must not be rerouted upstream")
+}
+
+// A Responses function_call output item passes through; like Messages tool_use
+// it has no per-call marketplace price, so only token usage is charged.
+func TestRelayIT_ResponsesToolCall(t *testing.T) {
+	h := newMPHarness(t, itBuyerQuota)
+	usage := responsesUsageJSON{InputTokens: 1000, OutputTokens: 200}
+	upstream := newMockUpstream(t, writeResponsesSuccess(itModel,
+		`[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"get_weather",`+
+			`"arguments":"{\"city\":\"Paris\"}"}]`, usage))
+	listing := h.addListing(upstream.url(), "sk-seller-resp-tool", 1000)
+
+	// The output cap must cover the mock's reported 200 output tokens; a small
+	// cap would freeze less than the reported usage and the settle cap (not the
+	// price book) would decide the charge.
+	body := fmt.Sprintf(`{"model":%q,"input":"weather?","max_output_tokens":1000,`+
+		`"tools":[{"type":"function","name":"get_weather","parameters":{"type":"object"}}]}`, itModel)
+	res := h.doResponses(body)
+	require.Equal(t, http.StatusOK, res.status, string(res.body))
+	require.Equal(t, 1, upstream.callCount())
+
+	assert.Contains(t, upstream.body(0), `"name":"get_weather"`)
+	assert.Contains(t, string(res.body), `"type":"function_call"`)
+	assert.Contains(t, string(res.body), `"name":"get_weather"`)
+
+	h.reconcileSuccess(res.requestID, listing, 1000, 200, 0)
+	rec := h.recordOf(res.requestID)
+	assert.Zero(t, rec.ToolDebitMicro)
 }

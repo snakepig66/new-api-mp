@@ -222,12 +222,15 @@ func TestConvertClaudeRequestForwardsThinkingBlockBinding(t *testing.T) {
 	}
 }
 
-func TestSetupRequestHeaderForwardsEveryAnthropicBetaValue(t *testing.T) {
+func TestSetupRequestHeaderFiltersAnthropicBeta(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	c.Request.Header.Add("anthropic-beta", "fast-mode-2026-02-01")
+	// Several header lines are flattened into one comma-separated list; the
+	// unknown value must not reach upstream.
+	c.Request.Header.Add("anthropic-beta", "context-1m-2025-08-07,fast-mode-2026-02-01")
 	c.Request.Header.Add("anthropic-beta", "thinking-binding-controls-2026-08-01")
+	c.Request.Header.Add("anthropic-beta", "made-up-beta-2099-01-01")
 	info := &relaycommon.RelayInfo{
 		OriginModelName: "claude-opus-5-5",
 		ChannelMeta:     &relaycommon.ChannelMeta{ApiKey: "sk-test"},
@@ -235,7 +238,69 @@ func TestSetupRequestHeaderForwardsEveryAnthropicBetaValue(t *testing.T) {
 
 	header := http.Header{}
 	require.NoError(t, (&Adaptor{}).SetupRequestHeader(c, &header, info))
-	assert.Equal(t, []string{"fast-mode-2026-02-01,thinking-binding-controls-2026-08-01"}, header.Values("anthropic-beta"))
+	assert.Equal(t,
+		[]string{"context-1m-2025-08-07,fast-mode-2026-02-01,thinking-binding-controls-2026-08-01"},
+		header.Values("anthropic-beta"))
+}
+
+func TestSetupRequestHeaderAnthropicVersion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	newInfo := func() *relaycommon.RelayInfo {
+		return &relaycommon.RelayInfo{
+			OriginModelName: "claude-opus-5-5",
+			ChannelMeta:     &relaycommon.ChannelMeta{ApiKey: "sk-test"},
+		}
+	}
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	header := http.Header{}
+	require.NoError(t, (&Adaptor{}).SetupRequestHeader(c, &header, newInfo()))
+	assert.Equal(t, "2023-06-01", header.Get("anthropic-version"))
+
+	c, _ = gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	c.Request.Header.Set("anthropic-version", "2024-01-01")
+	header = http.Header{}
+	require.NoError(t, (&Adaptor{}).SetupRequestHeader(c, &header, newInfo()))
+	assert.Equal(t, "2024-01-01", header.Get("anthropic-version"), "the buyer's version wins")
+}
+
+func TestGetRequestURLMessagesEndpoint(t *testing.T) {
+	tests := []struct {
+		name     string
+		base     string
+		messages string
+		want     string
+	}{
+		{
+			name: "marketplace messages endpoint is used verbatim",
+			base: "https://api.deepseek.com", messages: "https://api.deepseek.com/anthropic/v1/messages",
+			want: "https://api.deepseek.com/anthropic/v1/messages",
+		},
+		{
+			name: "base plus fixed path", base: "https://api.anthropic.com",
+			want: "https://api.anthropic.com/v1/messages",
+		},
+		{
+			name: "a v1 base is not doubled", base: "https://api.anthropic.com/v1",
+			want: "https://api.anthropic.com/v1/messages",
+		},
+		{
+			name: "empty base keeps the fixed path", base: "", want: "/v1/messages",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelBaseUrl: tt.base,
+				ChannelSetting: dto.ChannelSettings{MPAnthropicMessagesURL: tt.messages},
+			}}
+			got, err := (&Adaptor{}).GetRequestURL(info)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func geminiToClaudeInfo() *relaycommon.RelayInfo {

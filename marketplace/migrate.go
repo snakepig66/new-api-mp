@@ -26,6 +26,7 @@ func Migrate(db *gorm.DB) error {
 		&KeyPref{},
 		&KeyModel{},
 		&Request{},
+		&ResponseBinding{},
 		&LedgerEntry{},
 		&Payout{},
 		&Notification{},

@@ -77,17 +77,20 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	switch info.RelayFormat {
 	case types.RelayFormatClaude:
 		// MP-HOOK: a pass-through channel forwards the buyer's raw body to the
-		// vendor's native endpoint, so the URL is base + the buyer's original
-		// path; the /anthropic prefix below is the official DeepSeek endpoint
-		// convention and must not be forced on other gateways.
+		// vendor-native Messages endpoint. The marketplace stores that full
+		// endpoint in the channel setting; otherwise the base plus the fixed
+		// endpoint path is used.
 		if info.ChannelSetting.PassThroughBodyEnabled {
-			return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, info.RequestURLPath, info.ChannelType), nil
+			if messagesURL := info.ChannelSetting.MPAnthropicMessagesURL; messagesURL != "" {
+				return messagesURL, nil
+			}
+			return constant.BuildEndpointURL(info.ChannelBaseUrl, constant.EndpointAnthropicMessages), nil
 		}
 		// Non-passthrough Claude requests are converted to OpenAI format by
 		// the adaptor, so they must go to the OpenAI-compatible endpoint;
 		// sending them to /anthropic/v1/messages would hand the vendor the
 		// wrong protocol.
-		return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
+		return constant.BuildEndpointURL(info.ChannelBaseUrl, constant.EndpointOpenAIChat), nil
 	default:
 		if !strings.HasSuffix(info.ChannelBaseUrl, "/beta") {
 			fimBaseUrl += "/beta"
@@ -96,13 +99,13 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		case constant.RelayModeCompletions:
 			return fmt.Sprintf("%s/completions", fimBaseUrl), nil
 		case constant.RelayModeResponses:
-			return fmt.Sprintf("%s/responses", info.ChannelBaseUrl), nil
+			return constant.BuildEndpointURL(info.ChannelBaseUrl, constant.EndpointOpenAIResponses), nil
 		case constant.RelayModeToolsSearch:
 			return fmt.Sprintf("%s/v1/tools/search", info.ChannelBaseUrl), nil
 		case constant.RelayModeToolsFetch:
 			return fmt.Sprintf("%s/v1/tools/fetch", info.ChannelBaseUrl), nil
 		default:
-			return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
+			return constant.BuildEndpointURL(info.ChannelBaseUrl, constant.EndpointOpenAIChat), nil
 		}
 	}
 }

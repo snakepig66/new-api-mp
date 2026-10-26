@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 )
 
 // selectorTestT0 is a fixed instant the pure in-memory tests build on.
@@ -55,6 +57,21 @@ func TestSlotManager(t *testing.T) {
 		assert.True(t, m.Acquire(1, 1, t0.Add(SlotTimeout)),
 			"at exactly SlotTimeout the stale slot is swept (§3.5 超时 10 分钟释放)")
 		assert.Equal(t, 1, m.InFlight(1))
+	})
+
+	t.Run("renew extends a long-running slot past SlotTimeout", func(t *testing.T) {
+		m := NewSlotManager()
+		require.True(t, m.Acquire(1, 1, t0))
+		renewed := t0.Add(9 * time.Minute)
+		m.Renew(1, renewed)
+		assert.Equal(t, 1, m.InFlight(1))
+		assert.False(t, m.Acquire(1, 1, t0.Add(SlotTimeout)),
+			"the renewed slot is younger than SlotTimeout and still counts")
+		assert.True(t, m.Acquire(1, 1, renewed.Add(SlotTimeout)),
+			"at SlotTimeout after the renewal the stale slot is swept")
+		// Renewing a listing with nothing held is a no-op.
+		m.Renew(99, t0)
+		assert.Equal(t, 0, m.InFlight(99))
 	})
 
 	t.Run("limit zero falls back to the §3.5 default of five", func(t *testing.T) {
@@ -593,4 +610,118 @@ func TestAutoPauseListing(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidTransition, "an already paused listing cannot be auto-paused again")
 
 	assert.ErrorIs(t, AutoPauseListing(db, 99999, "upstream rejected the key"), ErrListingNotFound)
+}
+
+// addEndpointChannel inserts one active channel pool row and its verified
+// deepseek-flash qualification, so a listing on that vendor is selectable.
+func addEndpointChannel(t *testing.T, db *gorm.DB, slug, protocols string) {
+	t.Helper()
+	require.NoError(t, db.Create(&ChannelPool{
+		Slug: slug, Name: slug, Kind: ChannelKindOfficial,
+		Protocols: protocols, Status: PoolStatusActive,
+	}).Error)
+	require.NoError(t, db.Create(&ChannelModel{
+		ChannelSlug: slug, UpstreamModel: "deepseek-flash", Model: "deepseek-flash",
+		CoefficientMilli: 1000, Verified: true, Status: PoolStatusActive,
+	}).Error)
+}
+
+func TestSelectEndpointKind(t *testing.T) {
+	loc := shanghaiLocation(t)
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, loc)
+
+	t.Run("chat never picks a messages-only channel", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		addEndpointChannel(t, db, "messages-only", `{"anthropic":"https://api.example.com/anthropic"}`)
+		chat := addSelectorListing(t, db, "fp-chat", func(l *Listing) { l.MultiplierMilli = 400 })
+		messages := addSelectorListing(t, db, "fp-messages", func(l *Listing) {
+			l.Vendor = "messages-only"
+			l.MultiplierMilli = 100 // cheapest, so only the protocol filter keeps it out
+		})
+
+		got, err := NewSelector().Select(db, SelectInput{
+			Model: "deepseek-flash", Now: now, EndpointKind: relayconstant.EndpointOpenAIChat,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, chat.ID, got.ID, "a chat request must not land on a messages-only channel")
+
+		got, err = NewSelector().Select(db, SelectInput{
+			Model: "deepseek-flash", Now: now, EndpointKind: relayconstant.EndpointAnthropicMessages,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, messages.ID, got.ID)
+	})
+
+	t.Run("legacy openai-only channel serves chat and responses but not messages", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		addEndpointChannel(t, db, "legacy-openai", `{"openai":"https://api.example.com"}`)
+		l := addSelectorListing(t, db, "fp-legacy", func(l *Listing) { l.Vendor = "legacy-openai" })
+
+		for _, kind := range []relayconstant.EndpointKind{
+			relayconstant.EndpointOpenAIChat,
+			relayconstant.EndpointOpenAIResponses,
+		} {
+			got, err := NewSelector().Select(db, SelectInput{
+				Model: "deepseek-flash", Now: now, EndpointKind: kind,
+			})
+			require.NoError(t, err, "the legacy openai base covers %s", kind)
+			assert.Equal(t, l.ID, got.ID)
+		}
+		_, err := NewSelector().Select(db, SelectInput{
+			Model: "deepseek-flash", Now: now, EndpointKind: relayconstant.EndpointAnthropicMessages,
+		})
+		assert.ErrorIs(t, err, ErrNoListingAvailable)
+	})
+
+	t.Run("a channel with no endpoint data stays selectable", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		addEndpointChannel(t, db, "legacy-empty", `{}`)
+		l := addSelectorListing(t, db, "fp-empty", func(l *Listing) { l.Vendor = "legacy-empty" })
+		got, err := NewSelector().Select(db, SelectInput{
+			Model: "deepseek-flash", Now: now, EndpointKind: relayconstant.EndpointAnthropicMessages,
+		})
+		require.NoError(t, err, "rows written before the endpoint split are not silently withdrawn")
+		assert.Equal(t, l.ID, got.ID)
+	})
+}
+
+func TestHasLiveListingForEndpoint(t *testing.T) {
+	db := newTestDB(t)
+	migrateAll(t, db)
+	addEndpointChannel(t, db, "messages-only", `{"anthropic":"https://api.example.com/anthropic"}`)
+	addSelectorListing(t, db, "fp-live", func(l *Listing) { l.Vendor = "messages-only" })
+
+	has, err := hasLiveListingForModel(db, "deepseek-flash")
+	require.NoError(t, err)
+	assert.True(t, has, "without an endpoint restriction any live qualification counts")
+
+	has, err = hasLiveListingForModel(db, "deepseek-flash", relayconstant.EndpointOpenAIChat)
+	require.NoError(t, err)
+	assert.False(t, has, "a messages-only channel cannot serve a chat request")
+
+	has, err = hasLiveListingForModel(db, "deepseek-flash", relayconstant.EndpointAnthropicMessages)
+	require.NoError(t, err)
+	assert.True(t, has)
+}
+
+func TestSelectTieBreakSpreadsLoad(t *testing.T) {
+	db := newTestDB(t)
+	migrateAll(t, db)
+	a := addSelectorListing(t, db, "fp-a", nil)
+	b := addSelectorListing(t, db, "fp-b", nil)
+
+	s := NewSelector()
+	s.Rand = rand.New(rand.NewSource(7))
+	counts := map[int64]int{}
+	for range 200 {
+		got, err := s.Select(db, SelectInput{Model: "deepseek-flash", Now: selectorTestT0})
+		require.NoError(t, err)
+		counts[got.ID]++
+		s.Slots.Release(got.ID)
+	}
+	assert.Greater(t, counts[a.ID], 40, "an equally priced listing must receive a fair share")
+	assert.Greater(t, counts[b.ID], 40, "the final tie is a draw, not lowest-id-wins")
 }

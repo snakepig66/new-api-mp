@@ -577,44 +577,78 @@ func TestReplaceKeyValidatesChannelPattern(t *testing.T) {
 	assert.Equal(t, ListingVerifying, row.Status, "a key swap always re-verifies")
 }
 
-// TestCreateListingDisablesPassthroughWhenRenaming checks the P1 interaction:
-// raw-body passthrough skips model mapping, so it must be off whenever any
-// selected model's upstream id differs from its standard id.
-func TestCreateListingDisablesPassthroughWhenRenaming(t *testing.T) {
+// TestCreateListingPassthroughPerModel checks that raw-body pass-through is no
+// longer a channel-wide "all models are identity-mapped" switch: the channel
+// keeps capability on when the vendor forwards raw bodies, and the relay
+// decides per requested model whether the body is passed through (and rewrites
+// the model id it carries).
+func TestCreateListingPassthroughPerModel(t *testing.T) {
 	db := newListingTestDB(t)
-	// The hosted DeepSeek mapping is unverified after the seed; verify it so
-	// the listing can be created, then inspect the generated channel.
+	// A renamed mapping must not disable the channel capability any more.
 	require.NoError(t, db.Model(&ChannelModel{}).
-		Where("channel_slug = ? AND model = ?", "volcengine-ark", "deepseek-flash").
-		Updates(map[string]any{"verified": true, "fingerprint_ratio": 1.0}).Error)
+		Where("channel_slug = ? AND model = ?", "deepseek", "deepseek-flash").
+		Update("upstream_model", "deepseek-flash-renamed").Error)
 
-	listing, err := CreateListing(db, CreateListingInput{
-		SellerID: 1, VendorID: "volcengine-ark", APIKey: uniqueTestKey("sk-ark-rename"),
+	renamed, err := CreateListing(db, CreateListingInput{
+		SellerID: 1, VendorID: "deepseek", APIKey: uniqueTestKey("sk-ds-rename"),
 		Models: []string{"deepseek-flash"}, MultiplierMilli: 500,
 	})
 	require.NoError(t, err)
 	var ch model.Channel
-	require.NoError(t, db.Where("id = ?", listing.ChannelID).Take(&ch).Error)
+	require.NoError(t, db.Where("id = ?", renamed.ChannelID).Take(&ch).Error)
 	setting := ""
 	if ch.Setting != nil {
 		setting = *ch.Setting
 	}
-	assert.NotContains(t, setting, "pass_through_body_enabled", "renamed model must go through the mapping path")
-	assert.Contains(t, setting, "mp_strip_v1_prefix")
+	assert.Contains(t, setting, "pass_through_body_enabled", "the vendor supports raw bodies; the per-model decision happens at relay time")
+	assert.Contains(t, setting, "mp_anthropic_messages_url", "the native messages endpoint is always stored")
+	assert.Equal(t, "https://api.deepseek.com", ch.GetBaseURL())
 
-	// An identity mapping (DeepSeek origin) keeps passthrough enabled.
-	origin, err := CreateListing(db, CreateListingInput{
-		SellerID: 2, VendorID: "deepseek", APIKey: uniqueTestKey("sk-ds-identity"),
+	// A vendor that does not forward raw bodies never gets the capability, but
+	// still stores its native messages endpoint for /v1/messages.
+	require.NoError(t, db.Model(&ChannelModel{}).
+		Where("channel_slug = ? AND model = ?", "volcengine-ark", "deepseek-flash").
+		Updates(map[string]any{"verified": true, "fingerprint_ratio": 1.0}).Error)
+	converted, err := CreateListing(db, CreateListingInput{
+		SellerID: 2, VendorID: "volcengine-ark", APIKey: uniqueTestKey("sk-ark-rename"),
 		Models: []string{"deepseek-flash"}, MultiplierMilli: 500,
 	})
 	require.NoError(t, err)
-	var originCh model.Channel
-	require.NoError(t, db.Where("id = ?", origin.ChannelID).Take(&originCh).Error)
-	originSetting := ""
-	if originCh.Setting != nil {
-		originSetting = *originCh.Setting
+	var arkChannel model.Channel
+	require.NoError(t, db.Where("id = ?", converted.ChannelID).Take(&arkChannel).Error)
+	setting = ""
+	if arkChannel.Setting != nil {
+		setting = *arkChannel.Setting
 	}
-	assert.Contains(t, originSetting, "pass_through_body_enabled")
+	assert.NotContains(t, setting, "pass_through_body_enabled", "this vendor converts bodies")
+	assert.Contains(t, setting, "mp_anthropic_messages_url")
+	assert.Contains(t, setting, "mp_strip_v1_prefix")
+}
+
+// TestCreateListingUsesEndpointBases checks that per-endpoint protocol bases
+// from mp_channels.protocols reach the channel row instead of the legacy
+// single openai base.
+func TestCreateListingUsesEndpointBases(t *testing.T) {
+	db := newListingTestDB(t)
+	ch, ok := ChannelPoolBySlug(db, "deepseek")
+	require.True(t, ok)
+	require.NoError(t, db.Model(&ChannelPool{}).Where("id = ?", ch.ID).Update("protocols",
+		`{"openai":"https://legacy.example.com","openai_chat":"https://chat.example.com/v1",`+
+			`"openai_responses":"https://responses.example.com","anthropic_messages":"https://messages.example.com"}`).Error)
+
+	listing, err := CreateListing(db, CreateListingInput{
+		SellerID: 1, VendorID: "deepseek", APIKey: uniqueTestKey("sk-endpoints"),
+		Models: []string{"deepseek-flash"}, MultiplierMilli: 500,
+	})
+	require.NoError(t, err)
+	var channel model.Channel
+	require.NoError(t, db.Where("id = ?", listing.ChannelID).Take(&channel).Error)
+	assert.Equal(t, "https://chat.example.com/v1", channel.GetBaseURL())
+	setting := ""
+	if channel.Setting != nil {
+		setting = *channel.Setting
+	}
+	assert.Contains(t, setting, `"mp_anthropic_messages_url":"https://messages.example.com/v1/messages"`)
 }
 
 // TestRefreshListingChannelMapping updates the pinned upstream name on every

@@ -268,3 +268,67 @@ func TestModelModifiersUpstreamFields(t *testing.T) {
 		})
 	}
 }
+
+// The OpenAI-compatible and native Messages endpoints are built from a fixed
+// base plus a fixed path, not from the buyer's request path.
+func TestGetRequestURLFixedEndpoints(t *testing.T) {
+	tests := []struct {
+		name        string
+		base        string
+		format      types.RelayFormat
+		mode        int
+		passthrough bool
+		messages    string
+		want        string
+	}{
+		{
+			name: "chat", base: "https://api.deepseek.com",
+			format: types.RelayFormatOpenAI, mode: constant.RelayModeChatCompletions,
+			want: "https://api.deepseek.com/v1/chat/completions",
+		},
+		{
+			name: "chat v1 base is not doubled", base: "https://api.deepseek.com/v1",
+			format: types.RelayFormatOpenAI, mode: constant.RelayModeChatCompletions,
+			want: "https://api.deepseek.com/v1/chat/completions",
+		},
+		{
+			name: "responses", base: "https://api.deepseek.com",
+			format: types.RelayFormatOpenAIResponses, mode: constant.RelayModeResponses,
+			want: "https://api.deepseek.com/v1/responses",
+		},
+		{
+			name: "passthrough uses the stored messages endpoint", base: "https://api.deepseek.com",
+			format: types.RelayFormatClaude, mode: constant.RelayModeClaude, passthrough: true,
+			messages: "https://api.deepseek.com/anthropic/v1/messages",
+			want:     "https://api.deepseek.com/anthropic/v1/messages",
+		},
+		{
+			name: "passthrough falls back to the fixed path", base: "https://api.deepseek.com/anthropic",
+			format: types.RelayFormatClaude, mode: constant.RelayModeClaude, passthrough: true,
+			want: "https://api.deepseek.com/anthropic/v1/messages",
+		},
+		{
+			name: "converted claude goes to the chat endpoint", base: "https://api.deepseek.com",
+			format: types.RelayFormatClaude, mode: constant.RelayModeClaude,
+			want: "https://api.deepseek.com/v1/chat/completions",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{
+				RelayFormat: tt.format,
+				RelayMode:   tt.mode,
+				ChannelMeta: &relaycommon.ChannelMeta{
+					ChannelBaseUrl: tt.base,
+					ChannelSetting: dto.ChannelSettings{
+						PassThroughBodyEnabled: tt.passthrough,
+						MPAnthropicMessagesURL: tt.messages,
+					},
+				},
+			}
+			got, err := (&Adaptor{}).GetRequestURL(info)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

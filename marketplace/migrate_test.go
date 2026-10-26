@@ -27,6 +27,7 @@ func TestMigrateCreatesTables(t *testing.T) {
 		"mp_key_prefs",
 		"mp_key_models",
 		"mp_requests",
+		"mp_response_bindings",
 		"mp_ledger",
 		"mp_payouts",
 		"mp_channel_model_map",

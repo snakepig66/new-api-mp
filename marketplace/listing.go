@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 )
 
 // Listing write-path errors (§3.5). No error message from this file ever
@@ -318,7 +319,20 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 		// One listing = one upstream channel pinned to the vendor's fixed base
 		// URL. The adaptor and path handling come from the vendor definition
 		// (OFFICIAL-CHANNELS §4.1); sellers never supply an address.
-		baseURL := VendorOpenAIBase(vendor)
+		//
+		// The channel BaseURL is the OpenAI chat endpoint base; the Anthropic
+		// messages endpoint base is stored in the channel setting. Each adaptor
+		// appends its endpoint's fixed path, so the buyer's request path never
+		// decides the upstream URL.
+		bases, _ := ChannelPoolEndpointBases(tx, vendor.ID)
+		baseURL := strings.TrimSuffix(bases.ChatBase(), "/")
+		if baseURL == "" {
+			baseURL = VendorOpenAIBase(vendor)
+		}
+		messagesBase := strings.TrimSuffix(bases.MessagesBase(), "/")
+		if messagesBase == "" {
+			messagesBase = strings.TrimSuffix(vendor.Protocols.Anthropic, "/")
+		}
 		channelType := constant.ChannelTypeOpenAI
 		if vendor.Adaptor == VendorAdaptorDeepSeek {
 			channelType = constant.ChannelTypeDeepSeek
@@ -341,27 +355,24 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 		} else {
 			return fmt.Errorf("marketplace: encode model mapping: %w", merr)
 		}
-		// Multi-protocol vendors relay the buyer's raw body (native OpenAI +
-		// Anthropic) instead of the adaptor's conversion (§3.10). Raw-body
-		// forwarding skips new-api's model mapping, so it is only safe when
-		// every selected model's upstream id is identical. A renamed model
-		// would otherwise reach the vendor under the platform name.
-		allIdentity := true
-		for _, m := range models {
-			if channelMapping[m] != m {
-				allIdentity = false
-				break
-			}
-		}
+		// Multi-protocol vendors may relay the buyer's raw body (native OpenAI +
+		// Anthropic) instead of the adaptor's conversion (§3.10). Whether a
+		// request is passed through is decided per model at relay time: the
+		// marketplace rewrites the raw body's model to the mapped upstream id,
+		// so a renamed model is safe too (relayhook.rewritePassthroughBody).
+		// Only a model with no mapping skips pass-through and uses conversion.
 		setting := map[string]any{}
-		if vendor.PassthroughBody && allIdentity {
+		if vendor.PassthroughBody {
 			setting["pass_through_body_enabled"] = true
 		}
 		if vendor.StripV1Prefix {
+			// Kept for rolling compatibility with older rows; the adaptors no
+			// longer consult it (endpoint bases and fixed paths are used).
 			setting["mp_strip_v1_prefix"] = true
 		}
-		if messagesURL := VendorAnthropicMessagesURL(vendor); messagesURL != "" && vendor.PassthroughBody && allIdentity {
-			setting["mp_anthropic_messages_url"] = messagesURL
+		if messagesBase != "" {
+			setting["mp_anthropic_messages_url"] =
+				relayconstant.BuildEndpointURL(messagesBase, relayconstant.EndpointAnthropicMessages)
 		}
 		if len(setting) > 0 {
 			settingJSON, serr := common.Marshal(setting)

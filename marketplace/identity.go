@@ -37,3 +37,16 @@ func AnonBuyerCode(sellerID, buyerID int64) (string, error) {
 	}
 	return anonBuyerCode(anonSecret, sellerID, buyerID), nil
 }
+
+// RequestUserPseudonym returns the upstream `user` identity the marketplace
+// sends for one (seller, buyer) pair. It uses the same keyed HMAC as the
+// anonymous buyer code but a different domain tag, so the value a seller sees
+// in their console cannot be correlated with the upstream request field.
+func RequestUserPseudonym(sellerID, buyerID int64) (string, error) {
+	if len(anonSecret) == 0 {
+		return "", ErrNoAnonSecret
+	}
+	mac := hmac.New(sha256.New, anonSecret)
+	fmt.Fprintf(mac, "request-user|%d|%d", sellerID, buyerID)
+	return "mp_" + hex.EncodeToString(mac.Sum(nil))[:16], nil
+}
