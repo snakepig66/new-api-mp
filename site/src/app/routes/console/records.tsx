@@ -247,9 +247,16 @@ function RecordRow({ row }: { row: UsageRow }) {
         <div className="text-[13px] tabular-nums">
           {page.tokens.pair(formatCount(row.inputTokens), formatCount(row.outputTokens))}
         </div>
-        <div className="text-[13px] tabular-nums text-ink-3">
-          {page.tokens.cache(formatCount(row.cacheReadTokens))}
-        </div>
+        {(row.cacheReadTokens > 0 || row.cacheWriteTokens > 0) && (
+          <div className="flex items-center gap-1 text-[13px] tabular-nums text-ink-3">
+            {row.cacheReadTokens > 0 && (
+              <span>{page.tokens.cache(formatCount(row.cacheReadTokens))}</span>
+            )}
+            {row.cacheWriteTokens > 0 && (
+              <span>{page.tokens.cacheWrite(formatCount(row.cacheWriteTokens))}</span>
+            )}
+          </div>
+        )}
       </TableCell>
       <TableCell numeric className="text-[13px]">
         {row.searchCount} / {row.fetchCount}

@@ -1407,6 +1407,7 @@ console.log(response.choices[0].message.content)
         input: (value: string) => `入 ${value}`,
         output: (value: string) => `出 ${value}`,
         cache: (value: string) => `缓存↓ ${value}`,
+        cacheWrite: (value: string) => `↑ ${value}`,
         pair: (input: string, output: string) => `${input} / ${output}`,
       },
       status: {

@@ -259,9 +259,24 @@ function ConsoleOverviewPage() {
                           formatCount(row.outputTokens)
                         )}
                       </div>
-                      <div className="text-[13px] tabular-nums text-ink-3">
-                        {copy.pages.consoleRecords.tokens.cache(formatCount(row.cacheReadTokens))}
-                      </div>
+                      {(row.cacheReadTokens > 0 || row.cacheWriteTokens > 0) && (
+                        <div className="flex items-center gap-1 text-[13px] tabular-nums text-ink-3">
+                          {row.cacheReadTokens > 0 && (
+                            <span>
+                              {copy.pages.consoleRecords.tokens.cache(
+                                formatCount(row.cacheReadTokens)
+                              )}
+                            </span>
+                          )}
+                          {row.cacheWriteTokens > 0 && (
+                            <span>
+                              {copy.pages.consoleRecords.tokens.cacheWrite(
+                                formatCount(row.cacheWriteTokens)
+                              )}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell numeric>{formatYuan(row.totalDebitMicro)}</TableCell>
                     <TableCell numeric className="text-brand-ink">
