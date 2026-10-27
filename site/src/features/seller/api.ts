@@ -10,7 +10,7 @@
 
 import { queryOptions } from '@tanstack/react-query'
 
-import { api } from '@/lib/api'
+import { api, ApiError } from '@/lib/api'
 import { queryClient } from '@/lib/query-client'
 
 import type { SquareModelDetail } from '@/features/market/api'
@@ -78,7 +78,15 @@ export interface SellerVerification {
 export interface SellerListing {
   id: number
   vendor: string
+  /** Seller-defined display name; absent on payloads from older backends. */
+  label?: string
   models: string[]
+  /** Aggregate model counts / effective multiplier band from the listing rows. */
+  model_count?: number
+  enabled_model_count?: number
+  auto_disabled_model_count?: number
+  multiplier_min_milli?: number
+  multiplier_max_milli?: number
   multiplier_milli: number
   concurrency_limit: number
   rpm_limit: number
@@ -128,6 +136,11 @@ export interface SellerModelMultiplier {
   model: string
   multiplier_milli: number
   enabled: boolean
+  /** Staged price increase (applies at pending_effective_at). */
+  pending_multiplier_milli: number
+  pending_effective_at?: string
+  auto_disabled: boolean
+  disabled_reason: string
 }
 
 export interface UpdateSellerGroupInput {
@@ -177,6 +190,142 @@ export interface SellerListingHealth {
   /** 0..1000; 980 = 98%, 900 = 90%. */
   today_success_rate_milli: number
   today_income_micro: number | string
+  /**
+   * Rolling success-rate windows. A window with no samples is -1 (the console
+   * renders "—"), while 0 is a real all-failed window. Optional so older
+   * payloads/fixtures still type-check.
+   */
+  requests_1h?: number
+  success_rate_1h_milli?: number
+  requests_24h?: number
+  success_rate_24h_milli?: number
+  requests_7d?: number
+  success_rate_7d_milli?: number
+}
+
+/** Price tier used by the model/price table. */
+export type SellerPriceTier = 'peak' | 'offpeak' | 'flat'
+
+/** One tier's per-million-token prices, in 微元 (integer). */
+export interface SellerModelTierPrices {
+  input_micro_per_mtok: number
+  output_micro_per_mtok: number
+  cache_read_micro_per_mtok: number
+  cache_write_micro_per_mtok: number
+}
+
+/**
+ * One row of GET /marketplace/seller/listings/:id/models — the console's
+ * 模型与价格 table. Buyer prices come from the same Quote path the debit uses.
+ * A tier with no price row is omitted, hence Partial.
+ */
+export interface SellerModelRow {
+  model: string
+  upstream_model: string
+  enabled: boolean
+  auto_disabled: boolean
+  disabled_reason: string
+  disabled_detail: string
+  disabled_upstream_status: number
+  disabled_upstream_message: string
+  disabled_at?: string
+  multiplier_milli: number
+  effective_multiplier_milli: number
+  pending_multiplier_milli: number
+  pending_effective_at?: string
+  coefficient_milli: number
+  origin_vendor: string
+  multiplier_min_milli: number
+  multiplier_max_milli: number
+  official_prices: Partial<Record<SellerPriceTier, SellerModelTierPrices>>
+  buyer_prices: Partial<Record<SellerPriceTier, SellerModelTierPrices>>
+}
+
+export interface SellerListingModelsResponse {
+  items: SellerModelRow[]
+  platform_fee_percent: number
+  tier: string
+  tier_label: string
+  multiplier_min_milli: number
+  multiplier_max_milli: number
+}
+
+/** Per-channel-kind multiplier floor/ceiling from GET /seller/multiplier-bounds. */
+export interface MultiplierKindBounds {
+  min_milli: number
+  max_milli: number
+}
+
+export interface MultiplierBounds {
+  absolute_min_milli: number
+  absolute_max_milli: number
+  kinds: Record<SellerChannelKind, MultiplierKindBounds>
+}
+
+/** One row returned by the single/batch model-state endpoints. */
+export interface SellerModelChangeRow {
+  model: string
+  enabled: boolean
+  multiplier_milli: number
+  pending_multiplier_milli: number
+  pending_effective_at?: string
+  auto_disabled: boolean
+  disabled_reason: string
+}
+
+/** PUT /seller/listings/:id/models returns {items: [...]}. */
+export interface SellerModelChangeResult {
+  items: SellerModelChangeRow[]
+}
+
+/** POST /seller/listings/:id/models/restore result. */
+export interface SellerModelsRestoreResult {
+  restored: number
+  /** Models the probe still rejects (same row shape as a batch rejection). */
+  still_failing: ModelChangeError[]
+  checked_at: string
+}
+
+/** One rejected model change from an all-or-nothing batch (400/409). */
+export interface ModelChangeError {
+  listing_id: number
+  model: string
+  code: string
+  message: string
+  earliest_change_at?: string
+}
+
+// ---------------------------------------------------------------------------
+// 上游请求头（自定义渠道）
+// ---------------------------------------------------------------------------
+
+/** Only the masked spelling of a header value is ever sent to the console. */
+export interface SellerHeaderEntry {
+  name: string
+  value_masked: string
+}
+
+/** A header policy candidate that is still being verified. */
+export interface SellerPendingHeaders {
+  version: number
+  submitted_at?: string
+  headers: SellerHeaderEntry[]
+}
+
+/** GET /seller/listings/:id/headers. */
+export interface SellerHeadersView {
+  custom_channel: boolean
+  headers: SellerHeaderEntry[]
+  pending?: SellerPendingHeaders
+  can_edit: boolean
+}
+
+/** PUT /seller/listings/:id/headers with a non-empty object. */
+export interface SellerHeadersSubmitResult {
+  pending: boolean
+  unchanged: boolean
+  version: number
+  headers: SellerHeaderEntry[]
 }
 
 export interface CreateListingInput {
@@ -255,6 +404,60 @@ export interface SellerDailyIncome {
   income_micro: number | string
 }
 
+// ---------------------------------------------------------------------------
+// 概览（GET /seller/overview，也合并进 GET /seller/stats）
+// ---------------------------------------------------------------------------
+
+export interface SellerOverviewCards {
+  calls: number
+  tokens: number
+  income_micro: number | string
+  pending_micro: number | string
+}
+
+/** Chart window: today plus the previous 29 days, inclusive. */
+export interface SellerOverviewRange {
+  days: number
+  start: string
+  end: string
+}
+
+export interface SellerOverviewModelRow {
+  model: string
+  calls: number
+  tokens: number
+  income_micro: number | string
+}
+
+export interface SellerOverviewDay {
+  date: string
+  tokens: number
+  income_micro: number | string
+}
+
+/** One model's dense daily series; the remainder of the top 8 is "other". */
+export interface SellerOverviewModelSeries {
+  model: string
+  days: SellerOverviewDay[]
+}
+
+export interface SellerOverviewChannel {
+  listing_id: number
+  label: string
+  calls: number
+  tokens: number
+  income_micro: number | string
+}
+
+export interface SellerOverview {
+  cards: SellerOverviewCards
+  range: SellerOverviewRange
+  by_model: SellerOverviewModelRow[]
+  daily_by_model: SellerOverviewModelSeries[]
+  by_channel: SellerOverviewChannel[]
+  as_of: string
+}
+
 export interface SellerStats {
   pending_micro: number | string
   available_micro: number | string
@@ -262,6 +465,13 @@ export interface SellerStats {
   paid_micro: number | string
   month_income_micro: number | string
   platform_fee_total_micro: number | string
+  /** Month-to-date calls/tokens plus the 30-day breakdowns (same as overview). */
+  month_calls: number
+  month_tokens: number
+  range: SellerOverviewRange
+  by_model: SellerOverviewModelRow[]
+  daily_by_model: SellerOverviewModelSeries[]
+  by_channel: SellerOverviewChannel[]
   daily: SellerDailyIncome[]
   as_of: string
 }
@@ -499,6 +709,38 @@ export const sellerListingDetailQuery = (id: number) =>
       query.state.data?.status === 'verifying' ? VERIFY_POLL_INTERVAL_MS : false,
   })
 
+/** Every model of one listing with enabled state, official and buyer prices. */
+export const sellerListingModelsQuery = (id: number) =>
+  queryOptions({
+    queryKey: ['marketplace', 'seller', 'listing', id, 'models'],
+    queryFn: () => api.get<SellerListingModelsResponse>(`${sellerBase}/listings/${id}/models`),
+    staleTime: 15_000,
+  })
+
+/** Per-channel-kind multiplier floors/ceilings used by the console inputs. */
+export const sellerMultiplierBoundsQuery = () =>
+  queryOptions({
+    queryKey: ['marketplace', 'seller', 'multiplier-bounds'],
+    queryFn: () => api.get<MultiplierBounds>(`${sellerBase}/multiplier-bounds`),
+    staleTime: 5 * 60_000,
+  })
+
+/** Masked upstream header policy (plus any pending candidate) of one listing. */
+export const sellerListingHeadersQuery = (id: number) =>
+  queryOptions({
+    queryKey: ['marketplace', 'seller', 'listing', id, 'headers'],
+    queryFn: () => api.get<SellerHeadersView>(`${sellerBase}/listings/${id}/headers`),
+    staleTime: 15_000,
+  })
+
+/** Month-to-date cards + 30-day per-model/per-channel charts. */
+export const sellerOverviewQuery = () =>
+  queryOptions({
+    queryKey: ['marketplace', 'seller', 'overview'],
+    queryFn: () => api.get<SellerOverview>(`${sellerBase}/overview`),
+    staleTime: 30_000,
+  })
+
 /** P4 groups of the current seller (one per vendor), with their sibling keys. */
 export const sellerGroupsQuery = () =>
   queryOptions({
@@ -559,6 +801,36 @@ export const sellerPayoutsQuery = (page: number, pageSize = 10) =>
 // Mutations (plain functions; pages wrap them in useMutation)
 // ---------------------------------------------------------------------------
 
+/** PUT /seller/listings/:id body; omitted fields are left unchanged. */
+export interface UpdateListingSettingsInput {
+  label?: string
+  concurrency_limit?: number
+  rpm_limit?: number
+  daily_cap_micro?: number
+  hours?: string
+}
+
+/** POST /seller/listings/batch-models body (one change across listings). */
+export interface BatchListingModelsInput {
+  listing_ids: number[]
+  models?: string[]
+  multiplier_milli?: number
+  enabled?: boolean
+}
+
+/** PUT /seller/listings/:id/models body (one change across models). */
+export interface SetListingModelsStateInput {
+  models?: string[]
+  multiplier_milli?: number
+  enabled?: boolean
+}
+
+/** PUT /seller/listings/:id/models/:model body. */
+export interface SetListingModelStateInput {
+  multiplier_milli?: number
+  enabled?: boolean
+}
+
 export function postOnboarding(input: OnboardingInput): Promise<OnboardingResponse> {
   return api.post<OnboardingResponse>(`${sellerBase}/onboarding`, input)
 }
@@ -615,6 +887,89 @@ export function pauseListing(id: number): Promise<{ id: number; status: string }
 
 export function resumeListing(id: number): Promise<{ id: number; status: string }> {
   return api.post(`${sellerBase}/listings/${id}/resume`)
+}
+
+/** Soft-delete a listing; idempotent, so a repeated call returns the same status. */
+export function deleteListing(id: number): Promise<{ id: number; status: string }> {
+  return api.delete(`${sellerBase}/listings/${id}`)
+}
+
+/** Update display name, limits and business hours; omitted fields stay unchanged. */
+export function updateListingSettings(
+  id: number,
+  input: UpdateListingSettingsInput,
+): Promise<SellerListing> {
+  return api.put<SellerListing>(`${sellerBase}/listings/${id}`, input)
+}
+
+/** Apply one change across several listings in a single transaction. */
+export function batchListingModels(
+  input: BatchListingModelsInput,
+): Promise<{ ok: boolean }> {
+  return api.post(`${sellerBase}/listings/batch-models`, input)
+}
+
+/** Enable/disable or reprice several models of one listing (all-or-nothing). */
+export function setListingModelsState(
+  id: number,
+  input: SetListingModelsStateInput,
+): Promise<SellerModelChangeResult> {
+  return api.put<SellerModelChangeResult>(`${sellerBase}/listings/${id}/models`, input)
+}
+
+/** Enable/disable or reprice one model; a decrease applies now, an increase is staged. */
+export function setListingModelState(
+  id: number,
+  model: string,
+  input: SetListingModelStateInput,
+): Promise<SellerModelChangeRow> {
+  return api.put<SellerModelChangeRow>(
+    `${sellerBase}/listings/${id}/models/${encodeURIComponent(model)}`,
+    input,
+  )
+}
+
+/** Probe every auto-disabled model and re-enable the ones that pass. */
+export function restoreListingModels(id: number): Promise<SellerModelsRestoreResult> {
+  return api.post<SellerModelsRestoreResult>(`${sellerBase}/listings/${id}/models/restore`)
+}
+
+/**
+ * Replace the upstream header policy. A non-empty object is staged and
+ * verified before it goes live; an empty object clears the live policy, in
+ * which case the backend answers `{cleared: true, headers}` instead of the
+ * submit result.
+ */
+export function submitListingHeaders(
+  id: number,
+  headers: Record<string, string>,
+): Promise<SellerHeadersSubmitResult> {
+  return api.put<SellerHeadersSubmitResult>(`${sellerBase}/listings/${id}/headers`, { headers })
+}
+
+/**
+ * Extract the per-row reasons from an all-or-nothing model-change rejection
+ * (400/409 with `{code: 'MODEL_CHANGE_REJECTED', items: [...]}`). Returns an
+ * empty array for any other error, so callers can branch on the length without
+ * first checking the code.
+ */
+export function modelChangeErrors(err: unknown): ModelChangeError[] {
+  if (!(err instanceof ApiError)) return []
+  const details = err.details
+  const payload =
+    details && details.code === 'MODEL_CHANGE_REJECTED'
+      ? details
+      : details?.data && typeof details.data === 'object'
+        ? (details.data as Record<string, unknown>)
+        : undefined
+  if (err.code !== 'MODEL_CHANGE_REJECTED' && payload?.code !== 'MODEL_CHANGE_REJECTED') {
+    return []
+  }
+  const items = payload?.items
+  if (!Array.isArray(items)) return []
+  return items.filter(
+    (item): item is ModelChangeError => Boolean(item) && typeof item === 'object',
+  )
 }
 
 export function requestPayout(input: PayoutInput): Promise<{
