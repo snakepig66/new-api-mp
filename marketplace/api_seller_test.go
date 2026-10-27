@@ -1164,7 +1164,9 @@ func TestSellerGroupAndModelMultiplier(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var row ListingModel
 	require.NoError(t, f.db.Where("listing_id = ? AND model = ?", listing.ID, "deepseek-flash").Take(&row).Error)
-	assert.Equal(t, int64(450), row.MultiplierMilli)
+	// 450 is an increase over the 300 base, so it is staged, not applied.
+	assert.Equal(t, int64(300), row.MultiplierMilli)
+	assert.Equal(t, int64(450), row.PendingMultiplierMilli)
 
 	// Detail carries the group and the per-model table.
 	w = f.do(t, http.MethodGet, "/api/marketplace/seller/listings/"+strconv.FormatInt(listing.ID, 10),
@@ -1179,7 +1181,8 @@ func TestSellerGroupAndModelMultiplier(t *testing.T) {
 	models, ok := data["model_multipliers"].([]any)
 	require.True(t, ok)
 	require.Len(t, models, 1)
-	assert.EqualValues(t, 450, models[0].(map[string]any)["multiplier_milli"])
+	assert.EqualValues(t, 300, models[0].(map[string]any)["multiplier_milli"])
+	assert.EqualValues(t, 450, models[0].(map[string]any)["pending_multiplier_milli"])
 
 	// GET /seller/groups lists the group.
 	w = f.do(t, http.MethodGet, "/api/marketplace/seller/groups", nil, int(f.sellerID))

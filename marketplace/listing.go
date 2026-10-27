@@ -283,54 +283,18 @@ func UpdateListingGroup(db *gorm.DB, id int64, keyStrategy string, affinity bool
 	return nil
 }
 
-// UpdateModelMultiplier sets one listing's multiplier for one model (§P4
-// 逐模型倍率). The change applies to new requests immediately (the simplified
-// P4 contract; no cooldown and no scheduled effective time). The model must be
-// part of the listing's model list.
+// UpdateModelMultiplier is the P4-compatible entry point: it applies the new
+// per-model price rules (decrease immediate, increase staged) without an
+// ownership check. Seller-facing callers use SetListingModelsState directly so
+// the actor is recorded in the audit trail.
 func UpdateModelMultiplier(db *gorm.DB, listingID int64, model string, milli int64, now time.Time) error {
 	model = strings.TrimSpace(model)
 	if model == "" {
 		return errors.New("marketplace: model is required")
 	}
-	if milli < 1 || milli > 1000 {
-		return fmt.Errorf("marketplace: multiplier must be 1..1000 milli, got %d", milli)
-	}
-	return db.Transaction(func(tx *gorm.DB) error {
-		var listing Listing
-		if err := lockForUpdate(tx).Where("id = ?", listingID).First(&listing).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrListingNotFound
-			}
-			return err
-		}
-		if !slices.Contains(listing.Models, model) {
-			return fmt.Errorf("marketplace: model %q is not listed on listing %d", model, listingID)
-		}
-		var row ListingModel
-		err := tx.Where("listing_id = ? AND model = ?", listingID, model).Take(&row).Error
-		switch {
-		case errors.Is(err, gorm.ErrRecordNotFound):
-			return tx.Create(&ListingModel{
-				ListingID:       listingID,
-				Model:           model,
-				MultiplierMilli: milli,
-				Enabled:         true,
-			}).Error
-		case err != nil:
-			return err
-		}
-		res := tx.Model(&ListingModel{}).
-			Where("id = ?", row.ID).
-			Updates(map[string]any{
-				"multiplier_milli": milli,
-				"enabled":          true,
-				"updated_at":       now,
-			})
-		if res.Error != nil {
-			return res.Error
-		}
-		return nil
-	})
+	_, err := SetListingModelsState(db, listingID, 0, []string{model},
+		ModelStateInput{MultiplierMilli: &milli}, now)
+	return err
 }
 
 // validate checks every field that does not need the database. The vendor is
@@ -377,8 +341,10 @@ func (in CreateListingInput) validate(vendor Vendor) (Vendor, error) {
 			return Vendor{}, fmt.Errorf("marketplace: vendor %q base url hits a denied path", vendor.ID)
 		}
 	}
-	if in.MultiplierMilli < 1 || in.MultiplierMilli > 1000 {
-		return Vendor{}, fmt.Errorf("marketplace: multiplier must be 1..1000 milli, got %d", in.MultiplierMilli)
+	minMultiplier, maxMultiplier := MultiplierBoundsForTier(vendor.Tier)
+	if in.MultiplierMilli < minMultiplier || in.MultiplierMilli > maxMultiplier {
+		return Vendor{}, fmt.Errorf("marketplace: multiplier must be %d..%d milli for channel %q, got %d",
+			minMultiplier, maxMultiplier, vendor.ID, in.MultiplierMilli)
 	}
 	if in.RPM < 0 || in.DailyCapMicro < 0 {
 		return Vendor{}, errors.New("marketplace: rpm and daily cap must be >= 0")
@@ -1214,8 +1180,9 @@ func UpdateListingSettings(db *gorm.DB, id, sellerID int64, in UpdateListingSett
 // MultiplierUpdatedAt), and the new value affects only new requests. The
 // version field is the optimistic-lock backstop behind the row lock.
 func UpdateMultiplier(db *gorm.DB, id int64, milli int64, now time.Time) error {
-	if milli < 1 || milli > 1000 {
-		return fmt.Errorf("marketplace: multiplier must be 1..1000 milli, got %d", milli)
+	if milli < MultiplierAbsoluteMinMilli || milli > MultiplierAbsoluteMaxMilli {
+		return fmt.Errorf("marketplace: multiplier must be %d..%d milli, got %d",
+			MultiplierAbsoluteMinMilli, MultiplierAbsoluteMaxMilli, milli)
 	}
 	err := db.Transaction(func(tx *gorm.DB) error {
 		var row Listing
@@ -1223,6 +1190,15 @@ func UpdateMultiplier(db *gorm.DB, id int64, milli int64, now time.Time) error {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrListingNotFound
 			}
+			return err
+		}
+		if row.Status == ListingDeleted {
+			return ErrListingNotFound
+		}
+		if row.Status == ListingBanned {
+			return fmt.Errorf("%w: banned listing cannot be repriced", ErrInvalidTransition)
+		}
+		if err := validateMultiplierForVendor(tx, row.Vendor, milli); err != nil {
 			return err
 		}
 		if row.MultiplierUpdatedAt != nil && now.Sub(*row.MultiplierUpdatedAt) < multiplierMinInterval {
@@ -1247,6 +1223,8 @@ func UpdateMultiplier(db *gorm.DB, id int64, milli int64, now time.Time) error {
 		return err
 	}
 	mirrorListingUpdateLogged(db, id)
+	resetBuyerModelVisibilityCache()
+	resetPublicStatsCache()
 	return nil
 }
 

@@ -204,7 +204,7 @@ type ListingModel struct {
 	AutoDisabled            bool   `gorm:"not null;default:false"`
 	DisabledReason          string `gorm:"size:64;not null;default:''"`
 	DisabledDetail          string `gorm:"type:text;not null;default:''"`
-	DisabledHTTPStatus      int    `gorm:"not null;default:0"`
+	DisabledHTTPStatus      int    `gorm:"column:disabled_status_code;not null;default:0"`
 	DisabledUpstreamMessage string `gorm:"type:text;not null;default:''"`
 	DisabledAt              *time.Time
 	// A price increase is staged for one hour. Decreases apply immediately and

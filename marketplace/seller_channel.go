@@ -513,17 +513,21 @@ func mirrorListingUpdateTx(tx *gorm.DB, listing Listing) error {
 		allowedEndpoints = string(encoded)
 	}
 	listed := make(map[string]bool, len(listing.Models))
+	overrides := loadListingModelOverrides(tx, []int64{listing.ID}, time.Now())
 	for _, spec := range sellerChannelModelSpecs(tx, listing.Models, mapping, listing.Vendor) {
 		listed[spec.Model] = true
+		modelEnabled := overrides.modelEnabled(listing.ID, spec.Model)
+		modelMultiplier := overrides.multiplierFor(listing.ID, spec.Model, listing.MultiplierMilli)
 		var row SellerChannelModel
 		err := tx.Where("channel_id = ? AND model = ?", listing.ID, spec.Model).Take(&row).Error
 		switch {
 		case errors.Is(err, gorm.ErrRecordNotFound):
 			rows, rowsErr := sellerChannelModelRows(listing.ID,
-				[]sellerChannelModelSpec{spec}, endpoints, listing.MultiplierMilli, verified)
+				[]sellerChannelModelSpec{spec}, endpoints, modelMultiplier, verified)
 			if rowsErr != nil {
 				return rowsErr
 			}
+			rows[0].Enabled = modelEnabled
 			if err := tx.Create(&rows[0]).Error; err != nil {
 				return fmt.Errorf("marketplace: mirror seller channel model %d: %w", listing.ID, err)
 			}
@@ -532,8 +536,8 @@ func mirrorListingUpdateTx(tx *gorm.DB, listing Listing) error {
 		default:
 			updates := SellerChannelModel{
 				UpstreamModel:             spec.UpstreamModel,
-				MultiplierMilli:           listing.MultiplierMilli,
-				Enabled:                   true,
+				MultiplierMilli:           modelMultiplier,
+				Enabled:                   modelEnabled,
 				VerifiedOpenAIChat:        verified,
 				VerifiedOpenAIResponses:   verified,
 				VerifiedAnthropicMessages: verified,

@@ -1,6 +1,8 @@
 package marketplace
 
 import (
+	"time"
+
 	"gorm.io/gorm"
 )
 
@@ -22,7 +24,7 @@ type listingModelOverrides struct {
 // one query. A deployment without the table (partial schema or an early test
 // fixture) yields an empty state, which keeps every model at its base
 // multiplier and enabled — the historical behaviour.
-func loadListingModelOverrides(db *gorm.DB, listingIDs []int64) listingModelOverrides {
+func loadListingModelOverrides(db *gorm.DB, listingIDs []int64, now time.Time) listingModelOverrides {
 	out := listingModelOverrides{
 		multiplier:   make(map[int64]map[string]int64),
 		disabled:     make(map[int64]map[string]bool),
@@ -32,7 +34,8 @@ func loadListingModelOverrides(db *gorm.DB, listingIDs []int64) listingModelOver
 		return out
 	}
 	var rows []ListingModel
-	if err := db.Select("listing_id", "model", "multiplier_milli", "enabled", "auto_disabled").
+	if err := db.Select("listing_id", "model", "multiplier_milli", "enabled", "auto_disabled",
+		"pending_multiplier_milli", "pending_effective_at").
 		Where("listing_id IN ?", listingIDs).Find(&rows).Error; err != nil {
 		return out
 	}
@@ -54,9 +57,17 @@ func loadListingModelOverrides(db *gorm.DB, listingIDs []int64) listingModelOver
 			}
 			continue
 		}
+		// A staged increase becomes effective at pending_effective_at. The read
+		// path applies it itself so a lagging promotion job can never charge the
+		// old price.
+		milli := row.MultiplierMilli
+		if row.PendingMultiplierMilli >= 1 && row.PendingEffectiveAt != nil &&
+			!now.Before(*row.PendingEffectiveAt) {
+			milli = row.PendingMultiplierMilli
+		}
 		// A corrupt value must never make pricing reject every request, so it is
 		// treated as "no override" and the base multiplier applies.
-		if row.MultiplierMilli < 1 || row.MultiplierMilli > 1000 {
+		if milli < 1 || milli > 1000 {
 			continue
 		}
 		byModel := out.multiplier[row.ListingID]
@@ -64,9 +75,20 @@ func loadListingModelOverrides(db *gorm.DB, listingIDs []int64) listingModelOver
 			byModel = make(map[string]int64)
 			out.multiplier[row.ListingID] = byModel
 		}
-		byModel[row.Model] = row.MultiplierMilli
+		byModel[row.Model] = milli
 	}
 	return out
+}
+
+// effectiveListingModelMultiplier returns the price a listing charges now: a
+// staged increase becomes effective at pending_effective_at, otherwise the
+// stored multiplier applies.
+func effectiveListingModelMultiplier(row ListingModel, now time.Time) int64 {
+	if row.PendingMultiplierMilli >= 1 && row.PendingEffectiveAt != nil &&
+		!now.Before(*row.PendingEffectiveAt) {
+		return row.PendingMultiplierMilli
+	}
+	return row.MultiplierMilli
 }
 
 // modelEnabled reports whether the listing may serve the model. A listing with

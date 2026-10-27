@@ -989,6 +989,13 @@ func TestCreateListingGroups(t *testing.T) {
 func TestUpdateModelMultiplier(t *testing.T) {
 	db := newListingTestDB(t)
 	listing := createTestListing(t, db, 10023, uniqueTestKey("sk-model-mult"))
+	// Start above the official floor so a decrease can be tested without
+	// hitting the kind-specific lower bound.
+	require.NoError(t, db.Model(&Listing{}).Where("id = ?", listing.ID).
+		Update("multiplier_milli", 600).Error)
+	require.NoError(t, db.Model(&ListingModel{}).
+		Where("listing_id = ?", listing.ID).
+		Update("multiplier_milli", 600).Error)
 
 	now := time.Now()
 	require.NoError(t, UpdateModelMultiplier(db, listing.ID, "deepseek-flash", 450, now))
@@ -996,9 +1003,10 @@ func TestUpdateModelMultiplier(t *testing.T) {
 	var row ListingModel
 	require.NoError(t, db.Where("listing_id = ? AND model = ?", listing.ID, "deepseek-flash").Take(&row).Error)
 	assert.Equal(t, int64(450), row.MultiplierMilli)
+	assert.Zero(t, row.PendingMultiplierMilli, "a decrease applies immediately")
 	assert.True(t, row.Enabled)
 
-	// A second edit updates the same row instead of adding another.
+	// A second decrease updates the same row instead of adding another.
 	require.NoError(t, UpdateModelMultiplier(db, listing.ID, "deepseek-flash", 350, now))
 	var count int64
 	require.NoError(t, db.Model(&ListingModel{}).

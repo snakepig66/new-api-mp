@@ -505,15 +505,16 @@ func listingModelMultiplier(db *gorm.DB, listingID int64, modelName string) int6
 		return 0
 	}
 	var row ListingModel
-	if err := db.Select("multiplier_milli").
+	if err := db.Select("multiplier_milli", "pending_multiplier_milli", "pending_effective_at").
 		Where("listing_id = ? AND model = ? AND enabled = ?", listingID, modelName, true).
 		Take(&row).Error; err != nil {
 		return 0
 	}
-	if row.MultiplierMilli < 1 || row.MultiplierMilli > 1000 {
+	milli := effectiveListingModelMultiplier(row, time.Now())
+	if milli < 1 || milli > 1000 {
 		return 0
 	}
-	return row.MultiplierMilli
+	return milli
 }
 
 // listingModelDisabled reports whether the listing has an explicit disabled

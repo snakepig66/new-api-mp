@@ -120,6 +120,19 @@ func StartJobs(db *gorm.DB, stop <-chan struct{}) {
 			common.SysLog(common.LogText("marketplace: key-wipe job: wiped %d deleted keys", n))
 		}
 	})
+	// A staged price increase becomes effective after its one-hour delay. The
+	// read paths already honour a due pending value; this job persists it and
+	// writes the audit row.
+	go runJobLoop("model-price-promote", jobKeyWipeInterval, stop, func() {
+		n, err := PromotePendingModelMultipliers(db, time.Now())
+		if err != nil {
+			common.SysError(common.LogText("marketplace: model-price-promote job: %s", err.Error()))
+			return
+		}
+		if n > 0 {
+			common.SysLog(common.LogText("marketplace: model-price-promote job: applied %d staged prices", n))
+		}
+	})
 	// P5 derived metrics: aggregate the previous hour's request-derived metrics
 	// into mp_ops_metrics and snapshot the process-local slot counters. Both
 	// writes replace their bucket, so a repeated run is idempotent.

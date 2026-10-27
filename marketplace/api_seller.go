@@ -96,10 +96,17 @@ func registerSellerRoutes(g *gin.RouterGroup) {
 	// matches static segments first, so /listings/health never parses "health"
 	// as a listing id.
 	g.GET("/seller/listings/health", getSellerListingsHealth)
+	g.GET("/seller/multiplier-bounds", getSellerMultiplierBounds)
+	// Static batch path before the :id parameter routes.
+	g.POST("/seller/listings/batch-models", batchSellerListingModels)
 	g.POST("/seller/listings/:id/multiplier", updateSellerMultiplier)
 	// P4: per-model multiplier on one listing (PUT keeps the create/update
 	// distinction), group listing and group management.
 	g.PUT("/seller/listings/:id/models/:model/multiplier", setSellerModelMultiplier)
+	g.GET("/seller/listings/:id/models", getSellerListingModels)
+	g.PUT("/seller/listings/:id/models", batchSellerListingModelState)
+	g.PUT("/seller/listings/:id/models/:model", setSellerModelMultiplier)
+	g.POST("/seller/listings/:id/models/restore", restoreSellerListingModels)
 	g.GET("/seller/groups", listSellerListingGroups)
 	g.PUT("/seller/groups/:id", updateSellerListingGroup)
 	g.POST("/seller/listings/:id/key", replaceSellerKey)
@@ -532,7 +539,7 @@ func listSellerListings(c *gin.Context) {
 		ids = append(ids, rows[i].ID)
 	}
 	latest := latestVerifyProbes(db, ids)
-	overrides := loadListingModelOverrides(db, ids)
+	overrides := loadListingModelOverrides(db, ids, time.Now())
 	out := make([]sellerListingView, 0, len(rows))
 	for i := range rows {
 		view := toSellerListingView(&rows[i])
@@ -578,17 +585,78 @@ func updateSellerMultiplier(c *gin.Context) {
 			common.ApiErrorStatus(c, http.StatusConflict, errors.New("multiplier was changed less than 10 minutes ago"))
 			return
 		}
+		if errors.Is(err, ErrInvalidTransition) {
+			common.ApiErrorStatus(c, http.StatusConflict, errors.New(err.Error()))
+			return
+		}
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
 		return
 	}
 	common.ApiSuccess(c, gin.H{"id": id, "multiplier_milli": req.MultiplierMilli})
 }
 
-// setSellerModelMultiplier serves PUT
-// /seller/listings/:id/models/:model/multiplier {multiplier_milli} — set one
-// model's multiplier on the listing (P4 逐模型倍率, ownership-checked). The
-// simplified P4 contract applies the change immediately: no cooldown and no
-// delayed effective time.
+// sellerModelStateRequest is shared by the single-model, per-listing batch and
+// cross-listing batch endpoints. Nil pointers mean "leave unchanged".
+type sellerModelStateRequest struct {
+	Enabled         *bool    `json:"enabled"`
+	MultiplierMilli *int64   `json:"multiplier_milli"`
+	Models          []string `json:"models"`
+	ListingIDs      []int64  `json:"listing_ids"`
+}
+
+func (r sellerModelStateRequest) input() ModelStateInput {
+	return ModelStateInput{Enabled: r.Enabled, MultiplierMilli: r.MultiplierMilli}
+}
+
+func (r sellerModelStateRequest) hasChange() bool {
+	return r.Enabled != nil || r.MultiplierMilli != nil
+}
+
+func listingModelSummary(row ListingModel) gin.H {
+	return gin.H{
+		"model":                    row.Model,
+		"enabled":                  row.Enabled,
+		"multiplier_milli":         row.MultiplierMilli,
+		"pending_multiplier_milli": row.PendingMultiplierMilli,
+		"pending_effective_at":     row.PendingEffectiveAt,
+		"auto_disabled":            row.AutoDisabled,
+		"disabled_reason":          row.DisabledReason,
+	}
+}
+
+// writeModelChangeError maps a rejected model change to the console codes. A
+// batch rejection is all-or-nothing: the response carries every row's reason.
+func writeModelChangeError(c *gin.Context, err error) {
+	var batch *BatchModelChangeError
+	if errors.As(err, &batch) {
+		status := http.StatusConflict
+		for _, item := range batch.Items {
+			if item.IsBadRequest() {
+				status = http.StatusBadRequest
+				break
+			}
+		}
+		common.ApiErrorStatus(c, status, err, gin.H{
+			"code":  "MODEL_CHANGE_REJECTED",
+			"items": batch.Items,
+		})
+		return
+	}
+	switch {
+	case errors.Is(err, ErrListingNotFound):
+		common.ApiErrorStatus(c, http.StatusNotFound, errors.New("listing not found"))
+	case errors.Is(err, ErrInvalidTransition):
+		common.ApiErrorStatus(c, http.StatusConflict, errors.New(err.Error()))
+	case errors.Is(err, ErrModelPriceConflict):
+		common.ApiErrorStatus(c, http.StatusConflict, errors.New(err.Error()), gin.H{"code": "PRICE_CONFLICT"})
+	default:
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
+	}
+}
+
+// setSellerModelMultiplier serves PUT /seller/listings/:id/models/:model —
+// enable/disable or reprice one model. A decrease applies immediately; an
+// increase is staged for one hour.
 func setSellerModelMultiplier(c *gin.Context) {
 	sellerID, ok := sellerUserID(c)
 	if !ok {
@@ -602,25 +670,253 @@ func setSellerModelMultiplier(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, ok := requireOwnListing(c, db, id, sellerID); !ok {
-		return
-	}
 	model := c.Param("model")
-	var req struct {
-		MultiplierMilli int64 `json:"multiplier_milli"`
-	}
+	var req sellerModelStateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
 		return
 	}
-	if err := UpdateModelMultiplier(db, id, model, req.MultiplierMilli, time.Now()); err != nil {
-		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
+	if !req.hasChange() {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("enabled or multiplier_milli is required"))
 		return
 	}
+	rows, err := SetListingModelsState(db, id, sellerID, []string{model}, req.input(), time.Now())
+	if err != nil {
+		writeModelChangeError(c, err)
+		return
+	}
+	common.ApiSuccess(c, listingModelSummary(rows[0]))
+}
+
+// batchSellerListingModelState serves PUT /seller/listings/:id/models — one
+// request over several models of one listing. Any rejected row rejects all.
+func batchSellerListingModelState(c *gin.Context) {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	id, ok := sellerIDParam(c)
+	if !ok {
+		return
+	}
+	var req sellerModelStateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	if !req.hasChange() {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("enabled or multiplier_milli is required"))
+		return
+	}
+	rows, err := SetListingModelsState(db, id, sellerID, req.Models, req.input(), time.Now())
+	if err != nil {
+		writeModelChangeError(c, err)
+		return
+	}
+	items := make([]gin.H, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, listingModelSummary(row))
+	}
+	common.ApiSuccess(c, gin.H{"items": items})
+}
+
+// batchSellerListingModels serves POST /seller/listings/batch-models — the
+// same change across several listings (for example "set every selected
+// channel to 0.6x"). The whole batch is one transaction.
+func batchSellerListingModels(c *gin.Context) {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	var req sellerModelStateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	if len(req.ListingIDs) == 0 {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("listing_ids is required"))
+		return
+	}
+	if !req.hasChange() {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("enabled or multiplier_milli is required"))
+		return
+	}
+	if err := BatchSetListingModelsState(db, sellerID, req.ListingIDs, req.Models, req.input(), time.Now()); err != nil {
+		writeModelChangeError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"ok": true})
+}
+
+// getSellerMultiplierBounds serves GET /seller/multiplier-bounds — the single
+// source the console uses for input min/max and validation copy.
+func getSellerMultiplierBounds(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{
-		"listing_id":       id,
-		"model":            model,
-		"multiplier_milli": req.MultiplierMilli,
+		"absolute_min_milli": MultiplierAbsoluteMinMilli,
+		"absolute_max_milli": MultiplierAbsoluteMaxMilli,
+		"kinds": gin.H{
+			ChannelKindOfficial: gin.H{
+				"min_milli": MultiplierOfficialMinMilli,
+				"max_milli": MultiplierAbsoluteMaxMilli,
+			},
+			ChannelKindPlan: gin.H{
+				"min_milli": MultiplierPlanMinMilli,
+				"max_milli": MultiplierAbsoluteMaxMilli,
+			},
+			ChannelKindThirdParty: gin.H{
+				"min_milli": MultiplierThirdPartyMinMilli,
+				"max_milli": MultiplierAbsoluteMaxMilli,
+			},
+		},
+	})
+}
+
+// restoreSellerListingModels is completed in the automatic-disable phase.
+func restoreSellerListingModels(c *gin.Context) {
+	common.ApiErrorStatus(c, http.StatusNotImplemented, errors.New("restore is not available yet"))
+}
+
+// sellerModelRowView is one row of the console's 模型与价格 table. Buyer prices
+// are computed by the same Quote path the debit uses, so the preview cannot
+// drift from billing; the console only formats them.
+type sellerModelRowView struct {
+	Model                    string                      `json:"model"`
+	UpstreamModel            string                      `json:"upstream_model"`
+	Enabled                  bool                        `json:"enabled"`
+	AutoDisabled             bool                        `json:"auto_disabled"`
+	DisabledReason           string                      `json:"disabled_reason"`
+	DisabledDetail           string                      `json:"disabled_detail"`
+	DisabledUpstreamStatus   int                         `json:"disabled_upstream_status"`
+	DisabledUpstreamMessage  string                      `json:"disabled_upstream_message"`
+	DisabledAt               *time.Time                  `json:"disabled_at,omitempty"`
+	MultiplierMilli          int64                       `json:"multiplier_milli"`
+	EffectiveMultiplierMilli int64                       `json:"effective_multiplier_milli"`
+	PendingMultiplierMilli   int64                       `json:"pending_multiplier_milli"`
+	PendingEffectiveAt       *time.Time                  `json:"pending_effective_at,omitempty"`
+	CoefficientMilli         int64                       `json:"coefficient_milli"`
+	OriginVendor             string                      `json:"origin_vendor"`
+	MinMultiplierMilli       int64                       `json:"multiplier_min_milli"`
+	MaxMultiplierMilli       int64                       `json:"multiplier_max_milli"`
+	OfficialPrices           map[string]squareTierPrices `json:"official_prices"`
+	BuyerPrices              map[string]squareTierPrices `json:"buyer_prices"`
+}
+
+// getSellerListingModels serves GET /seller/listings/:id/models — every model
+// of the listing with enabled state, price, official reference and the buyer
+// price computed by Quote.
+func getSellerListingModels(c *gin.Context) {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	id, ok := sellerIDParam(c)
+	if !ok {
+		return
+	}
+	listing, ok := requireOwnListing(c, db, id, sellerID)
+	if !ok {
+		return
+	}
+	var modelRows []ListingModel
+	if err := db.Where("listing_id = ?", id).Find(&modelRows).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query model rows"))
+		return
+	}
+	rowByModel := make(map[string]ListingModel, len(modelRows))
+	for _, row := range modelRows {
+		rowByModel[row.Model] = row
+	}
+	_, cal := relayState()
+	now := time.Now()
+	minMilli, maxMilli := multiplierBoundsForVendor(db, listing.Vendor)
+	items := make([]sellerModelRowView, 0, len(listing.Models))
+	for _, model := range listing.Models {
+		row, exists := rowByModel[model]
+		if !exists {
+			row = ListingModel{
+				ListingID:       listing.ID,
+				Model:           model,
+				MultiplierMilli: listing.MultiplierMilli,
+				Enabled:         true,
+			}
+		}
+		origin := listing.Vendor
+		if mp, found := ModelPoolByName(db, model); found && strings.TrimSpace(mp.OriginVendor) != "" {
+			origin = mp.OriginVendor
+		}
+		coefficient := int64(1000)
+		if c, found := loadVerifiedCoefficients(db, model)[listing.Vendor]; found && c > 0 {
+			coefficient = c
+		}
+		effective := effectiveListingModelMultiplier(row, now)
+		upstream := model
+		if cm, found := ChannelModelFor(db, listing.Vendor, model); found && cm.UpstreamModel != "" {
+			upstream = cm.UpstreamModel
+		}
+		official := make(map[string]squareTierPrices, 3)
+		buyer := make(map[string]squareTierPrices, 3)
+		for _, tier := range []string{TierPeak, TierOffpeak, TierFlat} {
+			pb, err := PriceAt(db, model, origin, tier, now)
+			if err != nil {
+				continue
+			}
+			official[tier] = squareTierPrices{
+				InputMicroPerMTok:      pb.InputMicroPerMTok,
+				OutputMicroPerMTok:     pb.OutputMicroPerMTok,
+				CacheReadMicroPerMTok:  pb.CacheReadMicroPerMTok,
+				CacheWriteMicroPerMTok: pb.CacheWriteMicroPerMTok,
+			}
+			if cal != nil {
+				if prices, err := quoteTierPrices(db, cal, model, listing.Vendor, origin, effective, coefficient, now); err == nil {
+					buyer[tier] = prices
+				}
+			}
+		}
+		items = append(items, sellerModelRowView{
+			Model:                    model,
+			UpstreamModel:            upstream,
+			Enabled:                  row.Enabled,
+			AutoDisabled:             row.AutoDisabled,
+			DisabledReason:           row.DisabledReason,
+			DisabledDetail:           row.DisabledDetail,
+			DisabledUpstreamStatus:   row.DisabledHTTPStatus,
+			DisabledUpstreamMessage:  row.DisabledUpstreamMessage,
+			DisabledAt:               row.DisabledAt,
+			MultiplierMilli:          row.MultiplierMilli,
+			EffectiveMultiplierMilli: effectiveMultiplierMilli(effective, coefficient),
+			PendingMultiplierMilli:   row.PendingMultiplierMilli,
+			PendingEffectiveAt:       row.PendingEffectiveAt,
+			CoefficientMilli:         coefficient,
+			OriginVendor:             origin,
+			MinMultiplierMilli:       minMilli,
+			MaxMultiplierMilli:       maxMilli,
+			OfficialPrices:           official,
+			BuyerPrices:              buyer,
+		})
+	}
+	tier := ""
+	if cal != nil {
+		tier = cal.TierAt(now)
+	}
+	common.ApiSuccess(c, gin.H{
+		"items":                items,
+		"platform_fee_percent": PlatformFeePercent,
+		"tier":                 tier,
+		"tier_label":           tierLabel(tier),
+		"multiplier_min_milli": minMilli,
+		"multiplier_max_milli": maxMilli,
 	})
 }
 
@@ -1615,9 +1911,13 @@ type sellerListingDetail struct {
 
 // sellerModelMultiplier is one row of a listing's per-model multiplier table.
 type sellerModelMultiplier struct {
-	Model           string `json:"model"`
-	MultiplierMilli int64  `json:"multiplier_milli"`
-	Enabled         bool   `json:"enabled"`
+	Model                  string     `json:"model"`
+	MultiplierMilli        int64      `json:"multiplier_milli"`
+	Enabled                bool       `json:"enabled"`
+	PendingMultiplierMilli int64      `json:"pending_multiplier_milli"`
+	PendingEffectiveAt     *time.Time `json:"pending_effective_at,omitempty"`
+	AutoDisabled           bool       `json:"auto_disabled"`
+	DisabledReason         string     `json:"disabled_reason"`
 }
 
 // sellerGroupSibling is one key (listing) of a group, shown next to the key
@@ -1788,7 +2088,7 @@ func getSellerListingDetail(c *gin.Context) {
 		})
 	}
 	view := toSellerListingView(&listing)
-	applyListingAggregates(&view, listing, loadListingModelOverrides(db, []int64{id}))
+	applyListingAggregates(&view, listing, loadListingModelOverrides(db, []int64{id}, time.Now()))
 	view.PauseReason = listingPauseReason(listing, probes)
 	// Look the newest verify probe up independently of the recent-probe
 	// window: a run of patrol probes must not hide the last per-model verify
@@ -1815,9 +2115,13 @@ func getSellerListingDetail(c *gin.Context) {
 	modelMultipliers := make([]sellerModelMultiplier, 0, len(modelRows))
 	for _, row := range modelRows {
 		modelMultipliers = append(modelMultipliers, sellerModelMultiplier{
-			Model:           row.Model,
-			MultiplierMilli: row.MultiplierMilli,
-			Enabled:         row.Enabled,
+			Model:                  row.Model,
+			MultiplierMilli:        row.MultiplierMilli,
+			Enabled:                row.Enabled,
+			PendingMultiplierMilli: row.PendingMultiplierMilli,
+			PendingEffectiveAt:     row.PendingEffectiveAt,
+			AutoDisabled:           row.AutoDisabled,
+			DisabledReason:         row.DisabledReason,
 		})
 	}
 	common.ApiSuccess(c, sellerListingDetail{
