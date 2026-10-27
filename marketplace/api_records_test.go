@@ -286,14 +286,17 @@ func TestApiRecordSharesAnonymity(t *testing.T) {
 	assert.NotEqual(t, wantX, wantY, "§3.1: 每个分享者看到的代号不同")
 
 	// The full response must not leak the buyer's real id or token id, nor
-	// any key material field name (§3.1/§2.3).
+	// any key material field name (§3.1/§2.3). key_fingerprint4 (the last 4
+	// chars) is the deliberate display tail, so the absence check targets the
+	// full fingerprint value and the ciphertext instead.
 	rawX := wX.Body.String()
 	assert.NotContains(t, rawX, "918273645", "seller view leaks the buyer's real user id")
 	for _, absent := range []string{
-		"buyer_user_id", "buyer_token_id", "key_fingerprint", "key_ciphertext", "api_key",
+		"buyer_user_id", "buyer_token_id", "key_ciphertext", "api_key",
 	} {
 		assert.NotContains(t, rawX, absent, "seller view leaks %s", absent)
 	}
+	assert.NotContains(t, rawX, "fp-records-901", "seller view leaks the full key fingerprint")
 }
 
 // ---------------------------------------------------------------------------
