@@ -145,6 +145,13 @@ func probeIndicatesModelUnavailable(statusCode int, message string) bool {
 // but keeps the upstream status and a sanitized message for the auto-disable
 // evidence.
 func probeModelCallOutcome(ctx context.Context, client *http.Client, baseURL, model, apiKey string) modelProbeOutcome {
+	return probeModelCallOutcomeWithHeaders(ctx, client, baseURL, model, apiKey, nil)
+}
+
+// probeModelCallOutcomeWithHeaders is the header-policy variant: the candidate
+// headers ride on the same platform-owned minimal request the relay will use,
+// so a policy is tested against the real upstream shape.
+func probeModelCallOutcomeWithHeaders(ctx context.Context, client *http.Client, baseURL, model, apiKey string, headers map[string]string) modelProbeOutcome {
 	var out modelProbeOutcome
 	reqBody, err := common.Marshal(map[string]any{
 		"model":      model,
@@ -164,6 +171,9 @@ func probeModelCallOutcome(ctx context.Context, client *http.Client, baseURL, mo
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
 	start := time.Now()
 	resp, err := client.Do(req)
 	out.LatencyMs = time.Since(start).Milliseconds()

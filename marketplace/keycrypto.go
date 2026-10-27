@@ -146,3 +146,45 @@ func newListingGCM(key []byte) (cipher.AEAD, error) {
 	}
 	return gcm, nil
 }
+
+// EncryptProtectedBlob encrypts an arbitrary seller-supplied secret for
+// at-rest storage with the same AES-256-GCM key that protects listing keys.
+// Unlike EncryptListingKey it does not normalize the plaintext: candidate
+// request-header JSON legitimately contains whitespace and punctuation.
+func EncryptProtectedBlob(plaintext []byte) ([]byte, error) {
+	key, err := keyEncryptionKey()
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := newListingGCM(key)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, errors.New("marketplace: cannot generate blob nonce")
+	}
+	return gcm.Seal(nonce, nonce, plaintext, nil), nil
+}
+
+// DecryptProtectedBlob reverses EncryptProtectedBlob. It never echoes the
+// ciphertext or plaintext in an error.
+func DecryptProtectedBlob(ciphertext []byte) ([]byte, error) {
+	key, err := keyEncryptionKey()
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := newListingGCM(key)
+	if err != nil {
+		return nil, err
+	}
+	if len(ciphertext) < gcm.NonceSize()+gcm.Overhead() {
+		return nil, errors.New("marketplace: stored blob is malformed")
+	}
+	nonce, sealed := ciphertext[:gcm.NonceSize()], ciphertext[gcm.NonceSize():]
+	plain, err := gcm.Open(nil, nonce, sealed, nil)
+	if err != nil {
+		return nil, errors.New("marketplace: stored blob cannot be decrypted")
+	}
+	return plain, nil
+}

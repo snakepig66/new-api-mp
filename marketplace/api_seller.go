@@ -115,6 +115,10 @@ func registerSellerRoutes(g *gin.RouterGroup) {
 	g.POST("/seller/listings/:id/resume", resumeSellerListing)
 	g.DELETE("/seller/listings/:id", deleteSellerListing)
 	g.PUT("/seller/listings/:id", updateSellerListingSettings)
+	// Seller-supplied upstream headers (custom channels only). A candidate is
+	// verified before it replaces the live policy; reads are masked.
+	g.GET("/seller/listings/:id/headers", getSellerListingHeaders)
+	g.PUT("/seller/listings/:id/headers", putSellerListingHeaders)
 	g.GET("/seller/balance", getSellerBalance)
 	g.POST("/seller/payouts", postSellerPayout)
 }
@@ -807,6 +811,101 @@ func restoreSellerListingModels(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, result)
+}
+
+// getSellerListingHeaders serves GET /seller/listings/:id/headers. Values are
+// masked; the pending candidate (if any) is masked too.
+func getSellerListingHeaders(c *gin.Context) {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	id, ok := sellerIDParam(c)
+	if !ok {
+		return
+	}
+	listing, ok := requireOwnListing(c, db, id, sellerID)
+	if !ok {
+		return
+	}
+	view, err := SellerHeadersViewFor(db, listing)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to load request headers"))
+		return
+	}
+	common.ApiSuccess(c, view)
+}
+
+// putSellerListingHeaders serves PUT /seller/listings/:id/headers. An empty
+// object clears the live policy immediately; a non-empty object is staged and
+// verified asynchronously before it replaces the live policy.
+func putSellerListingHeaders(c *gin.Context) {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	id, ok := sellerIDParam(c)
+	if !ok {
+		return
+	}
+	listing, ok := requireOwnListing(c, db, id, sellerID)
+	if !ok {
+		return
+	}
+	var req struct {
+		Headers map[string]string `json:"headers"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, errors.New("headers must be a JSON object"))
+		return
+	}
+	if req.Headers == nil {
+		common.ApiError(c, errors.New("headers must be a JSON object"))
+		return
+	}
+	if len(req.Headers) == 0 {
+		if err := ClearListingHeaders(db, id, sellerID, time.Now()); err != nil {
+			writeSellerHeadersError(c, err)
+			return
+		}
+		view, err := SellerHeadersViewFor(db, listing)
+		if err != nil {
+			common.ApiSuccess(c, gin.H{"cleared": true, "headers": []sellerHeaderEntry{}})
+			return
+		}
+		common.ApiSuccess(c, gin.H{"cleared": true, "headers": view.Headers})
+		return
+	}
+	result, err := SubmitListingHeaders(db, id, sellerID, req.Headers, time.Now())
+	if err != nil {
+		writeSellerHeadersError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+	if result.Pending {
+		go verifyPendingHeaders(db, id, result.Version)
+	}
+}
+
+func writeSellerHeadersError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrListingNotFound):
+		common.ApiErrorStatus(c, http.StatusNotFound, errors.New("listing not found"))
+	case errors.Is(err, ErrInvalidTransition):
+		common.ApiErrorStatus(c, http.StatusConflict, errors.New(err.Error()))
+	case errors.Is(err, ErrHeadersUnsupported), errors.Is(err, ErrInvalidHeaders):
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
+	default:
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to update request headers"))
+	}
 }
 
 // sellerModelRowView is one row of the console's 模型与价格 table. Buyer prices
