@@ -419,9 +419,13 @@ func (s *RelaySession) endRelay(c *gin.Context) {
 		return
 	}
 	s.finished = true
+	requestID := s.requestID
 	settled, failed := s.settled, s.failed
 	billing := s.billing
 	s.mu.Unlock()
+	// P5-C: the request is over (settled, failed, or cleaned up here), so it
+	// must no longer appear as an active freeze.
+	DefaultSessionRegistry().Unregister(requestID)
 	if settled || failed {
 		// SettleRelay/FailRelay already released the slot and probe; these are
 		// idempotent safety nets.
@@ -1412,6 +1416,15 @@ func PrepareBilling(c *gin.Context, info *relaycommon.RelayInfo, estimateFn func
 	s.fetchCap = fetchCap
 	s.preFreeze = quote
 	s.mu.Unlock()
+	// P5-C: publish the freeze so an operator can enumerate and force-release a
+	// wedged request. s.requestID and s.buyerUserID are immutable.
+	DefaultSessionRegistry().Register(SessionEntry{
+		RequestID:   s.requestID,
+		ListingID:   listing.ID,
+		BuyerID:     s.buyerUserID,
+		FrozenMicro: int64(session.GetPreConsumedQuota()),
+		billing:     session,
+	})
 	return nil
 }
 
@@ -1734,6 +1747,16 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 	s.mu.Lock()
 	s.billing = session
 	s.mu.Unlock()
+	// The freeze now belongs to the new listing (the session itself may be the
+	// same one, adjusted by Reserve/RefundDelta). Keep the registry pointing at
+	// the winning listing and the current amount.
+	DefaultSessionRegistry().Register(SessionEntry{
+		RequestID:   s.requestID,
+		ListingID:   next.ID,
+		BuyerID:     s.buyerUserID,
+		FrozenMicro: int64(session.GetPreConsumedQuota()),
+		billing:     session,
+	})
 
 	channel, err := lookupRelayChannel(next.ChannelID)
 	if err != nil {

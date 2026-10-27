@@ -1171,3 +1171,118 @@ export const opsMetricsQuery = (filters: OpsMetricFilters) =>
     },
     staleTime: 15_000,
   })
+
+// ---------------------------------------------------------------------------
+// 活跃预占 / 强制释放（P5-C）
+// ---------------------------------------------------------------------------
+
+export interface AdminActiveSession {
+  request_id: string
+  listing_id: number
+  buyer_id: number
+  frozen_micro: number | string
+  created_at: string
+}
+
+export function normalizeAdminActiveSession(raw: unknown): AdminActiveSession {
+  const row = record(raw)
+  return {
+    request_id: text(pick(row, 'request_id', 'RequestID')),
+    listing_id: int(pick(row, 'listing_id', 'ListingID')),
+    buyer_id: int(pick(row, 'buyer_id', 'BuyerID')),
+    frozen_micro: micro(pick(row, 'frozen_micro', 'FrozenMicro')),
+    created_at: text(pick(row, 'created_at', 'CreatedAt')),
+  }
+}
+
+export interface AdminActiveSessions {
+  total: number
+  frozen_micro: number | string
+  items: AdminActiveSession[]
+}
+
+/** listingID 0 lists the active sessions of every listing. */
+export const activeSessionsQuery = (listingID = 0) =>
+  queryOptions({
+    queryKey: ['marketplace', 'admin', 'sessions', listingID],
+    queryFn: async (): Promise<AdminActiveSessions> => {
+      const raw = await api.get<unknown>(`${adminBase}/sessions`, {
+        query: { listing_id: listingID > 0 ? listingID : undefined },
+      })
+      const envelope = record(raw)
+      const items = Array.isArray(raw) ? raw : envelope.items
+      return {
+        total: int(envelope.total),
+        frozen_micro: micro(envelope.frozen_micro),
+        items: (Array.isArray(items) ? items : []).map(normalizeAdminActiveSession),
+      }
+    },
+    staleTime: 5_000,
+  })
+
+export interface ForceReleaseResult {
+  listing_id: number
+  sessions: number
+  frozen_micro: number | string
+  slots_released: number
+  refund_failures: number
+}
+
+/** Force-release every active freeze and slot of one listing. */
+export function forceRelease(listingID: number): Promise<ForceReleaseResult> {
+  return api
+    .post<unknown>(`${adminBase}/sessions/force-release`, { listing_id: listingID })
+    .then((raw) => {
+      const row = record(raw)
+      return {
+        listing_id: int(pick(row, 'listing_id', 'ListingID')),
+        sessions: int(pick(row, 'sessions', 'Sessions')),
+        frozen_micro: micro(pick(row, 'frozen_micro', 'FrozenMicro')),
+        slots_released: int(pick(row, 'slots_released', 'SlotsReleased')),
+        refund_failures: int(pick(row, 'refund_failures', 'RefundFailures')),
+      }
+    })
+}
+
+// ---------------------------------------------------------------------------
+// 风控图谱（P5-C）
+// ---------------------------------------------------------------------------
+
+export interface AdminRelatedUser {
+  user_id: number
+  relation_type: string
+  value: string
+}
+
+export function normalizeAdminRelatedUser(raw: unknown): AdminRelatedUser {
+  const row = record(raw)
+  return {
+    user_id: int(pick(row, 'user_id', 'UserID')),
+    relation_type: text(pick(row, 'relation_type', 'RelationType')),
+    value: text(pick(row, 'value', 'Value')),
+  }
+}
+
+export interface AdminRelatedUsers {
+  user_id: number
+  items: AdminRelatedUser[]
+}
+
+/** Related accounts of one user (shared login IP or payout account). */
+export const relatedUsersQuery = (userID: number) =>
+  queryOptions({
+    queryKey: ['marketplace', 'admin', 'risk', 'related', userID],
+    enabled: userID > 0,
+    queryFn: async (): Promise<AdminRelatedUsers> => {
+      const raw = await api.get<unknown>(`${adminBase}/risk/related`, {
+        query: { user_id: userID },
+      })
+      const envelope = record(raw)
+      const items = Array.isArray(raw) ? raw : envelope.items
+      return {
+        user_id: int(pick(envelope, 'user_id', 'UserID')) || userID,
+        items: (Array.isArray(items) ? items : []).map(normalizeAdminRelatedUser),
+      }
+    },
+    staleTime: 15_000,
+  })

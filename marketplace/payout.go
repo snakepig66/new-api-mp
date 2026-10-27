@@ -191,6 +191,14 @@ func RequestPayout(db *gorm.DB, sellerID, amountMicro int64, idempotencyKey stri
 			return ErrPayoutInsufficient
 		}
 
+		// P5-C risk gate: a payout that would otherwise be created requires a
+		// verified real name and no account sharing a login IP. It runs after the
+		// cheap account/balance checks so those keep their existing errors, and
+		// inside the locked transaction so the decision sees the same seller row.
+		if err := CheckWithdrawalEligibility(tx, sellerID); err != nil {
+			return err
+		}
+
 		p := Payout{
 			SellerID:       sellerID,
 			AmountMicro:    amountMicro,

@@ -43,6 +43,17 @@ func SetApiRouter(router *gin.Engine) {
 			marketplace.RegisterNotificationRoutes(mpUser)
 			mpAdmin := apiRouter.Group("/marketplace", middleware.RootAuth())
 			marketplace.RegisterAdminRootRoutes(mpAdmin)
+			// 认证池运营 (P5-C): AdminAuth establishes the dashboard session,
+			// then each route requires its trust_pool action. A non-root
+			// operator with a per-user grant can manage the pool without
+			// gaining the root-only marketplace admin endpoints; root is a
+			// superuser and still passes every action.
+			mpTrustPool := apiRouter.Group("/marketplace", middleware.AdminAuth())
+			for _, route := range marketplace.TrustPoolRoutes() {
+				permission := authz.Permission{Resource: authz.ResourceTrustPool, Action: route.Action}
+				middleware.DeclareAccessTokenPermissionRoute(route.Method, joinPaths(mpTrustPool.BasePath(), route.Path), permission)
+				mpTrustPool.Handle(route.Method, route.Path, middleware.RequirePermission(permission), route.Handler)
+			}
 		}
 		apiRouter.GET("/uptime/status", controller.GetUptimeKumaStatus)
 		apiRouter.GET("/models", middleware.UserAuth(), controller.DashboardListModels)

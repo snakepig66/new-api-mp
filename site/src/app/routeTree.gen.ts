@@ -59,6 +59,7 @@ import { Route as ConsoleOpsMetricsRouteImport } from './routes/console/ops/metr
 import { Route as ConsoleOpsModelsRouteImport } from './routes/console/ops/models'
 import { Route as ConsoleOpsPricingRouteImport } from './routes/console/ops/pricing'
 import { Route as ConsoleOpsReviewRouteImport } from './routes/console/ops/review'
+import { Route as ConsoleOpsRiskRouteImport } from './routes/console/ops/risk'
 import { Route as ConsoleOpsToolsRouteImport } from './routes/console/ops/tools'
 import { Route as ConsoleOpsTraceRouteImport } from './routes/console/ops/trace'
 import { Route as ConsoleOpsTrustPoolRouteImport } from './routes/console/ops/trust-pool'
@@ -319,6 +320,11 @@ const ConsoleOpsReviewRoute = ConsoleOpsReviewRouteImport.update({
   path: '/review',
   getParentRoute: () => ConsoleOpsRoute,
 } as any)
+const ConsoleOpsRiskRoute = ConsoleOpsRiskRouteImport.update({
+  id: '/risk',
+  path: '/risk',
+  getParentRoute: () => ConsoleOpsRoute,
+} as any)
 const ConsoleOpsToolsRoute = ConsoleOpsToolsRouteImport.update({
   id: '/tools',
   path: '/tools',
@@ -413,6 +419,7 @@ export interface FileRoutesByFullPath {
   '/console/ops/models': typeof ConsoleOpsModelsRoute
   '/console/ops/pricing': typeof ConsoleOpsPricingRouteWithChildren
   '/console/ops/review': typeof ConsoleOpsReviewRouteWithChildren
+  '/console/ops/risk': typeof ConsoleOpsRiskRoute
   '/console/ops/tools': typeof ConsoleOpsToolsRouteWithChildren
   '/console/ops/trace': typeof ConsoleOpsTraceRoute
   '/console/ops/trust-pool': typeof ConsoleOpsTrustPoolRoute
@@ -466,6 +473,7 @@ export interface FileRoutesByTo {
   '/console/listings/new': typeof ConsoleListingsNewRoute
   '/console/ops/metrics': typeof ConsoleOpsMetricsRoute
   '/console/ops/models': typeof ConsoleOpsModelsRoute
+  '/console/ops/risk': typeof ConsoleOpsRiskRoute
   '/console/ops/trace': typeof ConsoleOpsTraceRoute
   '/console/ops/trust-pool': typeof ConsoleOpsTrustPoolRoute
   '/console/earnings': typeof ConsoleEarningsIndexRoute
@@ -527,6 +535,7 @@ export interface FileRoutesById {
   '/console/ops/models': typeof ConsoleOpsModelsRoute
   '/console/ops/pricing': typeof ConsoleOpsPricingRouteWithChildren
   '/console/ops/review': typeof ConsoleOpsReviewRouteWithChildren
+  '/console/ops/risk': typeof ConsoleOpsRiskRoute
   '/console/ops/tools': typeof ConsoleOpsToolsRouteWithChildren
   '/console/ops/trace': typeof ConsoleOpsTraceRoute
   '/console/ops/trust-pool': typeof ConsoleOpsTrustPoolRoute
@@ -590,6 +599,7 @@ export interface FileRouteTypes {
     | '/console/ops/models'
     | '/console/ops/pricing'
     | '/console/ops/review'
+    | '/console/ops/risk'
     | '/console/ops/tools'
     | '/console/ops/trace'
     | '/console/ops/trust-pool'
@@ -643,6 +653,7 @@ export interface FileRouteTypes {
     | '/console/listings/new'
     | '/console/ops/metrics'
     | '/console/ops/models'
+    | '/console/ops/risk'
     | '/console/ops/trace'
     | '/console/ops/trust-pool'
     | '/console/earnings'
@@ -703,6 +714,7 @@ export interface FileRouteTypes {
     | '/console/ops/models'
     | '/console/ops/pricing'
     | '/console/ops/review'
+    | '/console/ops/risk'
     | '/console/ops/tools'
     | '/console/ops/trace'
     | '/console/ops/trust-pool'
@@ -1090,6 +1102,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleOpsReviewRouteImport
       parentRoute: typeof ConsoleOpsRoute
     }
+    '/console/ops/risk': {
+      id: '/console/ops/risk'
+      path: '/risk'
+      fullPath: '/console/ops/risk'
+      preLoaderRoute: typeof ConsoleOpsRiskRouteImport
+      parentRoute: typeof ConsoleOpsRoute
+    }
     '/console/ops/tools': {
       id: '/console/ops/tools'
       path: '/tools'
@@ -1257,6 +1276,7 @@ interface ConsoleOpsRouteChildren {
   ConsoleOpsModelsRoute: typeof ConsoleOpsModelsRoute
   ConsoleOpsPricingRoute: typeof ConsoleOpsPricingRouteWithChildren
   ConsoleOpsReviewRoute: typeof ConsoleOpsReviewRouteWithChildren
+  ConsoleOpsRiskRoute: typeof ConsoleOpsRiskRoute
   ConsoleOpsToolsRoute: typeof ConsoleOpsToolsRouteWithChildren
   ConsoleOpsTraceRoute: typeof ConsoleOpsTraceRoute
   ConsoleOpsTrustPoolRoute: typeof ConsoleOpsTrustPoolRoute
@@ -1268,6 +1288,7 @@ const ConsoleOpsRouteChildren: ConsoleOpsRouteChildren = {
   ConsoleOpsModelsRoute: ConsoleOpsModelsRoute,
   ConsoleOpsPricingRoute: ConsoleOpsPricingRouteWithChildren,
   ConsoleOpsReviewRoute: ConsoleOpsReviewRouteWithChildren,
+  ConsoleOpsRiskRoute: ConsoleOpsRiskRoute,
   ConsoleOpsToolsRoute: ConsoleOpsToolsRouteWithChildren,
   ConsoleOpsTraceRoute: ConsoleOpsTraceRoute,
   ConsoleOpsTrustPoolRoute: ConsoleOpsTrustPoolRoute,

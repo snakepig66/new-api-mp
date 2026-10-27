@@ -122,6 +122,23 @@ func (m *SlotManager) InFlight(listingID int64) int {
 	return len(m.slots[listingID])
 }
 
+// ForceRelease drops every slot held for listingID and returns how many were
+// released (P5-C operator escape hatch for a wedged listing). It bypasses the
+// normal one-slot-per-release rule, so the caller must treat it as a manual
+// intervention: any request still running on that listing will later find its
+// slot already gone, and capacity can be overbooked until it ends.
+func (m *SlotManager) ForceRelease(listingID int64) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	released := len(m.slots[listingID])
+	if released == 0 {
+		return 0
+	}
+	delete(m.slots, listingID)
+	m.releaseCount.Add(int64(released))
+	return released
+}
+
 // Stats returns a snapshot of the slot lifecycle counters (P5 名额占用和续租
 // 失败次数): acquire, renew, renew_failure and release are process-lifetime
 // totals, while in_flight is the number of slots held right now. It does not

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"slices"
@@ -31,6 +32,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service/authz"
 )
 
 // RegisterAdminRootRoutes is the exported seam for the marketplace admin API.
@@ -86,19 +89,44 @@ func registerAdminRootRoutes(g *gin.RouterGroup) {
 	g.GET("/admin/pool/channel-models", adminPoolListChannelModels)
 	g.PUT("/admin/pool/channel-models", adminPoolPutChannelModel)
 	g.DELETE("/admin/pool/channel-models", adminPoolDeleteChannelModel)
-	// 认证池 (P5): operator CRUD over mp_trust_pool plus the governance gate,
-	// the append-only audit trail and the P5-B two-person confirmation queue.
-	g.GET("/admin/trust-pool", adminTrustPoolList)
-	g.GET("/admin/trust-pool/approvals", adminTrustPoolApprovalList)
-	g.POST("/admin/trust-pool/approvals/:id/approve", adminTrustPoolApprovalApprove)
-	g.POST("/admin/trust-pool/approvals/:id/reject", adminTrustPoolApprovalReject)
-	g.GET("/admin/trust-pool/:id", adminTrustPoolGet)
-	g.POST("/admin/trust-pool", adminTrustPoolCreate)
-	g.PUT("/admin/trust-pool/:id", adminTrustPoolUpdate)
-	g.DELETE("/admin/trust-pool/:id", adminTrustPoolDelete)
 	// 派生指标 (P5): mp_ops_metrics with metric_name / since / dimensions
 	// filters.
 	g.GET("/admin/metrics", adminListOpsMetrics)
+	// 活跃请求与风控 (P5-C). Force release is an escape hatch for a wedged
+	// request; the risk endpoint is the simplified association graph. Both stay
+	// on the root-only group because they can move money and expose other
+	// accounts' relationships.
+	g.GET("/admin/sessions", adminListSessions)
+	g.POST("/admin/sessions/force-release", adminForceReleaseSessions)
+	g.GET("/admin/risk/related", adminRelatedUsers)
+}
+
+// TrustPoolRouteSpec is one trust-pool admin route exposed to the router seam.
+// The router mounts these on an AdminAuth group and guards each with
+// RequirePermission(trust_pool, Action), so a protected operator needs only the
+// trust_pool grant instead of full root access. The handlers do not re-check
+// root: the route permission is the gate.
+type TrustPoolRouteSpec struct {
+	Method  string
+	Path    string
+	Action  string
+	Handler gin.HandlerFunc
+}
+
+// TrustPoolRoutes returns the 认证池 routes. They are intentionally not part of
+// registerAdminRootRoutes (see RegisterAdminRootRoutes): those endpoints remain
+// root-only, while these are reachable by a per-user trust_pool grant.
+func TrustPoolRoutes() []TrustPoolRouteSpec {
+	return []TrustPoolRouteSpec{
+		{Method: http.MethodGet, Path: "/admin/trust-pool", Action: authz.ActionList, Handler: adminTrustPoolList},
+		{Method: http.MethodGet, Path: "/admin/trust-pool/approvals", Action: authz.ActionList, Handler: adminTrustPoolApprovalList},
+		{Method: http.MethodPost, Path: "/admin/trust-pool/approvals/:id/approve", Action: authz.ActionApprove, Handler: adminTrustPoolApprovalApprove},
+		{Method: http.MethodPost, Path: "/admin/trust-pool/approvals/:id/reject", Action: authz.ActionApprove, Handler: adminTrustPoolApprovalReject},
+		{Method: http.MethodGet, Path: "/admin/trust-pool/:id", Action: authz.ActionRead, Handler: adminTrustPoolGet},
+		{Method: http.MethodPost, Path: "/admin/trust-pool", Action: authz.ActionCreate, Handler: adminTrustPoolCreate},
+		{Method: http.MethodPut, Path: "/admin/trust-pool/:id", Action: authz.ActionUpdate, Handler: adminTrustPoolUpdate},
+		{Method: http.MethodDelete, Path: "/admin/trust-pool/:id", Action: authz.ActionDelete, Handler: adminTrustPoolDelete},
+	}
 }
 
 // adminRequireRoot is the L5 defense-in-depth gate for 提现审批 / 冲正 /
@@ -2102,9 +2130,6 @@ func adminTrustPoolCreate(c *gin.Context) {
 	if db == nil {
 		return
 	}
-	if !adminRequireRoot(c) {
-		return
-	}
 	var req adminTrustPoolRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
@@ -2130,9 +2155,6 @@ func adminTrustPoolCreate(c *gin.Context) {
 func adminTrustPoolUpdate(c *gin.Context) {
 	db := adminDB(c)
 	if db == nil {
-		return
-	}
-	if !adminRequireRoot(c) {
 		return
 	}
 	id, ok := adminIDParam(c)
@@ -2180,9 +2202,6 @@ func adminTrustPoolDelete(c *gin.Context) {
 	if db == nil {
 		return
 	}
-	if !adminRequireRoot(c) {
-		return
-	}
 	id, ok := adminIDParam(c)
 	if !ok {
 		return
@@ -2214,9 +2233,6 @@ func adminTrustPoolDelete(c *gin.Context) {
 func adminTrustPoolApprovalList(c *gin.Context) {
 	db := adminDB(c)
 	if db == nil {
-		return
-	}
-	if !adminRequireRoot(c) {
 		return
 	}
 	status := strings.TrimSpace(c.Query("status"))
@@ -2287,9 +2303,6 @@ func loadTrustPoolApprovalForReview(db *gorm.DB, c *gin.Context) (*TrustPoolAppr
 func adminTrustPoolApprovalApprove(c *gin.Context) {
 	db := adminDB(c)
 	if db == nil {
-		return
-	}
-	if !adminRequireRoot(c) {
 		return
 	}
 	approval, reviewerID, ok := loadTrustPoolApprovalForReview(db, c)
@@ -2403,9 +2416,6 @@ func adminTrustPoolApprovalApprove(c *gin.Context) {
 func adminTrustPoolApprovalReject(c *gin.Context) {
 	db := adminDB(c)
 	if db == nil {
-		return
-	}
-	if !adminRequireRoot(c) {
 		return
 	}
 	approval, reviewerID, ok := loadTrustPoolApprovalForReview(db, c)
@@ -2795,9 +2805,6 @@ func adminTrustPoolList(c *gin.Context) {
 	if db == nil {
 		return
 	}
-	if !adminRequireRoot(c) {
-		return
-	}
 	trustFilter := strings.TrimSpace(c.Query("trust"))
 	kindFilter := strings.TrimSpace(c.Query("kind"))
 	sourceFilter := strings.TrimSpace(c.Query("source"))
@@ -2851,9 +2858,6 @@ func adminTrustPoolList(c *gin.Context) {
 func adminTrustPoolGet(c *gin.Context) {
 	db := adminDB(c)
 	if db == nil {
-		return
-	}
-	if !adminRequireRoot(c) {
 		return
 	}
 	id, ok := adminIDParam(c)
@@ -2986,4 +2990,162 @@ func adminListOpsMetrics(c *gin.Context) {
 		})
 	}
 	common.ApiSuccess(c, items)
+}
+
+// ---------------------------------------------------------------------------
+// 活跃请求 / 预占强制释放 (P5-C)
+// ---------------------------------------------------------------------------
+
+// adminSessionView is one active request's console shape.
+type adminSessionView struct {
+	RequestID   string    `json:"request_id"`
+	ListingID   int64     `json:"listing_id"`
+	BuyerID     int       `json:"buyer_id"`
+	FrozenMicro int64     `json:"frozen_micro"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// adminSessionsView is the listing of active requests, optionally filtered by
+// listing. Frozen totals cover exactly the returned items.
+type adminSessionsView struct {
+	Total       int                `json:"total"`
+	FrozenMicro int64              `json:"frozen_micro"`
+	Items       []adminSessionView `json:"items"`
+}
+
+// adminListSessions serves GET /admin/sessions?listing_id=. The registry is
+// process-local, so this only reports requests served by the current node.
+func adminListSessions(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	var listingID int64
+	if raw := strings.TrimSpace(c.Query("listing_id")); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed <= 0 {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("listing_id must be a positive integer"))
+			return
+		}
+		listingID = parsed
+	}
+	entries := DefaultSessionRegistry().List(listingID)
+	view := adminSessionsView{Items: make([]adminSessionView, 0, len(entries))}
+	for _, entry := range entries {
+		view.Items = append(view.Items, adminSessionView{
+			RequestID:   entry.RequestID,
+			ListingID:   entry.ListingID,
+			BuyerID:     entry.BuyerID,
+			FrozenMicro: entry.FrozenMicro,
+			CreatedAt:   entry.CreatedAt,
+		})
+		view.FrozenMicro += entry.FrozenMicro
+	}
+	view.Total = len(view.Items)
+	common.ApiSuccess(c, view)
+}
+
+// adminForceReleaseSessions serves POST /admin/sessions/force-release with
+// {"listing_id": N}. It refunds every active freeze of the listing, unregisters
+// the requests, and drops every concurrency slot the process still holds.
+//
+// This is a manual escape hatch for a wedged request, not a normal path: the
+// refund is idempotent on the live BillingSession, so a request that later
+// settles charges 0 instead of refunding twice, but its in-flight work is still
+// running and the freed slot can admit new traffic concurrently (overbooking).
+func adminForceReleaseSessions(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	var req struct {
+		ListingID int64 `json:"listing_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.ListingID <= 0 {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("listing_id must be a positive integer"))
+		return
+	}
+	entries := DefaultSessionRegistry().List(req.ListingID)
+	var refundedMicro int64
+	refundFailures := 0
+	for i := range entries {
+		entry := entries[i]
+		frozen := entry.FrozenMicro
+		if entry.billing != nil {
+			entry.billing.Refund(c)
+			if entry.billing.NeedsRefund() {
+				refundFailures++
+			}
+		} else if frozen > 0 {
+			// Defensive fallback for an entry without a live session (tests and
+			// legacy callers). Production always registers the session pointer.
+			if frozen > math.MaxInt {
+				common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("frozen amount out of range"))
+				return
+			}
+			if err := model.IncreaseUserQuota(entry.BuyerID, int(frozen), true); err != nil {
+				common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to refund the frozen amount"))
+				return
+			}
+		}
+		refundedMicro += frozen
+		DefaultSessionRegistry().Unregister(entry.RequestID)
+	}
+	releasedSlots := DefaultSelector().Slots.ForceRelease(req.ListingID)
+
+	actorID := common.GetContextKeyInt(c, constant.ContextKeyUserId)
+	model.RecordAuditLog(c, model.AuditLog{
+		UserId:    actorID,
+		ActorRole: c.GetInt("role"),
+		Category:  model.AuditCategoryOperation,
+		Action:    "marketplace.sessions.force_release",
+		Content: fmt.Sprintf(
+			"listing_id=%d sessions=%d frozen_micro=%d slots=%d refund_failures=%d",
+			req.ListingID, len(entries), refundedMicro, releasedSlots, refundFailures),
+		Success: refundFailures == 0,
+	})
+	common.ApiSuccess(c, gin.H{
+		"listing_id":      req.ListingID,
+		"sessions":        len(entries),
+		"frozen_micro":    refundedMicro,
+		"slots_released":  releasedSlots,
+		"refund_failures": refundFailures,
+	})
+}
+
+// ---------------------------------------------------------------------------
+// 简化风控图谱 (P5-C)
+// ---------------------------------------------------------------------------
+
+// adminRelatedUsers serves GET /admin/risk/related?user_id=: the accounts linked
+// to one user by shared public login IP or shared bound payout account.
+func adminRelatedUsers(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	userID, err := strconv.Atoi(strings.TrimSpace(c.Query("user_id")))
+	if err != nil || userID <= 0 {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("user_id must be a positive integer"))
+		return
+	}
+	related, err := FindRelatedUsers(db, userID)
+	if err != nil {
+		common.SysError(common.LogText("marketplace: risk graph for user %d: %s", userID, err.Error()))
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to build the risk graph"))
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"user_id": userID,
+		"items":   related,
+	})
 }

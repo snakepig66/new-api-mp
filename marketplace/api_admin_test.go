@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service/authz"
 )
 
 // adminAPIFixture stands up the §5 阶段 6 admin API against an isolated
@@ -55,6 +56,27 @@ func headerAdminAuth() gin.HandlerFunc {
 		}
 		c.Set("role", role)
 		c.Next()
+	}
+}
+
+// trustPoolTestGrants impersonates a per-user trust_pool authorization for one
+// test user: key is the user id, value is the set of granted actions.
+var trustPoolTestGrants = map[int]map[string]bool{}
+
+// trustPoolTestGuard mirrors RequirePermission(trust_pool, action): root is a
+// superuser; every other role needs the explicit per-user grant.
+func trustPoolTestGuard(action string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.GetInt("role") >= common.RoleRootUser {
+			c.Next()
+			return
+		}
+		userID := common.GetContextKeyInt(c, constant.ContextKeyUserId)
+		if trustPoolTestGrants[userID][action] {
+			c.Next()
+			return
+		}
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"success": false, "message": "Unauthorized, insufficient privileges"})
 	}
 }
 
@@ -94,7 +116,14 @@ func newAdminAPIFixture(t *testing.T) *adminAPIFixture {
 	require.NoError(t, db.Create(&buyer).Error)
 
 	engine := gin.New()
-	registerAdminRootRoutes(engine.Group("/api/marketplace", headerAdminAuth()))
+	group := engine.Group("/api/marketplace", headerAdminAuth())
+	registerAdminRootRoutes(group)
+	// P5-C: the trust-pool routes live on a permission-guarded group in the
+	// real router. Tests install the same action guard locally (middleware
+	// cannot be imported here: it imports marketplace).
+	for _, route := range TrustPoolRoutes() {
+		group.Handle(route.Method, route.Path, trustPoolTestGuard(route.Action), route.Handler)
+	}
 
 	return &adminAPIFixture{
 		db:       db,
@@ -1635,6 +1664,15 @@ func TestAdminTrustPoolCRUDAndGovernance(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	w = f.doRole(t, http.MethodPost, path+"/approvals/1/approve", nil, f.adminID, nonRoot)
 	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	// P5-C seam: a delegated operator granted only trust_pool:list reaches the
+	// list endpoint without gaining another trust-pool action.
+	trustPoolTestGrants[f.adminID] = map[string]bool{authz.ActionList: true}
+	t.Cleanup(func() { delete(trustPoolTestGrants, f.adminID) })
+	w = f.doRole(t, http.MethodGet, path, nil, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusOK, w.Code)
+	w = f.doRole(t, http.MethodPost, path, map[string]any{"host": "grant.example"}, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code, "a list-only grant must not allow create")
 }
 
 // TestAdminOpsMetricsList covers the P5 derived-metrics read API: filters by
@@ -1697,4 +1735,68 @@ func TestAdminOpsMetricsList(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 	w = f.doRole(t, http.MethodGet, path, nil, f.adminID, common.RoleAdminUser)
 	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// TestAdminActiveSessionsAndForceRelease covers the P5-C operator escape hatch:
+// list the active freezes of a listing, refund them, drop the slots, and prove
+// that a later settle cannot move quota a second time.
+func TestAdminActiveSessionsAndForceRelease(t *testing.T) {
+	f := newAdminAPIFixture(t)
+	const listingID = int64(987654321)
+
+	oldRegistry := defaultSessionRegistry
+	defaultSessionRegistry = NewSessionRegistry()
+	t.Cleanup(func() { defaultSessionRegistry = oldRegistry })
+
+	require.NoError(t, f.db.Model(&model.User{}).Where("id = ?", f.buyerID).Update("quota", 5_000_000).Error)
+	session, err := NewBillingSession(f.db, f.buyerID, 2_000_000)
+	require.NoError(t, err)
+	DefaultSessionRegistry().Register(SessionEntry{
+		RequestID:   "req-force-1",
+		ListingID:   listingID,
+		BuyerID:     int(f.buyerID),
+		FrozenMicro: int64(session.GetPreConsumedQuota()),
+		billing:     session,
+	})
+	now := time.Now()
+	require.True(t, DefaultSelector().Slots.Acquire(listingID, 5, now))
+	require.True(t, DefaultSelector().Slots.Acquire(listingID, 5, now))
+
+	w := f.do(t, http.MethodGet, "/api/marketplace/admin/sessions?listing_id="+strconv.FormatInt(listingID, 10), nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	data := decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.EqualValues(t, 1, data["total"])
+	assert.EqualValues(t, 2_000_000, data["frozen_micro"])
+	items := data["items"].([]any)
+	require.Len(t, items, 1)
+	assert.Equal(t, "req-force-1", items[0].(map[string]any)["request_id"])
+
+	w = f.do(t, http.MethodGet, "/api/marketplace/admin/sessions?listing_id=0", nil, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	w = f.do(t, http.MethodPost, "/api/marketplace/admin/sessions/force-release", map[string]any{}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	w = f.do(t, http.MethodPost, "/api/marketplace/admin/sessions/force-release", map[string]any{"listing_id": listingID}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	result := decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.EqualValues(t, 1, result["sessions"])
+	assert.EqualValues(t, 2_000_000, result["frozen_micro"])
+	assert.EqualValues(t, 2, result["slots_released"])
+	assert.EqualValues(t, 0, result["refund_failures"])
+
+	var quota int64
+	require.NoError(t, f.db.Model(&model.User{}).Where("id = ?", f.buyerID).Select("quota").Scan(&quota).Error)
+	assert.Equal(t, int64(5_000_000), quota, "the force release restores the full freeze")
+	assert.False(t, session.NeedsRefund())
+	assert.Empty(t, DefaultSessionRegistry().List(listingID))
+	assert.Zero(t, DefaultSelector().Slots.InFlight(listingID))
+
+	// A settle that races the forced release must not refund or charge again.
+	require.NoError(t, session.Settle(1_500_000))
+	require.NoError(t, f.db.Model(&model.User{}).Where("id = ?", f.buyerID).Select("quota").Scan(&quota).Error)
+	assert.Equal(t, int64(5_000_000), quota)
+
+	w = f.do(t, http.MethodPost, "/api/marketplace/admin/sessions/force-release", map[string]any{"listing_id": listingID}, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.EqualValues(t, 0, decodeAdminBody(t, w)["data"].(map[string]any)["sessions"])
 }

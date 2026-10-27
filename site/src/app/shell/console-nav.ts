@@ -57,6 +57,7 @@ export function consoleGroups({
               { to: '/console/ops/tools', label: shell.ops.tools },
               { to: '/console/ops/trace', label: shell.ops.trace },
               { to: '/console/ops/metrics', label: shell.ops.metrics },
+              { to: '/console/ops/risk', label: shell.ops.risk },
             ],
           },
         ]
