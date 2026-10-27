@@ -830,10 +830,26 @@ export function NewListingPage() {
     const callable = new Set(probe.verified_models ?? probe.models)
     return values.models.some((model) => callable.has(model))
   })
+  // The three fields a submission cannot go without: upstream address, at
+  // least one key, at least one model. Everything else has a default.
+  const requiredFilled =
+    (values.url.trim().length > 0 ? 1 : 0) +
+    (keys.length > 0 ? 1 : 0) +
+    (values.models.length > 0 ? 1 : 0)
 
   return (
     <>
-      <PageHeader title={page.title} lead={page.lead} />
+      <PageHeader
+        title={page.title}
+        lead={page.lead}
+        actions={
+          <span title={page.requiredHint}>
+            <Tag tone={requiredFilled === 3 ? 'brand' : 'neutral'} dot>
+              {page.requiredCount(requiredFilled)}
+            </Tag>
+          </span>
+        }
+      />
       <StepRail step={step} onJump={handleJump} />
 
       <form

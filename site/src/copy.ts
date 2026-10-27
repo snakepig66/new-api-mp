@@ -2429,6 +2429,8 @@ console.log(response.choices[0].message.content)
     sellerListingNew: {
       title: '新建渠道',
       lead: '五步完成：填地址与 Key、挑模型、设限制、按需高级配置、逐项验真后上架。',
+      requiredCount: (filled: number) => `必填 ${filled}/3`,
+      requiredHint: '地址、Key、模型齐备后即可提交验真。',
       steps: ['地址与 Key', '模型', '限制', '高级', '验真'],
       stepLead: [
         '粘贴上游地址与 Key；地址会被认证池实时识别。',

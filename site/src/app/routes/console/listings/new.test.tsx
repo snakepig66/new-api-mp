@@ -202,6 +202,21 @@ async function reachVerify(url = 'https://api.deepseek.com', keys = 'sk-good-123
 }
 
 describe('new listing wizard: five steps', () => {
+  it('counts the three required fields as they are filled', async () => {
+    renderPage()
+    expect(await screen.findByText('必填 0/3')).toBeTruthy()
+
+    const urlInput = await screen.findByLabelText('上游地址')
+    fireEvent.change(urlInput, { target: { value: 'https://api.deepseek.com' } })
+    // Matching the address preselects the vendor's models, so two of three.
+    expect(await screen.findByText('必填 2/3')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('上游 API Key'), {
+      target: { value: 'sk-good-1234567890' },
+    })
+    expect(await screen.findByText('必填 3/3', {}, { timeout: 4000 })).toBeTruthy()
+  })
+
   it('walks forward through all five steps and back', async () => {
     await fillAddressAndKeys('https://api.deepseek.com', 'sk-good-1234567890')
     await advance(1)
