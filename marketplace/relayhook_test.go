@@ -281,7 +281,7 @@ func TestBeginDistributeOfficialOnlyNoSupplierMessage(t *testing.T) {
 		VendorID:        "volcengine-ark-coding-plan",
 		APIKey:          uniqueTestKey("sk-official-only-plan"),
 		Models:          []string{"deepseek-v4-pro"},
-		MultiplierMilli: 100,
+		MultiplierMilli: 300,
 		// Plan channels require the shared-terms acknowledgement (§4).
 		PlanTermsAccepted: true,
 	})
@@ -316,7 +316,7 @@ func TestBeginDistributeOfficialOnlyUnsellableMessage(t *testing.T) {
 		VendorID:        "volcengine-ark-coding-plan",
 		APIKey:          uniqueTestKey("sk-official-only-unverified"),
 		Models:          []string{"deepseek-v4-pro"},
-		MultiplierMilli: 100,
+		MultiplierMilli: 300,
 		// Plan channels require the shared-terms acknowledgement (§4).
 		PlanTermsAccepted: true,
 	})
@@ -1543,7 +1543,7 @@ func TestBeginDistributeRecordsAffinityOnSuccess(t *testing.T) {
 	assert.Equal(t, first.ID, binding.ListingID)
 
 	// A cheaper listing appears, but the recorded session stays pinned.
-	f.addListing(t, 100)
+	f.addListing(t, 300)
 	c2 := f.newRelayContext(t, []byte(`{"model":"deepseek-flash"}`))
 	c2.Request.Header.Set("X-Session-Id", "sess-record")
 	ch, handled, _, err := BeginDistribute(c2, "deepseek-flash")
