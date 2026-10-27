@@ -91,6 +91,33 @@ func TestMigrateCreatesTables(t *testing.T) {
 	}
 }
 
+func TestMigrateRequestTelemetryColumns(t *testing.T) {
+	db := newTestDB(t)
+	migrateAll(t, db)
+
+	// The usage-record page reads first_token_ms / is_stream / token_group off
+	// mp_requests, so the migration must create them with the documented
+	// defaults on all three dialects (0 / false / '').
+	require.NoError(t, db.Create(&Request{
+		RequestID: "req-migrate-telemetry", BuyerUserID: 1, BuyerTokenID: 1,
+		SellerID: 1, ListingID: 1, Model: "m", Tier: TierPeak, Status: RequestSuccess,
+	}).Error)
+	var row Request
+	require.NoError(t, db.Where("request_id = ?", "req-migrate-telemetry").Take(&row).Error)
+	assert.Zero(t, row.FirstTokenMs)
+	assert.False(t, row.IsStream)
+	assert.Empty(t, row.TokenGroup)
+
+	// Existing columns keep their own meaning: a row may carry all three.
+	require.NoError(t, db.Model(&Request{}).
+		Where("request_id = ?", "req-migrate-telemetry").
+		Updates(map[string]any{"first_token_ms": 812, "is_stream": true, "token_group": "vip"}).Error)
+	require.NoError(t, db.Where("request_id = ?", "req-migrate-telemetry").Take(&row).Error)
+	assert.EqualValues(t, 812, row.FirstTokenMs)
+	assert.True(t, row.IsStream)
+	assert.Equal(t, "vip", row.TokenGroup)
+}
+
 func TestUserIDWatermark(t *testing.T) {
 	db := newTestDB(t)
 
