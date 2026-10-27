@@ -151,6 +151,17 @@ export const usageRecordQuery = (requestId: string) =>
     staleTime: 60_000,
   })
 
+/** GET /marketplace/records/usage/summary — buyer totals under the same filters. */
+export const usageSummaryQuery = (filters: SummaryFilterParams = {}) =>
+  queryOptions({
+    queryKey: ['console', 'usage-summary', filters],
+    queryFn: () =>
+      api.get<UsageSummary>('/marketplace/records/usage/summary', {
+        query: buildRecordQuery(filters),
+      }),
+    staleTime: 20_000,
+  })
+
 /** Usage list including the cost-breakdown fields (费用明细). */
 export const usageRecordsCostQuery = (page: number, pageSize = 20) =>
   queryOptions({

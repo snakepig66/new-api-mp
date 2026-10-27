@@ -14,6 +14,8 @@ import { api, ApiError } from '@/lib/api'
 import { queryClient } from '@/lib/query-client'
 
 import type { SquareModelDetail } from '@/features/market/api'
+import type { RecordFilterParams, SummaryFilterParams } from '@/features/records/filters'
+import { buildRecordQuery } from '@/features/records/filters'
 
 // ---------------------------------------------------------------------------
 // 身份与开通
@@ -483,9 +485,16 @@ export interface SellerStats {
 export interface ShareRecord {
   request_id: string
   model: string
+  /** 匿名代号 (§3.1), 8 hex digits — never the real buyer user id. */
   buyer_code: string
   tier: string
   tier_label: string
+  /** 渠道分组 (mp_listing_groups 的 vendor slug). */
+  channel_group: string
+  /** 渠道 id. */
+  listing_id: number
+  /** key 指纹后 4 位; empty when unavailable. */
+  key_fingerprint4: string
   input_tokens: number
   output_tokens: number
   cache_read_tokens: number
@@ -493,10 +502,47 @@ export interface ShareRecord {
   search_count: number
   fetch_count: number
   tool_debit_micro: number | string
+  /** 卖家收入. */
   seller_credit_micro: number | string
+  /** 买家实付. */
+  buyer_paid_micro: number | string
+  /** 平台费. */
   platform_fee_micro: number | string
+  /** 首字耗时 ms; 0 = 未记录. */
+  first_token_ms: number
+  /** 总耗时 ms. */
+  latency_ms: number
+  is_stream: boolean
+  /** 买方协议 (openai-chat / anthropic-messages / …). */
+  endpoint: string
+  /** 协议转换. */
+  converted: boolean
+  usage_estimated: boolean
   status: string
   created_at: string
+}
+
+/** One sold request plus the retry chain (seller detail view). */
+export interface ShareRecordDetail extends ShareRecord {
+  retry_chain: string
+}
+
+/** GET /api/marketplace/records/shares/summary — seller aggregate stats (卖方汇总). */
+export interface ShareSummary {
+  request_count: number
+  success_count: number
+  /** -1 = no sample. */
+  success_rate_milli: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  /** 收益合计. */
+  seller_credit_micro: number | string
+  /** 首字平均 ms; 0 = 无数据. */
+  avg_first_token_ms: number
+  /** 总耗时平均 ms. */
+  avg_latency_ms: number
 }
 
 export interface PageEnvelope<T> {
@@ -775,12 +821,38 @@ export const sellerBalanceQuery = () =>
     staleTime: 15_000,
   })
 
-export const shareRecordsQuery = (page: number, pageSize = 20) =>
+export const shareRecordsQuery = (
+  page: number,
+  pageSize = 20,
+  filters: Omit<RecordFilterParams, 'page' | 'page_size'> = {},
+) =>
   queryOptions({
-    queryKey: ['marketplace', 'seller', 'shares', page, pageSize],
+    queryKey: ['marketplace', 'seller', 'shares', page, pageSize, filters],
     queryFn: () =>
       api.get<PageEnvelope<ShareRecord>>('/marketplace/records/shares', {
-        query: { page, page_size: pageSize },
+        query: buildRecordQuery({ page, page_size: pageSize, ...filters }),
+      }),
+    staleTime: 30_000,
+  })
+
+/** GET /marketplace/records/shares/:request_id — one sold request with the retry chain. */
+export const shareRecordQuery = (requestId: string) =>
+  queryOptions({
+    queryKey: ['marketplace', 'seller', 'share', requestId],
+    queryFn: () =>
+      api.get<ShareRecordDetail>(
+        `/marketplace/records/shares/${encodeURIComponent(requestId)}`,
+      ),
+    staleTime: 60_000,
+  })
+
+/** GET /marketplace/records/shares/summary — seller totals under the same filters. */
+export const shareSummaryQuery = (filters: SummaryFilterParams = {}) =>
+  queryOptions({
+    queryKey: ['marketplace', 'seller', 'shares-summary', filters],
+    queryFn: () =>
+      api.get<ShareSummary>('/marketplace/records/shares/summary', {
+        query: buildRecordQuery(filters),
       }),
     staleTime: 30_000,
   })

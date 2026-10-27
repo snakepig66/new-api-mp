@@ -28,6 +28,9 @@ export interface RecordFilterParams extends RecordFilters {
   page_size?: number
 }
 
+/** Summary endpoints take the same filters as the list, without pagination. */
+export type SummaryFilterParams = RecordFilters
+
 export type DatePreset = 'today' | '7d' | '30d'
 
 /**
