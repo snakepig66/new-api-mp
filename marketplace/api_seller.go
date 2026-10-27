@@ -134,6 +134,7 @@ func registerSellerRoutes(g *gin.RouterGroup) {
 //	POST /seller/listings/probe   dry-run key check (no DB write)
 //	GET  /seller/listings/:id     detail + recent probes + pause reason
 //	GET  /seller/stats            pending/available/income/fee/30-day series
+//	GET  /seller/overview         month cards + per-model/per-channel charts
 //	GET  /seller/payouts          paginated withdraw history
 func RegisterSellerOnboardingRoutes(g *gin.RouterGroup) {
 	registerSellerOnboardingRoutes(g)
@@ -146,6 +147,7 @@ func registerSellerOnboardingRoutes(g *gin.RouterGroup) {
 	g.GET("/seller/vendors", listSellerVendors)
 	g.GET("/seller/listings/:id", getSellerListingDetail)
 	g.GET("/seller/stats", getSellerStats)
+	g.GET("/seller/overview", getSellerOverview)
 	g.GET("/seller/payouts", listSellerPayouts)
 }
 
@@ -2588,12 +2590,27 @@ func getSellerStats(c *gin.Context) {
 		series = append(series, sellerDailyIncome{Date: day, IncomeMicro: byDay[day]})
 	}
 
+	// The richer overview charts (month calls/tokens, per-model and
+	// per-channel breakdowns) are shared with GET /seller/overview so the
+	// existing earnings page gets them in the same round trip.
+	overview, err := computeSellerOverview(db, sellerID, 0, now)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query seller overview"))
+		return
+	}
+
 	common.ApiSuccess(c, gin.H{
 		"pending_micro":            pending,
 		"available_micro":          int64(available),
 		"paid_micro":               paid,
 		"month_income_micro":       monthIncome,
 		"platform_fee_total_micro": fees,
+		"month_calls":              overview.MonthCalls,
+		"month_tokens":             overview.MonthTokens,
+		"range":                    overview.Range,
+		"by_model":                 overview.ByModel,
+		"daily_by_model":           overview.DailyByModel,
+		"by_channel":               overview.ByChannel,
 		"daily":                    series,
 		"as_of":                    now,
 	})
