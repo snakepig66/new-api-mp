@@ -175,6 +175,31 @@ type RelaySession struct {
 	// startedAt is when the marketplace took the request; the request record
 	// stores the elapsed wall-clock duration for the square's latency metric.
 	startedAt time.Time
+	// firstTokenMs / isStream / tokenGroup are snapshotted from the RelayInfo
+	// of the last attempt so the mp_requests row keeps the request-time facts
+	// even after a token group edit. 0 / false / "" means "not captured".
+	firstTokenMs int64
+	isStream     bool
+	tokenGroup   string
+}
+
+// captureRelayInfo snapshots the per-attempt facts the request record needs
+// (time to first response byte, streaming mode, token group). It is called
+// with the RelayInfo of the attempt that is being settled or failed; a later
+// attempt overwrites the values.
+func (s *RelaySession) captureRelayInfo(info *relaycommon.RelayInfo) {
+	if info == nil {
+		return
+	}
+	firstTokenMs := int64(0)
+	if info.HasSendResponse() {
+		firstTokenMs = max(info.FirstResponseTime.Sub(info.StartTime).Milliseconds(), 0)
+	}
+	s.mu.Lock()
+	s.firstTokenMs = firstTokenMs
+	s.isStream = info.IsStream
+	s.tokenGroup = info.TokenGroup
+	s.mu.Unlock()
 }
 
 // ---------------------------------------------------------------------------

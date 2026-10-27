@@ -512,8 +512,18 @@ type Request struct {
 	// LatencyMs is the wall-clock duration of the relay attempt (request
 	// received → response body finished). The public square reports its 24h
 	// average; 0 means "not measured" (rows written before the field existed).
-	LatencyMs int64     `gorm:"not null;default:0"`
-	CreatedAt time.Time `gorm:"index;index:idx_mp_requests_listing_created,priority:2"`
+	LatencyMs int64 `gorm:"not null;default:0"`
+	// FirstTokenMs is the time to the first upstream response byte of the
+	// request (FirstResponseTime − StartTime). 0 means "not measured": either
+	// the request produced no response or the row predates the column.
+	FirstTokenMs int64 `gorm:"not null;default:0"`
+	// IsStream records whether the buyer asked for a streaming response. It is
+	// a snapshot of RelayInfo.IsStream at settlement.
+	IsStream bool `gorm:"not null;default:false"`
+	// TokenGroup is the buyer token's group at request time, snapshotted so a
+	// later token/group edit never rewrites history.
+	TokenGroup string    `gorm:"size:64;not null;default:''"`
+	CreatedAt  time.Time `gorm:"index;index:idx_mp_requests_listing_created,priority:2"`
 }
 
 func (Request) TableName() string { return "mp_requests" }
