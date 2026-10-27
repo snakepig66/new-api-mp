@@ -916,3 +916,140 @@ T+7（已按 T+7 实现）；流式截断不收费（已实现）；改倍率不
 - `finishAttempt` 仍按原始 `StatusCode == 429` 判断半开探针回收；若厂商用非 429 状态返回 `rate_limit_exceeded`，会记录熔断但走非 429 回收分支（当前无害，但语义不完全一致）。
 - `ConvergeOutwardError` 会把 403 的内容/权限错误收敛成 503，与「内容审核原样返回」只对 400 成立。
 - 运营配置的 `ShouldDisableByStatusCode` 对 marketplace listing 不再生效（按任务要求），运营侧行为会变化；`AutomaticDisableKeywords` 仍生效。
+
+---
+
+## P2–P5 完成记录（2026-10-27）
+
+开发方式：主智能体监工、子智能体分组实现，主智能体验收、整改并复跑全部门禁。
+
+### P2 认证池 + 新建渠道流程（commit 9b68d5ec1）
+
+**认证池 schema + 匹配逻辑**：
+- `mp_trust_pool` 表：host 精确匹配、host_pattern 正则、path_prefix、key_prefix、vendor_slug、kind（official/third_party/plan）、trust（trusted/watch/blocked）、endpoints、allowed_models、deny_key_prefixes、deny_paths、source、notes、expires_at。
+- `MatchTrustPool`/`CheckTrustPool`：精确 host → 正则 → 最长路径前缀 → Key 前缀；blocked 拒绝、watch 降级、trusted 未过期、trusted 已过期降级、unlisted。
+- 三条流程基础：trusted 免审核、watch/unlisted 进入 `pending_review`、blocked 拒绝。
+- 种子数据：7 条官方渠道。
+
+**运营审核流程**：
+- 待审队列：`GET /marketplace/admin/listings/pending`（按 host 聚合）。
+- 审核通过：`POST /marketplace/admin/listings/:id/approve`（pending_review → verifying → 异步验真）。
+- 审核拒绝：`POST /marketplace/admin/listings/:id/reject`（pending_review → draft 或 banned）。
+- 审核记录：写入 `mp_probes`（type=review）。
+- 审核绕过修复：卖家触发验真时检查认证池状态，watch/unlisted → 403。
+
+**前端 5 步向导**：
+- 步骤 1（URL + Key）：多行 Key 粘贴、实时识别徽章（trust_pool）、常用地址列表。
+- 步骤 2（模型）：表格（模型/接口/倍率/买家价预览）、批量设倍率。
+- 步骤 3（限制）：渠道级限制、营业时段。
+- 步骤 4（高级，默认折叠）：Key 策略、亲和开关、请求头（仅 unlisted）、手动补充端点。
+- 步骤 5（验真）：按 Key × 模型 × 端点逐项显示、通过的先上架、失败的保留草稿。
+
+### P3a/P3b 拆表扩展 + 镜像更新（commit 8539e649b + ca03a3b9f）
+
+**P3a 扩展阶段**（新表 + 回填 + 双写，旧表权威，不切换读路径）：
+- 新增 5 张表：`mp_seller_channels`、`mp_channel_endpoints`、`mp_channel_keys`、`mp_seller_channel_models`（避免与现有 `mp_channel_models` 冲突）、`mp_multiplier_changes`。
+- `mp_requests`/`mp_ledger` 新增字段：channel_id、key_id、endpoint、model_multiplier_milli、converted。
+- 回填：分批（100/批）、幂等、每条 listing 单独事务。
+- 双写：CreateListing 同时写旧表和新表。
+- PostgreSQL 序列对齐。
+
+**P3b 镜像更新**：
+- `MirrorListingUpdate`：从 `mp_listings` 读取最新数据，同步到四张影子表。
+- `MirrorListingDelete`：软删 key、禁用模型、channel 置 deleted。
+- `CheckSellerChannelConsistency`：一致性检查。
+- 所有写路径同步：UpdateMultiplier、ReplaceKey、状态转换、验真模型缩减、canary promotion、patrol auto-pause、plan suspend/resume、admin approve/reject/ban/unban。
+- 镜像失败只记日志，不阻断主流程；镜像自愈。
+
+### P4 多 Key、亲和、限流
+
+**P4-A 亲和 + 买家优先检查**（commit 8539e649b）：
+- `AffinityBinding` 表：affinity_key + endpoint 复合唯一索引。
+- 亲和提取：metadata.user_id → prompt_cache_key → X-Session-Id → system 提示词哈希（仅在 cache_control 或 prompt ≥1024 tokens 时启用）。
+- 亲和键：HMAC(secret, buyer_id ‖ source ‖ value)，按买家隔离。
+- TTL 1 小时滑动 + 24 小时绝对上限；命中后照样跑完整过滤；并发满改派但不改写已有绑定。
+- 买家侧优先检查：余额 ≤0 直接 402（在选择之前）。
+
+**P4-B 简化版多 Key（listing 分组）+ 逐模型倍率 + 渠道级聚合限制**（commit aecaac3ab）：
+- `mp_listing_groups` 表：seller+vendor 唯一，key_strategy（weighted_round_robin/primary_backup）、affinity_enabled、渠道级限制（并发、RPM、日上限、累计上限）。
+- `mp_listing_models` 表：逐模型倍率。
+- `Listing` 新增 GroupID、Weight 字段。
+- CreateListing 建/入组（同 seller+vendor 复用分组），20 Key 上限。
+- 选择器组内选择：加权轮询（默认）或主备（按创建顺序）。
+- 渠道级聚合限制：组级并发、RPM、日上限、累计上限（进程内状态 + ledger 聚合）。
+- 逐模型倍率：QuoteInput.ModelMultiplierMilli；billing 从 `mp_listing_models` 读取；record 记录实际倍率。
+- 卖家 API：PUT /marketplace/seller/listings/:id/models/:model/multiplier。
+- 前端：创建时分组提示、详情页逐模型倍率编辑。
+
+### P5-A 运营与可观测（commit 447506c64）
+
+**认证池管理**：
+- `mp_trust_pool_audit` 表（只追加审计日志）。
+- 认证池 CRUD API + 治理守卫（official 只能种子、trusted 必须有 expires_at、blocked 必须有 notes）。
+- 前端认证池管理页（/console/ops/trust-pool）。
+
+**待审队列 + request_id 全链路**：
+- 待审队列按 host 聚合（后端 + 前端）。
+- `GET /marketplace/admin/requests/:request_id`：request + retry_chain + ledger + probes。
+- 前端全链路页（/console/ops/trace）。
+
+**派生指标**：
+- `mp_ops_metrics` 表。
+- 槽位占用和续租失败计数。
+- 预占与实际花费的偏差（聚合 capped_micro）。
+- 断流率、503 原因、指纹异常、订阅信号聚合（每小时定时任务）。
+- 前端指标页（/console/ops/metrics）。
+
+### P5-B 双人确认 + 排行榜防刷（commit 1249766d1）
+
+**双人确认**：
+- `mp_trust_pool_approvals` 表：认证池变更进入审批队列。
+- create/update/delete 全部进入审批队列，不直接生效。
+- approve/reject，防自审（提交人不能审批自己的变更）。
+- 审批通过时应用提交时的 after 快照。
+- 前端待审批 tab、自审禁用。
+
+**排行榜防刷**：
+- 按「互不关联的付费买家数」（按 buyer_id 去重）和结算金额排序。
+- 单个买家对单个卖家的贡献上限 10%。
+- 最低 token 门槛 1000 tokens。
+
+### P5-C 独立 RBAC + 预占强制释放 + 风控图谱（commit 6bd7f5a46）
+
+**独立 RBAC**：
+- `trust_pool` 资源（read/list/create/update/delete/approve）。
+- 认证池路由从 RootAuth 改为 AdminAuth + RequirePermission。
+- admin 基线为空（需 per-user 授权），root 隐式全权限。
+
+**活跃会话注册表 + 预占强制释放**：
+- `SessionRegistry`：记录所有活跃 BillingSession（request_id、listing_id、buyer_id、冻结金额）。
+- `GET /marketplace/admin/sessions`：列出活跃会话。
+- `POST /marketplace/admin/sessions/force-release`：强制释放（回滚冻结、释放槽位、注销会话、写审计）。
+- 通过 BillingSession.Refund 回滚（幂等），避免二次退款。
+
+**风控图谱简化版**：
+- `FindRelatedUsers`：同 IP（audit_logs）+ 同收款账户（解密比较）关联。
+- `CheckWithdrawalEligibility`：提现要求实名 + 无同 IP 关联账户（fail-closed）。
+- `GET /marketplace/admin/risk/related`：查询关联用户。
+- 前端风控页（/console/ops/risk）。
+
+### 测试结果
+
+- `go build ./...` ✅
+- `go test -p 1 ./marketplace/... ./model/... ./relay/... ./service/authz/... -count=1`：
+  - marketplace ✅（120s）
+  - model ✅（24s）
+  - relay/channel/* 大部分 ✅
+  - 3 个既有 flake/问题：`TestDeepSeekToolsHelper`（单独通过）、`TestUpstreamGetBody_HTTP2RetryAfterGracefulGoAway_PassThrough`（单独通过）、`TestAdaptorMasksDialedHostsInDialFailure`（既有问题，与本次无关）
+- 前端 site/：typecheck ✅、228 tests ✅、build ✅
+- 前端 web/：197/200 文件通过（3 个 worker 崩溃为 Windows 环境问题；单文件单独运行通过）
+
+**数据库矩阵**：只验证了 SQLite；MySQL/PostgreSQL 未实测（环境未设置 `MP_TEST_MYSQL_DSN` / `MP_TEST_POSTGRES_DSN`）。新增表/列均为方言中立（GORM 通用类型、复合唯一索引、OnConflict）。
+
+### 已知限制
+
+- P3 完整切换（读路径切换到新表）未执行：影子表已同步（P3b），但 selector/relay 仍读旧表 `mp_listings`。切换需要：灰度读、双写、排空、回滚预案。
+- P4 多 Key 为简化版（listing 分组）：一个 listing = 一个 Key，同 seller+vendor 的多个 listing 归组共享渠道级限制。真正的「一个渠道 20 个 Key」需要 P3 切换 + `mp_channel_keys` 读路径。
+- P5 风控图谱为简化版（IP + 收款账户关联）：设备/手机号关联需要新数据源。
+- 组级限制/槽位/亲和等进程内状态多节点需迁移到 Redis。
+- 排行榜防刷的「互不关联」简化为按 buyer_id 去重，真正的关联图谱剔除需要风控图谱数据。
