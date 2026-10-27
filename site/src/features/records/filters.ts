@@ -33,6 +33,17 @@ export type SummaryFilterParams = RecordFilters
 
 export type DatePreset = 'today' | '7d' | '30d'
 
+/** The segmented 时间范围 choices: a named preset or a user-picked window. */
+export type RecordDatePreset = DatePreset | 'custom'
+
+/**
+ * Controlled state of the shared records filter bar: the request filters plus
+ * the time-range preset that produced start/end ('custom' = user-picked dates).
+ */
+export interface RecordsFilterState extends RecordFilters {
+  preset: RecordDatePreset
+}
+
 /**
  * Convert a preset to [start, end] in unix seconds. `end` is always now; `today`
  * starts at local midnight, the rolling windows subtract 7/30 days from now.

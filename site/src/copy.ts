@@ -2699,6 +2699,41 @@ console.log(response.choices[0].message.content)
       },
     },
 
+    records: {
+      filters: {
+        ariaLabel: '记录筛选',
+        range: '时间范围',
+        rangeToday: '今天',
+        range7d: '7 天',
+        range30d: '30 天',
+        rangeCustom: '自定义',
+        customStart: '开始日期',
+        customEnd: '结束日期',
+        customStartAria: '自定义开始日期',
+        customEndAria: '自定义结束日期',
+        /** Buyer view: the calling Key. Seller view: the selling channel. */
+        subject: '渠道',
+        subjectAll: '全部渠道',
+        model: '模型',
+        modelPlaceholder: '按模型名筛选',
+        modelAria: '按模型名筛选',
+        group: '分组',
+        groupAll: '全部分组',
+        type: '类型',
+        typeAll: '全部',
+        typeStream: '流式',
+        typeNonStream: '非流',
+        status: '状态',
+        statusAll: '全部',
+        statusSuccess: '成功',
+        statusFailed: '失败',
+        refresh: '刷新',
+      },
+      summary: {
+        ariaLabel: '记录汇总',
+      },
+    },
+
     admin: {
       title: '运营后台',
       lead: '价目表、挂单审核、提现审批与冲正。',
