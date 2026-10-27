@@ -958,7 +958,7 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 	for i := range rows {
 		rowIDs[i] = rows[i].ID
 	}
-	overrides := loadListingModelOverrides(db, rowIDs)
+	overrides := loadListingModelOverrides(db, rowIDs, now)
 	// effectiveByID is the buyer-facing price factor (multiplier × channel
 	// coefficient) used for the cap and for ranking. A coefficient above 1000
 	// would let a listing charge more than official, so it is rejected outright.

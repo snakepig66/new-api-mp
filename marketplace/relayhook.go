@@ -53,13 +53,14 @@ const relaySessionContextKey = "mp_relay_session"
 // Relay hop events folded into mp_requests.retry_chain (§3.8). Details carry
 // semantics only — never key material (§2.3).
 const (
-	HopEventSelect       = "select"
-	HopEventSwitch       = "switch"
-	HopEventInPlaceRetry = "inplace_retry"
-	HopEventError        = "error"
-	HopEventStripTools   = "strip_tools"
-	HopEventBreaker429   = "breaker_429"
-	HopEventAutoPause    = "auto_pause"
+	HopEventSelect           = "select"
+	HopEventSwitch           = "switch"
+	HopEventInPlaceRetry     = "inplace_retry"
+	HopEventError            = "error"
+	HopEventStripTools       = "strip_tools"
+	HopEventBreaker429       = "breaker_429"
+	HopEventAutoPause        = "auto_pause"
+	HopEventModelUnavailable = "model_unavailable"
 	// HopEventPlanQuotaExhausted records a plan channel whose quota window ran
 	// out: every listing of the channel was suspended until the next reset
 	// (MODEL-CHANNEL-POOL §4).
@@ -956,7 +957,7 @@ func hasLiveListingForModel(db *gorm.DB, modelName string, endpointKinds ...rela
 	for i := range rows {
 		ids[i] = rows[i].ID
 	}
-	overrides := loadListingModelOverrides(db, ids)
+	overrides := loadListingModelOverrides(db, ids, time.Now())
 	eligible := loadVerifiedChannels(db, modelName, endpointKind)
 	for i := range rows {
 		if !slices.Contains(rows[i].Models, modelName) {
@@ -2013,6 +2014,24 @@ var (
 		"moderation_error":         {},
 		"safety_violation":         {},
 	}
+	// Explicit model-availability codes. A generic "not support" wording is
+	// deliberately absent: buyers can trigger it with an unsupported parameter.
+	marketplaceModelUnavailableErrorCodes = map[string]struct{}{
+		"model_not_found":     {},
+		"model_not_supported": {},
+		"model_not_exist":     {},
+		"model_not_available": {},
+		"unsupported_model":   {},
+		"unsupportedmodel":    {},
+		"invalid_model":       {},
+		"invalidmodel":        {},
+		"model.accessdenied":  {},
+		"model.notexist":      {},
+		"model_not_access":    {},
+		"model_access_denied": {},
+		"1211":                {}, // Zhipu: 模型不存在/未开通
+		"modelnotfound":       {},
+	}
 )
 
 // relayErrorClass is the §3.5 failure taxonomy. Only auth and balance
@@ -2026,6 +2045,7 @@ const (
 	relayErrorClassBalance
 	relayErrorClassRateLimit
 	relayErrorClassContent
+	relayErrorClassModelUnavailable
 )
 
 // classifyRelayError reads the upstream's structured type/code before falling
@@ -2047,6 +2067,9 @@ func classifyRelayError(err *types.NewAPIError) relayErrorClass {
 	status := err.StatusCode
 
 	switch {
+	case inCodeSet(code, marketplaceModelUnavailableErrorCodes),
+		errType == "model_not_found", errType == "model_not_supported":
+		return relayErrorClassModelUnavailable
 	case inCodeSet(code, marketplaceBalanceErrorCodes), errType == "insufficient_quota", errType == "billing_error":
 		return relayErrorClassBalance
 	case inCodeSet(code, marketplaceAuthErrorCodes), errType == "authentication_error", errType == "invalid_api_key":
@@ -2058,6 +2081,8 @@ func classifyRelayError(err *types.NewAPIError) relayErrorClass {
 	}
 
 	switch status {
+	case http.StatusNotFound:
+		return relayErrorClassModelUnavailable
 	case http.StatusUnauthorized:
 		return relayErrorClassAuth
 	case http.StatusPaymentRequired:
@@ -2159,6 +2184,19 @@ func ProcessRelayChannelError(c *gin.Context, apiErr *types.NewAPIError) {
 		// balance failure and never pauses the listing.
 		DefaultSelector().Breaker.Record429(listingID, time.Now())
 		s.addHop(HopEventBreaker429, "")
+		return
+	case relayErrorClassModelUnavailable:
+		// Only 404 / explicit vendor codes reach this class. Confirm with a
+		// platform-owned minimal probe before disabling the model; the probe is
+		// deduplicated per model for 10 minutes.
+		s.addHop(HopEventModelUnavailable, s.model)
+		if db == nil {
+			return
+		}
+		if !allowModelProbe(listingID, s.model, time.Now()) {
+			return
+		}
+		go verifyModelAvailabilityAsync(db, listingID, s.model)
 		return
 	case relayErrorClassAuth, relayErrorClassBalance:
 		reason := "upstream rejected the key"

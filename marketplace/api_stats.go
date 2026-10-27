@@ -255,7 +255,7 @@ func computePublicStats(db *gorm.DB, now time.Time) (publicStats, error) {
 	for i := range listings {
 		ids[i] = listings[i].ID
 	}
-	overrides := loadListingModelOverrides(db, ids)
+	overrides := loadListingModelOverrides(db, ids, now)
 	supply := make(map[[2]string]struct{})
 	haveLive := false
 	for i := range listings {

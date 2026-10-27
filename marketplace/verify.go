@@ -236,62 +236,8 @@ func probePromptCacheSupport(ctx context.Context, client *http.Client, baseURL, 
 // prompt_cache_miss_tokens), its latency, and a seller-readable failure
 // reason. NOTE: this call costs real vendor credit.
 func probeModelCall(ctx context.Context, client *http.Client, baseURL, model, apiKey string) (ok, cache bool, latencyMs int64, reason string) {
-	reqBody, err := common.Marshal(map[string]any{
-		"model":      model,
-		"max_tokens": 1,
-		"messages": []map[string]string{
-			{"role": "user", "content": "ping"},
-		},
-	})
-	if err != nil {
-		return false, false, 0, "无法构造模型探活请求"
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", strings.NewReader(string(reqBody)))
-	if err != nil {
-		return false, false, 0, "上游地址格式不正确"
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	start := time.Now()
-	resp, err := client.Do(req)
-	latencyMs = time.Since(start).Milliseconds()
-	if err != nil {
-		if ctx.Err() != nil {
-			return false, false, latencyMs, "模型探活超时"
-		}
-		return false, false, latencyMs, "模型探活失败：" + stripKey(err.Error(), apiKey)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return false, false, latencyMs, modelCallFailureReason(resp.StatusCode)
-	}
-	// HTTP 200 is only callability when the body is a real chat completion:
-	// it must decode, carry at least one choice, non-empty usage and a
-	// non-empty model id. A 200 with an error envelope or a truncated body is
-	// a failed probe (fail-closed), never a served model, and the prompt-cache
-	// fields remain informational only.
-	var cr struct {
-		Model   string `json:"model"`
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage map[string]any `json:"usage"`
-	}
-	if err := common.DecodeJson(io.LimitReader(resp.Body, maxVerifyBodyBytes), &cr); err != nil {
-		return false, false, latencyMs, "模型返回了无法解析的响应"
-	}
-	if len(cr.Choices) == 0 || len(cr.Usage) == 0 {
-		return false, false, latencyMs, "模型返回的响应缺少 choices 或 usage"
-	}
-	if strings.TrimSpace(cr.Model) == "" {
-		return false, false, latencyMs, "模型返回的响应缺少 model 字段"
-	}
-	_, hit := cr.Usage["prompt_cache_hit_tokens"]
-	_, miss := cr.Usage["prompt_cache_miss_tokens"]
-	return true, hit || miss, latencyMs, ""
+	out := probeModelCallOutcome(ctx, client, baseURL, model, apiKey)
+	return out.OK, out.PromptCache, out.LatencyMs, out.FailReason
 }
 
 // modelCallFailureReason translates an upstream status into a seller-facing

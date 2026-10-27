@@ -99,7 +99,7 @@ func loadModelVisibilityState(db *gorm.DB) modelVisibilityState {
 	for i := range rows {
 		ids[i] = rows[i].ID
 	}
-	overrides := loadListingModelOverrides(db, ids)
+	overrides := loadListingModelOverrides(db, ids, time.Now())
 	verified := loadVerifiedChannelModels(db)
 	for i := range rows {
 		listing := &rows[i]

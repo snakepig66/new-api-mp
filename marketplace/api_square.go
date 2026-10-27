@@ -370,7 +370,7 @@ func loadSquarePoolSupply(db *gorm.DB, idx modelPoolIndex, coeffs map[string]map
 	for i := range rows {
 		ids[i] = rows[i].ID
 	}
-	overrides := loadListingModelOverrides(db, ids)
+	overrides := loadListingModelOverrides(db, ids, time.Now())
 	official := loadOfficialChannelModels(db)
 	supply := make(map[string]*squareSupply)
 	for i := range rows {

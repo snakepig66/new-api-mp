@@ -43,6 +43,7 @@ var opsMetricFailureEvents = []string{
 	HopEventError,
 	HopEventBreaker429,
 	HopEventAutoPause,
+	HopEventModelUnavailable,
 	HopEventPlanQuotaExhausted,
 	HopEventZeroOutput,
 	HopEventStreamCut,

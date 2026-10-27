@@ -779,9 +779,34 @@ func getSellerMultiplierBounds(c *gin.Context) {
 	})
 }
 
-// restoreSellerListingModels is completed in the automatic-disable phase.
+// restoreSellerListingModels serves POST /seller/listings/:id/models/restore —
+// probe each auto-disabled model and enable only the ones that pass.
 func restoreSellerListingModels(c *gin.Context) {
-	common.ApiErrorStatus(c, http.StatusNotImplemented, errors.New("restore is not available yet"))
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	id, ok := sellerIDParam(c)
+	if !ok {
+		return
+	}
+	result, err := RestoreAutoDisabledModels(db, id, sellerID, time.Now())
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrListingNotFound):
+			common.ApiErrorStatus(c, http.StatusNotFound, errors.New("listing not found"))
+		case errors.Is(err, ErrInvalidTransition):
+			common.ApiErrorStatus(c, http.StatusConflict, errors.New(err.Error()))
+		default:
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
+		}
+		return
+	}
+	common.ApiSuccess(c, result)
 }
 
 // sellerModelRowView is one row of the console's 模型与价格 table. Buyer prices

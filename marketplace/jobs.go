@@ -460,6 +460,18 @@ func patrolOneListingWithClient(db *gorm.DB, limiter *VerifyLimiter, client *htt
 		return err
 	}
 	if !res.OK {
+		// A model-specific failure disables that model (after two consecutive
+		// patrols) and keeps the listing live for its other models. A key-wide
+		// failure keeps the existing listing-level auto-pause.
+		if res.KeyValid && len(res.Models) > 0 {
+			handled, derr := disableModelsFromPatrol(db, l.ID, modelResults, time.Now())
+			if derr != nil {
+				return derr
+			}
+			if handled {
+				return nil
+			}
+		}
 		// §3.5 巡检失败 → 自动暂停. reason carries semantics only (§2.3).
 		return AutoPauseListing(db, l.ID, "patrol failed: "+res.FailReason)
 	}
