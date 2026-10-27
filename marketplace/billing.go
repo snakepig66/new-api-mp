@@ -22,6 +22,12 @@ import (
 // a pre-freeze or a reserve top-up (§3.7: 余额不足报错).
 var ErrInsufficientBalance = errors.New("marketplace: insufficient balance")
 
+// ErrModelDisabled marks a request that reached a listing whose model the
+// seller (or an automatic rule) turned off. The selector already excludes such
+// listings, so this is the defensive check for a disable racing an in-flight
+// selection; it must never fall back to the base multiplier.
+var ErrModelDisabled = errors.New("marketplace: model is disabled on this listing")
+
 // DefaultToolPreFreezeCap is the default per-request upper bound of
 // Search/Fetch calls folded into the pre-freeze amount (§3.4: 预冻结额外按每
 // 请求最多 N 次，默认 10，可配).
@@ -510,6 +516,24 @@ func listingModelMultiplier(db *gorm.DB, listingID int64, modelName string) int6
 	return row.MultiplierMilli
 }
 
+// listingModelDisabled reports whether the listing has an explicit disabled
+// row for the model. No row means enabled.
+func listingModelDisabled(db *gorm.DB, listingID int64, modelName string) bool {
+	if db == nil || listingID <= 0 || strings.TrimSpace(modelName) == "" {
+		return false
+	}
+	if !db.Migrator().HasTable(&ListingModel{}) {
+		return false
+	}
+	var count int64
+	if err := db.Model(&ListingModel{}).
+		Where("listing_id = ? AND model = ? AND enabled = ?", listingID, modelName, false).
+		Count(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
+}
+
 // listingMultiplier resolves the multiplier a listing charges for one model:
 // the per-model override when present, otherwise the listing-level value.
 func listingMultiplier(db *gorm.DB, listing Listing, modelName string) int64 {
@@ -524,6 +548,9 @@ func listingMultiplier(db *gorm.DB, listing Listing, modelName string) int64 {
 // re-freeze goes through it so the frozen amount always matches the model
 // multiplier the buyer is actually charged.
 func PreFreezeQuoteForListing(db *gorm.DB, cal *Calendar, listing Listing, modelName string, estInputTokens, maxOutputTokens, searchCap, fetchCap int64, at time.Time) (QuoteResult, error) {
+	if listingModelDisabled(db, listing.ID, modelName) {
+		return QuoteResult{}, ErrModelDisabled
+	}
 	return PreFreezeQuote(db, cal, listing.Vendor, modelName,
 		listingMultiplier(db, listing, modelName),
 		estInputTokens, maxOutputTokens, searchCap, fetchCap, at)

@@ -672,7 +672,11 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 		if binding, berr := LookupAffinity(db, int(buyerUserID), affinitySource, affinityValue, string(endpointKind)); berr != nil {
 			common.SysError(common.LogText("marketplace: read affinity binding: %s", berr.Error()))
 		} else if binding != nil {
-			preferredListingID = binding.ListingID
+			// A binding is a preference, not a guarantee: if the seller disabled
+			// the model on that listing, ignore the binding and rank normally.
+			if listingServesModelEnabled(db, binding.ListingID, modelName) {
+				preferredListingID = binding.ListingID
+			}
 		}
 	}
 	listing, tookProbe, qerr := DefaultSelector().SelectWithProbe(db, SelectInput{
@@ -948,9 +952,17 @@ func hasLiveListingForModel(db *gorm.DB, modelName string, endpointKinds ...rela
 		Select("id", "vendor", "models").Find(&rows).Error; err != nil {
 		return false, err
 	}
+	ids := make([]int64, len(rows))
+	for i := range rows {
+		ids[i] = rows[i].ID
+	}
+	overrides := loadListingModelOverrides(db, ids)
 	eligible := loadVerifiedChannels(db, modelName, endpointKind)
 	for i := range rows {
 		if !slices.Contains(rows[i].Models, modelName) {
+			continue
+		}
+		if !overrides.modelEnabled(rows[i].ID, modelName) {
 			continue
 		}
 		if _, ok := eligible[rows[i].Vendor]; ok {
@@ -958,6 +970,24 @@ func hasLiveListingForModel(db *gorm.DB, modelName string, endpointKinds ...rela
 		}
 	}
 	return false, nil
+}
+
+// listingServesModelEnabled reports whether one listing currently serves the
+// model: it lists the model and has no disabled override for it. It is the
+// affinity re-check: a binding must never pin a session to a model the seller
+// turned off.
+func listingServesModelEnabled(db *gorm.DB, listingID int64, modelName string) bool {
+	if db == nil || listingID <= 0 {
+		return false
+	}
+	var row Listing
+	if err := db.Select("id", "models").Where("id = ?", listingID).Take(&row).Error; err != nil {
+		return false
+	}
+	if !slices.Contains(row.Models, modelName) {
+		return false
+	}
+	return !listingModelDisabled(db, listingID, modelName)
 }
 
 // keyModelCapMilli resolves the buyer key's price cap for one model (§3.6):
@@ -1417,6 +1447,11 @@ func PrepareBilling(c *gin.Context, info *relaycommon.RelayInfo, estimateFn func
 	quote, qerr := PreFreezeQuoteForListing(db, cal, listing, s.model,
 		int64(estInput), maxOut, searchCap, fetchCap, freezeAt)
 	if qerr != nil {
+		// A model disabled after selection is not a pricing error: return a
+		// retryable no-supplier response instead of charging the base multiplier.
+		if errors.Is(qerr, ErrModelDisabled) {
+			return types.NewError(errors.New("marketplace: model is disabled on this listing"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
+		}
 		common.SysError(common.LogText("marketplace: pre-freeze quote: %s", qerr.Error()))
 		return types.NewError(errors.New("marketplace: no covering price for this request"), types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest), types.ErrOptionWithSkipRetry())
 	}
@@ -1724,6 +1759,9 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 		s.releaseSlot()
 		if tookProbe {
 			selector.Breaker.ReleaseProbe(next.ID)
+		}
+		if errors.Is(err, ErrModelDisabled) {
+			return nil, types.NewError(errors.New("marketplace: model is disabled on this listing"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 		}
 		return nil, types.NewError(errors.New("marketplace: no covering price for this request"), types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest), types.ErrOptionWithSkipRetry())
 	}

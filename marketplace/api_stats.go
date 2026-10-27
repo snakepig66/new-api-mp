@@ -246,22 +246,31 @@ func computePublicStats(db *gorm.DB, now time.Time) (publicStats, error) {
 	// in Go (same trade-off as hasLiveListingForModel / loadSquareSupply).
 	var listings []Listing
 	if err := db.Model(&Listing{}).
-		Select("vendor", "models", "multiplier_milli", "status").
+		Select("id", "vendor", "models", "multiplier_milli", "status").
 		Where("status IN ?", []string{ListingLive, ListingCanary}).
 		Find(&listings).Error; err != nil {
 		return publicStats{}, err
 	}
+	ids := make([]int64, len(listings))
+	for i := range listings {
+		ids[i] = listings[i].ID
+	}
+	overrides := loadListingModelOverrides(db, ids)
 	supply := make(map[[2]string]struct{})
 	haveLive := false
 	for i := range listings {
 		l := &listings[i]
 		for _, model := range l.Models {
+			if !overrides.modelEnabled(l.ID, model) {
+				continue
+			}
 			supply[[2]string{model, l.Vendor}] = struct{}{}
-		}
-		if l.Status == ListingLive {
-			if !haveLive || l.MultiplierMilli < stats.MinMultiplierMilli {
-				stats.MinMultiplierMilli = l.MultiplierMilli
-				haveLive = true
+			if l.Status == ListingLive {
+				multiplier := overrides.multiplierFor(l.ID, model, l.MultiplierMilli)
+				if !haveLive || multiplier < stats.MinMultiplierMilli {
+					stats.MinMultiplierMilli = multiplier
+					haveLive = true
+				}
 			}
 		}
 	}

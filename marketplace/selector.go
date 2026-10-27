@@ -817,27 +817,6 @@ func loadListingGroups(db *gorm.DB, ids []int64) map[int64]ListingGroup {
 	return out
 }
 
-// loadListingModelMultipliers returns the enabled per-model multiplier of each
-// listing for one model. Listings without a row keep their base multiplier.
-func loadListingModelMultipliers(db *gorm.DB, model string, ids []int64) map[int64]int64 {
-	out := make(map[int64]int64, len(ids))
-	if db == nil || len(ids) == 0 {
-		return out
-	}
-	var rows []ListingModel
-	if err := db.Select("listing_id", "multiplier_milli").
-		Where("listing_id IN ? AND model = ? AND enabled = ?", ids, model, true).
-		Find(&rows).Error; err != nil {
-		return out
-	}
-	for _, r := range rows {
-		if r.MultiplierMilli >= 1 && r.MultiplierMilli <= 1000 {
-			out[r.ListingID] = r.MultiplierMilli
-		}
-	}
-	return out
-}
-
 // weightedRotationOrder maps the group cursor to a preference order over the
 // group's listings: equal-weight groups rotate evenly, and a larger Weight
 // takes proportionally more turns.
@@ -972,12 +951,14 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 	verifiedChannels := loadVerifiedChannels(db, in.Model, in.EndpointKind)
 	coefficients := loadVerifiedCoefficients(db, in.Model)
 	// P4 逐模型倍率: a model-specific multiplier overrides the listing-level one
-	// for both the price cap and the ranking, matching what Quote charges.
+	// for both the price cap and the ranking, matching what Quote charges. A
+	// disabled row removes the listing from this model entirely; falling back to
+	// the base multiplier would keep a model the seller turned off sellable.
 	rowIDs := make([]int64, len(rows))
 	for i := range rows {
 		rowIDs[i] = rows[i].ID
 	}
-	modelMultipliers := loadListingModelMultipliers(db, in.Model, rowIDs)
+	overrides := loadListingModelOverrides(db, rowIDs)
 	// effectiveByID is the buyer-facing price factor (multiplier × channel
 	// coefficient) used for the cap and for ranking. A coefficient above 1000
 	// would let a listing charge more than official, so it is rejected outright.
@@ -993,6 +974,9 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 			continue
 		}
 		if !slices.Contains(l.Models, in.Model) {
+			continue
+		}
+		if !overrides.modelEnabled(l.ID, in.Model) {
 			continue
 		}
 		ch, ok := verifiedChannels[l.Vendor]
@@ -1014,10 +998,7 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 			// Defence in depth: no mark-up above the official price.
 			continue
 		}
-		multiplier := l.MultiplierMilli
-		if milli, ok := modelMultipliers[l.ID]; ok {
-			multiplier = milli
-		}
+		multiplier := overrides.multiplierFor(l.ID, in.Model, l.MultiplierMilli)
 		effective := effectiveMultiplierMilli(multiplier, coefficient)
 		if in.MaxMultiplierMilli > 0 && effective > in.MaxMultiplierMilli {
 			continue

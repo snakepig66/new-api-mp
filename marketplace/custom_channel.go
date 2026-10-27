@@ -343,6 +343,7 @@ func ensureCustomChannel(db *gorm.DB, sellerID int64, rawURL string, models []st
 	// is live/canary (vendors.go); verification uses the whitelist-exempt
 	// EgressVerifyHTTPClient.
 	refreshVendorRegistry(true)
+	resetBuyerModelVisibilityCache()
 	return slug, nil
 }
 

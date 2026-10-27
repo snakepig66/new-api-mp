@@ -452,6 +452,7 @@ func verifyListingAsync(db *gorm.DB, listingID int64) {
 	// channel's host to the relay whitelist (vendors.go). Reload now instead of
 	// waiting out the registry TTL; the reload is in-memory only.
 	refreshVendorRegistry(true)
+	resetBuyerModelVisibilityCache()
 	if !res.OK {
 		common.SysLog(common.LogText("marketplace: listing %d verification failed: %s", listingID, res.FailReason))
 	}
@@ -823,6 +824,7 @@ func pauseSellerListing(c *gin.Context) {
 	// A live listing was the channel's relay-whitelist membership; drop it on
 	// the next registry reload.
 	refreshVendorRegistry(true)
+	resetBuyerModelVisibilityCache()
 	common.ApiSuccess(c, gin.H{"id": id, "status": ListingPaused})
 }
 
@@ -855,6 +857,7 @@ func resumeSellerListing(c *gin.Context) {
 	// The listing is live again, so its custom channel may rejoin the relay
 	// whitelist immediately.
 	refreshVendorRegistry(true)
+	resetBuyerModelVisibilityCache()
 	common.ApiSuccess(c, gin.H{"id": id, "status": ListingLive})
 }
 

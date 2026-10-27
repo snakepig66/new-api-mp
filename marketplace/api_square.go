@@ -366,12 +366,22 @@ func loadSquarePoolSupply(db *gorm.DB, idx modelPoolIndex, coeffs map[string]map
 		Find(&rows).Error; err != nil {
 		return nil, err
 	}
+	ids := make([]int64, len(rows))
+	for i := range rows {
+		ids[i] = rows[i].ID
+	}
+	overrides := loadListingModelOverrides(db, ids)
 	official := loadOfficialChannelModels(db)
 	supply := make(map[string]*squareSupply)
 	for i := range rows {
 		l := &rows[i]
 		channel := strings.TrimSpace(l.Vendor)
 		for _, raw := range l.Models {
+			if !overrides.modelEnabled(l.ID, raw) {
+				// A disabled model is not supply: its listing must not contribute
+				// to the count, multiplier band or the advertised cheapest price.
+				continue
+			}
 			model, ok := idx.resolve(raw)
 			if !ok {
 				continue
@@ -382,7 +392,8 @@ func loadSquarePoolSupply(db *gorm.DB, idx modelPoolIndex, coeffs map[string]map
 				supply[model] = s
 			}
 			_, isOfficial := official[model][channel]
-			s.add(channel, l.MultiplierMilli, coefficientFor(coeffs, model, channel), isOfficial)
+			s.add(channel, overrides.multiplierFor(l.ID, raw, l.MultiplierMilli),
+				coefficientFor(coeffs, model, channel), isOfficial)
 		}
 	}
 	return supply, nil

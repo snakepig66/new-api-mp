@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/marketplace"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
@@ -261,6 +262,9 @@ func ListModels(c *gin.Context, modelType int) {
 		}
 		userModelNames = append(userModelNames, modelName)
 	}
+	// A marketplace model whose supply the seller disabled must not be
+	// advertised: the relay would reject it with "no supplier".
+	userModelNames = marketplace.FilterBuyerModels(userModelNames)
 
 	ownerByModel := map[string]string{}
 	if len(ownerGroups) > 0 {
