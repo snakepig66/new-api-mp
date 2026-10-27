@@ -149,8 +149,8 @@ type shareRecordDetail struct {
 // Summary response shapes
 // ---------------------------------------------------------------------------
 
-// usageSummary is GET /records/usage/summary's payload for the buyer.
-type usageSummary struct {
+// usageSummaryResponse is GET /records/usage/summary's payload for the buyer.
+type usageSummaryResponse struct {
 	RequestCount     int64 `json:"request_count"`
 	SuccessCount     int64 `json:"success_count"`
 	SuccessRateMilli int64 `json:"success_rate_milli"` // -1 = no sample
@@ -164,8 +164,8 @@ type usageSummary struct {
 	AvgLatencyMs     int64 `json:"avg_latency_ms"`     // 总耗时平均 ms
 }
 
-// shareSummary is GET /records/shares/summary's payload for the seller.
-type shareSummary struct {
+// shareSummaryResponse is GET /records/shares/summary's payload for the seller.
+type shareSummaryResponse struct {
 	RequestCount      int64 `json:"request_count"`
 	SuccessCount      int64 `json:"success_count"`
 	SuccessRateMilli  int64 `json:"success_rate_milli"` // -1 = no sample
@@ -830,7 +830,7 @@ func usageSummary(c *gin.Context) {
 	if a.HasLatency > 0 {
 		avgLatency = a.SumLatencyMs / a.HasLatency
 	}
-	common.ApiSuccess(c, usageSummary{
+	common.ApiSuccess(c, usageSummaryResponse{
 		RequestCount:     a.RequestCount,
 		SuccessCount:     a.SuccessCount,
 		SuccessRateMilli: rate,
@@ -904,7 +904,7 @@ func shareSummary(c *gin.Context) {
 	if a.HasLatency > 0 {
 		avgLatency = a.SumLatencyMs / a.HasLatency
 	}
-	common.ApiSuccess(c, shareSummary{
+	common.ApiSuccess(c, shareSummaryResponse{
 		RequestCount:      a.RequestCount,
 		SuccessCount:      a.SuccessCount,
 		SuccessRateMilli:  rate,
