@@ -42,6 +42,7 @@ func Migrate(db *gorm.DB) error {
 		&ChannelKey{},
 		&SellerChannelModel{},
 		&MultiplierChange{},
+		&ListingAudit{},
 	); err != nil {
 		return fmt.Errorf("marketplace migrate: %w", err)
 	}

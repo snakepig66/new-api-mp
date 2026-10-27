@@ -43,6 +43,9 @@ const (
 	// CodePlanTermsRequired: a plan channel was submitted without
 	// plan_terms_accepted=true.
 	CodePlanTermsRequired = "PLAN_TERMS_REQUIRED"
+	// CodeKeyBannedDeleted: the key belonged to a listing that was banned and
+	// later deleted. The ban follows the fingerprint.
+	CodeKeyBannedDeleted = "KEY_BANNED_DELETED"
 )
 
 // sellerVerifyTimeout bounds one background verification. The UI shows a
@@ -103,6 +106,8 @@ func registerSellerRoutes(g *gin.RouterGroup) {
 	g.POST("/seller/listings/:id/verify", verifySellerListing)
 	g.POST("/seller/listings/:id/pause", pauseSellerListing)
 	g.POST("/seller/listings/:id/resume", resumeSellerListing)
+	g.DELETE("/seller/listings/:id", deleteSellerListing)
+	g.PUT("/seller/listings/:id", updateSellerListingSettings)
 	g.GET("/seller/balance", getSellerBalance)
 	g.POST("/seller/payouts", postSellerPayout)
 }
@@ -196,6 +201,7 @@ type sellerListingRequest struct {
 	RPM             int      `json:"rpm"`
 	DailyCapMicro   int64    `json:"daily_cap_micro"`
 	Hours           string   `json:"hours"`
+	Label           string   `json:"label"`
 	// PlanTermsAccepted is required (true) for plan channels; it is the
 	// seller's explicit confirmation that the plan terms allow sharing.
 	PlanTermsAccepted bool `json:"plan_terms_accepted"`
@@ -212,17 +218,23 @@ type sellerListingRequest struct {
 // only the fingerprint's first 8 hex chars — never the ciphertext or the full
 // fingerprint (§2.3).
 type sellerListingView struct {
-	ID               int64     `json:"id"`
-	Vendor           string    `json:"vendor"`
-	Models           []string  `json:"models"`
-	MultiplierMilli  int64     `json:"multiplier_milli"`
-	ConcurrencyLimit int       `json:"concurrency_limit"`
-	RPMLimit         int       `json:"rpm_limit"`
-	DailyCapMicro    int64     `json:"daily_cap_micro"`
-	Hours            string    `json:"hours"`
-	Status           string    `json:"status"`
-	KeyFingerprint8  string    `json:"key_fingerprint8"`
-	CreatedAt        time.Time `json:"created_at"`
+	ID                     int64     `json:"id"`
+	Vendor                 string    `json:"vendor"`
+	Label                  string    `json:"label"`
+	Models                 []string  `json:"models"`
+	ModelCount             int       `json:"model_count"`
+	EnabledModelCount      int       `json:"enabled_model_count"`
+	AutoDisabledModelCount int       `json:"auto_disabled_model_count"`
+	MultiplierMinMilli     int64     `json:"multiplier_min_milli"`
+	MultiplierMaxMilli     int64     `json:"multiplier_max_milli"`
+	MultiplierMilli        int64     `json:"multiplier_milli"`
+	ConcurrencyLimit       int       `json:"concurrency_limit"`
+	RPMLimit               int       `json:"rpm_limit"`
+	DailyCapMicro          int64     `json:"daily_cap_micro"`
+	Hours                  string    `json:"hours"`
+	Status                 string    `json:"status"`
+	KeyFingerprint8        string    `json:"key_fingerprint8"`
+	CreatedAt              time.Time `json:"created_at"`
 	// P4: the group this listing belongs to and the key's relative weight.
 	GroupID int64 `json:"group_id"`
 	Weight  int   `json:"weight"`
@@ -301,6 +313,17 @@ func latestVerifyProbes(db *gorm.DB, listingIDs []int64) map[int64]Probe {
 	return out
 }
 
+// applyListingAggregates fills the list-row summary fields (model counts and
+// effective multiplier band) from the batch-loaded overrides.
+func applyListingAggregates(view *sellerListingView, listing Listing, overrides listingModelOverrides) {
+	enabled, autoDisabled, minMilli, maxMilli := overrides.aggregate(listing)
+	view.ModelCount = len(listing.Models)
+	view.EnabledModelCount = enabled
+	view.AutoDisabledModelCount = autoDisabled
+	view.MultiplierMinMilli = minMilli
+	view.MultiplierMaxMilli = maxMilli
+}
+
 func toSellerListingView(l *Listing) sellerListingView {
 	fp8 := ""
 	if len(l.KeyFingerprint) >= 8 {
@@ -309,6 +332,7 @@ func toSellerListingView(l *Listing) sellerListingView {
 	return sellerListingView{
 		ID:               l.ID,
 		Vendor:           l.Vendor,
+		Label:            l.Label,
 		Models:           l.Models,
 		MultiplierMilli:  l.MultiplierMilli,
 		ConcurrencyLimit: l.ConcurrencyLimit,
@@ -361,6 +385,7 @@ func postSellerListing(c *gin.Context) {
 		RPM:               req.RPM,
 		DailyCapMicro:     req.DailyCapMicro,
 		Hours:             req.Hours,
+		Label:             req.Label,
 		PlanTermsAccepted: req.PlanTermsAccepted,
 		CustomBaseURL:     req.CustomBaseURL,
 		KeyStrategy:       req.KeyStrategy,
@@ -376,6 +401,11 @@ func postSellerListing(c *gin.Context) {
 			common.ApiErrorStatus(c, http.StatusBadRequest,
 				errors.New("plan channel requires accepting the plan terms"),
 				gin.H{"code": CodePlanTermsRequired})
+			return
+		}
+		if errors.Is(err, ErrKeyBannedDeleted) {
+			common.ApiErrorStatus(c, http.StatusForbidden, err,
+				gin.H{"code": CodeKeyBannedDeleted})
 			return
 		}
 		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
@@ -502,9 +532,11 @@ func listSellerListings(c *gin.Context) {
 		ids = append(ids, rows[i].ID)
 	}
 	latest := latestVerifyProbes(db, ids)
+	overrides := loadListingModelOverrides(db, ids)
 	out := make([]sellerListingView, 0, len(rows))
 	for i := range rows {
 		view := toSellerListingView(&rows[i])
+		applyListingAggregates(&view, rows[i], overrides)
 		if p, ok := latest[rows[i].ID]; ok {
 			view.Verification = probeVerificationView(p)
 		}
@@ -859,6 +891,89 @@ func resumeSellerListing(c *gin.Context) {
 	refreshVendorRegistry(true)
 	resetBuyerModelVisibilityCache()
 	common.ApiSuccess(c, gin.H{"id": id, "status": ListingLive})
+}
+
+// deleteSellerListing serves DELETE /seller/listings/:id — soft delete. The
+// response is idempotent: a second call returns the same status.
+func deleteSellerListing(c *gin.Context) {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	id, ok := sellerIDParam(c)
+	if !ok {
+		return
+	}
+	if _, err := DeleteListingForSeller(db, id, sellerID, time.Now()); err != nil {
+		if errors.Is(err, ErrListingNotFound) {
+			common.ApiErrorStatus(c, http.StatusNotFound, errors.New("listing not found"))
+			return
+		}
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to delete listing"))
+		return
+	}
+	if err := MirrorListingDelete(db, id); err != nil {
+		common.SysError(common.LogText("marketplace: mirror deleted listing %d: %s", id, err.Error()))
+	}
+	refreshVendorRegistry(true)
+	resetBuyerModelVisibilityCache()
+	common.ApiSuccess(c, gin.H{"id": id, "status": ListingDeleted})
+}
+
+// sellerListingSettingsRequest is the PUT /seller/listings/:id body. Nil
+// fields are left unchanged so the drawer can submit only dirty fields.
+type sellerListingSettingsRequest struct {
+	Label            *string `json:"label"`
+	ConcurrencyLimit *int    `json:"concurrency_limit"`
+	RPMLimit         *int    `json:"rpm_limit"`
+	DailyCapMicro    *int64  `json:"daily_cap_micro"`
+	Hours            *string `json:"hours"`
+}
+
+// updateSellerListingSettings serves PUT /seller/listings/:id — name, limits
+// and business hours.
+func updateSellerListingSettings(c *gin.Context) {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	id, ok := sellerIDParam(c)
+	if !ok {
+		return
+	}
+	var req sellerListingSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	updated, err := UpdateListingSettings(db, id, sellerID, UpdateListingSettingsInput{
+		Label:            req.Label,
+		ConcurrencyLimit: req.ConcurrencyLimit,
+		RPMLimit:         req.RPMLimit,
+		DailyCapMicro:    req.DailyCapMicro,
+		Hours:            req.Hours,
+	}, time.Now())
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrListingNotFound):
+			common.ApiErrorStatus(c, http.StatusNotFound, errors.New("listing not found"))
+		case errors.Is(err, ErrInvalidTransition):
+			common.ApiErrorStatus(c, http.StatusConflict, errors.New(err.Error()))
+		default:
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
+		}
+		return
+	}
+	view := toSellerListingView(&updated)
+	common.ApiSuccess(c, view)
 }
 
 // ---------------------------------------------------------------------------
@@ -1673,6 +1788,7 @@ func getSellerListingDetail(c *gin.Context) {
 		})
 	}
 	view := toSellerListingView(&listing)
+	applyListingAggregates(&view, listing, loadListingModelOverrides(db, []int64{id}))
 	view.PauseReason = listingPauseReason(listing, probes)
 	// Look the newest verify probe up independently of the recent-probe
 	// window: a run of patrol probes must not hide the last per-model verify
@@ -1736,6 +1852,24 @@ type sellerListingHealth struct {
 	TodayRequests         int64              `json:"today_requests"`
 	TodaySuccessRateMilli int64              `json:"today_success_rate_milli"`
 	TodayIncomeMicro      int64              `json:"today_income_micro"`
+	// Three rolling windows for the table's success-rate cell. A window with
+	// no sample is -1; the console applies its own <5-sample display threshold
+	// using the paired request count.
+	Requests1h          int64 `json:"requests_1h"`
+	SuccessRate1hMilli  int64 `json:"success_rate_1h_milli"`
+	Requests24h         int64 `json:"requests_24h"`
+	SuccessRate24hMilli int64 `json:"success_rate_24h_milli"`
+	Requests7d          int64 `json:"requests_7d"`
+	SuccessRate7dMilli  int64 `json:"success_rate_7d_milli"`
+}
+
+// windowRateMilli converts a window's counts into a 0..1000 rate; an empty
+// window is -1 so the UI can hide it instead of printing a fake 0.
+func windowRateMilli(total, success int64) int64 {
+	if total <= 0 {
+		return -1
+	}
+	return success * 1000 / total
 }
 
 // latestProbesByListing maps each listing to its newest probe of any type in
@@ -1835,6 +1969,40 @@ func getSellerListingsHealth(c *gin.Context) {
 		}
 	}
 
+	type windowAgg struct {
+		ListingID  int64
+		Total7d    int64
+		Success7d  int64
+		Total24h   int64
+		Success24h int64
+		Total1h    int64
+		Success1h  int64
+	}
+	windowsByListing := make(map[int64]windowAgg, len(ids))
+	if len(ids) > 0 {
+		since7d := now.Add(-7 * 24 * time.Hour)
+		since24h := now.Add(-24 * time.Hour)
+		since1h := now.Add(-time.Hour)
+		var aggs []windowAgg
+		if err := db.Table("mp_requests").
+			Select(`listing_id,
+				COUNT(*) AS total7d,
+				SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS success7d,
+				SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS total24h,
+				SUM(CASE WHEN created_at >= ? AND status = ? THEN 1 ELSE 0 END) AS success24h,
+				SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS total1h,
+				SUM(CASE WHEN created_at >= ? AND status = ? THEN 1 ELSE 0 END) AS success1h`,
+				RequestSuccess, since24h, since24h, RequestSuccess, since1h, since1h, RequestSuccess).
+			Where("seller_id = ? AND listing_id IN ? AND created_at >= ?", sellerID, ids, since7d).
+			Group("listing_id").Scan(&aggs).Error; err != nil {
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query request windows"))
+			return
+		}
+		for _, agg := range aggs {
+			windowsByListing[agg.ListingID] = agg
+		}
+	}
+
 	type incomeAgg struct {
 		ListingID   int64
 		IncomeMicro int64
@@ -1867,6 +2035,18 @@ func getSellerListingsHealth(c *gin.Context) {
 			if agg.Total > 0 {
 				row.TodaySuccessRateMilli = agg.Success * 1000 / agg.Total
 			}
+		}
+		if agg, ok := windowsByListing[listing.ID]; ok {
+			row.Requests1h = agg.Total1h
+			row.SuccessRate1hMilli = windowRateMilli(agg.Total1h, agg.Success1h)
+			row.Requests24h = agg.Total24h
+			row.SuccessRate24hMilli = windowRateMilli(agg.Total24h, agg.Success24h)
+			row.Requests7d = agg.Total7d
+			row.SuccessRate7dMilli = windowRateMilli(agg.Total7d, agg.Success7d)
+		} else {
+			row.SuccessRate1hMilli = -1
+			row.SuccessRate24hMilli = -1
+			row.SuccessRate7dMilli = -1
 		}
 		if p, ok := latest[listing.ID]; ok {
 			row.LatestProbe = sellerHealthProbeView(p)

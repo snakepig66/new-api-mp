@@ -22,6 +22,11 @@ const (
 	ListingLive          = "live"
 	ListingPaused        = "paused"
 	ListingBanned        = "banned"
+	// ListingDeleted is the seller's soft-delete state. The row and its history
+	// remain readable; the key fingerprint moves to DeletedFingerprint so the
+	// unique column is free for a re-listing, and the ciphertext is wiped by a
+	// delayed job after in-flight requests can no longer need it.
+	ListingDeleted = "deleted"
 )
 
 // Price tiers (§3.3).
@@ -131,6 +136,24 @@ type Listing struct {
 	MultiplierUpdatedAt *time.Time
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+
+	// Label is the seller's optional display name. Two channels on the same
+	// vendor are otherwise distinguishable only by #id.
+	Label string `gorm:"size:64;not null;default:''"`
+	// Soft-delete bookkeeping. DeletedFingerprint keeps the original key
+	// identity after KeyFingerprint is replaced by a per-row tombstone, so a
+	// banned key can never be re-listed while a normally deleted one can.
+	DeletedFingerprint string `gorm:"size:128;not null;default:'';index"`
+	DeletedBanned      bool   `gorm:"not null;default:false"`
+	DeletedAt          *time.Time
+	KeyWipeAt          *time.Time `gorm:"index"`
+	// PendingHeaders* carry a candidate header policy that is verified before
+	// it replaces channels.header_override. The plaintext never leaves the
+	// encrypted column; the version lets a newer submission supersede an
+	// in-flight verification.
+	PendingHeadersCiphertext []byte
+	PendingHeadersVersion    int `gorm:"not null;default:0"`
+	PendingHeadersAt         *time.Time
 }
 
 func (Listing) TableName() string { return "mp_listings" }
@@ -163,8 +186,9 @@ type ListingGroup struct {
 func (ListingGroup) TableName() string { return "mp_listing_groups" }
 
 // ListingModel is one listing's per-model multiplier override. The selector
-// and the pricing path read it before falling back to Listing.MultiplierMilli;
-// a row with enabled=false is ignored, so the base multiplier applies again.
+// and the pricing path read it before falling back to Listing.MultiplierMilli.
+// A row with enabled=false means the listing does NOT serve the model; it is
+// not a fallback to the base multiplier.
 type ListingModel struct {
 	ID              int64  `gorm:"primaryKey"`
 	ListingID       int64  `gorm:"not null;index;uniqueIndex:uk_mp_listing_models_listing_model,priority:1"`
@@ -173,6 +197,23 @@ type ListingModel struct {
 	Enabled         bool   `gorm:"not null"`
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+
+	// Automatic disable state. A row may be disabled by the seller or by a
+	// relay/patrol rule; the reason and the upstream evidence are shown in the
+	// console so the seller knows what to fix.
+	AutoDisabled            bool   `gorm:"not null;default:false"`
+	DisabledReason          string `gorm:"size:64;not null;default:''"`
+	DisabledDetail          string `gorm:"type:text;not null;default:''"`
+	DisabledHTTPStatus      int    `gorm:"not null;default:0"`
+	DisabledUpstreamMessage string `gorm:"type:text;not null;default:''"`
+	DisabledAt              *time.Time
+	// A price increase is staged for one hour. Decreases apply immediately and
+	// clear the staged value. LastChangedDate (Asia/Shanghai) enforces one
+	// increase per model per day; decreases do not consume it.
+	PendingMultiplierMilli int64 `gorm:"not null;default:0"`
+	PendingEffectiveAt     *time.Time
+	LastChangedAt          *time.Time
+	LastChangedDate        string `gorm:"size:10;not null;default:''"`
 }
 
 func (ListingModel) TableName() string { return "mp_listing_models" }
@@ -263,10 +304,14 @@ func (ChannelEndpoint) TableName() string { return "mp_channel_endpoints" }
 // the same AES-256-GCM blob the legacy listing carries. DeletedAt is a soft
 // delete so historical requests keep a resolvable key id.
 type ChannelKey struct {
-	ID                         int64 `gorm:"primaryKey"`
-	ChannelID                  int64 `gorm:"not null;index"`
-	KeyCiphertext              []byte
-	KeyFingerprint             string `gorm:"size:128;not null;uniqueIndex"`
+	ID             int64 `gorm:"primaryKey"`
+	ChannelID      int64 `gorm:"not null;index"`
+	KeyCiphertext  []byte
+	KeyFingerprint string `gorm:"size:128;not null;uniqueIndex"`
+	// DeletedFingerprint keeps the identity of a soft-deleted shadow key after
+	// KeyFingerprint moves to a per-row tombstone. Without it, a re-listed key
+	// would collide with the soft-deleted row's unique index.
+	DeletedFingerprint         string `gorm:"size:128;not null;default:'';index"`
 	UpstreamAccountFingerprint string `gorm:"size:128;not null;default:''"`
 	Weight                     int    `gorm:"not null;default:100"`
 	// Per-key limits; normalization rejects values above the channel level.
@@ -318,6 +363,36 @@ type MultiplierChange struct {
 }
 
 func (MultiplierChange) TableName() string { return "mp_multiplier_changes" }
+
+// Listing audit actions. Price changes are recorded in mp_multiplier_changes
+// instead; everything else that changes a listing's sellable state lands here.
+const (
+	ListingAuditDelete        = "delete"
+	ListingAuditUpdateLimits  = "update_limits"
+	ListingAuditModelEnable   = "model_enable"
+	ListingAuditModelDisable  = "model_disable"
+	ListingAuditModelRestore  = "model_restore"
+	ListingAuditHeadersSubmit = "headers_submit"
+	ListingAuditHeadersApply  = "headers_apply"
+	ListingAuditHeadersReject = "headers_reject"
+	ListingAuditAutoDisable   = "auto_disable"
+	ListingAuditAutoPause     = "auto_pause"
+)
+
+// ListingAudit is the append-only trail of seller/operator actions that are
+// not price changes: delete, limits update, model enable/disable/restore,
+// header submission/apply/reject, automatic pause/disable. Price changes keep
+// their dedicated mp_multiplier_changes row.
+type ListingAudit struct {
+	ID        int64     `gorm:"primaryKey"`
+	ListingID int64     `gorm:"not null;index"`
+	ActorID   int64     `gorm:"not null;default:0;index"`
+	Action    string    `gorm:"size:32;not null;index"`
+	Detail    string    `gorm:"type:text;not null;default:''"`
+	CreatedAt time.Time `gorm:"index"`
+}
+
+func (ListingAudit) TableName() string { return "mp_listing_audit" }
 
 // Probe is one verification / patrol / report check against a listing (§3.5).
 type Probe struct {
@@ -391,7 +466,7 @@ type Request struct {
 	BuyerUserID  int64  `gorm:"not null;index"`
 	BuyerTokenID int64  `gorm:"not null;index"`
 	SellerID     int64  `gorm:"not null;index"`
-	ListingID    int64  `gorm:"not null;index"`
+	ListingID    int64  `gorm:"not null;index;index:idx_mp_requests_listing_created,priority:1"`
 	// P3 shadow identity: ChannelID mirrors ListingID (mp_seller_channels.id),
 	// KeyID is the mp_channel_keys row (0 until multi-key supply exists), and
 	// Endpoint is the buyer protocol the request was served on.
@@ -438,7 +513,7 @@ type Request struct {
 	// received → response body finished). The public square reports its 24h
 	// average; 0 means "not measured" (rows written before the field existed).
 	LatencyMs int64     `gorm:"not null;default:0"`
-	CreatedAt time.Time `gorm:"index"`
+	CreatedAt time.Time `gorm:"index;index:idx_mp_requests_listing_created,priority:2"`
 }
 
 func (Request) TableName() string { return "mp_requests" }

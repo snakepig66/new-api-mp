@@ -234,6 +234,26 @@ func createSellerChannelShadow(tx *gorm.DB, listing Listing, base string, bases 
 		RPMLimit:         listing.RPMLimit,
 		Status:           ChannelKeyNormal,
 	}
+	// A soft-deleted shadow key keeps its unique fingerprint even though
+	// GORM's unique index is not partial. Free it with a tombstone before
+	// creating the new key, so re-listing a normally deleted key works even if
+	// a previous mirror deletion ran first.
+	var stale ChannelKey
+	staleErr := tx.Unscoped().Where("key_fingerprint = ? AND deleted_at IS NOT NULL", key.KeyFingerprint).
+		Take(&stale).Error
+	switch {
+	case staleErr == nil:
+		tombstone := fmt.Sprintf("deleted:%d:%d", stale.ChannelID, stale.ID)
+		if uerr := tx.Unscoped().Model(&ChannelKey{}).Where("id = ?", stale.ID).
+			Updates(map[string]any{
+				"deleted_fingerprint": key.KeyFingerprint,
+				"key_fingerprint":     tombstone,
+			}).Error; uerr != nil {
+			return fmt.Errorf("marketplace: release soft-deleted channel key %d: %w", stale.ID, uerr)
+		}
+	case !errors.Is(staleErr, gorm.ErrRecordNotFound):
+		return fmt.Errorf("marketplace: check soft-deleted channel key: %w", staleErr)
+	}
 	if err := tx.Create(&key).Error; err != nil {
 		return fmt.Errorf("marketplace: create channel key: %w", err)
 	}
@@ -547,6 +567,29 @@ func mirrorListingUpdateTx(tx *gorm.DB, listing Listing) error {
 	return nil
 }
 
+// tombstoneChannelKeysTx soft-deletes a listing's shadow keys and frees the
+// unique fingerprint with a per-row tombstone. The original identity moves to
+// deleted_fingerprint so a later re-listing of a normally deleted key cannot
+// collide with the unique index.
+func tombstoneChannelKeysTx(tx *gorm.DB, listingID int64, now time.Time) error {
+	var keys []ChannelKey
+	if err := tx.Unscoped().Where("channel_id = ?", listingID).Find(&keys).Error; err != nil {
+		return fmt.Errorf("marketplace: load channel keys %d: %w", listingID, err)
+	}
+	for i := range keys {
+		tombstone := fmt.Sprintf("deleted:%d:%d", listingID, keys[i].ID)
+		if err := tx.Unscoped().Model(&ChannelKey{}).Where("id = ?", keys[i].ID).
+			Updates(map[string]any{
+				"deleted_fingerprint": keys[i].KeyFingerprint,
+				"key_fingerprint":     tombstone,
+				"deleted_at":          now,
+			}).Error; err != nil {
+			return fmt.Errorf("marketplace: tombstone channel key %d: %w", keys[i].ID, err)
+		}
+	}
+	return nil
+}
+
 // MirrorListingDelete applies the shadow side of a removed listing: the
 // channel's credentials are soft-deleted (historical requests keep resolvable
 // key ids), its models are disabled, and the channel is marked deleted. The
@@ -560,8 +603,8 @@ func MirrorListingDelete(db *gorm.DB, listingID int64) error {
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
 		if tx.Migrator().HasTable(&ChannelKey{}) {
-			if err := tx.Where("channel_id = ?", listingID).Delete(&ChannelKey{}).Error; err != nil {
-				return fmt.Errorf("marketplace: mirror delete channel keys %d: %w", listingID, err)
+			if err := tombstoneChannelKeysTx(tx, listingID, time.Now()); err != nil {
+				return err
 			}
 		}
 		if tx.Migrator().HasTable(&SellerChannelModel{}) {

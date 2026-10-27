@@ -47,6 +47,7 @@ func TestMigrateCreatesTables(t *testing.T) {
 		"mp_channel_keys",
 		"mp_seller_channel_models",
 		"mp_multiplier_changes",
+		"mp_listing_audit",
 	}
 	var tables []string
 	switch db.Dialector.Name() {

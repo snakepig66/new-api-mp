@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 
@@ -25,6 +26,10 @@ var (
 	ErrInvalidTransition = errors.New("marketplace: invalid listing status transition")
 	ErrMultiplierTooSoon = errors.New("marketplace: multiplier was changed less than 10 minutes ago")
 	ErrListingNotFound   = errors.New("marketplace: listing not found")
+	// ErrKeyBannedDeleted marks a key whose earlier listing was banned and then
+	// deleted. The ban follows the fingerprint, so the key can never be
+	// re-listed under a new channel.
+	ErrKeyBannedDeleted = errors.New("marketplace: this key was banned and cannot be listed again")
 	// ErrListingGroupNotFound is returned when a group-scoped operation names a
 	// group that does not exist or is not owned by the caller.
 	ErrListingGroupNotFound = errors.New("marketplace: listing group not found")
@@ -140,6 +145,19 @@ func duplicateListingForKey(db *gorm.DB, fingerprint string, sellerID, excludeID
 		}
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// A banned key keeps its ban across deletion: the fingerprint moves to
+		// deleted_fingerprint, and it can never be re-listed. A normally
+		// deleted key is released and may be listed again.
+		var banned Listing
+		berr := db.Select("id").
+			Where("deleted_fingerprint = ? AND deleted_banned = ?", fingerprint, true).
+			Take(&banned).Error
+		if berr == nil {
+			return ErrKeyBannedDeleted
+		}
+		if !errors.Is(berr, gorm.ErrRecordNotFound) {
+			return berr
+		}
 		return nil
 	}
 	return err
@@ -169,6 +187,8 @@ type CreateListingInput struct {
 	RPM             int      // 0 = unlimited
 	DailyCapMicro   int64    // 0 = unlimited
 	Hours           string   // JSON windows; empty = all day
+	// Label is the seller's optional channel name (≤64 chars).
+	Label string
 	// PlanTermsAccepted is the seller's explicit acknowledgement that a plan
 	// channel's terms allow sharing (required for kind=plan, §4).
 	PlanTermsAccepted bool
@@ -394,6 +414,10 @@ func dedupModels(models []string) []string {
 // unlisted is created in pending_review instead of draft, so no automated
 // verification can promote it.
 func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
+	label, err := validateListingLabel(in.Label)
+	if err != nil {
+		return Listing{}, err
+	}
 	// A custom upstream is classified by the trust pool before any channel row
 	// is provisioned: blocked addresses are refused, watch/unlisted addresses
 	// may be listed but stay in pending_review until an operator approves them,
@@ -434,7 +458,7 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 	if !ok {
 		return Listing{}, fmt.Errorf("%w: %q", ErrVendorNotWhitelisted, in.VendorID)
 	}
-	vendor, err := in.validate(vendor)
+	vendor, err = in.validate(vendor)
 	if err != nil {
 		return Listing{}, err
 	}
@@ -601,6 +625,7 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 			RPMLimit:         in.RPM,
 			DailyCapMicro:    in.DailyCapMicro,
 			Hours:            strings.TrimSpace(in.Hours),
+			Label:            label,
 			Status:           status,
 			KeyFingerprint:   fingerprint,
 			KeyCiphertext:    ciphertext,
@@ -980,6 +1005,210 @@ func BanListing(db *gorm.DB, id int64) error {
 		[]string{ListingLive, ListingPaused, ListingCanary, ListingVerifying, ListingPendingReview}, ListingBanned)
 }
 
+// writeListingAuditTx appends one audit row inside the caller's transaction.
+func writeListingAuditTx(tx *gorm.DB, listingID, actorID int64, action string, detail map[string]any) error {
+	raw, err := common.Marshal(detail)
+	if err != nil {
+		raw = []byte("{}")
+	}
+	return tx.Create(&ListingAudit{
+		ListingID: listingID,
+		ActorID:   actorID,
+		Action:    action,
+		Detail:    string(raw),
+	}).Error
+}
+
+// writeListingAuditLogged is the best-effort form for actions whose main write
+// already committed. An audit failure is logged, never surfaced to the seller.
+func writeListingAuditLogged(db *gorm.DB, listingID, actorID int64, action string, detail map[string]any) {
+	if err := writeListingAuditTx(db, listingID, actorID, action, detail); err != nil {
+		common.SysError(common.LogText("marketplace: listing %d audit %s: %s", listingID, action, err.Error()))
+	}
+}
+
+// DeleteListingForSeller soft-deletes one listing owned by sellerID. The key
+// fingerprint moves to deleted_fingerprint and key_fingerprint becomes a
+// unique per-row tombstone, freeing the unique value for a legitimate
+// re-listing. The ciphertext is deliberately kept for 15 minutes so an
+// in-flight request can still finish; a background job wipes it afterwards.
+func DeleteListingForSeller(db *gorm.DB, id, sellerID int64, now time.Time) (Listing, error) {
+	var out Listing
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var row Listing
+		if err := lockForUpdate(tx).Where("id = ?", id).First(&row).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrListingNotFound
+			}
+			return err
+		}
+		if row.SellerID != sellerID {
+			return ErrListingNotFound
+		}
+		if row.Status == ListingDeleted {
+			out = row
+			return nil
+		}
+		tombstone := fmt.Sprintf("deleted:%d", row.ID)
+		wipeAt := now.Add(15 * time.Minute)
+		res := tx.Model(&Listing{}).
+			Where("id = ? AND version = ?", id, row.Version).
+			Updates(map[string]any{
+				"deleted_fingerprint":        row.KeyFingerprint,
+				"key_fingerprint":            tombstone,
+				"deleted_banned":             row.Status == ListingBanned,
+				"status":                     ListingDeleted,
+				"deleted_at":                 now,
+				"key_wipe_at":                wipeAt,
+				"pending_headers_ciphertext": nil,
+				"pending_headers_version":    0,
+				"pending_headers_at":         nil,
+				"version":                    row.Version + 1,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return fmt.Errorf("marketplace: listing %d was modified concurrently", id)
+		}
+		if err := tx.Model(&ListingModel{}).
+			Where("listing_id = ?", id).
+			Updates(map[string]any{
+				"pending_multiplier_milli": 0,
+				"pending_effective_at":     nil,
+			}).Error; err != nil {
+			return err
+		}
+		// Free the shadow key's unique fingerprint in the same transaction so a
+		// concurrent re-listing cannot collide with a soft-deleted row.
+		if tx.Migrator().HasTable(&ChannelKey{}) {
+			if err := tombstoneChannelKeysTx(tx, id, now); err != nil {
+				return err
+			}
+		}
+		if err := writeListingAuditTx(tx, id, sellerID, ListingAuditDelete, map[string]any{
+			"previous_status": row.Status,
+			"banned":          row.Status == ListingBanned,
+			"key_wipe_at":     wipeAt,
+		}); err != nil {
+			return err
+		}
+		return tx.Where("id = ?", id).First(&out).Error
+	})
+	if err != nil {
+		return Listing{}, err
+	}
+	return out, nil
+}
+
+// WipeDeletedListingKeys clears the ciphertext of deleted listings whose
+// grace period has elapsed. It is safe to run repeatedly and returns the
+// number of rows wiped.
+func WipeDeletedListingKeys(db *gorm.DB, now time.Time) (int64, error) {
+	if db == nil {
+		return 0, nil
+	}
+	res := db.Model(&Listing{}).
+		Where("status = ? AND key_wipe_at IS NOT NULL AND key_wipe_at <= ? AND key_ciphertext IS NOT NULL",
+			ListingDeleted, now).
+		Update("key_ciphertext", nil)
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
+// UpdateListingSettingsInput carries the mutable listing-level settings. Nil
+// pointers mean "leave unchanged", so the drawer can submit only dirty fields.
+type UpdateListingSettingsInput struct {
+	Label            *string
+	ConcurrencyLimit *int
+	RPMLimit         *int
+	DailyCapMicro    *int64
+	Hours            *string
+}
+
+// UpdateListingSettings applies the mutable listing-level settings of one
+// seller-owned listing. The version column is the optimistic-lock backstop.
+func UpdateListingSettings(db *gorm.DB, id, sellerID int64, in UpdateListingSettingsInput, now time.Time) (Listing, error) {
+	updates := map[string]any{}
+	audit := map[string]any{}
+	if in.Label != nil {
+		label, err := validateListingLabel(*in.Label)
+		if err != nil {
+			return Listing{}, err
+		}
+		updates["label"] = label
+		audit["label"] = label
+	}
+	if in.ConcurrencyLimit != nil {
+		if *in.ConcurrencyLimit < 1 {
+			return Listing{}, errors.New("marketplace: concurrency_limit must be >= 1")
+		}
+		updates["concurrency_limit"] = *in.ConcurrencyLimit
+		audit["concurrency_limit"] = *in.ConcurrencyLimit
+	}
+	if in.RPMLimit != nil {
+		if *in.RPMLimit < 0 {
+			return Listing{}, errors.New("marketplace: rpm_limit must be >= 0")
+		}
+		updates["rpm_limit"] = *in.RPMLimit
+		audit["rpm_limit"] = *in.RPMLimit
+	}
+	if in.DailyCapMicro != nil {
+		if *in.DailyCapMicro < 0 {
+			return Listing{}, errors.New("marketplace: daily_cap_micro must be >= 0")
+		}
+		updates["daily_cap_micro"] = *in.DailyCapMicro
+		audit["daily_cap_micro"] = *in.DailyCapMicro
+	}
+	if in.Hours != nil {
+		hours := strings.TrimSpace(*in.Hours)
+		if err := ValidateHours(hours); err != nil {
+			return Listing{}, err
+		}
+		updates["hours"] = hours
+		audit["hours"] = hours
+	}
+	if len(updates) == 0 {
+		return GetListingForSeller(db, id, sellerID)
+	}
+	var out Listing
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var row Listing
+		if err := lockForUpdate(tx).Where("id = ?", id).First(&row).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrListingNotFound
+			}
+			return err
+		}
+		if row.SellerID != sellerID || row.Status == ListingDeleted {
+			return ErrListingNotFound
+		}
+		if row.Status == ListingBanned {
+			return fmt.Errorf("%w: banned listing cannot be edited", ErrInvalidTransition)
+		}
+		updates["version"] = row.Version + 1
+		res := tx.Model(&Listing{}).Where("id = ? AND version = ?", id, row.Version).Updates(updates)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return fmt.Errorf("marketplace: listing %d was modified concurrently", id)
+		}
+		if err := writeListingAuditTx(tx, id, sellerID, ListingAuditUpdateLimits, audit); err != nil {
+			return err
+		}
+		return tx.Where("id = ?", id).First(&out).Error
+	})
+	if err != nil {
+		return Listing{}, err
+	}
+	mirrorListingUpdateLogged(db, id)
+	resetBuyerModelVisibilityCache()
+	return out, nil
+}
+
 // UpdateMultiplier changes the listing's 倍率 (§3.5): it never re-verifies
 // the key, two changes must be at least 10 minutes apart (measured on
 // MultiplierUpdatedAt), and the new value affects only new requests. The
@@ -1103,6 +1332,22 @@ type hourWindow struct {
 	End   string `json:"end"`
 }
 
+// validateListingLabel trims and validates the optional seller-facing channel
+// name. It rejects control characters so the label is safe in the console and
+// in logs.
+func validateListingLabel(label string) (string, error) {
+	label = strings.TrimSpace(label)
+	if utf8.RuneCountInString(label) > 64 {
+		return "", errors.New("marketplace: label must be at most 64 characters")
+	}
+	for _, r := range label {
+		if r < 0x20 || r == 0x7f {
+			return "", errors.New("marketplace: label contains control characters")
+		}
+	}
+	return label, nil
+}
+
 // ValidateHours checks the listing's 可接单时段 (§3.5): an empty string means
 // all day; otherwise it must be a JSON array of {"start","end"} windows in
 // zero-padded 24h HH:MM form with start strictly before end.
@@ -1170,7 +1415,8 @@ func GetListing(db *gorm.DB, id int64) (Listing, error) {
 // (ErrListingNotFound), so sellers cannot probe foreign listing ids.
 func GetListingForSeller(db *gorm.DB, id, sellerID int64) (Listing, error) {
 	var row Listing
-	if err := db.Where("id = ? AND seller_id = ?", id, sellerID).First(&row).Error; err != nil {
+	if err := db.Where("id = ? AND seller_id = ? AND status <> ?", id, sellerID, ListingDeleted).
+		First(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return Listing{}, ErrListingNotFound
 		}
@@ -1179,10 +1425,12 @@ func GetListingForSeller(db *gorm.DB, id, sellerID int64) (Listing, error) {
 	return row, nil
 }
 
-// ListListingsBySeller returns all of one seller's listings, oldest first.
+// ListListingsBySeller returns all of one seller's live (not soft-deleted)
+// listings, oldest first.
 func ListListingsBySeller(db *gorm.DB, sellerID int64) ([]Listing, error) {
 	var rows []Listing
-	if err := db.Where("seller_id = ?", sellerID).Order("id ASC").Find(&rows).Error; err != nil {
+	if err := db.Where("seller_id = ? AND status <> ?", sellerID, ListingDeleted).
+		Order("id ASC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	return rows, nil

@@ -38,6 +38,10 @@ const (
 	// jobPlanWindowInterval is the plan quota-window resume scan cadence
 	// (MODEL-CHANNEL-POOL §4: 窗口重置后自动恢复).
 	jobPlanWindowInterval = time.Minute
+	// jobKeyWipeInterval is the soft-delete ciphertext wipe cadence. The
+	// deletion itself keeps the key for 15 minutes so in-flight requests can
+	// finish; this job only clears rows whose key_wipe_at has passed.
+	jobKeyWipeInterval = time.Minute
 	// jobOpsMetricsInterval is the derived-metrics aggregation cadence (P5):
 	// one run per hour bucket, matching opsMetricBucket.
 	jobOpsMetricsInterval = time.Hour
@@ -102,6 +106,18 @@ func StartJobs(db *gorm.DB, stop <-chan struct{}) {
 		}
 		if n > 0 {
 			common.SysLog(common.LogText("marketplace: plan-window-resume job: resumed %d listings", n))
+		}
+	})
+	// Soft-deleted listings keep their ciphertext for a short grace period so
+	// an in-flight request can still decrypt it. This job wipes it afterwards.
+	go runJobLoop("key-wipe", jobKeyWipeInterval, stop, func() {
+		n, err := WipeDeletedListingKeys(db, time.Now())
+		if err != nil {
+			common.SysError(common.LogText("marketplace: key-wipe job: %s", err.Error()))
+			return
+		}
+		if n > 0 {
+			common.SysLog(common.LogText("marketplace: key-wipe job: wiped %d deleted keys", n))
 		}
 	})
 	// P5 derived metrics: aggregate the previous hour's request-derived metrics
