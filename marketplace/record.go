@@ -17,6 +17,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -248,6 +249,10 @@ func SettleRelay(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage
 		return 0
 	}
 	s.mu.Unlock()
+
+	// Snapshot the per-attempt facts the record keeps (time to first byte,
+	// streaming mode, token group) before the row is written.
+	s.captureRelayInfo(info)
 
 	db, cal := relayState()
 	// The buyer's protocol is fixed for the whole retry chain by BeginDistribute
@@ -552,6 +557,7 @@ func FailRelay(c *gin.Context, info *relaycommon.RelayInfo) {
 	s.mu.Lock()
 	s.failed = true
 	s.mu.Unlock()
+	s.captureRelayInfo(info)
 	if info != nil && info.LastError != nil {
 		s.addHop(HopEventError, fmt.Sprintf("status=%d code=%s", info.LastError.StatusCode, info.LastError.GetErrorCode()))
 	}
@@ -621,10 +627,23 @@ func (s *RelaySession) insertRecord(c *gin.Context, db *gorm.DB, u marketplaceUs
 	frozenModelMultiplier := s.preFreeze.ModelMultiplierMilli
 	listing := s.listing
 	startedAt := s.startedAt
+	firstTokenMs := s.firstTokenMs
+	isStream := s.isStream
+	tokenGroup := s.tokenGroup
+	buyerTokenID := s.tokenID
 	s.mu.Unlock()
 	latencyMs := int64(0)
 	if !startedAt.IsZero() {
 		latencyMs = time.Since(startedAt).Milliseconds()
+	}
+	if tokenGroup == "" && buyerTokenID > 0 {
+		// A relay path that never built a RelayInfo (early exit) still records
+		// the group the buyer's token carried at request time.
+		var group string
+		if err := db.Model(&model.Token{}).Where("id = ?", buyerTokenID).
+			Pluck("group", &group).Error; err == nil {
+			tokenGroup = group
+		}
 	}
 
 	hops, merr := common.Marshal(s.HopEvents())
@@ -681,6 +700,9 @@ func (s *RelaySession) insertRecord(c *gin.Context, db *gorm.DB, u marketplaceUs
 		Status:                  status,
 		RetryChain:              string(hops),
 		LatencyMs:               latencyMs,
+		FirstTokenMs:            firstTokenMs,
+		IsStream:                isStream,
+		TokenGroup:              tokenGroup,
 	}
 	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rec).Error
 }
