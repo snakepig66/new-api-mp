@@ -244,12 +244,10 @@ function RecordRow({ row }: { row: UsageRow }) {
         <TierBadge tier={row.tier} />
       </TableCell>
       <TableCell numeric>
-        <div className="text-[13px]">
-          {page.tokens.input(formatCount(row.inputTokens))}
-          {' · '}
-          {page.tokens.output(formatCount(row.outputTokens))}
+        <div className="text-[13px] tabular-nums">
+          {page.tokens.pair(formatCount(row.inputTokens), formatCount(row.outputTokens))}
         </div>
-        <div className="text-[13px] text-ink-3">
+        <div className="text-[13px] tabular-nums text-ink-3">
           {page.tokens.cache(formatCount(row.cacheReadTokens))}
         </div>
       </TableCell>

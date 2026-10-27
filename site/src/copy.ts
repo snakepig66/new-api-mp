@@ -1406,7 +1406,8 @@ console.log(response.choices[0].message.content)
       tokens: {
         input: (value: string) => `入 ${value}`,
         output: (value: string) => `出 ${value}`,
-        cache: (value: string) => `缓存 ${value}`,
+        cache: (value: string) => `缓存↓ ${value}`,
+        pair: (input: string, output: string) => `${input} / ${output}`,
       },
       status: {
         success: '成功',

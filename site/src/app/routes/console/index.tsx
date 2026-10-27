@@ -253,11 +253,15 @@ function ConsoleOverviewPage() {
                       <SellerId id={row.sellerId} />
                     </TableCell>
                     <TableCell numeric>
-                      <span className="text-[13px]">
-                        {copy.pages.consoleRecords.tokens.input(formatCount(row.inputTokens))}
-                        {' · '}
-                        {copy.pages.consoleRecords.tokens.output(formatCount(row.outputTokens))}
-                      </span>
+                      <div className="text-[13px] tabular-nums">
+                        {copy.pages.consoleRecords.tokens.pair(
+                          formatCount(row.inputTokens),
+                          formatCount(row.outputTokens)
+                        )}
+                      </div>
+                      <div className="text-[13px] tabular-nums text-ink-3">
+                        {copy.pages.consoleRecords.tokens.cache(formatCount(row.cacheReadTokens))}
+                      </div>
                     </TableCell>
                     <TableCell numeric>{formatYuan(row.totalDebitMicro)}</TableCell>
                     <TableCell numeric className="text-brand-ink">
