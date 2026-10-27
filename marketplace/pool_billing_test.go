@@ -86,7 +86,7 @@ func TestSelectorOfficialOnly(t *testing.T) {
 		VendorID:        "volcengine-ark-coding-plan",
 		APIKey:          uniqueTestKey("sk-selector-plan"),
 		Models:          []string{"deepseek-v4-pro"},
-		MultiplierMilli: 1, // cheapest, would win without the switch
+		MultiplierMilli: 300, // cheapest allowed, would win without the switch
 		// Plan channels require the shared-terms acknowledgement (§4).
 		PlanTermsAccepted: true,
 	})
@@ -105,10 +105,16 @@ func TestSelectorOfficialOnly(t *testing.T) {
 		VendorID:        "deepseek",
 		APIKey:          uniqueTestKey("sk-selector-official-pro"),
 		Models:          []string{"deepseek-v4-pro"},
-		MultiplierMilli: 10,
+		MultiplierMilli: 300,
 	})
 	require.NoError(t, err)
 	require.NoError(t, db.Model(&Listing{}).Where("id = ?", officialPro.ID).Update("status", ListingLive).Error)
+	// Make the second official listing the cheaper one so the assertion proves
+	// the official-only filter, not a tie-break by id.
+	require.NoError(t, db.Model(&Listing{}).Where("id = ?", official.ID).
+		Update("multiplier_milli", 500).Error)
+	require.NoError(t, db.Model(&ListingModel{}).Where("listing_id = ?", official.ID).
+		Update("multiplier_milli", 500).Error)
 
 	got, _, err := NewSelector().SelectWithProbe(db, SelectInput{Model: "deepseek-v4-pro", OfficialOnly: true})
 	require.NoError(t, err)

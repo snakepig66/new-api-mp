@@ -1217,7 +1217,20 @@ func UpdateMultiplier(db *gorm.DB, id int64, milli int64, now time.Time) error {
 		if res.RowsAffected != 1 {
 			return fmt.Errorf("marketplace: listing %d was modified concurrently", id)
 		}
-		return nil
+		// Per-model rows inherit the listing default until a model is priced
+		// separately. Keep the inherited rows in step, otherwise a legacy
+		// listing-level price edit would have no effect on quote or selection.
+		// Rows with an explicit price keep it, and any staged candidate on an
+		// inherited row is superseded by this immediate edit.
+		return tx.Model(&ListingModel{}).
+			Where("listing_id = ? AND multiplier_milli = ?", id, row.MultiplierMilli).
+			Updates(map[string]any{
+				"multiplier_milli":         milli,
+				"pending_multiplier_milli": 0,
+				"pending_effective_at":     nil,
+				"last_changed_at":          now,
+				"last_changed_date":        shanghaiDate(now),
+			}).Error
 	})
 	if err != nil {
 		return err

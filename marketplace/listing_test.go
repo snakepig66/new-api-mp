@@ -587,6 +587,37 @@ func TestReplaceKey(t *testing.T) {
 	assert.ErrorIs(t, ReplaceKey(db, 999999, newKey), ErrListingNotFound)
 }
 
+// TestUpdateListingMultiplierPropagatesInheritedRows locks the legacy
+// listing-level price edit: rows that still carry the listing default follow
+// the new value, while a separately priced model keeps its explicit price.
+func TestUpdateListingMultiplierPropagatesInheritedRows(t *testing.T) {
+	db := newListingTestDB(t)
+	listing := createTestListing(t, db, 10023, uniqueTestKey("sk-multiplier-inherit"))
+	require.NoError(t, db.Model(&ListingModel{}).
+		Where("listing_id = ? AND model = ?", listing.ID, "deepseek-v4-pro").
+		Updates(map[string]any{
+			"multiplier_milli":         600,
+			"pending_multiplier_milli": 650,
+			"last_changed_date":        "2026-01-01",
+		}).Error)
+
+	require.NoError(t, UpdateMultiplier(db, listing.ID, 450, time.Now()))
+
+	var rows []ListingModel
+	require.NoError(t, db.Where("listing_id = ?", listing.ID).Find(&rows).Error)
+	require.Len(t, rows, 2)
+	for _, row := range rows {
+		switch row.Model {
+		case "deepseek-flash":
+			assert.Equal(t, int64(450), row.MultiplierMilli)
+			assert.Zero(t, row.PendingMultiplierMilli, "an immediate edit supersedes a staged candidate")
+		case "deepseek-v4-pro":
+			assert.Equal(t, int64(600), row.MultiplierMilli, "an explicit per-model price is preserved")
+			assert.Equal(t, int64(650), row.PendingMultiplierMilli)
+		}
+	}
+}
+
 func mustDecrypt(t *testing.T, row Listing) string {
 	t.Helper()
 	plain, err := DecryptListingKey(row.KeyCiphertext)
