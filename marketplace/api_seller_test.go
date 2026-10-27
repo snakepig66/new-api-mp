@@ -1136,3 +1136,76 @@ func TestSellerVerifyListingAllowsTrustedChannels(t *testing.T) {
 		}, 5*time.Second, 10*time.Millisecond)
 	})
 }
+
+// TestSellerGroupAndModelMultiplier covers the P4 seller endpoints: groups are
+// listed with their keys, the group settings are editable, a listing detail
+// carries the group and per-model table, and the per-model multiplier is
+// ownership-checked.
+func TestSellerGroupAndModelMultiplier(t *testing.T) {
+	f := newSellerAPIFixture(t)
+	listing, err := CreateListing(f.db, CreateListingInput{
+		SellerID:        f.sellerID,
+		VendorID:        SeedVendorDeepSeek,
+		APIKey:          uniqueTestKey("sk-seller-group"),
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 300,
+	})
+	require.NoError(t, err)
+	require.NotZero(t, listing.GroupID)
+
+	modelPath := "/api/marketplace/seller/listings/" + strconv.FormatInt(listing.ID, 10) +
+		"/models/deepseek-flash/multiplier"
+
+	// A stranger cannot change the listing.
+	w := f.do(t, http.MethodPut, modelPath, map[string]any{"multiplier_milli": 450}, int(f.stranger))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	w = f.do(t, http.MethodPut, modelPath, map[string]any{"multiplier_milli": 450}, int(f.sellerID))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var row ListingModel
+	require.NoError(t, f.db.Where("listing_id = ? AND model = ?", listing.ID, "deepseek-flash").Take(&row).Error)
+	assert.Equal(t, int64(450), row.MultiplierMilli)
+
+	// Detail carries the group and the per-model table.
+	w = f.do(t, http.MethodGet, "/api/marketplace/seller/listings/"+strconv.FormatInt(listing.ID, 10),
+		nil, int(f.sellerID))
+	require.Equal(t, http.StatusOK, w.Code)
+	data, ok := decodeSellerBody(t, w)["data"].(map[string]any)
+	require.True(t, ok)
+	group, ok := data["group"].(map[string]any)
+	require.True(t, ok, "detail must include the group block")
+	assert.EqualValues(t, listing.GroupID, group["id"])
+	assert.EqualValues(t, 1, group["key_count"])
+	models, ok := data["model_multipliers"].([]any)
+	require.True(t, ok)
+	require.Len(t, models, 1)
+	assert.EqualValues(t, 450, models[0].(map[string]any)["multiplier_milli"])
+
+	// GET /seller/groups lists the group.
+	w = f.do(t, http.MethodGet, "/api/marketplace/seller/groups", nil, int(f.sellerID))
+	require.Equal(t, http.StatusOK, w.Code)
+	groups, ok := decodeSellerBody(t, w)["data"].([]any)
+	require.True(t, ok)
+	require.Len(t, groups, 1)
+	assert.EqualValues(t, listing.GroupID, groups[0].(map[string]any)["id"])
+
+	// PUT /seller/groups/:id updates the aggregate limits and strategy.
+	w = f.do(t, http.MethodPut, "/api/marketplace/seller/groups/"+strconv.FormatInt(listing.GroupID, 10),
+		map[string]any{
+			"key_strategy":                 KeyStrategyPrimaryBackup,
+			"affinity_enabled":             false,
+			"channel_concurrency_limit":    3,
+			"channel_rpm_limit":            120,
+			"channel_daily_cap_micro":      5_000_000,
+			"channel_cumulative_cap_micro": 50_000_000,
+		}, int(f.sellerID))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var groupRow ListingGroup
+	require.NoError(t, f.db.First(&groupRow, listing.GroupID).Error)
+	assert.Equal(t, KeyStrategyPrimaryBackup, groupRow.KeyStrategy)
+	assert.False(t, groupRow.AffinityEnabled)
+	assert.Equal(t, 3, groupRow.ChannelConcurrencyLimit)
+	assert.Equal(t, 120, groupRow.ChannelRPMLimit)
+	assert.Equal(t, int64(5_000_000), groupRow.ChannelDailyCapMicro)
+	assert.Equal(t, int64(50_000_000), groupRow.ChannelCumulativeCapMicro)
+}

@@ -819,3 +819,43 @@ func TestSettleRelayZeroOutputPerEndpoint(t *testing.T) {
 		})
 	}
 }
+
+// TestSettleRelayUsesModelMultiplier proves the per-model override drives the
+// pre-freeze, the charge and mp_requests.model_multiplier_milli, while the
+// listing base multiplier stays in mp_requests.multiplier_milli for audit.
+func TestSettleRelayUsesModelMultiplier(t *testing.T) {
+	f := newRelayFixture(t, 10_000_000)
+	l := f.addListing(t, 500)
+	require.NoError(t, f.db.Model(&ListingModel{}).
+		Where("listing_id = ? AND model = ?", l.ID, "deepseek-flash").
+		Update("multiplier_milli", 300).Error)
+	f.addKeyModel(t, 77, "deepseek-flash", 0)
+	c := f.newRelayContext(t, []byte(`{"model":"deepseek-flash","max_tokens":100}`))
+	_, handled, _, err := BeginDistribute(c, "deepseek-flash")
+	require.NoError(t, err)
+	require.True(t, handled)
+	maxTokens := uint(100)
+	info := newChatInfo("deepseek-flash", &maxTokens)
+	require.Nil(t, PrepareBilling(c, info, stubEstimator(1000)))
+
+	micro := SettleRelay(c, info, &dto.Usage{PromptTokens: 900, CompletionTokens: 80})
+	require.Greater(t, micro, 0)
+
+	s := CurrentRelaySession(c)
+	expected, err := Quote(f.db, f.cal, QuoteInput{
+		Model: "deepseek-flash", Vendor: l.Vendor,
+		MultiplierMilli: 500, ModelMultiplierMilli: 300, At: s.FreezeAt(),
+		InputTokens: 900, OutputTokens: 80,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int(expected.TotalDebit), micro)
+
+	var rec Request
+	require.NoError(t, f.db.Where("request_id = ?", s.RequestID()).Take(&rec).Error)
+	assert.Equal(t, int64(300), rec.ModelMultiplierMilli, "the record carries the multiplier actually charged")
+	assert.Equal(t, int64(500), rec.MultiplierMilli, "the listing base multiplier is kept for audit")
+
+	var credit LedgerEntry
+	require.NoError(t, f.db.Where("request_id = ? AND entry_type = ?", s.RequestID(), EntrySellerCredit).Take(&credit).Error)
+	assert.Equal(t, int64(300), credit.ModelMultiplierMilli)
+}

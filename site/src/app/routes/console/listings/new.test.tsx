@@ -83,6 +83,9 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
   if (url.startsWith('/api/marketplace/seller/common-addresses')) {
     return jsonResponse({ success: true, data: commonAddresses })
   }
+  if (url.startsWith('/api/marketplace/seller/groups')) {
+    return jsonResponse({ success: true, data: [] })
+  }
   if (url.startsWith('/api/marketplace/status')) {
     return jsonResponse({
       success: true,
@@ -332,6 +335,34 @@ describe('new listing wizard: verification', () => {
       expect(body.models).toEqual(['deepseek-flash', 'deepseek-v4-pro'])
       expect(body.custom_base_url).toBe('https://unlisted.example.com/v1')
       expect(body.vendor_id).toBe('')
+    })
+  })
+
+  it('sends the group strategy and per-key weight for a multi-key create', async () => {
+    await fillAddressAndKeys(
+      'https://api.deepseek.com',
+      'sk-good-1111111111\nsk-good-2222222222',
+    )
+
+    expect(await screen.findByLabelText('第 1 个 Key 的权重')).toBeTruthy()
+    expect(screen.getByLabelText('第 2 个 Key 的权重')).toBeTruthy()
+
+    await advance(4)
+    await screen.findByRole('heading', { level: 2, name: '验真' })
+
+    fireEvent.click(await screen.findByRole('button', { name: '失败的保留为草稿' }))
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.filter(
+        ([url, init]) =>
+          String(url) === '/api/marketplace/seller/listings' && init?.method === 'POST',
+      )
+      expect(calls).toHaveLength(2)
+      for (const [, init] of calls) {
+        const body = JSON.parse(String(init?.body))
+        expect(body.key_strategy).toBe('weighted_round_robin')
+        expect(body.affinity_enabled).toBe(true)
+        expect(body.weight).toBe(100)
+      }
     })
   })
 })

@@ -21,10 +21,16 @@ import (
 // contains an API key, a key ciphertext or a full key fingerprint (§2.3);
 // the fingerprint's first 8 hex chars may identify a listing's key.
 var (
-	ErrDuplicateKey         = errors.New("marketplace: this api key is already listed")
-	ErrInvalidTransition    = errors.New("marketplace: invalid listing status transition")
-	ErrMultiplierTooSoon    = errors.New("marketplace: multiplier was changed less than 10 minutes ago")
-	ErrListingNotFound      = errors.New("marketplace: listing not found")
+	ErrDuplicateKey      = errors.New("marketplace: this api key is already listed")
+	ErrInvalidTransition = errors.New("marketplace: invalid listing status transition")
+	ErrMultiplierTooSoon = errors.New("marketplace: multiplier was changed less than 10 minutes ago")
+	ErrListingNotFound   = errors.New("marketplace: listing not found")
+	// ErrListingGroupNotFound is returned when a group-scoped operation names a
+	// group that does not exist or is not owned by the caller.
+	ErrListingGroupNotFound = errors.New("marketplace: listing group not found")
+	// ErrGroupKeyLimit is returned when a group already holds the maximum
+	// number of keys (§P4: 每个渠道最多 20 个 Key).
+	ErrGroupKeyLimit        = errors.New("marketplace: this channel already has the maximum number of keys")
 	ErrVendorNotWhitelisted = errors.New("marketplace: vendor is not whitelisted")
 	// ErrVendorKeyDenied refuses personal-plan credentials (OFFICIAL-CHANNELS §2).
 	ErrVendorKeyDenied = errors.New("marketplace: this key belongs to a personal plan")
@@ -146,6 +152,8 @@ const (
 	// multiplierMinInterval is the §3.5 cooldown between two multiplier
 	// changes; a change only affects new requests and never re-verifies.
 	multiplierMinInterval = 10 * time.Minute
+	// maxGroupKeys is the §P4 cap on keys (listings) in one channel group.
+	maxGroupKeys = 20
 )
 
 // CreateListingInput carries everything needed to open one listing (§3.5).
@@ -168,6 +176,141 @@ type CreateListingInput struct {
 	// is empty: the platform provisions a private channel row for the URL and
 	// derives the vendor id from it (custom_channel.go).
 	CustomBaseURL string
+	// KeyStrategy / Affinity configure the P4 listing group when this create
+	// request also creates it. Joining an existing group keeps that group's
+	// settings. Empty KeyStrategy defaults to weighted_round_robin and a nil
+	// Affinity defaults to true.
+	KeyStrategy string
+	Affinity    *bool
+	// Weight is this key's relative share inside a weighted_round_robin group
+	// (0 → 100).
+	Weight int
+}
+
+// normalizeKeyStrategy maps an arbitrary input onto the two supported group
+// strategies; an unknown or empty value falls back to weighted round robin.
+func normalizeKeyStrategy(strategy string) string {
+	switch strings.TrimSpace(strategy) {
+	case KeyStrategyPrimaryBackup:
+		return KeyStrategyPrimaryBackup
+	default:
+		return KeyStrategyWeightedRoundRobin
+	}
+}
+
+// ensureListingGroup returns the seller's group for vendor, creating it with
+// the supplied defaults when none exists. It runs outside the listing
+// transaction on purpose: a concurrent first-create that loses the unique
+// (seller, vendor) race can then re-read the winner instead of aborting the
+// caller's transaction (PostgreSQL marks a transaction failed after a
+// duplicate key). An occasionally empty group is harmless.
+func ensureListingGroup(db *gorm.DB, sellerID int64, vendor, strategy string, affinity bool) (ListingGroup, error) {
+	var group ListingGroup
+	err := db.Where("seller_id = ? AND vendor_slug = ?", sellerID, vendor).Take(&group).Error
+	if err == nil {
+		return group, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return ListingGroup{}, err
+	}
+	group = ListingGroup{
+		SellerID:        sellerID,
+		VendorSlug:      vendor,
+		KeyStrategy:     normalizeKeyStrategy(strategy),
+		AffinityEnabled: affinity,
+	}
+	if err := db.Create(&group).Error; err != nil {
+		if isDuplicateKeyError(err) {
+			if again := db.Where("seller_id = ? AND vendor_slug = ?", sellerID, vendor).Take(&group).Error; again == nil {
+				return group, nil
+			}
+		}
+		return ListingGroup{}, err
+	}
+	return group, nil
+}
+
+// UpdateListingGroup changes one group's routing strategy, affinity switch and
+// channel-level limits. All limits are non-negative; 0 means unlimited.
+func UpdateListingGroup(db *gorm.DB, id int64, keyStrategy string, affinity bool, concurrency, rpm int, dailyCap, cumulativeCap int64, now time.Time) error {
+	if concurrency < 0 || rpm < 0 || dailyCap < 0 || cumulativeCap < 0 {
+		return errors.New("marketplace: group limits must be >= 0")
+	}
+	// MySQL reports changed rows, not matched rows, so an idempotent update
+	// would otherwise look like a missing group.
+	var count int64
+	if err := db.Model(&ListingGroup{}).Where("id = ?", id).Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return ErrListingGroupNotFound
+	}
+	res := db.Model(&ListingGroup{}).Where("id = ?", id).Updates(map[string]any{
+		"key_strategy":                 normalizeKeyStrategy(keyStrategy),
+		"affinity_enabled":             affinity,
+		"channel_concurrency_limit":    concurrency,
+		"channel_rpm_limit":            rpm,
+		"channel_daily_cap_micro":      dailyCap,
+		"channel_cumulative_cap_micro": cumulativeCap,
+		"updated_at":                   now,
+	})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrListingGroupNotFound
+	}
+	return nil
+}
+
+// UpdateModelMultiplier sets one listing's multiplier for one model (§P4
+// 逐模型倍率). The change applies to new requests immediately (the simplified
+// P4 contract; no cooldown and no scheduled effective time). The model must be
+// part of the listing's model list.
+func UpdateModelMultiplier(db *gorm.DB, listingID int64, model string, milli int64, now time.Time) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return errors.New("marketplace: model is required")
+	}
+	if milli < 1 || milli > 1000 {
+		return fmt.Errorf("marketplace: multiplier must be 1..1000 milli, got %d", milli)
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		var listing Listing
+		if err := lockForUpdate(tx).Where("id = ?", listingID).First(&listing).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrListingNotFound
+			}
+			return err
+		}
+		if !slices.Contains(listing.Models, model) {
+			return fmt.Errorf("marketplace: model %q is not listed on listing %d", model, listingID)
+		}
+		var row ListingModel
+		err := tx.Where("listing_id = ? AND model = ?", listingID, model).Take(&row).Error
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			return tx.Create(&ListingModel{
+				ListingID:       listingID,
+				Model:           model,
+				MultiplierMilli: milli,
+				Enabled:         true,
+			}).Error
+		case err != nil:
+			return err
+		}
+		res := tx.Model(&ListingModel{}).
+			Where("id = ?", row.ID).
+			Updates(map[string]any{
+				"multiplier_milli": milli,
+				"enabled":          true,
+				"updated_at":       now,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		return nil
+	})
 }
 
 // validate checks every field that does not need the database. The vendor is
@@ -219,6 +362,9 @@ func (in CreateListingInput) validate(vendor Vendor) (Vendor, error) {
 	}
 	if in.RPM < 0 || in.DailyCapMicro < 0 {
 		return Vendor{}, errors.New("marketplace: rpm and daily cap must be >= 0")
+	}
+	if in.Weight < 0 || in.Weight > 10000 {
+		return Vendor{}, fmt.Errorf("marketplace: weight must be 0..10000, got %d", in.Weight)
 	}
 	if err := ValidateHours(in.Hours); err != nil {
 		return Vendor{}, err
@@ -333,11 +479,33 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 		return Listing{}, err
 	}
 
+	// P4: every listing of one seller on the same vendor joins that seller's
+	// group, so its key participates in the group's rotation and shares the
+	// channel-level limits. The group is created with this request's defaults
+	// when it does not exist yet.
+	affinity := true
+	if in.Affinity != nil {
+		affinity = *in.Affinity
+	}
+	group, err := ensureListingGroup(db, in.SellerID, vendor.ID, in.KeyStrategy, affinity)
+	if err != nil {
+		return Listing{}, fmt.Errorf("marketplace: resolve listing group: %w", err)
+	}
+
 	var listing Listing
 	err = db.Transaction(func(tx *gorm.DB) error {
 		if dup := duplicateListingForKey(tx, fingerprint, in.SellerID, 0); dup != nil {
 			// §2.3: the errors identify the key by the fingerprint prefix only.
 			return dup
+		}
+		// §P4: a channel holds at most 20 keys. The check is inside the create
+		// transaction; the cap is a product rule, not a DB constraint.
+		var groupKeys int64
+		if err := tx.Model(&Listing{}).Where("group_id = ?", group.ID).Count(&groupKeys).Error; err != nil {
+			return err
+		}
+		if groupKeys >= maxGroupKeys {
+			return fmt.Errorf("%w (group %d)", ErrGroupKeyLimit, group.ID)
 		}
 
 		// One listing = one upstream channel pinned to the vendor's fixed base
@@ -437,6 +605,8 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 			KeyFingerprint:   fingerprint,
 			KeyCiphertext:    ciphertext,
 			Version:          1,
+			GroupID:          group.ID,
+			Weight:           in.Weight,
 		}
 		if err := tx.Create(&listing).Error; err != nil {
 			// The unique index on key_fingerprint is the concurrency
@@ -444,6 +614,23 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 			// the caller re-resolves who owns the winning row after the
 			// transaction (a failed transaction cannot query on PostgreSQL).
 			return err
+		}
+		// P4 逐模型倍率: seed one row per listed model with the listing-level
+		// multiplier. The selector and the pricing path read these rows first
+		// and fall back to Listing.MultiplierMilli when a model has no row.
+		perModel := make([]ListingModel, 0, len(models))
+		for _, model := range models {
+			perModel = append(perModel, ListingModel{
+				ListingID:       listing.ID,
+				Model:           model,
+				MultiplierMilli: listing.MultiplierMilli,
+				Enabled:         true,
+			})
+		}
+		if len(perModel) > 0 {
+			if err := tx.Create(&perModel).Error; err != nil {
+				return fmt.Errorf("marketplace: create listing models: %w", err)
+			}
 		}
 		// P3a shadow double-write: the legacy listing stays authoritative, but
 		// the split tables are kept in sync so a later read-path switch has a

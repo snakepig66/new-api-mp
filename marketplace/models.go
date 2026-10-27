@@ -107,6 +107,13 @@ type Listing struct {
 	DailyCapMicro    int64    `gorm:"not null"`  // 0 = unlimited
 	Hours            string   `gorm:"type:text"` // JSON windows, empty = all day
 	Status           string   `gorm:"size:16;not null;index"`
+	// P4 group: listings of one seller on the same vendor share a group
+	// (mp_listing_groups) that aggregates the channel-level limits. 0 means the
+	// listing is not grouped (legacy rows and standalone fixtures).
+	GroupID int64 `gorm:"not null;default:0;index"`
+	// Weight is the relative share of this key inside a weighted_round_robin
+	// group. 0 is treated as 100, so the default is an even distribution.
+	Weight int `gorm:"not null;default:0"`
 	// PauseReason / ResumeAt / PreviousStatus carry a time-boxed suspension
 	// (MODEL-CHANNEL-POOL §4): a plan channel's quota window ran out, so every
 	// listing of that channel is paused until ResumeAt and then restored to
@@ -127,6 +134,48 @@ type Listing struct {
 }
 
 func (Listing) TableName() string { return "mp_listings" }
+
+// ListingGroup is the P4 simplified multi-key container: one seller's listings
+// on the same vendor share one group, so their keys rotate inside one logical
+// channel and share the channel-level limits. A listing still represents
+// exactly one key.
+//
+// Channel* limits are aggregate limits over every listing in the group:
+// 0 means unlimited. Concurrency and RPM are enforced by the selector's
+// process-local state; the daily and cumulative caps are computed from
+// mp_ledger.
+type ListingGroup struct {
+	ID          int64  `gorm:"primaryKey"`
+	SellerID    int64  `gorm:"not null;uniqueIndex:uk_mp_listing_groups_seller_vendor,priority:1"`
+	VendorSlug  string `gorm:"size:64;not null;uniqueIndex:uk_mp_listing_groups_seller_vendor,priority:2"`
+	KeyStrategy string `gorm:"size:32;not null;default:'weighted_round_robin'"`
+	// AffinityEnabled defaults to true in code (not a column default) so
+	// AutoMigrate stays stable across SQLite, MySQL and PostgreSQL.
+	AffinityEnabled           bool  `gorm:"not null"`
+	ChannelConcurrencyLimit   int   `gorm:"not null"`
+	ChannelRPMLimit           int   `gorm:"not null"`
+	ChannelDailyCapMicro      int64 `gorm:"not null"`
+	ChannelCumulativeCapMicro int64 `gorm:"not null"`
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+}
+
+func (ListingGroup) TableName() string { return "mp_listing_groups" }
+
+// ListingModel is one listing's per-model multiplier override. The selector
+// and the pricing path read it before falling back to Listing.MultiplierMilli;
+// a row with enabled=false is ignored, so the base multiplier applies again.
+type ListingModel struct {
+	ID              int64  `gorm:"primaryKey"`
+	ListingID       int64  `gorm:"not null;index;uniqueIndex:uk_mp_listing_models_listing_model,priority:1"`
+	Model           string `gorm:"size:128;not null;uniqueIndex:uk_mp_listing_models_listing_model,priority:2"`
+	MultiplierMilli int64  `gorm:"not null"`
+	Enabled         bool   `gorm:"not null"`
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+func (ListingModel) TableName() string { return "mp_listing_models" }
 
 // P3 extension: a listing is split into a seller channel with one or more
 // endpoints, keys and per-model rows. During P3a the old mp_listings tables

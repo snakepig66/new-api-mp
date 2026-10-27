@@ -87,12 +87,56 @@ export interface SellerListing {
   status: string
   key_fingerprint8: string
   created_at: string
+  /** P4 group id; 0 for a listing created before groups existed. */
+  group_id?: number
+  /** P4 key weight inside a weighted_round_robin group (0 = default 100). */
+  weight?: number
   /** Stored system pause reason (plan quota, patrol, migration) or "manual". */
   pause_reason?: string
   /** Time-boxed pause end (plan quota windows). */
   resume_at?: string
   /** Per-model outcome of the latest verify probe. */
   verification?: SellerVerification | null
+}
+
+/** P4: one key (listing) inside a group. */
+export interface SellerGroupSibling {
+  id: number
+  status: string
+  models: string[]
+  multiplier_milli: number
+  weight: number
+  key_fingerprint8: string
+}
+
+/** P4: one seller's multi-key channel group. */
+export interface SellerGroup {
+  id: number
+  vendor_slug: string
+  key_strategy: 'weighted_round_robin' | 'primary_backup'
+  affinity_enabled: boolean
+  channel_concurrency_limit: number
+  channel_rpm_limit: number
+  channel_daily_cap_micro: number | string
+  channel_cumulative_cap_micro: number | string
+  key_count: number
+  listings: SellerGroupSibling[]
+}
+
+/** P4: one listing's per-model multiplier row. */
+export interface SellerModelMultiplier {
+  model: string
+  multiplier_milli: number
+  enabled: boolean
+}
+
+export interface UpdateSellerGroupInput {
+  key_strategy: 'weighted_round_robin' | 'primary_backup'
+  affinity_enabled: boolean
+  channel_concurrency_limit: number
+  channel_rpm_limit: number
+  channel_daily_cap_micro: number
+  channel_cumulative_cap_micro: number
 }
 
 export interface SellerProbe {
@@ -106,6 +150,10 @@ export interface SellerProbe {
 
 export interface SellerListingDetail extends SellerListing {
   probes: SellerProbe[]
+  /** P4 group block with sibling keys; absent when the listing is ungrouped. */
+  group?: SellerGroup | null
+  /** P4 per-model multiplier table (fallback is multiplier_milli). */
+  model_multipliers?: SellerModelMultiplier[]
 }
 
 /** Newest patrol/verify probe summarised on a health card. */
@@ -144,6 +192,11 @@ export interface CreateListingInput {
   plan_terms_accepted?: boolean
   /** Seller-defined upstream URL; opens a private third-party channel. */
   custom_base_url?: string
+  /** P4 group settings, used when this create request creates the group. */
+  key_strategy?: 'weighted_round_robin' | 'primary_backup'
+  affinity_enabled?: boolean
+  /** P4 key weight inside a weighted_round_robin group. */
+  weight?: number
 }
 
 export interface CreateListingResponse {
@@ -430,8 +483,7 @@ export const sellerListingsQuery = () =>
 
 export const sellerListingsHealthQuery = () =>
   queryOptions({
-    queryKey: ['marketplace', 'seller', 'listings', 'health'],
-    queryFn: () => api.get<SellerListingHealth[]>(`${sellerBase}/listings/health`),
+    queryKey: ['marketplace', 'seller', 'listings', 'health'],    queryFn: () => api.get<SellerListingHealth[]>(`${sellerBase}/listings/health`),
     staleTime: 30_000,
     // The card is a live reading (today's rate/income + last probe); without a
     // poll an open tab keeps showing the values it loaded hours ago.
@@ -447,8 +499,15 @@ export const sellerListingDetailQuery = (id: number) =>
       query.state.data?.status === 'verifying' ? VERIFY_POLL_INTERVAL_MS : false,
   })
 
-export const sellerStatsQuery = () =>
+/** P4 groups of the current seller (one per vendor), with their sibling keys. */
+export const sellerGroupsQuery = () =>
   queryOptions({
+    queryKey: ['marketplace', 'seller', 'groups'],
+    queryFn: () => api.get<SellerGroup[]>(`${sellerBase}/groups`),
+    staleTime: 15_000,
+  })
+
+export const sellerStatsQuery = () =>  queryOptions({
     queryKey: ['marketplace', 'seller', 'stats'],
     queryFn: () => api.get<SellerStats>(`${sellerBase}/stats`),
     staleTime: 30_000,
@@ -523,6 +582,26 @@ export function updateListingMultiplier(
 
 export function replaceListingKey(id: number, apiKey: string): Promise<{ id: number; status: string }> {
   return api.post(`${sellerBase}/listings/${id}/key`, { api_key: apiKey })
+}
+
+/** P4: set one model's multiplier on a listing (applies immediately). */
+export function setListingModelMultiplier(
+  id: number,
+  model: string,
+  multiplierMilli: number,
+): Promise<{ listing_id: number; model: string; multiplier_milli: number }> {
+  return api.put(
+    `${sellerBase}/listings/${id}/models/${encodeURIComponent(model)}/multiplier`,
+    { multiplier_milli: multiplierMilli },
+  )
+}
+
+/** P4: update a group's routing strategy, affinity switch and channel limits. */
+export function updateListingGroup(
+  id: number,
+  input: UpdateSellerGroupInput,
+): Promise<SellerGroup> {
+  return api.put<SellerGroup>(`${sellerBase}/groups/${id}`, input)
 }
 
 /** Re-run verification for a draft (failed) listing. */

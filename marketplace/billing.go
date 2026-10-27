@@ -490,6 +490,45 @@ func PreFreezeQuote(db *gorm.DB, cal *Calendar, vendor, modelName string, multip
 	})
 }
 
+// listingModelMultiplier returns the enabled per-model multiplier of one
+// listing, or 0 when the model has no override (or the row is disabled). A row
+// with an out-of-range value is ignored so a corrupt override can never make
+// pricing reject every request.
+func listingModelMultiplier(db *gorm.DB, listingID int64, modelName string) int64 {
+	if db == nil || listingID <= 0 || strings.TrimSpace(modelName) == "" {
+		return 0
+	}
+	var row ListingModel
+	if err := db.Select("multiplier_milli").
+		Where("listing_id = ? AND model = ? AND enabled = ?", listingID, modelName, true).
+		Take(&row).Error; err != nil {
+		return 0
+	}
+	if row.MultiplierMilli < 1 || row.MultiplierMilli > 1000 {
+		return 0
+	}
+	return row.MultiplierMilli
+}
+
+// listingMultiplier resolves the multiplier a listing charges for one model:
+// the per-model override when present, otherwise the listing-level value.
+func listingMultiplier(db *gorm.DB, listing Listing, modelName string) int64 {
+	if milli := listingModelMultiplier(db, listing.ID, modelName); milli > 0 {
+		return milli
+	}
+	return listing.MultiplierMilli
+}
+
+// PreFreezeQuoteForListing is PreFreezeQuote with the P4 per-model multiplier
+// resolved for this listing's model. Every marketplace pre-freeze and retry
+// re-freeze goes through it so the frozen amount always matches the model
+// multiplier the buyer is actually charged.
+func PreFreezeQuoteForListing(db *gorm.DB, cal *Calendar, listing Listing, modelName string, estInputTokens, maxOutputTokens, searchCap, fetchCap int64, at time.Time) (QuoteResult, error) {
+	return PreFreezeQuote(db, cal, listing.Vendor, modelName,
+		listingMultiplier(db, listing, modelName),
+		estInputTokens, maxOutputTokens, searchCap, fetchCap, at)
+}
+
 // channelAllowsGift reports whether a listing's channel is an official
 // (platform-registered) channel, where gifted balance (redemption codes,
 // invitation transfers, admin grants) may be spent. Plan and seller-defined

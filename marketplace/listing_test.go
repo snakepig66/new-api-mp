@@ -912,3 +912,138 @@ func TestRefreshListingChannelMapping(t *testing.T) {
 	_, exists := mapping["deepseek-flash"]
 	assert.False(t, exists)
 }
+
+// TestCreateListingGroups proves the P4 simplified multi-key model: listings of
+// one seller on the same vendor share one group, a different vendor gets its
+// own group, and every create seeds the per-model multiplier rows.
+func TestCreateListingGroups(t *testing.T) {
+	db := newListingTestDB(t)
+
+	first, err := CreateListing(db, CreateListingInput{
+		SellerID:        10023,
+		VendorID:        SeedVendorDeepSeek,
+		APIKey:          uniqueTestKey("sk-group-a"),
+		Models:          []string{"deepseek-flash", "deepseek-v4-pro"},
+		MultiplierMilli: 300,
+		KeyStrategy:     KeyStrategyPrimaryBackup,
+		Weight:          250,
+	})
+	require.NoError(t, err)
+	require.NotZero(t, first.GroupID)
+
+	var group ListingGroup
+	require.NoError(t, db.First(&group, first.GroupID).Error)
+	assert.Equal(t, int64(10023), group.SellerID)
+	assert.Equal(t, SeedVendorDeepSeek, group.VendorSlug)
+	assert.Equal(t, KeyStrategyPrimaryBackup, group.KeyStrategy, "the creating request configures the group")
+	assert.True(t, group.AffinityEnabled, "affinity defaults to enabled")
+	assert.Zero(t, group.ChannelConcurrencyLimit)
+	assert.Zero(t, group.ChannelCumulativeCapMicro)
+	assert.Equal(t, 250, first.Weight)
+
+	var models []ListingModel
+	require.NoError(t, db.Where("listing_id = ?", first.ID).Order("model ASC").Find(&models).Error)
+	require.Len(t, models, 2)
+	for _, row := range models {
+		assert.Equal(t, int64(300), row.MultiplierMilli)
+		assert.True(t, row.Enabled)
+	}
+
+	// A second key from the same seller on the same vendor joins the group and
+	// keeps the group's existing strategy/affinity.
+	second, err := CreateListing(db, CreateListingInput{
+		SellerID:        10023,
+		VendorID:        SeedVendorDeepSeek,
+		APIKey:          uniqueTestKey("sk-group-b"),
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 400,
+		KeyStrategy:     KeyStrategyWeightedRoundRobin,
+		Weight:          100,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, first.GroupID, second.GroupID, "same seller + vendor joins the existing group")
+	require.NoError(t, db.First(&group, first.GroupID).Error)
+	assert.Equal(t, KeyStrategyPrimaryBackup, group.KeyStrategy, "joining does not rewrite the group")
+
+	var groupCount int64
+	require.NoError(t, db.Model(&ListingGroup{}).Where("seller_id = ?", 10023).Count(&groupCount).Error)
+	assert.EqualValues(t, 1, groupCount)
+
+	// A different vendor gets a second, independent group.
+	third, err := CreateListing(db, CreateListingInput{
+		SellerID:        10023,
+		VendorID:        "moonshot",
+		APIKey:          uniqueTestKey("sk-group-c"),
+		Models:          []string{"kimi-k3"},
+		MultiplierMilli: 500,
+	})
+	require.NoError(t, err)
+	assert.NotEqual(t, first.GroupID, third.GroupID)
+	require.NoError(t, db.Model(&ListingGroup{}).Where("seller_id = ?", 10023).Count(&groupCount).Error)
+	assert.EqualValues(t, 2, groupCount)
+}
+
+// TestUpdateModelMultiplier proves the per-model override is created or
+// updated, stays scoped to the listing, and rejects a model the listing does
+// not serve.
+func TestUpdateModelMultiplier(t *testing.T) {
+	db := newListingTestDB(t)
+	listing := createTestListing(t, db, 10023, uniqueTestKey("sk-model-mult"))
+
+	now := time.Now()
+	require.NoError(t, UpdateModelMultiplier(db, listing.ID, "deepseek-flash", 450, now))
+
+	var row ListingModel
+	require.NoError(t, db.Where("listing_id = ? AND model = ?", listing.ID, "deepseek-flash").Take(&row).Error)
+	assert.Equal(t, int64(450), row.MultiplierMilli)
+	assert.True(t, row.Enabled)
+
+	// A second edit updates the same row instead of adding another.
+	require.NoError(t, UpdateModelMultiplier(db, listing.ID, "deepseek-flash", 350, now))
+	var count int64
+	require.NoError(t, db.Model(&ListingModel{}).
+		Where("listing_id = ? AND model = ?", listing.ID, "deepseek-flash").Count(&count).Error)
+	assert.EqualValues(t, 1, count)
+	require.NoError(t, db.Where("listing_id = ? AND model = ?", listing.ID, "deepseek-flash").Take(&row).Error)
+	assert.Equal(t, int64(350), row.MultiplierMilli)
+
+	assert.Error(t, UpdateModelMultiplier(db, listing.ID, "not-a-model", 500, now))
+	assert.Error(t, UpdateModelMultiplier(db, listing.ID, "deepseek-flash", 1001, now))
+	assert.ErrorIs(t, UpdateModelMultiplier(db, 999999, "deepseek-flash", 500, now), ErrListingNotFound)
+}
+
+// TestCreateListingGroupKeyCap proves one channel group holds at most 20 keys.
+func TestCreateListingGroupKeyCap(t *testing.T) {
+	db := newListingTestDB(t)
+	group := ListingGroup{
+		SellerID:        10023,
+		VendorSlug:      SeedVendorDeepSeek,
+		KeyStrategy:     KeyStrategyWeightedRoundRobin,
+		AffinityEnabled: true,
+	}
+	require.NoError(t, db.Create(&group).Error)
+	// Fill the group directly; the cap only counts rows, so no channel or key
+	// material is needed for the fixture.
+	for i := range maxGroupKeys {
+		require.NoError(t, db.Create(&Listing{
+			SellerID:        10023,
+			ChannelID:       int64(i + 1),
+			Vendor:          SeedVendorDeepSeek,
+			Models:          []string{"deepseek-flash"},
+			MultiplierMilli: 300,
+			Status:          ListingLive,
+			KeyFingerprint:  uniqueTestKey("sk-cap"),
+			Version:         1,
+			GroupID:         group.ID,
+		}).Error)
+	}
+
+	_, err := CreateListing(db, CreateListingInput{
+		SellerID:        10023,
+		VendorID:        SeedVendorDeepSeek,
+		APIKey:          uniqueTestKey("sk-over-cap"),
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 300,
+	})
+	assert.ErrorIs(t, err, ErrGroupKeyLimit)
+}

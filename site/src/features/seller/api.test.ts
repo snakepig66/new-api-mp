@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { queryClient } from '@/lib/query-client'
 
@@ -6,6 +6,8 @@ import {
   normalizePayout,
   sellerChannelKind,
   sellerCommonAddressesQuery,
+  sellerGroupsQuery,
+  setListingModelMultiplier,
   VERIFY_POLL_INTERVAL_MS,
   verifyingRefetchInterval,
   vendorName,
@@ -29,6 +31,7 @@ const deepseek: SellerVendor = {
 
 afterEach(() => {
   queryClient.clear()
+  vi.unstubAllGlobals()
 })
 
 describe('normalizePayout', () => {
@@ -104,6 +107,32 @@ describe('vendorName', () => {
     queryClient.setQueryData(vendorsQuery().queryKey, [deepseek])
     expect(vendorName('deepseek')).toBe('DeepSeek')
     expect(vendorName('acme-ai')).toBe('acme-ai')
+  })
+})
+
+describe('P4 group API', () => {
+  it('groups query uses the seller-scoped key', () => {
+    expect(sellerGroupsQuery().queryKey).toEqual(['marketplace', 'seller', 'groups'])
+  })
+
+  it('per-model multiplier PUTs the encoded model path', async () => {
+    const calls: [string, RequestInit | undefined][] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        calls.push([String(input), init])
+        return new Response(JSON.stringify({ success: true, data: {} }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }),
+    )
+
+    await setListingModelMultiplier(7, 'kimi/k3', 450)
+    expect(calls).toHaveLength(1)
+    expect(calls[0][0]).toBe('/api/marketplace/seller/listings/7/models/kimi%2Fk3/multiplier')
+    expect(calls[0][1]?.method).toBe('PUT')
+    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ multiplier_milli: 450 })
   })
 })
 

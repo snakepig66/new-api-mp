@@ -23,6 +23,8 @@ func TestMigrateCreatesTables(t *testing.T) {
 		"mp_per_call_prices",
 		"mp_holidays",
 		"mp_listings",
+		"mp_listing_groups",
+		"mp_listing_models",
 		"mp_probes",
 		"mp_key_prefs",
 		"mp_key_models",

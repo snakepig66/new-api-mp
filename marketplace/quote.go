@@ -22,8 +22,12 @@ type QuoteInput struct {
 	OriginVendor string
 	// CoefficientMilli is the channel-model price coefficient (1000 = official
 	// price). <= 0 is treated as 1000.
-	CoefficientMilli                                             int64
-	MultiplierMilli                                              int64     // 倍率千分值, must be 1..1000 (§3.2)
+	CoefficientMilli int64
+	MultiplierMilli  int64 // 倍率千分值, must be 1..1000 (§3.2)
+	// ModelMultiplierMilli is the per-model multiplier override (P4). When > 0
+	// it replaces MultiplierMilli for this quote; 0 falls back to the listing
+	// multiplier.
+	ModelMultiplierMilli                                         int64
 	At                                                           time.Time // pricing instant = pre-freeze moment (§3.3)
 	InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens int64
 	SearchCount, FetchCount                                      int64
@@ -33,11 +37,14 @@ type QuoteInput struct {
 // actual debit and the request record (§3.7) — there is no second pricing
 // function.
 type QuoteResult struct {
-	Model, Vendor, Tier               string           // Tier is the tier actually priced (flat after fallback)
-	OriginVendor                      string           // price-book owner used for this quote
-	PriceVersion                      int64            // token price-book version
-	ToolPriceVersions                 map[string]int64 // item -> version, only for items with count > 0
-	MultiplierMilli                   int64
+	Model, Vendor, Tier string           // Tier is the tier actually priced (flat after fallback)
+	OriginVendor        string           // price-book owner used for this quote
+	PriceVersion        int64            // token price-book version
+	ToolPriceVersions   map[string]int64 // item -> version, only for items with count > 0
+	MultiplierMilli     int64
+	// ModelMultiplierMilli is the multiplier actually used: the per-model
+	// override when one was supplied, otherwise the listing multiplier.
+	ModelMultiplierMilli              int64
 	CoefficientMilli                  int64
 	TokenDebit, ToolDebit, TotalDebit Micro
 	OfficialCost                      Micro // same usage at multiplier 1000, for 省了多少 (§3.8)
@@ -56,8 +63,12 @@ type QuoteResult struct {
 // with ErrNoPrice — the caller strips unpriceable tools before relaying
 // (§3.4); a zero count is ignored entirely.
 func Quote(db *gorm.DB, cal *Calendar, in QuoteInput) (QuoteResult, error) {
-	if in.MultiplierMilli < 1 || in.MultiplierMilli > 1000 {
-		return QuoteResult{}, fmt.Errorf("marketplace: multiplier milli %d out of range 1..1000", in.MultiplierMilli)
+	multiplier := in.MultiplierMilli
+	if in.ModelMultiplierMilli > 0 {
+		multiplier = in.ModelMultiplierMilli
+	}
+	if multiplier < 1 || multiplier > 1000 {
+		return QuoteResult{}, fmt.Errorf("marketplace: multiplier milli %d out of range 1..1000", multiplier)
 	}
 	if in.InputTokens < 0 || in.OutputTokens < 0 || in.CacheReadTokens < 0 || in.CacheWriteTokens < 0 ||
 		in.SearchCount < 0 || in.FetchCount < 0 {
@@ -105,11 +116,11 @@ func Quote(db *gorm.DB, cal *Calendar, in QuoteInput) (QuoteResult, error) {
 		{in.SearchCount, searchUnit},
 		{in.FetchCount, fetchUnit},
 	}
-	tokenDebit, err := ceilScaledSum(tokenParts, in.MultiplierMilli*coefficient, MicroPerMillionTokens*1000*1000)
+	tokenDebit, err := ceilScaledSum(tokenParts, multiplier*coefficient, MicroPerMillionTokens*1000*1000)
 	if err != nil {
 		return QuoteResult{}, err
 	}
-	toolDebit, err := ceilScaledSum(toolParts, in.MultiplierMilli*coefficient, 1000*1000)
+	toolDebit, err := ceilScaledSum(toolParts, multiplier*coefficient, 1000*1000)
 	if err != nil {
 		return QuoteResult{}, err
 	}
@@ -128,18 +139,19 @@ func Quote(db *gorm.DB, cal *Calendar, in QuoteInput) (QuoteResult, error) {
 		return QuoteResult{}, ErrMoneyOverflow
 	}
 	return QuoteResult{
-		Model:             in.Model,
-		Vendor:            in.Vendor,
-		OriginVendor:      origin,
-		Tier:              pb.Tier,
-		PriceVersion:      pb.Version,
-		ToolPriceVersions: toolVersions,
-		MultiplierMilli:   in.MultiplierMilli,
-		CoefficientMilli:  coefficient,
-		TokenDebit:        tokenDebit,
-		ToolDebit:         toolDebit,
-		TotalDebit:        tokenDebit + toolDebit,
-		OfficialCost:      officialToken + officialTool,
+		Model:                in.Model,
+		Vendor:               in.Vendor,
+		OriginVendor:         origin,
+		Tier:                 pb.Tier,
+		PriceVersion:         pb.Version,
+		ToolPriceVersions:    toolVersions,
+		MultiplierMilli:      multiplier,
+		ModelMultiplierMilli: multiplier,
+		CoefficientMilli:     coefficient,
+		TokenDebit:           tokenDebit,
+		ToolDebit:            toolDebit,
+		TotalDebit:           tokenDebit + toolDebit,
+		OfficialCost:         officialToken + officialTool,
 	}, nil
 }
 

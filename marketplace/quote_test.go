@@ -416,3 +416,30 @@ func TestQuoteChannelOriginAndCoefficient(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1000), res.CoefficientMilli)
 }
+
+// TestQuoteUsesModelMultiplier proves the per-model override wins over the
+// listing-level multiplier and is reported back as the effective multiplier.
+func TestQuoteUsesModelMultiplier(t *testing.T) {
+	db, cal := newQuoteFixture(t)
+	at := shTime(2026, time.October, 21, 20, 0, 0)
+
+	in := flashUsage(300, at)
+	in.ModelMultiplierMilli = 600
+	res, err := Quote(db, cal, in)
+	require.NoError(t, err)
+	// Σ = 3e12; ceil(3e12 × 600 / 1e9) = 1_800_000.
+	assert.Equal(t, Micro(1_800_000), res.TokenDebit)
+	assert.Equal(t, int64(600), res.MultiplierMilli)
+	assert.Equal(t, int64(600), res.ModelMultiplierMilli)
+
+	// A zero override falls back to the listing multiplier.
+	in.ModelMultiplierMilli = 0
+	res, err = Quote(db, cal, in)
+	require.NoError(t, err)
+	assert.Equal(t, int64(300), res.MultiplierMilli)
+	assert.Equal(t, Micro(900_000), res.TokenDebit)
+
+	in.ModelMultiplierMilli = 1001
+	_, err = Quote(db, cal, in)
+	assert.Error(t, err, "an out-of-range override is rejected")
+}

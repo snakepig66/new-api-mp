@@ -94,6 +94,11 @@ func registerSellerRoutes(g *gin.RouterGroup) {
 	// as a listing id.
 	g.GET("/seller/listings/health", getSellerListingsHealth)
 	g.POST("/seller/listings/:id/multiplier", updateSellerMultiplier)
+	// P4: per-model multiplier on one listing (PUT keeps the create/update
+	// distinction), group listing and group management.
+	g.PUT("/seller/listings/:id/models/:model/multiplier", setSellerModelMultiplier)
+	g.GET("/seller/groups", listSellerListingGroups)
+	g.PUT("/seller/groups/:id", updateSellerListingGroup)
 	g.POST("/seller/listings/:id/key", replaceSellerKey)
 	g.POST("/seller/listings/:id/verify", verifySellerListing)
 	g.POST("/seller/listings/:id/pause", pauseSellerListing)
@@ -197,6 +202,10 @@ type sellerListingRequest struct {
 	// CustomBaseURL opens a seller-defined third-party channel; VendorID is
 	// ignored when set (custom_channel.go).
 	CustomBaseURL string `json:"custom_base_url"`
+	// P4 group settings, used only when this request creates the group.
+	KeyStrategy string `json:"key_strategy"`
+	Affinity    *bool  `json:"affinity_enabled"`
+	Weight      int    `json:"weight"`
 }
 
 // sellerListingView is one row of the seller's own listing list. It carries
@@ -214,6 +223,9 @@ type sellerListingView struct {
 	Status           string    `json:"status"`
 	KeyFingerprint8  string    `json:"key_fingerprint8"`
 	CreatedAt        time.Time `json:"created_at"`
+	// P4: the group this listing belongs to and the key's relative weight.
+	GroupID int64 `json:"group_id"`
+	Weight  int   `json:"weight"`
 	// PauseReason is the stored system pause reason (plan quota, patrol,
 	// migration). "manual" is the fallback for a seller-initiated pause.
 	PauseReason string `json:"pause_reason,omitempty"`
@@ -306,6 +318,8 @@ func toSellerListingView(l *Listing) sellerListingView {
 		Status:           l.Status,
 		KeyFingerprint8:  fp8,
 		CreatedAt:        l.CreatedAt,
+		GroupID:          l.GroupID,
+		Weight:           l.Weight,
 		PauseReason:      l.PauseReason,
 		ResumeAt:         l.ResumeAt,
 	}
@@ -349,6 +363,9 @@ func postSellerListing(c *gin.Context) {
 		Hours:             req.Hours,
 		PlanTermsAccepted: req.PlanTermsAccepted,
 		CustomBaseURL:     req.CustomBaseURL,
+		KeyStrategy:       req.KeyStrategy,
+		Affinity:          req.Affinity,
+		Weight:            req.Weight,
 	}
 	listing, err := CreateListing(db, in)
 	if err != nil {
@@ -532,6 +549,140 @@ func updateSellerMultiplier(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, gin.H{"id": id, "multiplier_milli": req.MultiplierMilli})
+}
+
+// setSellerModelMultiplier serves PUT
+// /seller/listings/:id/models/:model/multiplier {multiplier_milli} — set one
+// model's multiplier on the listing (P4 逐模型倍率, ownership-checked). The
+// simplified P4 contract applies the change immediately: no cooldown and no
+// delayed effective time.
+func setSellerModelMultiplier(c *gin.Context) {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	id, ok := sellerIDParam(c)
+	if !ok {
+		return
+	}
+	if _, ok := requireOwnListing(c, db, id, sellerID); !ok {
+		return
+	}
+	model := c.Param("model")
+	var req struct {
+		MultiplierMilli int64 `json:"multiplier_milli"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	if err := UpdateModelMultiplier(db, id, model, req.MultiplierMilli, time.Now()); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"listing_id":       id,
+		"model":            model,
+		"multiplier_milli": req.MultiplierMilli,
+	})
+}
+
+// listSellerListingGroups serves GET /seller/groups — the seller's P4 groups,
+// each with its sibling keys, so the create wizard can offer joining an
+// existing channel.
+func listSellerListingGroups(c *gin.Context) {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	var groups []ListingGroup
+	if err := db.Where("seller_id = ?", sellerID).Order("id ASC").Find(&groups).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query groups"))
+		return
+	}
+	out := make([]sellerListingGroupView, 0, len(groups))
+	for _, group := range groups {
+		view, err := sellerListingGroupViewFor(db, group)
+		if err != nil {
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query group listings"))
+			return
+		}
+		out = append(out, view)
+	}
+	common.ApiSuccess(c, out)
+}
+
+// updateSellerListingGroup serves PUT /seller/groups/:id — change the group's
+// routing strategy, affinity switch and aggregate channel limits
+// (ownership-checked). Limits are non-negative; 0 means unlimited.
+func updateSellerListingGroup(c *gin.Context) {
+	sellerID, ok := sellerUserID(c)
+	if !ok {
+		return
+	}
+	db := sellerDB(c)
+	if db == nil {
+		return
+	}
+	id, ok := sellerIDParam(c)
+	if !ok {
+		return
+	}
+	var group ListingGroup
+	if err := db.Where("id = ? AND seller_id = ?", id, sellerID).Take(&group).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			common.ApiErrorStatus(c, http.StatusNotFound, errors.New("group not found"))
+			return
+		}
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query group"))
+		return
+	}
+	var req struct {
+		KeyStrategy               string `json:"key_strategy"`
+		AffinityEnabled           bool   `json:"affinity_enabled"`
+		ChannelConcurrencyLimit   int    `json:"channel_concurrency_limit"`
+		ChannelRPMLimit           int    `json:"channel_rpm_limit"`
+		ChannelDailyCapMicro      int64  `json:"channel_daily_cap_micro"`
+		ChannelCumulativeCapMicro int64  `json:"channel_cumulative_cap_micro"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	if err := UpdateListingGroup(db, group.ID, req.KeyStrategy, req.AffinityEnabled,
+		req.ChannelConcurrencyLimit, req.ChannelRPMLimit,
+		req.ChannelDailyCapMicro, req.ChannelCumulativeCapMicro, time.Now()); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
+		return
+	}
+	updated, err := loadListingGroup(db, group.ID)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query group"))
+		return
+	}
+	view, err := sellerListingGroupViewFor(db, updated)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query group listings"))
+		return
+	}
+	common.ApiSuccess(c, view)
+}
+
+// loadListingGroup returns one group by id.
+func loadListingGroup(db *gorm.DB, id int64) (ListingGroup, error) {
+	var group ListingGroup
+	if err := db.Where("id = ?", id).Take(&group).Error; err != nil {
+		return ListingGroup{}, err
+	}
+	return group, nil
 }
 
 // replaceSellerKey serves POST /seller/listings/:id/key {api_key} — swap in a
@@ -1338,6 +1489,80 @@ type sellerProbeView struct {
 type sellerListingDetail struct {
 	sellerListingView
 	Probes []sellerProbeView `json:"probes"`
+	// P4: the listing's group (with its sibling keys) and the per-model
+	// multiplier table shown in the detail page.
+	Group            *sellerListingGroupView `json:"group,omitempty"`
+	ModelMultipliers []sellerModelMultiplier `json:"model_multipliers"`
+}
+
+// sellerModelMultiplier is one row of a listing's per-model multiplier table.
+type sellerModelMultiplier struct {
+	Model           string `json:"model"`
+	MultiplierMilli int64  `json:"multiplier_milli"`
+	Enabled         bool   `json:"enabled"`
+}
+
+// sellerGroupSibling is one key (listing) of a group, shown next to the key
+// being viewed. It carries only the fingerprint prefix, like every seller view.
+type sellerGroupSibling struct {
+	ID              int64    `json:"id"`
+	Status          string   `json:"status"`
+	Models          []string `json:"models"`
+	MultiplierMilli int64    `json:"multiplier_milli"`
+	Weight          int      `json:"weight"`
+	KeyFingerprint8 string   `json:"key_fingerprint8"`
+}
+
+// sellerListingGroupView is the seller-facing group block: the routing
+// strategy, the aggregate channel limits and the sibling keys.
+type sellerListingGroupView struct {
+	ID                        int64                `json:"id"`
+	VendorSlug                string               `json:"vendor_slug"`
+	KeyStrategy               string               `json:"key_strategy"`
+	AffinityEnabled           bool                 `json:"affinity_enabled"`
+	ChannelConcurrencyLimit   int                  `json:"channel_concurrency_limit"`
+	ChannelRPMLimit           int                  `json:"channel_rpm_limit"`
+	ChannelDailyCapMicro      int64                `json:"channel_daily_cap_micro"`
+	ChannelCumulativeCapMicro int64                `json:"channel_cumulative_cap_micro"`
+	KeyCount                  int                  `json:"key_count"`
+	Listings                  []sellerGroupSibling `json:"listings"`
+}
+
+// sellerListingGroupViewFor builds the group view for one seller-owned group,
+// including every sibling listing. The caller must have verified ownership.
+func sellerListingGroupViewFor(db *gorm.DB, group ListingGroup) (sellerListingGroupView, error) {
+	var listings []Listing
+	if err := db.Select("id", "status", "models", "multiplier_milli", "weight", "key_fingerprint").
+		Where("group_id = ?", group.ID).Order("id ASC").Find(&listings).Error; err != nil {
+		return sellerListingGroupView{}, err
+	}
+	siblings := make([]sellerGroupSibling, 0, len(listings))
+	for i := range listings {
+		fp8 := ""
+		if len(listings[i].KeyFingerprint) >= 8 {
+			fp8 = listings[i].KeyFingerprint[:8]
+		}
+		siblings = append(siblings, sellerGroupSibling{
+			ID:              listings[i].ID,
+			Status:          listings[i].Status,
+			Models:          listings[i].Models,
+			MultiplierMilli: listings[i].MultiplierMilli,
+			Weight:          listings[i].Weight,
+			KeyFingerprint8: fp8,
+		})
+	}
+	return sellerListingGroupView{
+		ID:                        group.ID,
+		VendorSlug:                group.VendorSlug,
+		KeyStrategy:               group.KeyStrategy,
+		AffinityEnabled:           group.AffinityEnabled,
+		ChannelConcurrencyLimit:   group.ChannelConcurrencyLimit,
+		ChannelRPMLimit:           group.ChannelRPMLimit,
+		ChannelDailyCapMicro:      group.ChannelDailyCapMicro,
+		ChannelCumulativeCapMicro: group.ChannelCumulativeCapMicro,
+		KeyCount:                  len(siblings),
+		Listings:                  siblings,
+	}, nil
 }
 
 // probeDetailValue renders a probe's JSON detail to the console; a malformed
@@ -1452,9 +1677,35 @@ func getSellerListingDetail(c *gin.Context) {
 	if latest := latestVerifyProbe(db, id); latest != nil {
 		view.Verification = probeVerificationView(*latest)
 	}
+	// P4: the group block (with sibling keys) and the per-model multiplier
+	// table. A listing created before groups existed has GroupID 0 and simply
+	// renders no group block.
+	var groupView *sellerListingGroupView
+	if listing.GroupID > 0 {
+		if group, gerr := loadListingGroup(db, listing.GroupID); gerr == nil {
+			if v, verr := sellerListingGroupViewFor(db, group); verr == nil {
+				groupView = &v
+			}
+		}
+	}
+	var modelRows []ListingModel
+	if err := db.Where("listing_id = ?", id).Order("model ASC").Find(&modelRows).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query model multipliers"))
+		return
+	}
+	modelMultipliers := make([]sellerModelMultiplier, 0, len(modelRows))
+	for _, row := range modelRows {
+		modelMultipliers = append(modelMultipliers, sellerModelMultiplier{
+			Model:           row.Model,
+			MultiplierMilli: row.MultiplierMilli,
+			Enabled:         row.Enabled,
+		})
+	}
 	common.ApiSuccess(c, sellerListingDetail{
 		sellerListingView: view,
 		Probes:            views,
+		Group:             groupView,
+		ModelMultipliers:  modelMultipliers,
 	})
 }
 

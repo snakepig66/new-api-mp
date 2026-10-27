@@ -28,6 +28,7 @@ import {
   probeListing,
   sellerChannelKind,
   sellerCommonAddressesQuery,
+  sellerGroupsQuery,
   sellerListingsQuery,
   sellerVendorsQuery,
   squareModelForSeller,
@@ -478,6 +479,8 @@ export function NewListingPage() {
   const [step, setStep] = useState<WizardStep>(0)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [multipliers, setMultipliers] = useState<Record<string, number>>({})
+  // P4: per-key weight (weighted_round_robin) keyed by the raw key text.
+  const [weights, setWeights] = useState<Record<string, number>>({})
   const [batchMultiplier, setBatchMultiplier] = useState('0.5')
   const [batchApplied, setBatchApplied] = useState(false)
   const [recognition, setRecognition] = useState<ProbeResult | null>(null)
@@ -518,10 +521,20 @@ export function NewListingPage() {
 
   const vendors = useQuery(sellerVendorsQuery())
   const commonAddresses = useQuery(sellerCommonAddressesQuery())
+  // P4: an existing group for the matched vendor means the new keys join that
+  // logical channel instead of creating another one.
+  const groups = useQuery(sellerGroupsQuery())
   const marketplaceStatus = useQuery(marketplaceStatusQuery())
   const feePercent = marketplaceStatus.data?.platform_fee_percent ?? DEFAULT_FEE_PERCENT
   const allVendors = useMemo(() => vendors.data ?? [], [vendors.data])
   const matchedVendor = vendorForURL(values.url, allVendors)
+  const existingGroup = useMemo(
+    () =>
+      matchedVendor
+        ? (groups.data ?? []).find((group) => group.vendor_slug === matchedVendor.id)
+        : undefined,
+    [groups.data, matchedVendor],
+  )
   const isCustomAddress = Boolean(validCustomURL(values.url) && !matchedVendor)
   const requiresPlanTerms = Boolean(
     matchedVendor && sellerChannelKind(matchedVendor) === 'plan',
@@ -760,6 +773,8 @@ export function NewListingPage() {
     const multiplierMilli = multipliers[representative] ?? DEFAULT_MULTIPLIER_MILLI
     if (!validModelMultiplier(multiplierMilli)) return []
     const hours = flatHours.windows.length > 0 ? JSON.stringify(flatHours.windows) : ''
+    const keyStrategy: 'weighted_round_robin' | 'primary_backup' =
+      data.key_strategy === 'primary_backup' ? 'primary_backup' : 'weighted_round_robin'
     const base = {
       vendor_id: matchedVendor?.id ?? '',
       multiplier_milli: multiplierMilli,
@@ -769,6 +784,8 @@ export function NewListingPage() {
       hours,
       plan_terms_accepted: requiresPlanTerms ? data.plan_terms_accepted : false,
       custom_base_url: matchedVendor ? undefined : data.url.trim(),
+      key_strategy: keyStrategy,
+      affinity_enabled: data.affinity,
     }
     const payloads: CreateListingInput[] = []
     for (const key of keys) {
@@ -779,7 +796,8 @@ export function NewListingPage() {
           ? data.models.filter((model) => probe?.key_valid && callable.has(model))
           : [...data.models]
       if (models.length === 0) continue
-      payloads.push({ ...base, api_key: key, models })
+      const weight = Math.min(10000, Math.max(1, Math.round(weights[key] ?? 100)))
+      payloads.push({ ...base, api_key: key, models, weight })
     }
     return payloads
   }
@@ -886,6 +904,85 @@ export function NewListingPage() {
                   <p className="text-[13px] leading-5 text-warn" role="status">
                     {trust.trust === 'watch' ? page.trust.watch : page.trust.unlisted}
                   </p>
+                ) : null}
+
+                {existingGroup ? (
+                  <div className="rounded-md border border-line bg-bg-soft px-4 py-3">
+                    <h3 className="text-[13px] font-semibold text-ink">
+                      {page.group.existingTitle}
+                    </h3>
+                    <p className="mt-1 text-[13px] leading-5 text-ink-3">
+                      {page.group.existingHint(
+                        existingGroup.key_count,
+                        existingGroup.key_strategy,
+                      )}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-4">
+                      <label className="flex items-center gap-2 text-[13px] text-ink">
+                        <input type="radio" checked readOnly className="h-4 w-4 accent-brand" />
+                        {page.group.join}
+                      </label>
+                      <label className="flex items-center gap-2 text-[13px] text-ink-3">
+                        <input
+                          type="radio"
+                          disabled
+                          aria-label={page.group.createNew}
+                          className="h-4 w-4"
+                        />
+                        {page.group.createNew}
+                      </label>
+                    </div>
+                    <p className="mt-1 text-[12px] leading-5 text-ink-3">
+                      {page.group.createNewHint}
+                    </p>
+                  </div>
+                ) : null}
+
+                {keys.length > 1 ? (
+                  <div>
+                    <h3 className="text-[13px] font-semibold text-ink">
+                      {page.group.keyOrderTitle}
+                    </h3>
+                    <p className="mt-1 text-[13px] leading-5 text-ink-3">
+                      {values.key_strategy === 'primary_backup'
+                        ? page.group.orderHint
+                        : page.group.weightHint}
+                    </p>
+                    <ul className="mt-2 space-y-2">
+                      {keys.map((key, index) => (
+                        <li
+                          key={`${index}-${key.slice(-6)}`}
+                          className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-bg-soft px-4 py-2"
+                        >
+                          <span className="font-mono text-[12px] text-ink-3">
+                            {maskApiKey(key)}
+                          </span>
+                          {values.key_strategy === 'primary_backup' ? (
+                            <Tag>{page.group.order(index + 1)}</Tag>
+                          ) : (
+                            <label className="flex items-center gap-2 text-[13px] text-ink-3">
+                              {page.group.weight}
+                              <Input
+                                className="w-24"
+                                type="number"
+                                min={1}
+                                max={10000}
+                                aria-label={page.group.weightLabel(index + 1)}
+                                value={weights[key] ?? 100}
+                                onChange={(event) => {
+                                  const parsed = Number(event.target.value)
+                                  setWeights((current) => ({
+                                    ...current,
+                                    [key]: Number.isFinite(parsed) ? parsed : 100,
+                                  }))
+                                }}
+                              />
+                            </label>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 ) : null}
               </div>
 

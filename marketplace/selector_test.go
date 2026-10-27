@@ -875,3 +875,144 @@ func TestSelectTieBreakSpreadsLoad(t *testing.T) {
 	assert.Greater(t, counts[a.ID], 40, "an equally priced listing must receive a fair share")
 	assert.Greater(t, counts[b.ID], 40, "the final tie is a draw, not lowest-id-wins")
 }
+
+// addSelectorGroup inserts one P4 listing group for the selector fixtures.
+func addSelectorGroup(t *testing.T, db *gorm.DB, mutate func(*ListingGroup)) ListingGroup {
+	t.Helper()
+	g := ListingGroup{
+		SellerID:        10023,
+		VendorSlug:      SeedVendorDeepSeek,
+		KeyStrategy:     KeyStrategyWeightedRoundRobin,
+		AffinityEnabled: true,
+	}
+	if mutate != nil {
+		mutate(&g)
+	}
+	require.NoError(t, db.Create(&g).Error)
+	return g
+}
+
+// TestSelectGroupRotation covers the in-group key choice: weighted round robin
+// alternates the keys, primary_backup keeps the lowest id first.
+func TestSelectGroupRotation(t *testing.T) {
+	loc := shanghaiLocation(t)
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, loc)
+
+	t.Run("weighted round robin alternates two equal keys", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		group := addSelectorGroup(t, db, nil)
+		a := addSelectorListing(t, db, "fp-g-a", func(l *Listing) { l.GroupID = group.ID })
+		b := addSelectorListing(t, db, "fp-g-b", func(l *Listing) { l.GroupID = group.ID })
+		s := NewSelector()
+		s.Rand = rand.New(rand.NewSource(1))
+
+		first, err := s.Select(db, SelectInput{Model: "deepseek-flash", Now: now})
+		require.NoError(t, err)
+		s.Slots.Release(first.ID)
+		second, err := s.Select(db, SelectInput{Model: "deepseek-flash", Now: now})
+		require.NoError(t, err)
+		s.Slots.Release(second.ID)
+
+		assert.ElementsMatch(t, []int64{a.ID, b.ID}, []int64{first.ID, second.ID})
+		assert.NotEqual(t, first.ID, second.ID, "the second request rotates to the other key")
+	})
+
+	t.Run("primary backup prefers the lowest listing id", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		group := addSelectorGroup(t, db, func(g *ListingGroup) { g.KeyStrategy = KeyStrategyPrimaryBackup })
+		a := addSelectorListing(t, db, "fp-g-pa", func(l *Listing) { l.GroupID = group.ID })
+		b := addSelectorListing(t, db, "fp-g-pb", func(l *Listing) { l.GroupID = group.ID })
+		s := NewSelector()
+		s.Rand = rand.New(rand.NewSource(1))
+
+		got, err := s.Select(db, SelectInput{Model: "deepseek-flash", Now: now})
+		require.NoError(t, err)
+		assert.Equal(t, a.ID, got.ID)
+		s.Slots.Release(got.ID)
+
+		// Excluding the primary falls through to the backup.
+		got, err = s.Select(db, SelectInput{Model: "deepseek-flash", Now: now, ExcludeListingIDs: []int64{a.ID}})
+		require.NoError(t, err)
+		assert.Equal(t, b.ID, got.ID)
+		s.Slots.Release(got.ID)
+	})
+}
+
+// TestSelectGroupLimits covers the aggregate channel limits: concurrency, RPM,
+// daily cap and cumulative cap. A limit is shared by every key of the group.
+func TestSelectGroupLimits(t *testing.T) {
+	loc := shanghaiLocation(t)
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, loc)
+
+	t.Run("group concurrency is shared by the keys", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		group := addSelectorGroup(t, db, func(g *ListingGroup) { g.ChannelConcurrencyLimit = 1 })
+		addSelectorListing(t, db, "fp-gc-a", func(l *Listing) { l.GroupID = group.ID })
+		addSelectorListing(t, db, "fp-gc-b", func(l *Listing) { l.GroupID = group.ID })
+		s := NewSelector()
+		s.Rand = rand.New(rand.NewSource(1))
+
+		first, err := s.Select(db, SelectInput{Model: "deepseek-flash", Now: now})
+		require.NoError(t, err)
+		assert.Equal(t, 1, s.GroupSlots.InFlight(group.ID))
+		_, err = s.Select(db, SelectInput{Model: "deepseek-flash", Now: now, ExcludeListingIDs: []int64{first.ID}})
+		assert.ErrorIs(t, err, ErrNoListingAvailable, "the other key shares the full group slot budget")
+		s.Slots.Release(first.ID)
+		s.GroupSlots.Release(group.ID)
+
+		_, err = s.Select(db, SelectInput{Model: "deepseek-flash", Now: now})
+		require.NoError(t, err)
+	})
+
+	t.Run("group rpm is shared by the keys", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		group := addSelectorGroup(t, db, func(g *ListingGroup) { g.ChannelRPMLimit = 1 })
+		addSelectorListing(t, db, "fp-gr-a", func(l *Listing) { l.GroupID = group.ID })
+		addSelectorListing(t, db, "fp-gr-b", func(l *Listing) { l.GroupID = group.ID })
+		s := NewSelector()
+		s.Rand = rand.New(rand.NewSource(1))
+
+		first, err := s.Select(db, SelectInput{Model: "deepseek-flash", Now: now})
+		require.NoError(t, err)
+		s.Slots.Release(first.ID)
+
+		_, err = s.Select(db, SelectInput{Model: "deepseek-flash", Now: now, ExcludeListingIDs: []int64{first.ID}})
+		assert.ErrorIs(t, err, ErrNoListingAvailable)
+		_, err = s.Select(db, SelectInput{Model: "deepseek-flash", Now: now.Add(61 * time.Second)})
+		assert.NoError(t, err, "the RPM window rolls over after a minute")
+	})
+
+	t.Run("group daily cap skips every key", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		group := addSelectorGroup(t, db, func(g *ListingGroup) { g.ChannelDailyCapMicro = 500 })
+		a := addSelectorListing(t, db, "fp-gd-a", func(l *Listing) { l.GroupID = group.ID })
+		require.NoError(t, db.Create(&LedgerEntry{
+			RequestID: "req-group-daily", EntryType: EntryBuyerDebit,
+			Account: BuyerAccount(1), ListingID: a.ID, AmountMicro: -600,
+			Status: LedgerAvailable, CreatedAt: now,
+		}).Error)
+
+		_, err := NewSelector().Select(db, SelectInput{Model: "deepseek-flash", Now: now})
+		assert.ErrorIs(t, err, ErrNoListingAvailable)
+	})
+
+	t.Run("group cumulative cap counts older ledger rows", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		group := addSelectorGroup(t, db, func(g *ListingGroup) { g.ChannelCumulativeCapMicro = 500 })
+		a := addSelectorListing(t, db, "fp-gt-a", func(l *Listing) { l.GroupID = group.ID })
+		require.NoError(t, db.Create(&LedgerEntry{
+			RequestID: "req-group-total", EntryType: EntryBuyerDebit,
+			Account: BuyerAccount(1), ListingID: a.ID, AmountMicro: -600,
+			Status: LedgerAvailable, CreatedAt: now.AddDate(0, 0, -10),
+		}).Error)
+
+		_, err := NewSelector().Select(db, SelectInput{Model: "deepseek-flash", Now: now})
+		assert.ErrorIs(t, err, ErrNoListingAvailable)
+	})
+}

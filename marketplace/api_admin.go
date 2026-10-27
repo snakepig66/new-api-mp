@@ -60,6 +60,8 @@ func registerAdminRootRoutes(g *gin.RouterGroup) {
 	g.POST("/admin/holidays", adminPostHolidays)
 	g.GET("/admin/holidays", adminListHolidays)
 	g.GET("/admin/listings", adminListListings)
+	// P4: read-only view of seller listing groups and their aggregate limits.
+	g.GET("/admin/listing-groups", adminListListingGroups)
 	// 待审队列 (P2) + 通过/拒绝.
 	g.GET("/admin/listings/pending", adminListPendingListings)
 	g.POST("/admin/listings/:id/approve", adminApproveListing)
@@ -586,6 +588,75 @@ func adminListListings(c *gin.Context) {
 	out := make([]adminListing, 0, len(rows))
 	for i := range rows {
 		out = append(out, toAdminListing(&rows[i]))
+	}
+	common.ApiSuccess(c, out)
+}
+
+// adminListingGroup is one row of the read-only group view (P4): the routing
+// strategy, aggregate channel limits and the number of keys in the group.
+type adminListingGroup struct {
+	ID                        int64     `json:"id"`
+	SellerID                  int64     `json:"seller_id"`
+	VendorSlug                string    `json:"vendor_slug"`
+	KeyStrategy               string    `json:"key_strategy"`
+	AffinityEnabled           bool      `json:"affinity_enabled"`
+	ChannelConcurrencyLimit   int       `json:"channel_concurrency_limit"`
+	ChannelRPMLimit           int       `json:"channel_rpm_limit"`
+	ChannelDailyCapMicro      int64     `json:"channel_daily_cap_micro"`
+	ChannelCumulativeCapMicro int64     `json:"channel_cumulative_cap_micro"`
+	KeyCount                  int64     `json:"key_count"`
+	CreatedAt                 time.Time `json:"created_at"`
+}
+
+// adminListListingGroups serves GET /admin/listing-groups — every seller group
+// with its current key count. Read-only: sellers own their groups.
+func adminListListingGroups(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	var groups []ListingGroup
+	if err := db.Order("id DESC").Find(&groups).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query listing groups"))
+		return
+	}
+	counts := make(map[int64]int64, len(groups))
+	if len(groups) > 0 {
+		ids := make([]int64, 0, len(groups))
+		for i := range groups {
+			ids = append(ids, groups[i].ID)
+		}
+		var rows []struct {
+			GroupID int64
+			Total   int64
+		}
+		if err := db.Model(&Listing{}).
+			Select("group_id, COUNT(*) AS total").
+			Where("group_id IN ?", ids).
+			Group("group_id").
+			Scan(&rows).Error; err != nil {
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to count group listings"))
+			return
+		}
+		for _, row := range rows {
+			counts[row.GroupID] = row.Total
+		}
+	}
+	out := make([]adminListingGroup, 0, len(groups))
+	for _, group := range groups {
+		out = append(out, adminListingGroup{
+			ID:                        group.ID,
+			SellerID:                  group.SellerID,
+			VendorSlug:                group.VendorSlug,
+			KeyStrategy:               group.KeyStrategy,
+			AffinityEnabled:           group.AffinityEnabled,
+			ChannelConcurrencyLimit:   group.ChannelConcurrencyLimit,
+			ChannelRPMLimit:           group.ChannelRPMLimit,
+			ChannelDailyCapMicro:      group.ChannelDailyCapMicro,
+			ChannelCumulativeCapMicro: group.ChannelCumulativeCapMicro,
+			KeyCount:                  counts[group.ID],
+			CreatedAt:                 group.CreatedAt,
+		})
 	}
 	common.ApiSuccess(c, out)
 }

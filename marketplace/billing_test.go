@@ -415,3 +415,37 @@ func TestToolPreFreezeCap(t *testing.T) {
 	t.Setenv("MP_TOOL_PREFREEZE_CAP", "abc")
 	assert.Equal(t, DefaultToolPreFreezeCap, ToolPreFreezeCap())
 }
+
+// TestPreFreezeQuoteForListing proves the pre-freeze resolves the listing's
+// per-model multiplier and falls back to the base multiplier without a row.
+func TestPreFreezeQuoteForListing(t *testing.T) {
+	db, cal := newQuoteFixture(t)
+	at := shTime(2026, time.November, 2, 20, 0, 0)
+	listing := Listing{
+		SellerID:        10023,
+		ChannelID:       1,
+		Vendor:          SeedVendorDeepSeek,
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 300,
+		Status:          ListingLive,
+		KeyFingerprint:  "fp-prefreeze-model",
+		Version:         1,
+	}
+	require.NoError(t, db.Create(&listing).Error)
+	require.NoError(t, db.Create(&ListingModel{
+		ListingID: listing.ID, Model: "deepseek-flash", MultiplierMilli: 600, Enabled: true,
+	}).Error)
+
+	res, err := PreFreezeQuoteForListing(db, cal, listing, "deepseek-flash", 1_000_000, 500_000, 0, 0, at)
+	require.NoError(t, err)
+	// Σ = 1e6×1e6 + 0.5e6×4e6 = 3e12; ceil(3e12 × 600 / 1e9) = 1_800_000.
+	assert.Equal(t, Micro(1_800_000), res.TokenDebit)
+	assert.Equal(t, int64(600), res.ModelMultiplierMilli)
+
+	// A model without a row keeps the listing multiplier.
+	require.NoError(t, db.Model(&Listing{}).Where("id = ?", listing.ID).
+		Update("models", []string{"deepseek-flash", "deepseek-v4-pro"}).Error)
+	res, err = PreFreezeQuoteForListing(db, cal, listing, "deepseek-v4-pro", 1_000_000, 0, 0, 0, at)
+	require.NoError(t, err)
+	assert.Equal(t, int64(300), res.ModelMultiplierMilli)
+}

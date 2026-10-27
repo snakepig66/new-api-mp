@@ -149,7 +149,11 @@ type RelaySession struct {
 	preFreeze       QuoteResult
 	strippedTools   int
 	slotListingID   int64
-	slotHeld        bool
+	// slotGroupID is the P4 group whose aggregate concurrency slot this
+	// attempt holds. 0 means the listing is ungrouped; a group with no
+	// configured limit never holds state, so releasing is a harmless no-op.
+	slotGroupID int64
+	slotHeld    bool
 	// tookProbe/probeListingID track the half-open circuit probe slot this
 	// attempt owns (H2). It must be handed back on every non-429 end.
 	tookProbe      bool
@@ -323,11 +327,15 @@ func (s *RelaySession) addHopForListing(event, detail string, listingID int64) {
 // idempotent: the slot may already have been released by a hop switch.
 func (s *RelaySession) releaseSlot() {
 	s.mu.Lock()
-	id, held := s.slotListingID, s.slotHeld
+	id, groupID, held := s.slotListingID, s.slotGroupID, s.slotHeld
 	s.slotHeld = false
+	s.slotGroupID = 0
 	s.mu.Unlock()
 	if held && id > 0 {
 		DefaultSelector().Slots.Release(id)
+	}
+	if groupID > 0 {
+		DefaultSelector().GroupSlots.Release(groupID)
 	}
 }
 
@@ -336,10 +344,13 @@ func (s *RelaySession) releaseSlot() {
 // than SlotTimeout keeps its slot instead of silently losing the limit.
 func (s *RelaySession) renewSlot(now time.Time) {
 	s.mu.Lock()
-	id, held := s.slotListingID, s.slotHeld
+	id, groupID, held := s.slotListingID, s.slotGroupID, s.slotHeld
 	s.mu.Unlock()
 	if held && id > 0 {
 		DefaultSelector().Slots.Renew(id, now)
+	}
+	if groupID > 0 {
+		DefaultSelector().GroupSlots.Renew(groupID, now)
 	}
 }
 
@@ -718,6 +729,9 @@ func startRelaySession(
 ) (*model.Channel, error) {
 	release := func() {
 		DefaultSelector().Slots.Release(listing.ID)
+		if listing.GroupID > 0 {
+			DefaultSelector().GroupSlots.Release(listing.GroupID)
+		}
 		if tookProbe {
 			DefaultSelector().Breaker.ReleaseProbe(listing.ID)
 		}
@@ -756,6 +770,7 @@ func startRelaySession(
 		realKey:              realKey,
 		triedListingIDs:      []int64{listing.ID},
 		slotListingID:        listing.ID,
+		slotGroupID:          listing.GroupID,
 		slotHeld:             true,
 		tookProbe:            tookProbe,
 		startedAt:            time.Now(),
@@ -822,12 +837,21 @@ func resumeBoundListing(
 		return nil, errors.New("thinking signature requires the bound backend family")
 	}
 	now := time.Now()
+	groupOK, gerr := DefaultSelector().AcquireGroupLimits(db, listing.GroupID, now)
+	if gerr != nil {
+		return nil, fmt.Errorf("bound listing %d group limits: %w", listing.ID, gerr)
+	}
+	if !groupOK {
+		return nil, fmt.Errorf("bound listing %d group limits are exhausted", listing.ID)
+	}
 	if !DefaultSelector().Slots.Acquire(listing.ID, listing.ConcurrencyLimit, now) {
+		DefaultSelector().GroupSlots.Release(listing.GroupID)
 		return nil, fmt.Errorf("bound listing %d has no free concurrency slot", listing.ID)
 	}
 	allowed, tookProbe := DefaultSelector().Breaker.allow(listing.ID, now)
 	if !allowed {
 		DefaultSelector().Slots.Release(listing.ID)
+		DefaultSelector().GroupSlots.Release(listing.GroupID)
 		return nil, fmt.Errorf("bound listing %d circuit is open", listing.ID)
 	}
 	return startRelaySession(c, db, listing, tookProbe, endpointKind, modelName,
@@ -1390,7 +1414,7 @@ func PrepareBilling(c *gin.Context, info *relaycommon.RelayInfo, estimateFn func
 		s.filterAnthropicBeta(c, s.model)
 	}
 
-	quote, qerr := PreFreezeQuote(db, cal, listing.Vendor, s.model, listing.MultiplierMilli,
+	quote, qerr := PreFreezeQuoteForListing(db, cal, listing, s.model,
 		int64(estInput), maxOut, searchCap, fetchCap, freezeAt)
 	if qerr != nil {
 		common.SysError(common.LogText("marketplace: pre-freeze quote: %s", qerr.Error()))
@@ -1489,7 +1513,7 @@ func (s *RelaySession) affordableMaxOutput(db *gorm.DB, cal *Calendar, freezeAt 
 	if err != nil {
 		return maxOut, nil
 	}
-	fixed, err := PreFreezeQuote(db, cal, listing.Vendor, modelName, listing.MultiplierMilli, estInput, 0, searchCap, fetchCap, freezeAt)
+	fixed, err := PreFreezeQuoteForListing(db, cal, listing, modelName, estInput, 0, searchCap, fetchCap, freezeAt)
 	if err != nil {
 		return maxOut, nil
 	}
@@ -1499,7 +1523,8 @@ func (s *RelaySession) affordableMaxOutput(db *gorm.DB, cal *Calendar, freezeAt 
 	}
 	// cost(out) = ceil(out·price·mult / (1e6·1000)) ≤ remaining
 	//   ⟹ out ≤ remaining·1e6·1000 / (price·mult), floored.
-	denom := new(big.Int).Mul(big.NewInt(pb.OutputMicroPerMTok), big.NewInt(listing.MultiplierMilli))
+	multiplier := listingMultiplier(db, listing, modelName)
+	denom := new(big.Int).Mul(big.NewInt(pb.OutputMicroPerMTok), big.NewInt(multiplier))
 	if denom.Sign() <= 0 {
 		return maxOut, nil
 	}
@@ -1606,15 +1631,24 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 		if !inPlaceRetried && !planQuotaExhausted && isTransientUpstreamError(lastErr) {
 			current := s.CurrentListing()
 			if previousResponseID == "" || current.ID == s.boundListingID {
-				if selector.Slots.Acquire(current.ID, current.ConcurrencyLimit, time.Now()) {
+				now := time.Now()
+				groupOK, gerr := selector.AcquireGroupLimits(db, current.GroupID, now)
+				if gerr != nil {
+					common.SysError(common.LogText("marketplace: in-place retry group limits: %s", gerr.Error()))
+					groupOK = false
+				}
+				if groupOK && selector.Slots.Acquire(current.ID, current.ConcurrencyLimit, now) {
 					next = current
 					s.mu.Lock()
 					s.inPlaceRetried = true
 					// Same supplier/key in place: this is a key-level retry.
 					s.keyRetries++
 					s.slotListingID = current.ID
+					s.slotGroupID = current.GroupID
 					s.slotHeld = true
 					s.mu.Unlock()
+				} else if groupOK {
+					selector.GroupSlots.Release(current.GroupID)
 				}
 			}
 		}
@@ -1631,6 +1665,7 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 	// backend family would make the signature unverifiable (§3.7).
 	if switched && hasThinkingSignature && !thinkingSignatureCompatible(backendType, endpointKind) {
 		selector.Slots.Release(next.ID)
+		selector.GroupSlots.Release(next.GroupID)
 		if tookProbe {
 			selector.Breaker.ReleaseProbe(next.ID)
 		}
@@ -1641,6 +1676,7 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 	if switched {
 		s.mu.Lock()
 		s.slotListingID = next.ID
+		s.slotGroupID = next.GroupID
 		s.slotHeld = true
 		s.mu.Unlock()
 		if err := hydrateListingKey(db, &next); err != nil {
@@ -1682,7 +1718,7 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 		}
 		return nil, apiErr
 	}
-	quote, err := PreFreezeQuote(db, cal, next.Vendor, modelName, next.MultiplierMilli, estInput, maxOut, searchCap, fetchCap, freezeAt)
+	quote, err := PreFreezeQuoteForListing(db, cal, next, modelName, estInput, maxOut, searchCap, fetchCap, freezeAt)
 	if err != nil {
 		common.SysError(common.LogText("marketplace: re-freeze quote: %s", err.Error()))
 		s.releaseSlot()

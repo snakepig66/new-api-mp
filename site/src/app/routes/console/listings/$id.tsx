@@ -8,6 +8,7 @@ import { formatDateTime } from '@/lib/time'
 import {
   Button,
   Empty,
+  Input,
   Multiplier,
   PageHeader,
   Table,
@@ -22,8 +23,10 @@ import {
 
 import {
   sellerListingDetailQuery,
+  setListingModelMultiplier,
   verifyListing,
   vendorName,
+  type SellerGroup,
   type SellerListingDetail,
 } from '@/features/seller/api'
 import { AsyncError, notify, PageSkeleton } from '@/features/seller/components'
@@ -56,8 +59,28 @@ function limitsText(listing: SellerListingDetail): string {
   return `${listing.concurrency_limit} / ${rpm} / ${cap}`
 }
 
-function hoursText(hours: string): string {
-  if (!hours.trim()) return page.fields.allDay
+function groupLimitsText(group: SellerGroup): string {  const rpm = group.channel_rpm_limit > 0 ? String(group.channel_rpm_limit) : common.unlimited
+  const daily = isZeroMicro(group.channel_daily_cap_micro)
+    ? common.unlimited
+    : formatYuan(group.channel_daily_cap_micro)
+  const total = isZeroMicro(group.channel_cumulative_cap_micro)
+    ? common.unlimited
+    : formatYuan(group.channel_cumulative_cap_micro)
+  const concurrency =
+    group.channel_concurrency_limit > 0 ? String(group.channel_concurrency_limit) : common.unlimited
+  return `${concurrency} / ${rpm} / ${daily} / ${total}`
+}
+
+/** True when every non-empty per-model multiplier draft is within 0.1x–1.0x. */
+function validDraftForAny(inputs: Record<string, string>): boolean {
+  return Object.values(inputs).every((draft) => {
+    if (draft === '') return true
+    const parsed = Number(draft)
+    return Number.isFinite(parsed) && parsed >= 0.1 && parsed <= 1
+  })
+}
+
+function hoursText(hours: string): string {  if (!hours.trim()) return page.fields.allDay
   try {
     const windows = JSON.parse(hours) as { start?: string; end?: string }[]
     if (!Array.isArray(windows) || windows.length === 0) return page.fields.allDay
@@ -104,6 +127,25 @@ function SellerListingDetailPage() {
       notify(toast, { title: common.toast.verifyStarted, tone: 'success' })
     },
     onError: (error) => setRecheckError(sellerErrorMessage(error)),
+  })
+
+  // P4 逐模型倍率: the edit is per model and applies immediately.
+  const [modelInputs, setModelInputs] = useState<Record<string, string>>({})
+  const [modelError, setModelError] = useState<string | null>(null)
+  const saveModelMultiplier = useMutation({
+    mutationFn: (input: { model: string; milli: number }) =>
+      setListingModelMultiplier(id, input.model, input.milli),
+    onSuccess: (_, input) => {
+      setModelError(null)
+      setModelInputs((current) => {
+        const next = { ...current }
+        delete next[input.model]
+        return next
+      })
+      notify(toast, { title: page.saved, tone: 'success' })
+      void queryClient.invalidateQueries({ queryKey: sellerListingDetailQuery(id).queryKey })
+    },
+    onError: (error) => setModelError(sellerErrorMessage(error)),
   })
 
   if (!validId) {
@@ -199,6 +241,153 @@ function SellerListingDetailPage() {
             <Tag key={model}>{model}</Tag>
           ))}
         </div>
+      </section>
+
+      <section className="mt-6 rounded-md border border-line bg-bg p-6">
+        <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+          {page.groupTitle}
+        </h2>
+        <p className="mt-1 text-[13px] leading-5 text-ink-3">{page.groupLead}</p>
+        {listing.group ? (
+          <>
+            <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Field label={page.groupStrategy}>
+                {page.groupStrategies[listing.group.key_strategy] ?? listing.group.key_strategy}
+              </Field>
+              <Field label={page.groupAffinity}>
+                {listing.group.affinity_enabled ? page.groupAffinityOn : page.groupAffinityOff}
+              </Field>
+              <Field label={page.groupKeyCountLabel}>
+                {page.groupKeyCount(listing.group.key_count)}
+              </Field>
+              <Field label={page.groupLimits}>{groupLimitsText(listing.group)}</Field>
+            </dl>
+            <div className="mt-4">
+              <Table minWidth={640}>
+                <TableHead>
+                  <TableRow>
+                    <TableHeaderCell>{page.groupColumns.key}</TableHeaderCell>
+                    <TableHeaderCell>{page.groupColumns.status}</TableHeaderCell>
+                    <TableHeaderCell numeric>{page.groupColumns.weight}</TableHeaderCell>
+                    <TableHeaderCell>{page.groupColumns.multiplier}</TableHeaderCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {listing.group.listings.map((sibling) => (
+                    <TableRow key={sibling.id}>
+                      <TableCell className="font-mono text-[13px] text-ink-3">
+                        {sibling.key_fingerprint8 || '—'}
+                        {sibling.id === listing.id ? (
+                          <Tag tone="brand" className="ml-2">
+                            {page.groupCurrent}
+                          </Tag>
+                        ) : null}
+                      </TableCell>
+                      <TableCell>
+                        <Tag tone={listingStatusView(sibling.status).tone}>
+                          {listingStatusView(sibling.status).label}
+                        </Tag>
+                      </TableCell>
+                      <TableCell numeric className="tabular-nums text-ink-3">
+                        {sibling.weight > 0 ? sibling.weight : 100}
+                      </TableCell>
+                      <TableCell>
+                        <Multiplier milli={sibling.multiplier_milli} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
+        ) : (
+          <p className="mt-3 text-[13px] text-ink-3">{page.groupEmpty}</p>
+        )}
+      </section>
+
+      <section className="mt-6 rounded-md border border-line bg-bg p-6">
+        <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+          {page.modelMultiplierTitle}
+        </h2>
+        <p className="mt-1 text-[13px] leading-5 text-ink-3">{page.modelMultiplierLead}</p>
+        <div className="mt-4">
+          <Table minWidth={640}>
+            <TableHead>
+              <TableRow>
+                <TableHeaderCell>{page.modelColumns.model}</TableHeaderCell>
+                <TableHeaderCell>{page.modelColumns.current}</TableHeaderCell>
+                <TableHeaderCell>{page.modelColumns.next}</TableHeaderCell>
+                <TableHeaderCell>{page.modelColumns.action}</TableHeaderCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {listing.models.map((model) => {
+                const override = (listing.model_multipliers ?? []).find(
+                  (row) => row.model === model && row.enabled,
+                )
+                const currentMilli = override?.multiplier_milli ?? listing.multiplier_milli
+                const draft = modelInputs[model] ?? ''
+                const parsed = Number(draft)
+                const validDraft =
+                  draft === '' || (Number.isFinite(parsed) && parsed >= 0.1 && parsed <= 1)
+                return (
+                  <TableRow key={model}>
+                    <TableCell className="font-mono text-[13px]">{model}</TableCell>
+                    <TableCell>
+                      <Multiplier milli={currentMilli} />
+                      {override ? (
+                        <span className="ml-2 text-[12px] text-ink-3">{override.model}</span>
+                      ) : null}
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        className="w-28"
+                        inputMode="decimal"
+                        placeholder={(currentMilli / 1000).toFixed(1)}
+                        aria-label={page.modelColumns.next + ' ' + model}
+                        invalid={!validDraft}
+                        value={draft}
+                        onChange={(event) =>
+                          setModelInputs((current) => ({
+                            ...current,
+                            [model]: event.target.value,
+                          }))
+                        }
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        loading={saveModelMultiplier.isPending}
+                        disabled={!validDraft || draft === ''}
+                        onClick={() => {
+                          if (!validDraft || draft === '') return
+                          saveModelMultiplier.mutate({
+                            model,
+                            milli: Math.round(parsed * 1000),
+                          })
+                        }}
+                      >
+                        {page.save}
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        </div>
+        {!validDraftForAny(modelInputs) ? (
+          <p className="mt-3 text-[13px] text-danger" role="alert">
+            {page.invalidMultiplier}
+          </p>
+        ) : null}
+        {modelError ? (
+          <p className="mt-3 text-[13px] text-danger" role="alert">
+            {modelError}
+          </p>
+        ) : null}
       </section>
 
       <section className="mt-6 rounded-md border border-line bg-bg p-6">

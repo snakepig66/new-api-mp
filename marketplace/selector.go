@@ -179,6 +179,93 @@ func (m *SlotManager) sweepLocked(listingID int64, now time.Time) {
 	m.slots[listingID] = remaining
 }
 
+// GroupSlots enforces a listing group's aggregate concurrency limit (P4
+// 渠道级并发上限). Unlike SlotManager, a limit <= 0 means unlimited: the
+// channel-level limit is opt-in, and a group without one never holds a slot.
+type GroupSlots struct {
+	mu    sync.Mutex
+	slots map[int64][]time.Time
+}
+
+// NewGroupSlots builds an empty GroupSlots.
+func NewGroupSlots() *GroupSlots {
+	return &GroupSlots{slots: make(map[int64][]time.Time)}
+}
+
+// Acquire takes one aggregate slot of groupID when the group has a limit. It
+// reports success; a group with no limit always succeeds without holding state.
+func (m *GroupSlots) Acquire(groupID int64, limit int, now time.Time) bool {
+	if limit <= 0 {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sweepLocked(groupID, now)
+	if len(m.slots[groupID]) >= limit {
+		return false
+	}
+	m.slots[groupID] = append(m.slots[groupID], now)
+	return true
+}
+
+// Release frees the oldest aggregate slot of groupID. Releasing with nothing
+// held is a no-op, so a caller never goes negative after a timeout sweep.
+func (m *GroupSlots) Release(groupID int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	times := m.slots[groupID]
+	if len(times) == 0 {
+		return
+	}
+	times = times[1:]
+	if len(times) == 0 {
+		delete(m.slots, groupID)
+		return
+	}
+	m.slots[groupID] = times
+}
+
+// Renew extends one outstanding slot of groupID to now. It is a no-op when no
+// slot is held (an unlimited group never holds one), so a streaming request
+// can renew unconditionally.
+func (m *GroupSlots) Renew(groupID int64, now time.Time) {
+	if groupID <= 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	times := m.slots[groupID]
+	if len(times) == 0 {
+		return
+	}
+	m.slots[groupID] = append(times[1:], now)
+}
+
+// InFlight reports the number of aggregate slots currently held by groupID.
+func (m *GroupSlots) InFlight(groupID int64) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.slots[groupID])
+}
+
+func (m *GroupSlots) sweepLocked(groupID int64, now time.Time) {
+	times := m.slots[groupID]
+	cutoff := now.Add(-SlotTimeout)
+	first := 0
+	for first < len(times) && !times[first].After(cutoff) {
+		first++
+	}
+	if first == 0 {
+		return
+	}
+	remaining := slices.Clone(times[first:])
+	if len(remaining) == 0 {
+		delete(m.slots, groupID)
+		return
+	}
+	m.slots[groupID] = remaining
+}
+
 // CircuitBreakDuration is how long one listing stays broken after a 429
 // (§3.5: 429 只熔断这条挂单 60 秒并换家; a 429 never counts as 额度耗尽).
 const CircuitBreakDuration = 60 * time.Second
@@ -329,8 +416,105 @@ func (w *RPMWindow) Allow(listingID int64, rpm int, now time.Time) bool {
 	return true
 }
 
-// ListingDailySpendMicro returns how much buyers have been charged through
-// one listing since 00:00 Asia/Shanghai of the day containing now: the
+// GroupRPMWindow enforces a listing group's aggregate RPM limit (P4 渠道级
+// RPM 上限) as a 60-second sliding window. rpm <= 0 means unlimited.
+type GroupRPMWindow struct {
+	mu   sync.Mutex
+	hits map[int64][]time.Time
+}
+
+// NewGroupRPMWindow builds an empty GroupRPMWindow.
+func NewGroupRPMWindow() *GroupRPMWindow {
+	return &GroupRPMWindow{hits: make(map[int64][]time.Time)}
+}
+
+// Allow records one attempt against groupID and reports whether the group's
+// budget admits it. An unlimited group records nothing.
+func (w *GroupRPMWindow) Allow(groupID int64, rpm int, now time.Time) bool {
+	if rpm <= 0 {
+		return true
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	cutoff := now.Add(-rpmWindow)
+	times := w.hits[groupID]
+	first := 0
+	for first < len(times) && !times[first].After(cutoff) {
+		first++
+	}
+	times = times[first:]
+	if len(times) >= rpm {
+		w.hits[groupID] = times
+		return false
+	}
+	w.hits[groupID] = append(times, now)
+	return true
+}
+
+// GroupRotation holds one weighted-round-robin cursor per listing group. The
+// cursor is process-local, like the other selector state.
+type GroupRotation struct {
+	mu       sync.Mutex
+	counters map[int64]uint64
+}
+
+// NewGroupRotation builds an empty GroupRotation.
+func NewGroupRotation() *GroupRotation {
+	return &GroupRotation{counters: make(map[int64]uint64)}
+}
+
+// Next advances and returns the cursor of groupID.
+func (r *GroupRotation) Next(groupID int64) uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	next := r.counters[groupID]
+	r.counters[groupID] = next + 1
+	return next
+}
+
+// GroupDailySpendMicro returns how much buyers have been charged through the
+// listings of one group since 00:00 Asia/Shanghai of the day containing now
+// (§P4 渠道级日上限). It joins each ledger row's listing_id back to its group.
+func GroupDailySpendMicro(db *gorm.DB, groupID int64, now time.Time) (int64, error) {
+	loc, err := time.LoadLocation(shanghaiTZ)
+	if err != nil {
+		return 0, fmt.Errorf("marketplace: load %s: %w", shanghaiTZ, err)
+	}
+	lt := now.In(loc)
+	dayStart := time.Date(lt.Year(), lt.Month(), lt.Day(), 0, 0, 0, 0, loc)
+	return groupSpendMicro(db, groupID, dayStart, dayStart.AddDate(0, 0, 1))
+}
+
+// GroupCumulativeSpendMicro returns the group's all-time charged amount
+// (§P4 渠道级累计上限). A zero since/until bound is unbounded.
+func GroupCumulativeSpendMicro(db *gorm.DB, groupID int64) (int64, error) {
+	return groupSpendMicro(db, groupID, time.Time{}, time.Time{})
+}
+
+// groupSpendMicro sums the absolute buyer/tool debits of every ledger row whose
+// listing belongs to groupID, optionally bounded by [since, until).
+func groupSpendMicro(db *gorm.DB, groupID int64, since, until time.Time) (int64, error) {
+	if groupID <= 0 {
+		return 0, nil
+	}
+	q := db.Model(&LedgerEntry{}).
+		Joins("JOIN mp_listings ON mp_listings.id = mp_ledger.listing_id").
+		Where("mp_listings.group_id = ? AND mp_ledger.entry_type IN ?",
+			groupID, []string{EntryBuyerDebit, EntryToolDebit})
+	if !since.IsZero() {
+		q = q.Where("mp_ledger.created_at >= ?", since)
+	}
+	if !until.IsZero() {
+		q = q.Where("mp_ledger.created_at < ?", until)
+	}
+	var total int64
+	if err := q.Select("COALESCE(SUM(ABS(mp_ledger.amount_micro)), 0)").Scan(&total).Error; err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// ListingDailySpendMicro returns how much buyers have been charged through// one listing since 00:00 Asia/Shanghai of the day containing now: the
 // absolute buyer_debit + tool_debit of its mp_ledger rows (§3.5
 // daily_cap_micro). Select skips the listing once this reaches
 // Listing.DailyCapMicro; a 0 cap means unlimited.
@@ -463,6 +647,11 @@ type Selector struct {
 	Slots   *SlotManager
 	Breaker *CircuitBreaker
 	RPM     *RPMWindow
+	// P4 group-level state: aggregate concurrency, rate and rotation per
+	// mp_listing_groups row.
+	GroupSlots *GroupSlots
+	GroupRPM   *GroupRPMWindow
+	Rotation   *GroupRotation
 	// CanaryFraction is the share of traffic admitted to canary listings
 	// (§3.5: canary 灰度默认 10% 流量); 0 admits none, 1 admits all.
 	CanaryFraction float64
@@ -474,6 +663,12 @@ type Selector struct {
 	// spend caches each listing's daily spend for dailySpendCacheTTL (M7).
 	spendMu sync.Mutex
 	spend   *dailySpendCache
+	// P4 group spend caches, keyed by group id, sharing the same short TTL so a
+	// burst of requests issues one aggregate SUM each.
+	groupDailyMu sync.Mutex
+	groupDaily   *dailySpendCache
+	groupTotalMu sync.Mutex
+	groupTotal   *dailySpendCache
 }
 
 // NewSelector builds a Selector with the §3.5 default canary fraction.
@@ -482,9 +677,14 @@ func NewSelector() *Selector {
 		Slots:          NewSlotManager(),
 		Breaker:        NewCircuitBreaker(),
 		RPM:            NewRPMWindow(),
+		GroupSlots:     NewGroupSlots(),
+		GroupRPM:       NewGroupRPMWindow(),
+		Rotation:       NewGroupRotation(),
 		CanaryFraction: 0.1,
 		Rand:           rand.New(rand.NewSource(time.Now().UnixNano())),
 		spend:          newDailySpendCache(),
+		groupDaily:     newDailySpendCache(),
+		groupTotal:     newDailySpendCache(),
 	}
 }
 
@@ -499,6 +699,34 @@ func (s *Selector) dailySpend(db *gorm.DB, listingID int64, now time.Time) (int6
 	s.spendMu.Unlock()
 	return cache.get(listingID, now, func() (int64, error) {
 		return ListingDailySpendMicro(db, listingID, now)
+	})
+}
+
+// groupDailySpend returns the group's daily spend from the short-TTL cache.
+func (s *Selector) groupDailySpend(db *gorm.DB, groupID int64, now time.Time) (int64, error) {
+	s.groupDailyMu.Lock()
+	if s.groupDaily == nil {
+		s.groupDaily = newDailySpendCache()
+	}
+	cache := s.groupDaily
+	s.groupDailyMu.Unlock()
+	return cache.get(groupID, now, func() (int64, error) {
+		return GroupDailySpendMicro(db, groupID, now)
+	})
+}
+
+// groupCumulativeSpend returns the group's all-time spend from the short-TTL
+// cache. The cache key is the group id; the TTL only delays cap enforcement by
+// up to one second, far below the request-level granularity.
+func (s *Selector) groupCumulativeSpend(db *gorm.DB, groupID int64, now time.Time) (int64, error) {
+	s.groupTotalMu.Lock()
+	if s.groupTotal == nil {
+		s.groupTotal = newDailySpendCache()
+	}
+	cache := s.groupTotal
+	s.groupTotalMu.Unlock()
+	return cache.get(groupID, now, func() (int64, error) {
+		return GroupCumulativeSpendMicro(db, groupID)
 	})
 }
 
@@ -570,7 +798,97 @@ func loadVerifiedChannels(db *gorm.DB, model string, endpointKind relayconstant.
 // every live listing on every request, and the encrypted seller key is only
 // needed for the winning listing (hydrateListingKey). M7: 挂单全表加载不取密文.
 const selectorListingColumns = "id, seller_id, channel_id, vendor, models, multiplier_milli, " +
-	"concurrency_limit, status, hours, daily_cap_micro, rpm_limit, key_fingerprint, version"
+	"concurrency_limit, status, hours, daily_cap_micro, rpm_limit, key_fingerprint, version, group_id, weight"
+
+// loadListingGroups returns the groups of the given ids. A missing row means
+// the listing has no aggregate limits (the selector treats it as ungrouped).
+func loadListingGroups(db *gorm.DB, ids []int64) map[int64]ListingGroup {
+	out := make(map[int64]ListingGroup, len(ids))
+	if len(ids) == 0 {
+		return out
+	}
+	var rows []ListingGroup
+	if err := db.Where("id IN ?", ids).Find(&rows).Error; err != nil {
+		return out
+	}
+	for _, g := range rows {
+		out[g.ID] = g
+	}
+	return out
+}
+
+// loadListingModelMultipliers returns the enabled per-model multiplier of each
+// listing for one model. Listings without a row keep their base multiplier.
+func loadListingModelMultipliers(db *gorm.DB, model string, ids []int64) map[int64]int64 {
+	out := make(map[int64]int64, len(ids))
+	if db == nil || len(ids) == 0 {
+		return out
+	}
+	var rows []ListingModel
+	if err := db.Select("listing_id", "multiplier_milli").
+		Where("listing_id IN ? AND model = ? AND enabled = ?", ids, model, true).
+		Find(&rows).Error; err != nil {
+		return out
+	}
+	for _, r := range rows {
+		if r.MultiplierMilli >= 1 && r.MultiplierMilli <= 1000 {
+			out[r.ListingID] = r.MultiplierMilli
+		}
+	}
+	return out
+}
+
+// weightedRotationOrder maps the group cursor to a preference order over the
+// group's listings: equal-weight groups rotate evenly, and a larger Weight
+// takes proportionally more turns.
+func weightedRotationOrder(members []Listing, cursor uint64) []int {
+	weights := make([]int, len(members))
+	divisor := 0
+	for i := range members {
+		weight := members[i].Weight
+		if weight <= 0 {
+			weight = 100
+		}
+		weights[i] = weight
+		divisor = gcdInt(divisor, weight)
+	}
+	if divisor <= 0 {
+		divisor = 1
+	}
+	total := 0
+	for i := range weights {
+		// Dividing by the GCD keeps the sequence stable for the default equal
+		// weights (one turn each) instead of a hundred identical turns.
+		weights[i] /= divisor
+		total += weights[i]
+	}
+	if total <= 0 || len(members) == 0 {
+		return nil
+	}
+	pos := int(cursor % uint64(total))
+	start := 0
+	acc := 0
+	for i, weight := range weights {
+		if pos < acc+weight {
+			start = i
+			break
+		}
+		acc += weight
+	}
+	order := make([]int, 0, len(members))
+	for i := range len(members) {
+		order = append(order, (start+i)%len(members))
+	}
+	return order
+}
+
+// gcdInt is the Euclidean greatest common divisor of two non-negative ints.
+func gcdInt(a, b int) int {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
 
 // loadVerifiedCoefficients returns channel slug -> price coefficient (milli)
 // for the model's verified, active qualifications. A missing/zero coefficient
@@ -653,10 +971,18 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 	// (MODEL-CHANNEL-POOL §3.2/§4). Loaded once per selection.
 	verifiedChannels := loadVerifiedChannels(db, in.Model, in.EndpointKind)
 	coefficients := loadVerifiedCoefficients(db, in.Model)
+	// P4 逐模型倍率: a model-specific multiplier overrides the listing-level one
+	// for both the price cap and the ranking, matching what Quote charges.
+	rowIDs := make([]int64, len(rows))
+	for i := range rows {
+		rowIDs[i] = rows[i].ID
+	}
+	modelMultipliers := loadListingModelMultipliers(db, in.Model, rowIDs)
 	// effectiveByID is the buyer-facing price factor (multiplier × channel
 	// coefficient) used for the cap and for ranking. A coefficient above 1000
 	// would let a listing charge more than official, so it is rejected outright.
 	effectiveByID := make(map[int64]int64, len(rows))
+	multiplierByID := make(map[int64]int64, len(rows))
 	var cands []Listing
 	for i := range rows {
 		l := rows[i]
@@ -688,7 +1014,11 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 			// Defence in depth: no mark-up above the official price.
 			continue
 		}
-		effective := effectiveMultiplierMilli(l.MultiplierMilli, coefficient)
+		multiplier := l.MultiplierMilli
+		if milli, ok := modelMultipliers[l.ID]; ok {
+			multiplier = milli
+		}
+		effective := effectiveMultiplierMilli(multiplier, coefficient)
 		if in.MaxMultiplierMilli > 0 && effective > in.MaxMultiplierMilli {
 			continue
 		}
@@ -710,11 +1040,65 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 			continue
 		}
 		effectiveByID[l.ID] = effective
+		multiplierByID[l.ID] = multiplier
 		cands = append(cands, l)
 	}
 	if len(cands) == 0 {
 		return Listing{}, false, ErrNoListingAvailable
 	}
+
+	// P4 渠道级聚合: one group is one logical channel. A group whose daily or
+	// cumulative cap is exhausted is dropped as a whole, so no key of that
+	// group can serve.
+	groupIDs := make([]int64, 0, len(cands))
+	for i := range cands {
+		if id := cands[i].GroupID; id > 0 && !slices.Contains(groupIDs, id) {
+			groupIDs = append(groupIDs, id)
+		}
+	}
+	groups := loadListingGroups(db, groupIDs)
+	if len(groups) > 0 {
+		groupAllowed := make(map[int64]bool, len(groups))
+		for id, g := range groups {
+			allowed := true
+			if g.ChannelDailyCapMicro > 0 {
+				spent, err := s.groupDailySpend(db, id, now)
+				if err != nil {
+					return Listing{}, false, err
+				}
+				if spent >= g.ChannelDailyCapMicro {
+					allowed = false
+				}
+			}
+			if allowed && g.ChannelCumulativeCapMicro > 0 {
+				spent, err := s.groupCumulativeSpend(db, id, now)
+				if err != nil {
+					return Listing{}, false, err
+				}
+				if spent >= g.ChannelCumulativeCapMicro {
+					allowed = false
+				}
+			}
+			groupAllowed[id] = allowed
+		}
+		kept := cands[:0]
+		for _, l := range cands {
+			if _, grouped := groups[l.GroupID]; grouped && !groupAllowed[l.GroupID] {
+				continue
+			}
+			kept = append(kept, l)
+		}
+		cands = kept
+		if len(cands) == 0 {
+			return Listing{}, false, ErrNoListingAvailable
+		}
+	}
+
+	// 组内选择: weighted_round_robin rotates the group's keys (Weight decides
+	// the share), primary_backup always tries the lowest listing id first. The
+	// rank is a tie-breaker after price, so the cheapest supply still wins.
+	groupRank := s.groupPreferenceRanks(groups, cands)
+
 	ids := make([]int64, len(cands))
 	for i := range cands {
 		ids[i] = cands[i].ID
@@ -751,8 +1135,11 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 		if ea, eb := effectiveByID[a.ID], effectiveByID[b.ID]; ea != eb {
 			return cmp.Compare(ea, eb)
 		}
-		if a.MultiplierMilli != b.MultiplierMilli {
-			return cmp.Compare(a.MultiplierMilli, b.MultiplierMilli)
+		if ra, rb := groupRank[a.ID], groupRank[b.ID]; ra != rb {
+			return cmp.Compare(ra, rb)
+		}
+		if ma, mb := multiplierByID[a.ID], multiplierByID[b.ID]; ma != mb {
+			return cmp.Compare(ma, mb)
 		}
 		la, oka := latency[a.ID]
 		lb, okb := latency[b.ID]
@@ -770,9 +1157,9 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 		}
 		return cmp.Compare(a.ID, b.ID)
 	})
-	// Commit side effects in ranked order: the winner keeps the slot, the RPM
-	// budget and (when half-open) the probe; every loser is handed back before
-	// the next candidate is considered.
+	// Commit side effects in ranked order: the winner keeps the listing slot,
+	// the group's aggregate slot/RPM budget and (when half-open) the probe;
+	// every loser is handed back before the next candidate is considered.
 	for i := range cands {
 		l := cands[i]
 		if !s.Slots.Acquire(l.ID, l.ConcurrencyLimit, now) {
@@ -782,14 +1169,104 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 			s.Slots.Release(l.ID)
 			continue
 		}
+		group, hasGroup := groups[l.GroupID]
+		if hasGroup {
+			if !s.GroupSlots.Acquire(l.GroupID, group.ChannelConcurrencyLimit, now) {
+				s.Slots.Release(l.ID)
+				continue
+			}
+			if !s.GroupRPM.Allow(l.GroupID, group.ChannelRPMLimit, now) {
+				s.GroupSlots.Release(l.GroupID)
+				s.Slots.Release(l.ID)
+				continue
+			}
+		}
 		allowed, tookProbe := s.Breaker.allow(l.ID, now)
 		if !allowed {
+			if hasGroup {
+				s.GroupSlots.Release(l.GroupID)
+			}
 			s.Slots.Release(l.ID)
 			continue
 		}
 		return l, tookProbe, nil
 	}
 	return Listing{}, false, ErrNoListingAvailable
+}
+
+// groupPreferenceRanks computes the in-group preference rank of every member
+// listing: 0 is the key the strategy wants to try first, then the fallbacks.
+// Ungrouped listings and groups without a loaded row have no rank (0).
+func (s *Selector) groupPreferenceRanks(groups map[int64]ListingGroup, cands []Listing) map[int64]int {
+	ranks := make(map[int64]int, len(cands))
+	if len(groups) == 0 {
+		return ranks
+	}
+	byGroup := make(map[int64][]Listing)
+	for _, l := range cands {
+		if _, ok := groups[l.GroupID]; !ok {
+			continue
+		}
+		byGroup[l.GroupID] = append(byGroup[l.GroupID], l)
+	}
+	for groupID, members := range byGroup {
+		slices.SortFunc(members, func(a, b Listing) int { return cmp.Compare(a.ID, b.ID) })
+		var order []int
+		if normalizeKeyStrategy(groups[groupID].KeyStrategy) == KeyStrategyPrimaryBackup {
+			for i := range members {
+				order = append(order, i)
+			}
+		} else {
+			order = weightedRotationOrder(members, s.Rotation.Next(groupID))
+		}
+		for rank, index := range order {
+			ranks[members[index].ID] = rank
+		}
+	}
+	return ranks
+}
+
+// AcquireGroupLimits applies a group's aggregate limits to a listing chosen
+// outside SelectWithProbe (bound-response resume and the in-place retry). It
+// checks the daily/cumulative caps first, then takes one aggregate concurrency
+// slot and one RPM attempt. A dangling group row or a group with no limits
+// admits the request without holding state, mirroring SelectWithProbe.
+func (s *Selector) AcquireGroupLimits(db *gorm.DB, groupID int64, now time.Time) (bool, error) {
+	if groupID <= 0 {
+		return true, nil
+	}
+	var group ListingGroup
+	if err := db.Select("id", "channel_concurrency_limit", "channel_rpm_limit",
+		"channel_daily_cap_micro", "channel_cumulative_cap_micro").
+		Where("id = ?", groupID).Take(&group).Error; err != nil {
+		return true, nil
+	}
+	if group.ChannelDailyCapMicro > 0 {
+		spent, err := s.groupDailySpend(db, groupID, now)
+		if err != nil {
+			return false, err
+		}
+		if spent >= group.ChannelDailyCapMicro {
+			return false, nil
+		}
+	}
+	if group.ChannelCumulativeCapMicro > 0 {
+		spent, err := s.groupCumulativeSpend(db, groupID, now)
+		if err != nil {
+			return false, err
+		}
+		if spent >= group.ChannelCumulativeCapMicro {
+			return false, nil
+		}
+	}
+	if !s.GroupSlots.Acquire(groupID, group.ChannelConcurrencyLimit, now) {
+		return false, nil
+	}
+	if !s.GroupRPM.Allow(groupID, group.ChannelRPMLimit, now) {
+		s.GroupSlots.Release(groupID)
+		return false, nil
+	}
+	return true, nil
 }
 
 // canaryAdmit rolls the gray-release dice for one canary candidate.

@@ -22,6 +22,8 @@ func Migrate(db *gorm.DB) error {
 		&PerCallPrice{},
 		&Holiday{},
 		&Listing{},
+		&ListingGroup{},
+		&ListingModel{},
 		&Probe{},
 		&KeyPref{},
 		&KeyModel{},

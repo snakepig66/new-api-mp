@@ -320,12 +320,20 @@ func SettleRelay(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage
 			if origin == "" || coefficient <= 0 {
 				origin, coefficient = pricingContext(db, listing.Vendor, s.model)
 			}
+			// P4 逐模型倍率: the freeze captured the multiplier actually charged;
+			// fall back to the listing's per-model override (or its base
+			// multiplier) only when no pre-freeze exists.
+			multiplier := s.preFreeze.ModelMultiplierMilli
+			if multiplier <= 0 {
+				multiplier = listingMultiplier(db, listing, s.model)
+			}
 			quote, quoteErr = Quote(db, cal, QuoteInput{
-				Model:            s.model,
-				Vendor:           listing.Vendor,
-				OriginVendor:     origin,
-				CoefficientMilli: coefficient,
-				MultiplierMilli:  listing.MultiplierMilli,
+				Model:                s.model,
+				Vendor:               listing.Vendor,
+				OriginVendor:         origin,
+				CoefficientMilli:     coefficient,
+				MultiplierMilli:      listing.MultiplierMilli,
+				ModelMultiplierMilli: multiplier,
 				// 整条请求（含重试链）用首次预冻结时刻重算 (§3.3/§4.3).
 				At:               freezeAt,
 				InputTokens:      u.inputTokens,
@@ -469,6 +477,12 @@ func (s *RelaySession) settleAtomic(c *gin.Context, db *gorm.DB, u marketplaceUs
 		if err := s.insertRecord(c, tx, u, searchCount, fetchCount, quote, tokenDebit, toolDebit, charged, giftUsed, platformCapped, RequestSuccess); err != nil {
 			return err
 		}
+		// P4 逐模型倍率: report the multiplier actually used for pricing; the
+		// base listing multiplier stays in MultiplierMilli for audit.
+		modelMultiplier := quote.ModelMultiplierMilli
+		if modelMultiplier <= 0 {
+			modelMultiplier = listingMultiplier(tx, listing, s.model)
+		}
 		settlement := Settlement{
 			RequestID:            s.RequestID(),
 			BuyerUserID:          int64(s.buyerUserID),
@@ -477,7 +491,7 @@ func (s *RelaySession) settleAtomic(c *gin.Context, db *gorm.DB, u marketplaceUs
 			ChannelID:            listing.ID, // mp_seller_channels.id == listing id
 			KeyID:                0,          // one key per listing until P4
 			Endpoint:             string(s.EndpointKind()),
-			ModelMultiplierMilli: listing.MultiplierMilli,
+			ModelMultiplierMilli: modelMultiplier,
 			PriceVersion:         quote.PriceVersion,
 			MultiplierMilli:      listing.MultiplierMilli,
 			TokenDebit:           tokenDebit,
@@ -604,6 +618,7 @@ func (s *RelaySession) insertRecord(c *gin.Context, db *gorm.DB, u marketplaceUs
 	if official == 0 {
 		official = s.preFreeze.OfficialCost
 	}
+	frozenModelMultiplier := s.preFreeze.ModelMultiplierMilli
 	listing := s.listing
 	startedAt := s.startedAt
 	s.mu.Unlock()
@@ -621,6 +636,16 @@ func (s *RelaySession) insertRecord(c *gin.Context, db *gorm.DB, u marketplaceUs
 		// The column is size:128; MySQL strict mode would reject a longer id.
 		upstreamModel = upstreamModel[:128]
 	}
+	// P4 逐模型倍率: the record carries the multiplier actually used. A failed
+	// request has no quote, so the listing's per-model override (or base value)
+	// is resolved directly.
+	modelMultiplier := quote.ModelMultiplierMilli
+	if modelMultiplier <= 0 {
+		modelMultiplier = frozenModelMultiplier
+	}
+	if modelMultiplier <= 0 {
+		modelMultiplier = listingMultiplier(db, listing, s.model)
+	}
 	rec := Request{
 		RequestID:               s.RequestID(),
 		BuyerUserID:             int64(s.buyerUserID),
@@ -630,7 +655,7 @@ func (s *RelaySession) insertRecord(c *gin.Context, db *gorm.DB, u marketplaceUs
 		ChannelID:               listing.ID, // mp_seller_channels.id == listing id
 		KeyID:                   0,          // one key per listing until P4
 		Endpoint:                string(s.EndpointKind()),
-		ModelMultiplierMilli:    listing.MultiplierMilli,
+		ModelMultiplierMilli:    modelMultiplier,
 		Converted:               false, // protocol conversion is deferred
 		Model:                   s.model,
 		UpstreamModel:           upstreamModel,
