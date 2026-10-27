@@ -85,13 +85,23 @@ export interface KeyDetail {
 
 export type UsageTier = 'peak' | 'offpeak' | 'flat' | string
 
-/** One row of GET /api/marketplace/records/usage. Amounts are 微元. */
+/**
+ * One row of GET /api/marketplace/records/usage. Amounts are 微元. The
+ * telemetry and cost fields are additive JSON additions — console clients
+ * without them keep working.
+ */
 export interface UsageRecord {
   request_id: string
   model: string
   seller_id: number
+  /** official / plan / third_party. */
+  channel_type: string
   tier: UsageTier
   tier_label: string
+  /** 令牌分组快照 (token-group snapshot at request time). */
+  token_group: string
+  /** 令牌名; empty when the token has been deleted. */
+  token_name: string
   input_tokens: number
   output_tokens: number
   cache_read_tokens: number
@@ -100,9 +110,23 @@ export interface UsageRecord {
   search_count: number
   fetch_count: number
   tool_debit_micro: number
+  /** 分享者设定的计价比例 (1000 = 100%). */
+  multiplier_milli: number
+  platform_fee_micro: number | string
+  seller_credit_micro: number | string
   official_cost_micro: number
   total_debit_micro: number
   saved_micro: number
+  /** 省了千分之几 = saved / official × 1000; 0 when official = 0. */
+  saved_permille: number
+  /** 首字耗时 ms; 0 = 未记录. */
+  first_token_ms: number
+  /** 总耗时 ms. */
+  latency_ms: number
+  is_stream: boolean
+  /** 买方协议 (openai-chat / anthropic-messages / …). */
+  endpoint: string
+  converted: boolean
   usage_estimated: boolean
   status: string
   created_at: string
@@ -110,6 +134,26 @@ export interface UsageRecord {
 
 export interface UsageRecordDetail extends UsageRecord {
   retry_chain: string
+}
+
+/** GET /api/marketplace/records/usage/summary — buyer aggregate stats (买方汇总). */
+export interface UsageSummary {
+  request_count: number
+  success_count: number
+  /** -1 = no sample. */
+  success_rate_milli: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  /** 实付合计. */
+  total_debit_micro: number | string
+  /** 比官方节省合计. */
+  saved_micro: number | string
+  /** 首字平均 ms; 0 = 无数据. */
+  avg_first_token_ms: number
+  /** 总耗时平均 ms. */
+  avg_latency_ms: number
 }
 
 export interface UsageDayStat {

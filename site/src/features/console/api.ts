@@ -34,11 +34,15 @@ import type {
   UsageRecord,
   UsageRecordDetail,
   UsageStats,
+  UsageSummary,
   WalletLedgerEntry,
   WalletSummary,
   WalletTransaction,
   WalletTransactionKind,
 } from './types'
+
+import type { RecordFilterParams, SummaryFilterParams } from '@/features/records/filters'
+import { buildRecordQuery } from '@/features/records/filters'
 
 export type LedgerPage = PageInfo<WalletLedgerEntry>
 export type WalletTransactionPage = PageInfo<WalletTransaction>
@@ -123,12 +127,16 @@ export const usageStatsQuery = (days = 7) =>
     staleTime: 60_000,
   })
 
-export const usageRecordsQuery = (page: number, pageSize = 20) =>
+export const usageRecordsQuery = (
+  page: number,
+  pageSize = 20,
+  filters: Omit<RecordFilterParams, 'page' | 'page_size'> = {},
+) =>
   queryOptions({
-    queryKey: ['console', 'usage-records', page, pageSize],
+    queryKey: ['console', 'usage-records', page, pageSize, filters],
     queryFn: () =>
       api.get<UsagePage>('/marketplace/records/usage', {
-        query: { page, page_size: pageSize },
+        query: buildRecordQuery({ page, page_size: pageSize, ...filters }),
       }),
     staleTime: 20_000,
   })
