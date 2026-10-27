@@ -1,19 +1,43 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { ApiError } from '@/lib/api'
 import { queryClient } from '@/lib/query-client'
 
 import {
+  batchListingModels,
+  deleteListing,
+  modelChangeErrors,
   normalizePayout,
+  restoreListingModels,
   sellerChannelKind,
   sellerCommonAddressesQuery,
   sellerGroupsQuery,
+  sellerListingHeadersQuery,
+  sellerListingModelsQuery,
+  sellerListingsHealthQuery,
+  sellerMultiplierBoundsQuery,
+  sellerOverviewQuery,
   setListingModelMultiplier,
+  setListingModelState,
+  setListingModelsState,
+  submitListingHeaders,
+  updateListingSettings,
   VERIFY_POLL_INTERVAL_MS,
   verifyingRefetchInterval,
   vendorName,
   vendorsQuery,
+  type ModelChangeError,
+  type MultiplierBounds,
   type ProbeResult,
   type SellerCommonAddress,
+  type SellerHeadersSubmitResult,
+  type SellerHeadersView,
+  type SellerListingHealth,
+  type SellerListingModelsResponse,
+  type SellerModelChangeResult,
+  type SellerModelChangeRow,
+  type SellerModelsRestoreResult,
+  type SellerOverview,
   type SellerVendor,
 } from './api'
 
@@ -170,5 +194,353 @@ describe('P2 trust-pool shapes', () => {
       endpoints: ['openai_chat'],
     }
     expect(address.kind).toBe('official')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 模型与价格 / 倍率边界 / 请求头 / 概览 / 健康窗口 (api_seller.go)
+// ---------------------------------------------------------------------------
+
+/** Records fetch calls and answers every request with one canned JSON body. */
+function stubFetch(status: number, body: unknown) {
+  const calls: [string, RequestInit | undefined][] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push([String(input), init])
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      })
+    }),
+  )
+  return calls
+}
+
+/**
+ * Invokes a queryFn directly. The seller queries ignore the react-query
+ * context argument, so tests can drive them without a QueryClient.
+ */
+function invokeQuery<T>(options: { queryFn?: (context: never) => T | Promise<T> }): Promise<T> {
+  const fn = options.queryFn
+  if (!fn) throw new Error('queryFn is missing')
+  return Promise.resolve(fn(undefined as never))
+}
+
+describe('seller console queries (models, bounds, headers, overview, health)', () => {
+  it('listing models query unwraps the envelope from the per-listing models path', async () => {
+    const data: SellerListingModelsResponse = {
+      items: [
+        {
+          model: 'deepseek-flash',
+          upstream_model: 'deepseek-chat',
+          enabled: true,
+          auto_disabled: false,
+          disabled_reason: '',
+          disabled_detail: '',
+          disabled_upstream_status: 0,
+          disabled_upstream_message: '',
+          multiplier_milli: 600,
+          effective_multiplier_milli: 660,
+          pending_multiplier_milli: 0,
+          coefficient_milli: 1100,
+          origin_vendor: 'deepseek',
+          multiplier_min_milli: 100,
+          multiplier_max_milli: 1000,
+          official_prices: {
+            peak: {
+              input_micro_per_mtok: 1_000,
+              output_micro_per_mtok: 2_000,
+              cache_read_micro_per_mtok: 100,
+              cache_write_micro_per_mtok: 0,
+            },
+          },
+          buyer_prices: {
+            peak: {
+              input_micro_per_mtok: 660,
+              output_micro_per_mtok: 1_320,
+              cache_read_micro_per_mtok: 66,
+              cache_write_micro_per_mtok: 0,
+            },
+          },
+        },
+        {
+          model: 'kimi/k3',
+          upstream_model: 'moonshot-v3',
+          enabled: false,
+          auto_disabled: true,
+          disabled_reason: 'upstream_error',
+          disabled_detail: 'upstream returned 402',
+          disabled_upstream_status: 402,
+          disabled_upstream_message: 'insufficient balance',
+          disabled_at: '2026-10-26T18:00:00+08:00',
+          multiplier_milli: 600,
+          effective_multiplier_milli: 600,
+          pending_multiplier_milli: 800,
+          pending_effective_at: '2026-10-27T21:00:00+08:00',
+          coefficient_milli: 1000,
+          origin_vendor: 'moonshot',
+          multiplier_min_milli: 100,
+          multiplier_max_milli: 1000,
+          official_prices: {},
+          buyer_prices: {},
+        },
+      ],
+      platform_fee_percent: 7,
+      tier: 'peak',
+      tier_label: '高峰',
+      multiplier_min_milli: 100,
+      multiplier_max_milli: 1000,
+    }
+    const calls = stubFetch(200, { success: true, message: '', data })
+    const options = sellerListingModelsQuery(5)
+    expect(options.queryKey).toEqual(['marketplace', 'seller', 'listing', 5, 'models'])
+    await expect(invokeQuery(options)).resolves.toEqual(data)
+    expect(calls).toHaveLength(1)
+    expect(calls[0][0]).toBe('/api/marketplace/seller/listings/5/models')
+    expect(calls[0][1]?.method ?? 'GET').toBe('GET')
+  })
+
+  it('multiplier bounds query reads the per-kind floors/ceilings', async () => {
+    const data: MultiplierBounds = {
+      absolute_min_milli: 100,
+      absolute_max_milli: 1000,
+      kinds: {
+        official: { min_milli: 500, max_milli: 1000 },
+        plan: { min_milli: 300, max_milli: 1000 },
+        third_party: { min_milli: 100, max_milli: 1000 },
+      },
+    }
+    const calls = stubFetch(200, { success: true, message: '', data })
+    const options = sellerMultiplierBoundsQuery()
+    expect(options.queryKey).toEqual(['marketplace', 'seller', 'multiplier-bounds'])
+    await expect(invokeQuery(options)).resolves.toEqual(data)
+    expect(calls[0][0]).toBe('/api/marketplace/seller/multiplier-bounds')
+  })
+
+  it('listing headers query returns masked headers plus the pending candidate', async () => {
+    const data: SellerHeadersView = {
+      custom_channel: true,
+      headers: [{ name: 'X-App', value_masked: 'sk-****' }],
+      pending: {
+        version: 3,
+        submitted_at: '2026-10-27T09:00:00+08:00',
+        headers: [{ name: 'X-App', value_masked: 'sk-****' }],
+      },
+      can_edit: true,
+    }
+    const calls = stubFetch(200, { success: true, message: '', data })
+    const options = sellerListingHeadersQuery(5)
+    expect(options.queryKey).toEqual(['marketplace', 'seller', 'listing', 5, 'headers'])
+    await expect(invokeQuery(options)).resolves.toEqual(data)
+    expect(calls[0][0]).toBe('/api/marketplace/seller/listings/5/headers')
+  })
+
+  it('overview query unwraps cards, range and the chart series', async () => {
+    const data: SellerOverview = {
+      cards: { calls: 12, tokens: 3400, income_micro: 1_200_000, pending_micro: 80_000 },
+      range: { days: 30, start: '2026-09-28', end: '2026-10-27' },
+      by_model: [{ model: 'deepseek-flash', calls: 12, tokens: 3400, income_micro: 1_200_000 }],
+      daily_by_model: [
+        {
+          model: 'deepseek-flash',
+          days: [{ date: '2026-10-27', tokens: 3400, income_micro: 1_200_000 }],
+        },
+      ],
+      by_channel: [
+        { listing_id: 5, label: '主力通道', calls: 12, tokens: 3400, income_micro: 1_200_000 },
+      ],
+      as_of: '2026-10-27T12:00:00+08:00',
+    }
+    const calls = stubFetch(200, { success: true, message: '', data })
+    const options = sellerOverviewQuery()
+    expect(options.queryKey).toEqual(['marketplace', 'seller', 'overview'])
+    await expect(invokeQuery(options)).resolves.toEqual(data)
+    expect(calls[0][0]).toBe('/api/marketplace/seller/overview')
+  })
+
+  it('health rows pass the -1 "no sample" success rates through untouched', async () => {
+    const data: SellerListingHealth[] = [
+      {
+        listing_id: 5,
+        latest_probe: null,
+        today_requests: 0,
+        today_success_rate_milli: 0,
+        today_income_micro: 0,
+        requests_1h: 0,
+        success_rate_1h_milli: -1,
+        requests_24h: 0,
+        success_rate_24h_milli: -1,
+        requests_7d: 0,
+        success_rate_7d_milli: -1,
+      },
+      {
+        listing_id: 6,
+        latest_probe: null,
+        today_requests: 40,
+        today_success_rate_milli: 950,
+        today_income_micro: 250_000,
+        requests_1h: 4,
+        success_rate_1h_milli: 1000,
+        requests_24h: 40,
+        success_rate_24h_milli: 950,
+        requests_7d: 400,
+        success_rate_7d_milli: 990,
+      },
+    ]
+    stubFetch(200, { success: true, message: '', data })
+    const rows = await invokeQuery(sellerListingsHealthQuery())
+    expect(rows).toEqual(data)
+    // -1 means "not enough samples" and must survive the envelope unwrap
+    // unchanged (0 is a real all-failed window).
+    expect(rows[0].success_rate_1h_milli).toBe(-1)
+    expect(rows[0].success_rate_24h_milli).toBe(-1)
+    expect(rows[0].success_rate_7d_milli).toBe(-1)
+    expect(rows[1].success_rate_24h_milli).toBe(950)
+  })
+})
+
+describe('seller listing mutations', () => {
+  it('deleteListing issues a DELETE on the listing path without a body', async () => {
+    const calls = stubFetch(200, { success: true, message: '', data: { id: 9, status: 'deleted' } })
+    await expect(deleteListing(9)).resolves.toEqual({ id: 9, status: 'deleted' })
+    expect(calls[0][0]).toBe('/api/marketplace/seller/listings/9')
+    expect(calls[0][1]?.method).toBe('DELETE')
+    expect(calls[0][1]?.body).toBeUndefined()
+  })
+
+  it('updateListingSettings PUTs only the dirty settings fields', async () => {
+    const calls = stubFetch(200, { success: true, message: '', data: { id: 9, status: 'live' } })
+    await expect(updateListingSettings(9, { label: '主力通道', rpm_limit: 600 })).resolves.toEqual({
+      id: 9,
+      status: 'live',
+    })
+    expect(calls[0][0]).toBe('/api/marketplace/seller/listings/9')
+    expect(calls[0][1]?.method).toBe('PUT')
+    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ label: '主力通道', rpm_limit: 600 })
+  })
+
+  it('batchListingModels POSTs one change across listings', async () => {
+    const calls = stubFetch(200, { success: true, message: '', data: { ok: true } })
+    await expect(
+      batchListingModels({ listing_ids: [5, 9], multiplier_milli: 600 }),
+    ).resolves.toEqual({ ok: true })
+    expect(calls[0][0]).toBe('/api/marketplace/seller/listings/batch-models')
+    expect(calls[0][1]?.method).toBe('POST')
+    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({
+      listing_ids: [5, 9],
+      multiplier_milli: 600,
+    })
+  })
+
+  it('setListingModelsState PUTs the model subset and unwraps {items}', async () => {
+    const data: SellerModelChangeResult = {
+      items: [
+        {
+          model: 'deepseek-flash',
+          enabled: false,
+          multiplier_milli: 600,
+          pending_multiplier_milli: 0,
+          auto_disabled: false,
+          disabled_reason: '',
+        },
+      ],
+    }
+    const calls = stubFetch(200, { success: true, message: '', data })
+    await expect(
+      setListingModelsState(9, { models: ['deepseek-flash'], enabled: false }),
+    ).resolves.toEqual(data)
+    expect(calls[0][0]).toBe('/api/marketplace/seller/listings/9/models')
+    expect(calls[0][1]?.method).toBe('PUT')
+    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({
+      models: ['deepseek-flash'],
+      enabled: false,
+    })
+  })
+
+  it('setListingModelState PUTs the encoded model path and unwraps the row', async () => {
+    const data: SellerModelChangeRow = {
+      model: 'kimi/k3',
+      enabled: true,
+      multiplier_milli: 450,
+      pending_multiplier_milli: 0,
+      auto_disabled: false,
+      disabled_reason: '',
+    }
+    const calls = stubFetch(200, { success: true, message: '', data })
+    await expect(setListingModelState(9, 'kimi/k3', { multiplier_milli: 450 })).resolves.toEqual(
+      data,
+    )
+    expect(calls[0][0]).toBe('/api/marketplace/seller/listings/9/models/kimi%2Fk3')
+    expect(calls[0][1]?.method).toBe('PUT')
+    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ multiplier_milli: 450 })
+  })
+
+  it('restoreListingModels POSTs the restore path and returns the probe outcome', async () => {
+    const data: SellerModelsRestoreResult = {
+      restored: 2,
+      still_failing: [
+        { listing_id: 9, model: 'kimi/k3', code: 'PROBE_FAILED', message: 'upstream 500' },
+      ],
+      checked_at: '2026-10-27T12:00:00+08:00',
+    }
+    const calls = stubFetch(200, { success: true, message: '', data })
+    await expect(restoreListingModels(9)).resolves.toEqual(data)
+    expect(calls[0][0]).toBe('/api/marketplace/seller/listings/9/models/restore')
+    expect(calls[0][1]?.method).toBe('POST')
+    expect(calls[0][1]?.body).toBeUndefined()
+  })
+
+  it('submitListingHeaders PUTs the header object under {headers}', async () => {
+    const data: SellerHeadersSubmitResult = {
+      pending: true,
+      unchanged: false,
+      version: 4,
+      headers: [{ name: 'X-App', value_masked: 'sk-****' }],
+    }
+    const calls = stubFetch(200, { success: true, message: '', data })
+    await expect(submitListingHeaders(9, { 'X-App': 'secret' })).resolves.toEqual(data)
+    expect(calls[0][0]).toBe('/api/marketplace/seller/listings/9/headers')
+    expect(calls[0][1]?.method).toBe('PUT')
+    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ headers: { 'X-App': 'secret' } })
+  })
+})
+
+describe('modelChangeErrors', () => {
+  it('extracts the per-row items from a 409 MODEL_CHANGE_REJECTED response', async () => {
+    const items: ModelChangeError[] = [
+      {
+        listing_id: 9,
+        model: 'deepseek-flash',
+        code: 'PRICE_JUMP',
+        message: 'multiplier may rise at most 30% per change',
+        earliest_change_at: '2026-10-27T13:00:00+08:00',
+      },
+      { listing_id: 9, model: 'kimi/k3', code: 'MODEL_NOT_FOUND', message: 'model is not listed' },
+    ]
+    stubFetch(409, {
+      success: false,
+      message: '2 model change(s) rejected',
+      code: 'MODEL_CHANGE_REJECTED',
+      items,
+    })
+    const err = await setListingModelsState(9, {
+      models: ['deepseek-flash', 'kimi/k3'],
+      multiplier_milli: 900,
+    }).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(409)
+    expect(modelChangeErrors(err)).toEqual(items)
+  })
+
+  it('returns an empty array for other errors and non-ApiError values', async () => {
+    stubFetch(409, { success: false, message: 'price conflict', code: 'PRICE_CONFLICT' })
+    const err = await setListingModelState(9, 'deepseek-flash', { multiplier_milli: 900 }).catch(
+      (e: unknown) => e,
+    )
+    expect(err).toBeInstanceOf(ApiError)
+    expect(modelChangeErrors(err)).toEqual([])
+    expect(modelChangeErrors(new Error('offline'))).toEqual([])
+    expect(modelChangeErrors(null)).toEqual([])
   })
 })
