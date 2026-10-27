@@ -56,18 +56,20 @@ const TrustPoolSeedValidity = 90 * 24 * time.Hour
 // Trust-pool write validation errors. The admin API maps them to 400/409; the
 // text never echoes key material.
 var (
-	ErrTrustPoolAddressRequired  = errors.New("exactly one of host or host_pattern is required")
-	ErrTrustPoolAddressAmbiguous = errors.New("host and host_pattern are mutually exclusive")
-	ErrTrustPoolHostInvalid      = errors.New("host is not a valid hostname")
-	ErrTrustPoolPatternInvalid   = errors.New("host_pattern is not a valid regular expression")
-	ErrTrustPoolKindInvalid      = errors.New("kind must be official, third_party or plan")
-	ErrTrustPoolTrustInvalid     = errors.New("trust must be trusted, watch or blocked")
-	ErrTrustPoolOfficialSource   = errors.New("official rows can only come from the built-in seed data")
-	ErrTrustPoolTrustedExpiry    = errors.New("a trusted row requires expires_at")
-	ErrTrustPoolBlockedNotes     = errors.New("a blocked row requires notes (the refusal reason)")
-	ErrTrustPoolSourceReserved   = errors.New("source seed is reserved for the built-in trust pool")
-	ErrTrustPoolSourceImmutable  = errors.New("source cannot be changed")
-	ErrTrustPoolSeedLocked       = errors.New("seed rows are managed by the code and cannot be deleted")
+	ErrTrustPoolAddressRequired    = errors.New("exactly one of host or host_pattern is required")
+	ErrTrustPoolAddressAmbiguous   = errors.New("host and host_pattern are mutually exclusive")
+	ErrTrustPoolHostInvalid        = errors.New("host is not a valid hostname")
+	ErrTrustPoolPatternInvalid     = errors.New("host_pattern is not a valid regular expression")
+	ErrTrustPoolKindInvalid        = errors.New("kind must be official, third_party or plan")
+	ErrTrustPoolTrustInvalid       = errors.New("trust must be trusted, watch or blocked")
+	ErrTrustPoolOfficialSource     = errors.New("official rows can only come from the built-in seed data")
+	ErrTrustPoolTrustedExpiry      = errors.New("a trusted row requires expires_at")
+	ErrTrustPoolBlockedNotes       = errors.New("a blocked row requires notes (the refusal reason)")
+	ErrTrustPoolSourceReserved     = errors.New("source seed is reserved for the built-in trust pool")
+	ErrTrustPoolSourceImmutable    = errors.New("source cannot be changed")
+	ErrTrustPoolSeedLocked         = errors.New("seed rows are managed by the code and cannot be deleted")
+	ErrTrustPoolApprovalNotPending = errors.New("trust-pool change is not pending")
+	ErrTrustPoolApprovalSelfReview = errors.New("submitters cannot review their own trust-pool change")
 )
 
 // NormalizeTrustPoolAddress validates the host/host_pattern pair and returns
@@ -136,6 +138,20 @@ func ValidateTrustPoolGovernance(row TrustPool) error {
 	}
 	if row.Kind == TrustKindOfficial && row.Source != TrustSourceSeed {
 		return ErrTrustPoolOfficialSource
+	}
+	return nil
+}
+
+// ValidateTrustPoolApprovalDecision enforces the P5-B 双人确认 guard: only a
+// pending change may be decided, and the reviewer must not be the operator who
+// submitted it. The API keeps RootAuth in this phase; this check is the
+// authorization rule that RootAuth alone cannot express.
+func ValidateTrustPoolApprovalDecision(approval TrustPoolApproval, reviewerID int64) error {
+	if approval.Status != TrustPoolApprovalPending {
+		return ErrTrustPoolApprovalNotPending
+	}
+	if reviewerID > 0 && approval.SubmitterID == reviewerID {
+		return ErrTrustPoolApprovalSelfReview
 	}
 	return nil
 }

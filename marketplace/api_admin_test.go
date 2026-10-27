@@ -1374,12 +1374,14 @@ func TestAdminPoolChannelModelsAPI(t *testing.T) {
 }
 
 // TestAdminTrustPoolCRUDAndGovernance covers the P5 authentication-pool CRUD,
-// the governance gate and the append-only audit trail in one fixture: the
-// routes share a single state machine, so splitting them would only repeat the
-// seed setup.
+// the governance gate, the append-only audit trail and the P5-B two-person
+// confirmation flow in one fixture: they share a single state machine, so
+// splitting them would only repeat the seed setup.
 func TestAdminTrustPoolCRUDAndGovernance(t *testing.T) {
 	f := newAdminAPIFixture(t)
 	const path = "/api/marketplace/admin/trust-pool"
+	submitter := f.adminID
+	reviewer := int(f.buyerID)
 
 	// The seed rows are listed with a parsed view and an expiry (P5 requires
 	// every trusted row to carry one).
@@ -1423,31 +1425,76 @@ func TestAdminTrustPoolCRUDAndGovernance(t *testing.T) {
 	assert.Equal(t, "api.deepseek.com", seed["host"])
 	assert.Equal(t, "seed", seed["source"])
 
-	// Create a manual watch row; source defaults to manual.
+	// Create a manual watch row: it is queued as a pending approval and does
+	// not touch mp_trust_pool yet.
 	w = f.do(t, http.MethodPost, path, map[string]any{
 		"host": "api.manual.example", "kind": "third_party", "trust": "watch",
 		"endpoints": []string{"openai_chat"}, "deny_paths": []string{"/admin"},
 		"notes": "manual test row",
-	}, f.adminID)
+	}, submitter)
 	require.Equal(t, http.StatusOK, w.Code)
-	created := decodeAdminBody(t, w)["data"].(map[string]any)
-	createdID := int64(created["id"].(float64))
-	assert.Equal(t, "manual", created["source"])
-	assert.Equal(t, "api.manual.example", created["host"])
-	assert.Equal(t, []any{"openai_chat"}, created["endpoints"])
-	assert.Equal(t, []any{"/admin"}, created["deny_paths"])
+	createApproval := decodeAdminBody(t, w)["data"].(map[string]any)
+	createApprovalID := int64(createApproval["id"].(float64))
+	assert.Equal(t, TrustPoolApprovalPending, createApproval["status"])
+	assert.Equal(t, TrustPoolApprovalCreate, createApproval["action"])
+	assert.Equal(t, "api.manual.example", createApproval["target"])
+	assert.EqualValues(t, submitter, createApproval["submitter_id"])
+	assert.EqualValues(t, 0, createApproval["approver_id"])
+	createPayload := createApproval["payload"].(map[string]any)
+	assert.Nil(t, createPayload["before"], "a create has no before snapshot")
+	assert.Equal(t, "api.manual.example", createPayload["after"].(map[string]any)["host"])
+	assert.EqualValues(t, len(trustPoolSeeds), countRows(t, f.db, &TrustPool{}), "a pending change is not applied")
 
-	// The audit row was written in the same transaction.
+	// The pending queue lists it; another status filter does not.
+	w = f.do(t, http.MethodGet, path+"/approvals", nil, submitter)
+	require.Equal(t, http.StatusOK, w.Code)
+	pendingApprovals, ok := decodeAdminBody(t, w)["data"].([]any)
+	require.True(t, ok)
+	require.Len(t, pendingApprovals, 1)
+	assert.EqualValues(t, createApprovalID, pendingApprovals[0].(map[string]any)["id"])
+	w = f.do(t, http.MethodGet, path+"/approvals?status=approved", nil, submitter)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, decodeAdminBody(t, w)["data"])
+	w = f.do(t, http.MethodGet, path+"/approvals?status=bogus", nil, submitter)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// 防自审: the submitter cannot approve their own change.
+	w = f.do(t, http.MethodPost, path+"/approvals/"+strconv.FormatInt(createApprovalID, 10)+"/approve", nil, submitter)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	var stillPending TrustPoolApproval
+	require.NoError(t, f.db.Where("id = ?", createApprovalID).Take(&stillPending).Error)
+	assert.Equal(t, TrustPoolApprovalPending, stillPending.Status)
+
+	// A second operator approves; only now is the row created and audited.
+	w = f.do(t, http.MethodPost, path+"/approvals/"+strconv.FormatInt(createApprovalID, 10)+"/approve", nil, reviewer)
+	require.Equal(t, http.StatusOK, w.Code)
+	approvedCreate := decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.Equal(t, TrustPoolApprovalApproved, approvedCreate["status"])
+	assert.EqualValues(t, reviewer, approvedCreate["approver_id"])
+	createdID := int64(approvedCreate["trust_pool_id"].(float64))
+	require.NotZero(t, createdID)
+	var createdRow TrustPool
+	require.NoError(t, f.db.Where("id = ?", createdID).Take(&createdRow).Error)
+	assert.Equal(t, "api.manual.example", createdRow.Host)
+	assert.Equal(t, "manual", createdRow.Source)
+
 	var audits []TrustPoolAudit
 	require.NoError(t, f.db.Where("trust_pool_id = ?", createdID).Order("id ASC").Find(&audits).Error)
 	require.Len(t, audits, 1)
 	assert.Equal(t, TrustPoolAuditCreate, audits[0].Action)
-	assert.EqualValues(t, f.adminID, audits[0].ActorID)
+	assert.EqualValues(t, reviewer, audits[0].ActorID)
 	assert.Empty(t, audits[0].Before)
 	assert.Contains(t, audits[0].After, "api.manual.example")
 	assert.Equal(t, "manual test row", audits[0].Notes)
 
-	// Governance and shape validation.
+	// The queue is empty again, and a decided change cannot be decided twice.
+	w = f.do(t, http.MethodGet, path+"/approvals", nil, submitter)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, decodeAdminBody(t, w)["data"])
+	w = f.do(t, http.MethodPost, path+"/approvals/"+strconv.FormatInt(createApprovalID, 10)+"/approve", nil, reviewer)
+	assert.Equal(t, http.StatusConflict, w.Code)
+
+	// Governance and shape validation still runs at submission time.
 	for _, body := range []map[string]any{
 		{"kind": "third_party", "trust": "watch"},                                              // address required
 		{"host": "a.example", "host_pattern": `^a\.`, "kind": "third_party", "trust": "watch"}, // both
@@ -1461,28 +1508,59 @@ func TestAdminTrustPoolCRUDAndGovernance(t *testing.T) {
 		{"host": "api.manual.example", "kind": "third_party", "trust": "watch", "endpoints": []string{"bad"}},
 		{"host": "api.manual.example", "kind": "third_party", "trust": "watch", "path_prefix": "/" + strings.Repeat("a", 513)},
 	} {
-		w = f.do(t, http.MethodPost, path, body, f.adminID)
+		w = f.do(t, http.MethodPost, path, body, submitter)
 		assert.Equal(t, http.StatusBadRequest, w.Code, "%v", body)
 	}
 	w = f.do(t, http.MethodPost, path, map[string]any{
 		"host": "api.expiring.example", "kind": "third_party", "trust": "trusted",
 		"expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
-	}, f.adminID)
+	}, submitter)
 	require.Equal(t, http.StatusOK, w.Code)
-	expiringID := int64(decodeAdminBody(t, w)["data"].(map[string]any)["id"].(float64))
+	expiringApprovalID := int64(decodeAdminBody(t, w)["data"].(map[string]any)["id"].(float64))
+	w = f.do(t, http.MethodPost, path+"/approvals/"+strconv.FormatInt(expiringApprovalID, 10)+"/approve", nil, reviewer)
+	require.Equal(t, http.StatusOK, w.Code)
+	expiringID := int64(decodeAdminBody(t, w)["data"].(map[string]any)["trust_pool_id"].(float64))
 
-	// Update keeps the source and records the before/after snapshots.
+	// An update is queued (tagged change_trust when trust flips), leaves the
+	// row untouched, and a rejection leaves it untouched for good.
 	w = f.do(t, http.MethodPut, path+"/"+strconv.FormatInt(createdID, 10), map[string]any{
 		"host": "api.manual.example", "kind": "third_party", "trust": "blocked",
 		"notes": "resold plan account", "deny_paths": []string{"/api/coding"},
-	}, f.adminID)
+	}, submitter)
 	require.Equal(t, http.StatusOK, w.Code)
-	updated := decodeAdminBody(t, w)["data"].(map[string]any)
-	assert.Equal(t, "blocked", updated["trust"])
-	assert.Equal(t, "manual", updated["source"])
+	updateApproval := decodeAdminBody(t, w)["data"].(map[string]any)
+	updateApprovalID := int64(updateApproval["id"].(float64))
+	assert.Equal(t, TrustPoolApprovalChangeTrust, updateApproval["action"])
+	require.NoError(t, f.db.Where("id = ?", createdID).Take(&createdRow).Error)
+	assert.Equal(t, TrustWatch, createdRow.Trust, "a pending update is not applied")
+
+	w = f.do(t, http.MethodPost, path+"/approvals/"+strconv.FormatInt(updateApprovalID, 10)+"/reject", nil, submitter)
+	assert.Equal(t, http.StatusForbidden, w.Code, "the submitter cannot reject their own change")
+	w = f.do(t, http.MethodPost, path+"/approvals/"+strconv.FormatInt(updateApprovalID, 10)+"/reject", nil, reviewer)
+	require.Equal(t, http.StatusOK, w.Code)
+	rejected := decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.Equal(t, TrustPoolApprovalRejected, rejected["status"])
+	require.NoError(t, f.db.Where("id = ?", createdID).Take(&createdRow).Error)
+	assert.Equal(t, TrustWatch, createdRow.Trust, "a rejected change is not applied")
+	w = f.do(t, http.MethodPost, path+"/approvals/"+strconv.FormatInt(updateApprovalID, 10)+"/reject", nil, reviewer)
+	assert.Equal(t, http.StatusConflict, w.Code, "only a pending change can be decided")
+
+	// Resubmit and approve the same update.
+	w = f.do(t, http.MethodPut, path+"/"+strconv.FormatInt(createdID, 10), map[string]any{
+		"host": "api.manual.example", "kind": "third_party", "trust": "blocked",
+		"notes": "resold plan account", "deny_paths": []string{"/api/coding"},
+	}, submitter)
+	require.Equal(t, http.StatusOK, w.Code)
+	updateApprovalID = int64(decodeAdminBody(t, w)["data"].(map[string]any)["id"].(float64))
+	w = f.do(t, http.MethodPost, path+"/approvals/"+strconv.FormatInt(updateApprovalID, 10)+"/approve", nil, reviewer)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NoError(t, f.db.Where("id = ?", createdID).Take(&createdRow).Error)
+	assert.Equal(t, TrustBlocked, createdRow.Trust)
+	assert.Equal(t, "manual", createdRow.Source)
 	require.NoError(t, f.db.Where("trust_pool_id = ?", createdID).Order("id ASC").Find(&audits).Error)
 	require.Len(t, audits, 2)
 	assert.Equal(t, TrustPoolAuditUpdate, audits[1].Action)
+	assert.EqualValues(t, reviewer, audits[1].ActorID)
 	assert.Contains(t, audits[1].Before, `"trust":"watch"`)
 	assert.Contains(t, audits[1].After, `"trust":"blocked"`)
 	assert.Equal(t, "resold plan account", audits[1].Notes)
@@ -1490,11 +1568,11 @@ func TestAdminTrustPoolCRUDAndGovernance(t *testing.T) {
 	// A manual row cannot become official, and source is immutable.
 	w = f.do(t, http.MethodPut, path+"/"+strconv.FormatInt(createdID, 10), map[string]any{
 		"host": "api.manual.example", "kind": "official", "trust": "watch",
-	}, f.adminID)
+	}, submitter)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	w = f.do(t, http.MethodPut, path+"/"+strconv.FormatInt(createdID, 10), map[string]any{
 		"host": "api.manual.example", "kind": "third_party", "trust": "watch", "source": "probe",
-	}, f.adminID)
+	}, submitter)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	// A seeded official row stays editable (source stays seed).
@@ -1503,28 +1581,46 @@ func TestAdminTrustPoolCRUDAndGovernance(t *testing.T) {
 		"endpoints":  []string{"openai_chat", "anthropic_messages"},
 		"expires_at": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 		"notes":      "reviewed",
-	}, f.adminID)
+	}, submitter)
 	require.Equal(t, http.StatusOK, w.Code)
-	seedUpdated := decodeAdminBody(t, w)["data"].(map[string]any)
-	assert.Equal(t, "seed", seedUpdated["source"])
-	assert.Equal(t, "official", seedUpdated["kind"])
-	assert.Equal(t, "reviewed", seedUpdated["notes"])
+	seedApprovalID := int64(decodeAdminBody(t, w)["data"].(map[string]any)["id"].(float64))
+	w = f.do(t, http.MethodPost, path+"/approvals/"+strconv.FormatInt(seedApprovalID, 10)+"/approve", nil, reviewer)
+	require.Equal(t, http.StatusOK, w.Code)
+	var seedUpdated TrustPool
+	require.NoError(t, f.db.Where("id = ?", seedID).Take(&seedUpdated).Error)
+	assert.Equal(t, "seed", seedUpdated.Source)
+	assert.Equal(t, "official", seedUpdated.Kind)
+	assert.Equal(t, "reviewed", seedUpdated.Notes)
 
-	// Hard delete keeps the audit trail; seeded rows are code-owned (409).
-	w = f.do(t, http.MethodDelete, path+"/"+strconv.FormatInt(expiringID, 10), nil, f.adminID)
+	// A delete is queued too; the row survives until the second operator
+	// approves, then the hard delete and its audit row commit together.
+	w = f.do(t, http.MethodDelete, path+"/"+strconv.FormatInt(expiringID, 10), nil, submitter)
 	require.Equal(t, http.StatusOK, w.Code)
-	assert.EqualValues(t, len(trustPoolSeeds)+1, countRows(t, f.db, &TrustPool{}), "the seed rows and the manual row remain")
+	deleteApproval := decodeAdminBody(t, w)["data"].(map[string]any)
+	assert.Equal(t, TrustPoolApprovalDelete, deleteApproval["action"])
+	deleteApprovalID := int64(deleteApproval["id"].(float64))
+	assert.EqualValues(t, len(trustPoolSeeds)+2, countRows(t, f.db, &TrustPool{}), "the pending delete has not been applied")
+	w = f.do(t, http.MethodPost, path+"/approvals/"+strconv.FormatInt(deleteApprovalID, 10)+"/approve", nil, reviewer)
+	require.Equal(t, http.StatusOK, w.Code)
+	var gone int64
+	require.NoError(t, f.db.Model(&TrustPool{}).Where("id = ?", expiringID).Count(&gone).Error)
+	assert.Zero(t, gone)
 	var deleteAudits []TrustPoolAudit
 	require.NoError(t, f.db.Where("trust_pool_id = ? AND action = ?", expiringID, TrustPoolAuditDelete).Find(&deleteAudits).Error)
 	require.Len(t, deleteAudits, 1)
 	assert.Contains(t, deleteAudits[0].Before, "api.expiring.example")
 	assert.Empty(t, deleteAudits[0].After)
 
-	w = f.do(t, http.MethodDelete, path+"/"+strconv.FormatInt(seedID, 10), nil, f.adminID)
+	// Seed rows cannot be deleted even through the approval queue.
+	w = f.do(t, http.MethodDelete, path+"/"+strconv.FormatInt(seedID, 10), nil, submitter)
 	assert.Equal(t, http.StatusConflict, w.Code)
-	w = f.do(t, http.MethodDelete, path+"/999999", nil, f.adminID)
+	w = f.do(t, http.MethodDelete, path+"/999999", nil, submitter)
 	assert.Equal(t, http.StatusNotFound, w.Code)
-	w = f.do(t, http.MethodGet, path+"/999999", nil, f.adminID)
+	w = f.do(t, http.MethodGet, path+"/999999", nil, submitter)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	w = f.do(t, http.MethodPost, path+"/approvals/999999/approve", nil, reviewer)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	w = f.do(t, http.MethodPost, path+"/approvals/999999/reject", nil, reviewer)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 
 	// Auth: missing session is 401; non-root is 403.
@@ -1534,6 +1630,10 @@ func TestAdminTrustPoolCRUDAndGovernance(t *testing.T) {
 	w = f.doRole(t, http.MethodGet, path, nil, f.adminID, nonRoot)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	w = f.doRole(t, http.MethodPost, path, map[string]any{"host": "x.example"}, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	w = f.doRole(t, http.MethodGet, path+"/approvals", nil, f.adminID, nonRoot)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	w = f.doRole(t, http.MethodPost, path+"/approvals/1/approve", nil, f.adminID, nonRoot)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 

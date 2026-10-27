@@ -38,6 +38,7 @@ func TestMigrateCreatesTables(t *testing.T) {
 		"mp_notifications",
 		"mp_trust_pool",
 		"mp_trust_pool_audit",
+		"mp_trust_pool_approvals",
 		"mp_ops_metrics",
 		"mp_seller_channels",
 		"mp_channel_endpoints",

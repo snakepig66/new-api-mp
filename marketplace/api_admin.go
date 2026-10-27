@@ -86,9 +86,12 @@ func registerAdminRootRoutes(g *gin.RouterGroup) {
 	g.GET("/admin/pool/channel-models", adminPoolListChannelModels)
 	g.PUT("/admin/pool/channel-models", adminPoolPutChannelModel)
 	g.DELETE("/admin/pool/channel-models", adminPoolDeleteChannelModel)
-	// 认证池 (P5): operator CRUD over mp_trust_pool plus the governance gate
-	// and the append-only audit trail.
+	// 认证池 (P5): operator CRUD over mp_trust_pool plus the governance gate,
+	// the append-only audit trail and the P5-B two-person confirmation queue.
 	g.GET("/admin/trust-pool", adminTrustPoolList)
+	g.GET("/admin/trust-pool/approvals", adminTrustPoolApprovalList)
+	g.POST("/admin/trust-pool/approvals/:id/approve", adminTrustPoolApprovalApprove)
+	g.POST("/admin/trust-pool/approvals/:id/reject", adminTrustPoolApprovalReject)
 	g.GET("/admin/trust-pool/:id", adminTrustPoolGet)
 	g.POST("/admin/trust-pool", adminTrustPoolCreate)
 	g.PUT("/admin/trust-pool/:id", adminTrustPoolUpdate)
@@ -1974,27 +1977,466 @@ func adminPoolDeleteChannelModel(c *gin.Context) {
 }
 
 // ---------------------------------------------------------------------------
-// 认证池 (P5): CRUD + 治理守卫 + 只追加审计.
+// 认证池 (P5): CRUD + 治理守卫 + 只追加审计 + 双人确认.
 //
 // The operator console may only add manual/probe rows: source="seed" is
 // reserved for SeedTrustPool, so an official row can never be minted through
-// the API. Every successful write is recorded in mp_trust_pool_audit in the
-// same transaction, making the trail append-only. Deletion is a hard delete
-// (the audit row keeps the before snapshot); seeded rows are code-owned and
-// cannot be deleted.
+// the API. P5-B changes the write path: a create/update/delete is recorded as
+// a pending TrustPoolApproval instead of taking effect immediately. A second
+// operator approves it, and only then is the stored after snapshot applied and
+// the append-only audit row written. The submitter may never approve their own
+// change (防自审); independent RBAC roles are deferred to P5-C, so the routes
+// keep the existing RootAuth gate.
 // ---------------------------------------------------------------------------
+
+// trustPoolApprovalPayload is the JSON stored in TrustPoolApproval.Payload.
+// The after snapshot is exactly the row the second operator reviews and the
+// row applied on approval. Deletion stores only before.
+type trustPoolApprovalPayload struct {
+	Before *TrustPool `json:"before"`
+	After  *TrustPool `json:"after"`
+}
+
+// adminTrustPoolApprovalView is the console shape of one approval row.
+type adminTrustPoolApprovalView struct {
+	ID          int64      `json:"id"`
+	TrustPoolID int64      `json:"trust_pool_id"`
+	Action      string     `json:"action"`
+	Target      string     `json:"target"`
+	Payload     any        `json:"payload"`
+	SubmitterID int64      `json:"submitter_id"`
+	ApproverID  int64      `json:"approver_id"`
+	Status      string     `json:"status"`
+	Notes       string     `json:"notes"`
+	CreatedAt   time.Time  `json:"created_at"`
+	ApprovedAt  *time.Time `json:"approved_at"`
+}
+
+// decodeTrustPoolApprovalPayload parses a stored payload. Callers treat an
+// error as a corrupt row, not as a client error.
+func decodeTrustPoolApprovalPayload(raw string) (trustPoolApprovalPayload, error) {
+	var payload trustPoolApprovalPayload
+	if strings.TrimSpace(raw) == "" {
+		return payload, nil
+	}
+	if err := common.UnmarshalJsonStr(raw, &payload); err != nil {
+		return payload, err
+	}
+	return payload, nil
+}
+
+// trustPoolApprovalTarget names the affected address for a list row.
+func trustPoolApprovalTarget(payload trustPoolApprovalPayload) string {
+	row := payload.After
+	if row == nil {
+		row = payload.Before
+	}
+	if row == nil {
+		return ""
+	}
+	if row.Host != "" {
+		return row.Host
+	}
+	return row.HostPattern
+}
+
+// toAdminTrustPoolApprovalView decodes the payload for display. A corrupt
+// stored payload is returned verbatim so an operator can see what is stored.
+func toAdminTrustPoolApprovalView(row TrustPoolApproval) adminTrustPoolApprovalView {
+	payload, err := decodeTrustPoolApprovalPayload(row.Payload)
+	view := adminTrustPoolApprovalView{
+		ID:          row.ID,
+		TrustPoolID: row.TrustPoolID,
+		Action:      row.Action,
+		Target:      trustPoolApprovalTarget(payload),
+		SubmitterID: row.SubmitterID,
+		ApproverID:  row.ApproverID,
+		Status:      row.Status,
+		Notes:       row.Notes,
+		CreatedAt:   row.CreatedAt,
+		ApprovedAt:  row.ApprovedAt,
+	}
+	if err != nil {
+		view.Payload = row.Payload
+	} else {
+		view.Payload = payload
+	}
+	return view
+}
+
+// submitTrustPoolApproval inserts the pending change. The caller has already
+// validated the after row with trustPoolFromAdminRequest / the governance
+// guard, so a malformed change never reaches the approval queue.
+func submitTrustPoolApproval(db *gorm.DB, submitterID, trustPoolID int64, action string,
+	before, after *TrustPool) (*TrustPoolApproval, error) {
+	raw, err := common.Marshal(trustPoolApprovalPayload{Before: before, After: after})
+	if err != nil {
+		return nil, err
+	}
+	notes := ""
+	switch {
+	case after != nil:
+		notes = after.Notes
+	case before != nil:
+		notes = before.Notes
+	}
+	row := TrustPoolApproval{
+		TrustPoolID: trustPoolID,
+		Action:      action,
+		Payload:     string(raw),
+		SubmitterID: submitterID,
+		Status:      TrustPoolApprovalPending,
+		Notes:       notes,
+		CreatedAt:   time.Now(),
+	}
+	if err := db.Create(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// adminTrustPoolCreate serves POST /admin/trust-pool — validate the row and
+// queue a create for a second operator's approval.
+func adminTrustPoolCreate(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	var req adminTrustPoolRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	row, err := trustPoolFromAdminRequest(req, nil)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body: "+err.Error()))
+		return
+	}
+	actorID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	approval, err := submitTrustPoolApproval(db, actorID, 0, TrustPoolApprovalCreate, nil, &row)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to submit trust pool change"))
+		return
+	}
+	common.ApiSuccess(c, toAdminTrustPoolApprovalView(*approval))
+}
+
+// adminTrustPoolUpdate serves PUT /admin/trust-pool/:id. The source of an
+// existing row is immutable; seeded rows keep their official identity. The
+// validated row is queued for a second operator instead of saved.
+func adminTrustPoolUpdate(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	id, ok := adminIDParam(c)
+	if !ok {
+		return
+	}
+	var req adminTrustPoolRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
+		return
+	}
+	var before TrustPool
+	if err := db.Where("id = ?", id).Take(&before).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			common.ApiErrorStatus(c, http.StatusNotFound, errors.New("trust pool row not found"))
+			return
+		}
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query trust pool row"))
+		return
+	}
+	after, err := trustPoolFromAdminRequest(req, &before)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body: "+err.Error()))
+		return
+	}
+	action := TrustPoolApprovalUpdate
+	if before.Trust != after.Trust {
+		action = TrustPoolApprovalChangeTrust
+	}
+	actorID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	approval, err := submitTrustPoolApproval(db, actorID, id, action, &before, &after)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to submit trust pool change"))
+		return
+	}
+	common.ApiSuccess(c, toAdminTrustPoolApprovalView(*approval))
+}
+
+// adminTrustPoolDelete serves DELETE /admin/trust-pool/:id — queue a hard
+// delete for a second operator's approval. Seeded rows are code-owned and
+// cannot be deleted; setting trust=blocked is the supported way to stop
+// trusting one.
+func adminTrustPoolDelete(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	id, ok := adminIDParam(c)
+	if !ok {
+		return
+	}
+	var before TrustPool
+	if err := db.Where("id = ?", id).Take(&before).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			common.ApiErrorStatus(c, http.StatusNotFound, errors.New("trust pool row not found"))
+			return
+		}
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query trust pool row"))
+		return
+	}
+	if before.Source == TrustSourceSeed {
+		common.ApiErrorStatus(c, http.StatusConflict, ErrTrustPoolSeedLocked)
+		return
+	}
+	actorID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	approval, err := submitTrustPoolApproval(db, actorID, id, TrustPoolApprovalDelete, &before, nil)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to submit trust pool change"))
+		return
+	}
+	common.ApiSuccess(c, toAdminTrustPoolApprovalView(*approval))
+}
+
+// adminTrustPoolApprovalList serves GET /admin/trust-pool/approvals?status=
+// (default pending). Rows are newest first.
+func adminTrustPoolApprovalList(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	status := strings.TrimSpace(c.Query("status"))
+	if status == "" {
+		status = TrustPoolApprovalPending
+	}
+	switch status {
+	case TrustPoolApprovalPending, TrustPoolApprovalApproved, TrustPoolApprovalRejected:
+	default:
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("status must be pending, approved or rejected"))
+		return
+	}
+	limit := 200
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 500 {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("limit must be between 1 and 500"))
+			return
+		}
+		limit = parsed
+	}
+	var rows []TrustPoolApproval
+	if err := db.Where("status = ?", status).Order("created_at DESC").Order("id DESC").
+		Limit(limit).Find(&rows).Error; err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query trust pool approvals"))
+		return
+	}
+	items := make([]adminTrustPoolApprovalView, 0, len(rows))
+	for i := range rows {
+		items = append(items, toAdminTrustPoolApprovalView(rows[i]))
+	}
+	common.ApiSuccess(c, items)
+}
+
+// adminTrustPoolApprovalDecision loads a pending approval and runs the 双人确认
+// guard before fn claims and applies it. The guard is checked both here and
+// inside the claim transaction so a concurrent second approval cannot slip
+// through.
+func loadTrustPoolApprovalForReview(db *gorm.DB, c *gin.Context) (*TrustPoolApproval, int64, bool) {
+	id, ok := adminIDParam(c)
+	if !ok {
+		return nil, 0, false
+	}
+	var approval TrustPoolApproval
+	if err := db.Where("id = ?", id).Take(&approval).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			common.ApiErrorStatus(c, http.StatusNotFound, errors.New("trust pool approval not found"))
+			return nil, 0, false
+		}
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query trust pool approval"))
+		return nil, 0, false
+	}
+	reviewerID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	if err := ValidateTrustPoolApprovalDecision(approval, reviewerID); err != nil {
+		if errors.Is(err, ErrTrustPoolApprovalSelfReview) {
+			common.ApiErrorStatus(c, http.StatusForbidden, err)
+			return nil, 0, false
+		}
+		common.ApiErrorStatus(c, http.StatusConflict, err)
+		return nil, 0, false
+	}
+	return &approval, reviewerID, true
+}
+
+// adminTrustPoolApprovalApprove serves POST /admin/trust-pool/approvals/:id/approve.
+// It claims the pending row, applies the reviewed snapshot and writes the
+// audit row in one transaction.
+func adminTrustPoolApprovalApprove(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	approval, reviewerID, ok := loadTrustPoolApprovalForReview(db, c)
+	if !ok {
+		return
+	}
+	payload, err := decodeTrustPoolApprovalPayload(approval.Payload)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("trust pool approval payload is corrupt"))
+		return
+	}
+	now := time.Now()
+	applied := TrustPoolApproval{}
+	err = db.Transaction(func(tx *gorm.DB) error {
+		// Claim the approval first: the conditional status update makes a
+		// second concurrent reviewer fail instead of applying the change twice.
+		res := tx.Model(&TrustPoolApproval{}).
+			Where("id = ? AND status = ?", approval.ID, TrustPoolApprovalPending).
+			Updates(map[string]any{
+				"approver_id": reviewerID,
+				"status":      TrustPoolApprovalApproved,
+				"approved_at": now,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return ErrTrustPoolApprovalNotPending
+		}
+		var auditAction string
+		switch approval.Action {
+		case TrustPoolApprovalCreate:
+			if payload.After == nil {
+				return errors.New("create approval has no after snapshot")
+			}
+			row := *payload.After
+			row.ID = 0
+			row.CreatedAt = now
+			row.UpdatedAt = now
+			if err := tx.Create(&row).Error; err != nil {
+				return err
+			}
+			applied.TrustPoolID = row.ID
+			auditAction = TrustPoolAuditCreate
+			if err := recordTrustPoolAudit(tx, reviewerID, auditAction, nil, &row); err != nil {
+				return err
+			}
+		case TrustPoolApprovalUpdate, TrustPoolApprovalChangeTrust:
+			if payload.After == nil {
+				return errors.New("update approval has no after snapshot")
+			}
+			var current TrustPool
+			if err := tx.Where("id = ?", approval.TrustPoolID).Take(&current).Error; err != nil {
+				return err
+			}
+			row := *payload.After
+			row.ID = approval.TrustPoolID
+			row.CreatedAt = current.CreatedAt
+			row.UpdatedAt = now
+			if err := tx.Save(&row).Error; err != nil {
+				return err
+			}
+			applied.TrustPoolID = row.ID
+			if err := recordTrustPoolAudit(tx, reviewerID, TrustPoolAuditUpdate, &current, &row); err != nil {
+				return err
+			}
+		case TrustPoolApprovalDelete:
+			var current TrustPool
+			if err := tx.Where("id = ?", approval.TrustPoolID).Take(&current).Error; err != nil {
+				return err
+			}
+			if current.Source == TrustSourceSeed {
+				return ErrTrustPoolSeedLocked
+			}
+			if err := tx.Delete(&TrustPool{}, approval.TrustPoolID).Error; err != nil {
+				return err
+			}
+			applied.TrustPoolID = approval.TrustPoolID
+			if err := recordTrustPoolAudit(tx, reviewerID, TrustPoolAuditDelete, &current, nil); err != nil {
+				return err
+			}
+		default:
+			return errors.New("unknown trust pool approval action")
+		}
+		return nil
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrTrustPoolApprovalNotPending):
+			common.ApiErrorStatus(c, http.StatusConflict, err)
+		case errors.Is(err, ErrTrustPoolSeedLocked):
+			common.ApiErrorStatus(c, http.StatusConflict, err)
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			common.ApiErrorStatus(c, http.StatusConflict, errors.New("the trust pool row no longer exists"))
+		default:
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to apply trust pool change"))
+		}
+		return
+	}
+	approval.Status = TrustPoolApprovalApproved
+	approval.ApproverID = reviewerID
+	approval.ApprovedAt = &now
+	view := toAdminTrustPoolApprovalView(*approval)
+	view.TrustPoolID = applied.TrustPoolID
+	common.ApiSuccess(c, view)
+}
+
+// adminTrustPoolApprovalReject serves POST /admin/trust-pool/approvals/:id/reject.
+// The change is not applied and the row stays unchanged; the approval row
+// records who rejected it.
+func adminTrustPoolApprovalReject(c *gin.Context) {
+	db := adminDB(c)
+	if db == nil {
+		return
+	}
+	if !adminRequireRoot(c) {
+		return
+	}
+	approval, reviewerID, ok := loadTrustPoolApprovalForReview(db, c)
+	if !ok {
+		return
+	}
+	now := time.Now()
+	res := db.Model(&TrustPoolApproval{}).
+		Where("id = ? AND status = ?", approval.ID, TrustPoolApprovalPending).
+		Updates(map[string]any{
+			"approver_id": reviewerID,
+			"status":      TrustPoolApprovalRejected,
+			"approved_at": now,
+		})
+	if res.Error != nil {
+		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to reject trust pool change"))
+		return
+	}
+	if res.RowsAffected != 1 {
+		common.ApiErrorStatus(c, http.StatusConflict, ErrTrustPoolApprovalNotPending)
+		return
+	}
+	approval.Status = TrustPoolApprovalRejected
+	approval.ApproverID = reviewerID
+	approval.ApprovedAt = &now
+	common.ApiSuccess(c, toAdminTrustPoolApprovalView(*approval))
+}
 
 // trustPoolEndpointValues is the closed set of endpoint kinds a trust-pool row
 // may declare.
 var trustPoolEndpointValues = []string{"openai_chat", "openai_responses", "anthropic_messages"}
-
-// trustPoolInputError marks a request that failed semantic validation inside a
-// transaction, so the handler can answer 400 instead of 500 without unwrapping
-// every sentinel.
-type trustPoolInputError struct{ err error }
-
-func (e trustPoolInputError) Error() string { return e.err.Error() }
-func (e trustPoolInputError) Unwrap() error { return e.err }
 
 // adminTrustPoolView is the console shape of one trust-pool row. JSON text
 // columns are decoded into real values; malformed data is returned verbatim so
@@ -2428,133 +2870,6 @@ func adminTrustPoolGet(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, toAdminTrustPoolView(row))
-}
-
-// adminTrustPoolCreate serves POST /admin/trust-pool.
-func adminTrustPoolCreate(c *gin.Context) {
-	db := adminDB(c)
-	if db == nil {
-		return
-	}
-	if !adminRequireRoot(c) {
-		return
-	}
-	var req adminTrustPoolRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
-		return
-	}
-	row, err := trustPoolFromAdminRequest(req, nil)
-	if err != nil {
-		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body: "+err.Error()))
-		return
-	}
-	actorID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
-	if err := db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&row).Error; err != nil {
-			return err
-		}
-		return recordTrustPoolAudit(tx, actorID, TrustPoolAuditCreate, nil, &row)
-	}); err != nil {
-		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to create trust pool row"))
-		return
-	}
-	common.ApiSuccess(c, toAdminTrustPoolView(row))
-}
-
-// adminTrustPoolUpdate serves PUT /admin/trust-pool/:id. The source of an
-// existing row is immutable; seeded rows keep their official identity.
-func adminTrustPoolUpdate(c *gin.Context) {
-	db := adminDB(c)
-	if db == nil {
-		return
-	}
-	if !adminRequireRoot(c) {
-		return
-	}
-	id, ok := adminIDParam(c)
-	if !ok {
-		return
-	}
-	var req adminTrustPoolRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body"))
-		return
-	}
-	actorID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
-	var updated TrustPool
-	err := db.Transaction(func(tx *gorm.DB) error {
-		var before TrustPool
-		if err := tx.Where("id = ?", id).Take(&before).Error; err != nil {
-			return err
-		}
-		row, err := trustPoolFromAdminRequest(req, &before)
-		if err != nil {
-			return trustPoolInputError{err}
-		}
-		row.UpdatedAt = time.Now()
-		if err := tx.Save(&row).Error; err != nil {
-			return err
-		}
-		updated = row
-		return recordTrustPoolAudit(tx, actorID, TrustPoolAuditUpdate, &before, &row)
-	})
-	if err != nil {
-		var inputErr trustPoolInputError
-		switch {
-		case errors.As(err, &inputErr):
-			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("invalid request body: "+inputErr.Error()))
-		case errors.Is(err, gorm.ErrRecordNotFound):
-			common.ApiErrorStatus(c, http.StatusNotFound, errors.New("trust pool row not found"))
-		default:
-			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to update trust pool row"))
-		}
-		return
-	}
-	common.ApiSuccess(c, toAdminTrustPoolView(updated))
-}
-
-// adminTrustPoolDelete serves DELETE /admin/trust-pool/:id — a hard delete
-// backed by the audit row. Seeded rows are code-owned and cannot be deleted;
-// setting trust=blocked is the supported way to stop trusting one.
-func adminTrustPoolDelete(c *gin.Context) {
-	db := adminDB(c)
-	if db == nil {
-		return
-	}
-	if !adminRequireRoot(c) {
-		return
-	}
-	id, ok := adminIDParam(c)
-	if !ok {
-		return
-	}
-	actorID := int64(common.GetContextKeyInt(c, constant.ContextKeyUserId))
-	var deleted TrustPool
-	err := db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("id = ?", id).Take(&deleted).Error; err != nil {
-			return err
-		}
-		if deleted.Source == TrustSourceSeed {
-			return ErrTrustPoolSeedLocked
-		}
-		if err := tx.Delete(&TrustPool{}, id).Error; err != nil {
-			return err
-		}
-		return recordTrustPoolAudit(tx, actorID, TrustPoolAuditDelete, &deleted, nil)
-	})
-	if err != nil {
-		switch {
-		case errors.Is(err, gorm.ErrRecordNotFound):
-			common.ApiErrorStatus(c, http.StatusNotFound, errors.New("trust pool row not found"))
-		case errors.Is(err, ErrTrustPoolSeedLocked):
-			common.ApiErrorStatus(c, http.StatusConflict, ErrTrustPoolSeedLocked)
-		default:
-			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to delete trust pool row"))
-		}
-		return
-	}
-	common.ApiSuccess(c, gin.H{"id": id})
 }
 
 // ---------------------------------------------------------------------------

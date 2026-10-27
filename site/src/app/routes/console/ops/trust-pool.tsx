@@ -11,6 +11,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useMemo, useState, type ReactNode } from 'react'
 
 import { copy } from '@/copy'
+import { useAuth } from '@/lib/auth'
 import { formatDateTime, parseApiTime } from '@/lib/time'
 import {
   Button,
@@ -31,12 +32,16 @@ import {
 import {
   TRUST_POOL_ENDPOINTS,
   adminPoolChannelsQuery,
+  approveTrustPoolChange,
   createTrustPool,
   deleteTrustPool,
+  rejectTrustPoolChange,
+  trustPoolApprovalsQuery,
   trustPoolDetailQuery,
   trustPoolQuery,
   updateTrustPool,
   type AdminTrustPool,
+  type AdminTrustPoolApproval,
   type TrustPoolEndpoint,
   type TrustPoolInput,
   type TrustPoolKind,
@@ -47,12 +52,14 @@ import {
   ConfirmDialog,
   ErrorBlock,
   Field,
+  FilterTabs,
   Notice,
   Section,
   Select,
   TableSkeleton,
   TextArea,
   TextInput,
+  type FilterTabOption,
 } from '@/features/admin/components'
 import { adminErrorMessage } from '@/features/admin/errors'
 import {
@@ -71,6 +78,22 @@ const PAGE_SIZE = 50
 const KINDS: readonly TrustPoolKind[] = ['official', 'third_party', 'plan']
 const TRUSTS: readonly TrustPoolTrust[] = ['trusted', 'watch', 'blocked']
 const SOURCES: readonly TrustPoolSource[] = ['seed', 'manual', 'probe']
+
+type TrustPoolTab = 'pool' | 'pending'
+const TRUST_POOL_TABS: readonly FilterTabOption<TrustPoolTab>[] = [
+  { value: 'pool', label: page.tabs.pool },
+  { value: 'pending', label: page.tabs.pending },
+]
+
+function approvalActionLabel(action: string): string {
+  return (
+    (page.approvals.action as Record<string, string>)[action] ?? action
+  )
+}
+
+function approvalTarget(row: AdminTrustPoolApproval): string {
+  return row.target || `#${row.trust_pool_id}`
+}
 
 function asKind(value: string): TrustPoolKind {
   return (KINDS as readonly string[]).includes(value) ? (value as TrustPoolKind) : 'third_party'
@@ -204,8 +227,11 @@ function formFromRow(row: AdminTrustPool): TrustPoolForm {
 export function TrustPoolPage() {
   const toast = useToast()
   const queryClient = useQueryClient()
+  const { user } = useAuth()
+  const selfId = user?.id ?? 0
   const channels = useQuery(adminPoolChannelsQuery())
 
+  const [tab, setTab] = useState<TrustPoolTab>('pool')
   const [trustFilter, setTrustFilter] = useState('')
   const [kindFilter, setKindFilter] = useState('')
   const [sourceFilter, setSourceFilter] = useState('')
@@ -220,6 +246,7 @@ export function TrustPoolPage() {
       page_size: PAGE_SIZE,
     }),
   )
+  const approvals = useQuery(trustPoolApprovalsQuery('pending', tab === 'pending'))
 
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<AdminTrustPool | null>(null)
@@ -269,6 +296,24 @@ export function TrustPoolPage() {
       refresh()
       toast.show({ title: page.success.delete, tone: 'success' })
       setDeleteTarget(null)
+    },
+    onError: (error) => toast.show({ title: adminErrorMessage(error), tone: 'error' }),
+  })
+
+  const approve = useMutation({
+    mutationFn: (id: number) => approveTrustPoolChange(id),
+    onSuccess: () => {
+      refresh()
+      toast.show({ title: page.approvals.successApprove, tone: 'success' })
+    },
+    onError: (error) => toast.show({ title: adminErrorMessage(error), tone: 'error' }),
+  })
+
+  const reject = useMutation({
+    mutationFn: (id: number) => rejectTrustPoolChange(id),
+    onSuccess: () => {
+      refresh()
+      toast.show({ title: page.approvals.successReject, tone: 'success' })
     },
     onError: (error) => toast.show({ title: adminErrorMessage(error), tone: 'error' }),
   })
@@ -376,6 +421,7 @@ export function TrustPoolPage() {
   }
 
   const list = rows.data?.items ?? []
+  const approvalList = approvals.data ?? []
 
   return (
     <>
@@ -387,6 +433,14 @@ export function TrustPoolPage() {
         }
       />
 
+      <FilterTabs
+        options={TRUST_POOL_TABS}
+        value={tab}
+        onChange={setTab}
+        ariaLabel={page.tabsAria}
+      />
+
+      {tab === 'pool' ? (
       <div className="mt-6">
         <Section
           title={page.listTitle}
@@ -554,6 +608,93 @@ export function TrustPoolPage() {
           </div>
         </Section>
       </div>
+      ) : (
+        <div className="mt-6">
+          <Section
+            title={page.approvals.title}
+            hint={page.approvals.hint(approvalList.length)}
+          >
+            {approvals.isPending ? (
+              <TableSkeleton rows={4} columns={6} />
+            ) : approvals.isError ? (
+              <ErrorBlock error={approvals.error} onRetry={() => void approvals.refetch()} />
+            ) : approvalList.length === 0 ? (
+              <Empty
+                title={page.approvals.emptyTitle}
+                reason={page.approvals.emptyReason}
+                next={page.approvals.emptyNext}
+              />
+            ) : (
+              <Table minWidth={860}>
+                <TableHead>
+                  <TableRow interactive={false}>
+                    <TableHeaderCell>{page.approvals.columns.target}</TableHeaderCell>
+                    <TableHeaderCell>{page.approvals.columns.action}</TableHeaderCell>
+                    <TableHeaderCell>{page.approvals.columns.submitter}</TableHeaderCell>
+                    <TableHeaderCell>{page.approvals.columns.createdAt}</TableHeaderCell>
+                    <TableHeaderCell>{page.approvals.columns.notes}</TableHeaderCell>
+                    <TableHeaderCell className="text-right">
+                      {page.approvals.columns.actions}
+                    </TableHeaderCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {approvalList.map((row) => {
+                    const isSelf = row.submitter_id === selfId
+                    const approving = approve.isPending && approve.variables === row.id
+                    const rejecting = reject.isPending && reject.variables === row.id
+                    const busy = approving || rejecting
+                    return (
+                      <TableRow key={row.id}>
+                        <TableCell className="font-mono text-[13px]">
+                          <div className="max-w-[260px] truncate" title={approvalTarget(row)}>
+                            {approvalTarget(row)}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Tag>{approvalActionLabel(row.action)}</Tag>
+                        </TableCell>
+                        <TableCell className="text-[13px] text-ink-2">
+                          {page.approvals.submitter(row.submitter_id)}
+                        </TableCell>
+                        <TableCell className="text-[13px] text-ink-3">
+                          {formatDateTime(row.created_at)}
+                        </TableCell>
+                        <TableCell className="max-w-[220px] truncate text-[13px] text-ink-3">
+                          {row.notes || common.none}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              size="sm"
+                              loading={approving}
+                              disabled={isSelf || busy}
+                              title={isSelf ? page.approvals.selfReview : undefined}
+                              onClick={() => approve.mutate(row.id)}
+                            >
+                              {page.approvals.approve}
+                            </Button>
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              loading={rejecting}
+                              disabled={isSelf || busy}
+                              title={isSelf ? page.approvals.selfReview : undefined}
+                              onClick={() => reject.mutate(row.id)}
+                            >
+                              {page.approvals.reject}
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </Section>
+        </div>
+      )}
 
       <Dialog
         open={formOpen}
@@ -772,6 +913,10 @@ export function TrustPoolPage() {
             </p>
           ) : null}
 
+          <Notice tone="brand" className="mt-4">
+            {page.form.approvalNotice}
+          </Notice>
+
           {officialLocked ? (
             <Notice tone="warning" className="mt-4">
               {page.governance.official}
@@ -801,7 +946,7 @@ export function TrustPoolPage() {
         open={deleteTarget !== null}
         title={deleteTarget ? page.deleteTitle(targetLabel(deleteTarget)) : ''}
         description={page.deleteLead}
-        confirmLabel={page.actions.delete}
+        confirmLabel={page.actions.save}
         loading={remove.isPending}
         onConfirm={() => {
           if (deleteTarget) remove.mutate(deleteTarget.id)

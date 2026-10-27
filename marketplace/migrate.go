@@ -33,6 +33,7 @@ func Migrate(db *gorm.DB) error {
 		&Notification{},
 		&TrustPool{},
 		&TrustPoolAudit{},
+		&TrustPoolApproval{},
 		&OpsMetric{},
 		&SellerChannel{},
 		&ChannelEndpoint{},

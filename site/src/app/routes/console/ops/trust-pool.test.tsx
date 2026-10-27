@@ -8,6 +8,47 @@ import { shanghaiDateTimeToRfc3339 } from '@/features/admin/schemas'
 
 import { TrustPoolPage } from './trust-pool'
 
+// The page reads the current operator to enforce 防自审 in the approval queue.
+vi.mock('@/lib/auth', () => ({
+  useAuth: () => ({
+    user: { id: 7, username: 'operator' },
+    session: {},
+    isLoggedIn: true,
+    role: 100,
+    isAdmin: true,
+    isRoot: true,
+  }),
+}))
+
+const approvals = [
+  {
+    id: 11,
+    trust_pool_id: 0,
+    action: 'create',
+    target: 'api.pending.example',
+    payload: { before: null, after: { host: 'api.pending.example' } },
+    submitter_id: 7,
+    approver_id: 0,
+    status: 'pending',
+    notes: 'pending create',
+    created_at: '2026-10-03T00:00:00+08:00',
+    approved_at: null,
+  },
+  {
+    id: 12,
+    trust_pool_id: 2,
+    action: 'change_trust',
+    target: 'api.manual.example',
+    payload: { before: { trust: 'watch' }, after: { trust: 'blocked' } },
+    submitter_id: 8,
+    approver_id: 0,
+    status: 'pending',
+    notes: 'block this host',
+    created_at: '2026-10-04T00:00:00+08:00',
+    approved_at: null,
+  },
+]
+
 const rows = [
   {
     id: 1,
@@ -70,6 +111,8 @@ let postBody: Record<string, unknown> | null = null
 let putBody: Record<string, unknown> | null = null
 let putURL = ''
 let deleteURL = ''
+let approveURL = ''
+let rejectURL = ''
 
 const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input)
@@ -82,17 +125,41 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
       },
     })
   }
+  if (url.startsWith('/api/marketplace/admin/trust-pool/approvals/')) {
+    if (method === 'POST' && url.endsWith('/approve')) {
+      approveURL = url
+      const id = Number(url.split('/').at(-2))
+      return jsonResponse({
+        success: true,
+        data: { ...approvals.find((row) => row.id === id), status: 'approved' },
+      })
+    }
+    if (method === 'POST' && url.endsWith('/reject')) {
+      rejectURL = url
+      const id = Number(url.split('/').at(-2))
+      return jsonResponse({
+        success: true,
+        data: { ...approvals.find((row) => row.id === id), status: 'rejected' },
+      })
+    }
+  }
+  if (
+    url.startsWith('/api/marketplace/admin/trust-pool/approvals') &&
+    method === 'GET'
+  ) {
+    return jsonResponse({ success: true, data: approvals })
+  }
   if (url === '/api/marketplace/admin/trust-pool' && method === 'POST') {
     postBody = JSON.parse(String(init?.body)) as Record<string, unknown>
     return jsonResponse({
       success: true,
-      data: { ...rows[1], id: 3, ...postBody, source: 'manual' },
+      data: { ...approvals[0], id: 13, ...postBody },
     })
   }
   if (url.startsWith('/api/marketplace/admin/trust-pool/') && method === 'PUT') {
     putURL = url
     putBody = JSON.parse(String(init?.body)) as Record<string, unknown>
-    return jsonResponse({ success: true, data: { ...rows[1], ...putBody } })
+    return jsonResponse({ success: true, data: { ...approvals[0], ...putBody } })
   }
   if (url.startsWith('/api/marketplace/admin/trust-pool/') && method === 'DELETE') {
     deleteURL = url
@@ -116,6 +183,8 @@ beforeEach(() => {
   putBody = null
   putURL = ''
   deleteURL = ''
+  approveURL = ''
+  rejectURL = ''
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
 })
@@ -167,6 +236,7 @@ describe('trust pool admin page', () => {
   it('creates a manual watch row without ever sending a source', async () => {
     await openCreate()
     const dialog = within(formDialog())
+    expect(dialog.getByRole('button', { name: '提交审批' })).toBeTruthy()
 
     fireEvent.change(dialog.getByLabelText('精确主机'), {
       target: { value: 'api.new.example' },
@@ -243,9 +313,42 @@ describe('trust pool admin page', () => {
     fireEvent.click(deleteButtons[1])
 
     const confirm = within(await screen.findByRole('dialog'))
-    const actions = confirm.getAllByRole('button', { name: '删除' })
-    fireEvent.click(actions[actions.length - 1])
+    fireEvent.click(confirm.getByRole('button', { name: '提交审批' }))
 
     await waitFor(() => expect(deleteURL).toBe('/api/marketplace/admin/trust-pool/2'))
+  })
+
+  it('lists pending approvals, blocks self-review and sends decisions', async () => {
+    renderPage()
+    await screen.findByText('api.manual.example')
+
+    fireEvent.click(screen.getByRole('tab', { name: '待审批' }))
+    await screen.findByText('api.pending.example')
+
+    expect(screen.getByText('运营 #7')).toBeTruthy()
+    expect(screen.getByText('运营 #8')).toBeTruthy()
+    expect(screen.getByText('新建')).toBeTruthy()
+    expect(screen.getByText('变更信任状态')).toBeTruthy()
+
+    const approveButtons = screen.getAllByRole('button', {
+      name: '通过',
+    }) as HTMLButtonElement[]
+    const rejectButtons = screen.getAllByRole('button', {
+      name: '拒绝',
+    }) as HTMLButtonElement[]
+    expect(approveButtons[0].disabled).toBe(true)
+    expect(rejectButtons[0].disabled).toBe(true)
+    expect(approveButtons[0].title).toBe('不能审批自己提交的变更')
+    expect(approveButtons[1].disabled).toBe(false)
+
+    fireEvent.click(approveButtons[1])
+    await waitFor(() =>
+      expect(approveURL).toBe('/api/marketplace/admin/trust-pool/approvals/12/approve'),
+    )
+
+    fireEvent.click(rejectButtons[1])
+    await waitFor(() =>
+      expect(rejectURL).toBe('/api/marketplace/admin/trust-pool/approvals/12/reject'),
+    )
   })
 })

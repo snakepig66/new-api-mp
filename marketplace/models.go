@@ -603,6 +603,42 @@ type TrustPoolAudit struct {
 
 func (TrustPoolAudit) TableName() string { return "mp_trust_pool_audit" }
 
+// Trust-pool approval actions and statuses (P5-B). Every create/update/delete
+// of a trust-pool row is submitted as a pending change; a second operator must
+// approve it before it takes effect. change_trust marks an update that flips
+// the row's trust state, so the console can highlight the governance-sensitive
+// case while both are applied identically.
+const (
+	TrustPoolApprovalCreate      = "create"
+	TrustPoolApprovalUpdate      = "update"
+	TrustPoolApprovalDelete      = "delete"
+	TrustPoolApprovalChangeTrust = "change_trust"
+
+	TrustPoolApprovalPending  = "pending"
+	TrustPoolApprovalApproved = "approved"
+	TrustPoolApprovalRejected = "rejected"
+)
+
+// TrustPoolApproval is one pending (or decided) trust-pool change (P5-B).
+// Payload is a JSON object with the "before" and "after" TrustPool snapshots;
+// the after snapshot is applied verbatim on approval, so the change reviewed by
+// the second operator is exactly the change that takes effect. Neither
+// snapshot ever contains key material.
+type TrustPoolApproval struct {
+	ID          int64      `gorm:"primaryKey" json:"id"`
+	TrustPoolID int64      `gorm:"not null;index" json:"trust_pool_id"`
+	Action      string     `gorm:"size:16;not null;index" json:"action"`
+	Payload     string     `gorm:"type:text;not null;default:''" json:"payload"`
+	SubmitterID int64      `gorm:"not null;index" json:"submitter_id"`
+	ApproverID  int64      `gorm:"not null;default:0" json:"approver_id"`
+	Status      string     `gorm:"size:16;not null;index" json:"status"`
+	Notes       string     `gorm:"type:text;not null;default:''" json:"notes"`
+	CreatedAt   time.Time  `gorm:"index" json:"created_at"`
+	ApprovedAt  *time.Time `gorm:"index" json:"approved_at,omitempty"`
+}
+
+func (TrustPoolApproval) TableName() string { return "mp_trust_pool_approvals" }
+
 // Ops metric names (P5). Every row of mp_ops_metrics is one derived metric of
 // one time bucket: a request-derived rate/count aggregated from mp_requests, a
 // process-local slot snapshot, or the pre-freeze deviation total.

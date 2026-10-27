@@ -1045,6 +1045,60 @@ export function deleteTrustPool(id: number): Promise<unknown> {
   return api.delete<unknown>(`${adminBase}/trust-pool/${id}`)
 }
 
+/** One queued trust-pool change awaiting a second operator's decision. */
+export interface AdminTrustPoolApproval {
+  id: number
+  trust_pool_id: number
+  action: string
+  target: string
+  payload: unknown
+  submitter_id: number
+  approver_id: number
+  status: string
+  notes: string
+  created_at: string
+  approved_at: string | null
+}
+
+export function normalizeAdminTrustPoolApproval(raw: unknown): AdminTrustPoolApproval {
+  const row = record(raw)
+  const approvedAt = pick(row, 'approved_at', 'ApprovedAt')
+  return {
+    id: int(pick(row, 'id', 'ID')),
+    trust_pool_id: int(pick(row, 'trust_pool_id', 'TrustPoolID')),
+    action: text(pick(row, 'action', 'Action')),
+    target: text(pick(row, 'target', 'Target')),
+    payload: pick(row, 'payload', 'Payload') ?? null,
+    submitter_id: int(pick(row, 'submitter_id', 'SubmitterID')),
+    approver_id: int(pick(row, 'approver_id', 'ApproverID')),
+    status: text(pick(row, 'status', 'Status')),
+    notes: text(pick(row, 'notes', 'Notes')),
+    created_at: text(pick(row, 'created_at', 'CreatedAt')),
+    approved_at: approvedAt === undefined || approvedAt === null ? null : text(approvedAt),
+  }
+}
+
+export const trustPoolApprovalsQuery = (status = 'pending', enabled = true) =>
+  queryOptions({
+    queryKey: ['marketplace', 'admin', 'trust-pool', 'approvals', status],
+    enabled,
+    queryFn: async (): Promise<AdminTrustPoolApproval[]> => {
+      const rows = await api.get<unknown[]>(`${adminBase}/trust-pool/approvals`, {
+        query: { status },
+      })
+      return (Array.isArray(rows) ? rows : []).map(normalizeAdminTrustPoolApproval)
+    },
+    staleTime: 10_000,
+  })
+
+export function approveTrustPoolChange(id: number): Promise<unknown> {
+  return api.post<unknown>(`${adminBase}/trust-pool/approvals/${id}/approve`)
+}
+
+export function rejectTrustPoolChange(id: number): Promise<unknown> {
+  return api.post<unknown>(`${adminBase}/trust-pool/approvals/${id}/reject`)
+}
+
 // ---------------------------------------------------------------------------
 // 派生指标（P5）
 // ---------------------------------------------------------------------------
