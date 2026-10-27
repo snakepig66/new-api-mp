@@ -57,6 +57,7 @@ const sellerBlocks = [
   copy.pages.sellerOnboarding,
   copy.pages.sellerListings,
   copy.pages.sellerListingDetail,
+  copy.pages.sellerListingEdit,
   copy.pages.sellerListingNew,
   copy.pages.sellerRecords,
   copy.pages.sellerPayouts,

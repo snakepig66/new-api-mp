@@ -3,10 +3,8 @@ import { Link, createFileRoute } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 
 import { copy } from '@/copy'
-import { formatDate } from '@/lib/time'
 import { formatYuan } from '@/lib/money'
 import {
-  Button,
   Empty,
   PageHeader,
   Stat,
@@ -20,18 +18,11 @@ import {
   buttonClasses,
 } from '@/ui'
 
-import {
-  meQuery,
-  sellerListingsHealthQuery,
-  sellerListingsQuery,
-  sellerStatsQuery,
-  vendorName,
-} from '@/features/seller/api'
+import { meQuery, sellerStatsQuery, type SellerOverviewChannel } from '@/features/seller/api'
 import { AsyncError, PageSkeleton, SectionHeading } from '@/features/seller/components'
-import { IncomeChart } from '@/features/seller/IncomeChart'
+import { OverviewCharts, formatCount } from '@/features/seller/OverviewCharts'
 import { sellerErrorMessage } from '@/features/seller/errors'
 import { payoutGateState, type PayoutGateStepId } from '@/features/seller/payout-gate'
-import { listingStatusView, successRateText } from '@/features/seller/status'
 
 export const Route = createFileRoute('/console/earnings/')({
   component: SellerOverviewPage,
@@ -145,13 +136,17 @@ function PayoutGate({
   )
 }
 
+/** 排序用：金额统一转成可比较的数字，展示仍走 formatYuan。 */
+function incomeSortValue(value: number | string): number {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
 export function SellerOverviewPage() {
   const stats = useQuery(sellerStatsQuery())
-  const listings = useQuery(sellerListingsQuery())
-  const health = useQuery(sellerListingsHealthQuery())
   const me = useQuery(meQuery())
 
-  if (stats.isPending || listings.isPending) return <PageSkeleton />
+  if (stats.isPending) return <PageSkeleton />
 
   if (stats.isError) {
     return (
@@ -165,13 +160,50 @@ export function SellerOverviewPage() {
   }
 
   const data = stats.data
-  const daily = data?.daily ?? []
-  const hasIncome = daily.some((day) => String(day.income_micro) !== '0')
-  const healthById = new Map((health.data ?? []).map((row) => [row.listing_id, row]))
+  const series = data?.daily_by_model ?? []
+  const hasChartData = series.some((row) =>
+    row.days.some((day) => Number(day.tokens) > 0 || Number(day.income_micro) > 0),
+  )
+  const channels = [...(data?.by_channel ?? [])].sort(
+    (a: SellerOverviewChannel, b: SellerOverviewChannel) =>
+      incomeSortValue(b.income_micro) - incomeSortValue(a.income_micro),
+  )
+  const range = data?.range
 
   return (
     <>
       <PageHeader title={earnings.title} lead={earnings.lead} />
+
+      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard>
+          <Stat
+            label={earnings.stats.calls}
+            value={data ? formatCount(data.month_calls) : copy.common.none}
+            hint={earnings.stats.callsHint}
+          />
+        </StatCard>
+        <StatCard>
+          <Stat
+            label={earnings.stats.tokens}
+            value={data ? formatCount(data.month_tokens) : copy.common.none}
+            hint={earnings.stats.tokensHint}
+          />
+        </StatCard>
+        <StatCard>
+          <Stat
+            label={earnings.stats.income}
+            value={data ? formatYuan(data.month_income_micro) : copy.common.none}
+            hint={earnings.stats.incomeHint}
+          />
+        </StatCard>
+        <StatCard>
+          <Stat
+            label={earnings.stats.pending}
+            value={data ? formatYuan(data.pending_micro) : copy.common.none}
+            hint={earnings.stats.pendingHint}
+          />
+        </StatCard>
+      </div>
 
       <PayoutGate
         realNameVerified={me.data?.seller.progress.real_name_verified ?? false}
@@ -212,15 +244,20 @@ export function SellerOverviewPage() {
       </p>
 
       <section className="mt-6 rounded-md border border-line bg-bg p-6">
-        <SectionHeading title={page.chart.title} lead={page.chart.lead} />
+        <SectionHeading
+          title={earnings.charts.title}
+          lead={
+            range ? earnings.charts.lead(range.start.slice(0, 10), range.end.slice(0, 10)) : undefined
+          }
+        />
         <div className="mt-4">
-          {hasIncome ? (
-            <IncomeChart daily={daily} />
+          {hasChartData ? (
+            <OverviewCharts series={series} />
           ) : (
             <Empty
-              title={page.chart.emptyTitle}
-              reason={page.chart.emptyReason}
-              next={page.chart.emptyNext}
+              title={earnings.charts.emptyTitle}
+              reason={earnings.charts.emptyReason}
+              next={earnings.charts.emptyNext}
             />
           )}
         </div>
@@ -228,20 +265,14 @@ export function SellerOverviewPage() {
 
       <section className="mt-6 rounded-md border border-line bg-bg p-6">
         <SectionHeading
-          title={page.health.title}
-          lead={page.health.lead}
+          title={earnings.channels.title}
+          lead={earnings.channels.lead}
           actions={
             <>
-              <Link
-                to="/console/listings"
-                className={buttonClasses('secondary', 'sm')}
-              >
-                {copy.pages.sellerCommon.nav.listings}
+              <Link to="/console/listings" className={buttonClasses('secondary', 'sm')}>
+                {common.nav.listings}
               </Link>
-              <Link
-                to="/console/listings/new"
-                className={buttonClasses('primary', 'sm')}
-              >
+              <Link to="/console/listings/new" className={buttonClasses('primary', 'sm')}>
                 {page.newListing}
               </Link>
             </>
@@ -249,90 +280,47 @@ export function SellerOverviewPage() {
         />
 
         <div className="mt-5">
-          {listings.isPending ? (
-            <div className="space-y-2 border-t border-line pt-3" aria-busy="true">
-              {Array.from({ length: 3 }, (_, index) => (
-                <div key={index} className="h-9 animate-pulse rounded-sm bg-bg-soft" />
-              ))}
-            </div>
-          ) : listings.isError ? (
+          {channels.length === 0 ? (
             <Empty
-              title={copy.pages.sellerListings.loadError}
-              reason={sellerErrorMessage(listings.error)}
-              next={copy.common.retryHint}
-              action={
-                <Button variant="secondary" onClick={() => void listings.refetch()}>
-                  {copy.actions.retry}
-                </Button>
-              }
+              title={earnings.channels.emptyTitle}
+              reason={earnings.channels.emptyReason}
+              next={earnings.channels.emptyNext}
             />
-          ) : listings.data && listings.data.length > 0 ? (
-            <Table minWidth={860}>
+          ) : (
+            <Table minWidth={640}>
               <TableHead>
                 <TableRow>
-                  <TableHeaderCell>{page.health.columns.listing}</TableHeaderCell>
-                  <TableHeaderCell>{page.health.columns.models}</TableHeaderCell>
-                  <TableHeaderCell>{page.health.columns.status}</TableHeaderCell>
-                  <TableHeaderCell numeric>{page.health.columns.todayIncome}</TableHeaderCell>
-                  <TableHeaderCell numeric>{page.health.columns.successRate}</TableHeaderCell>
-                  <TableHeaderCell numeric>{page.health.columns.created}</TableHeaderCell>
+                  <TableHeaderCell>{earnings.channels.columns.channel}</TableHeaderCell>
+                  <TableHeaderCell numeric>{earnings.channels.columns.calls}</TableHeaderCell>
+                  <TableHeaderCell numeric>{earnings.channels.columns.tokens}</TableHeaderCell>
+                  <TableHeaderCell numeric>{earnings.channels.columns.income}</TableHeaderCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {listings.data.map((listing) => {
-                  const view = listingStatusView(listing.status)
-                  const row = healthById.get(listing.id)
-                  return (
-                    <TableRow key={listing.id} interactive>
-                      <TableCell>
-                        <div className="font-medium text-ink">{vendorName(listing.vendor)}</div>
-                        <div className="tabular-nums text-[13px] text-ink-3">
-                          #{listing.id} · {common.keyFingerprint} {listing.key_fingerprint8 || '—'}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {listing.models.slice(0, 2).map((model) => (
-                            <Tag key={model}>{model}</Tag>
-                          ))}
-                          {listing.models.length > 2 ? (
-                            <Tag>+{listing.models.length - 2}</Tag>
-                          ) : null}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Tag tone={view.tone} dot>
-                          {view.label}
-                        </Tag>
-                      </TableCell>
-                      <TableCell numeric className="tabular-nums">
-                        {formatYuan(row?.today_income_micro ?? 0)}
-                      </TableCell>
-                      <TableCell numeric className="tabular-nums text-ink-3">
-                        {successRateText(row)}
-                      </TableCell>
-                      <TableCell numeric className="text-ink-3">
-                        {formatDate(listing.created_at)}
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
+                {channels.map((row) => (
+                  <TableRow key={row.listing_id}>
+                    <TableCell>
+                      <Link
+                        to="/console/listings"
+                        search={{ edit: row.listing_id }}
+                        className="font-medium text-brand-ink hover:underline"
+                      >
+                        {row.label || `#${row.listing_id}`}
+                      </Link>
+                    </TableCell>
+                    <TableCell numeric className="tabular-nums">
+                      {formatCount(row.calls)}
+                    </TableCell>
+                    <TableCell numeric className="tabular-nums">
+                      {formatCount(row.tokens)}
+                    </TableCell>
+                    <TableCell numeric className="tabular-nums">
+                      {formatYuan(row.income_micro)}
+                    </TableCell>
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
-          ) : (
-            <Empty
-              title={page.health.emptyTitle}
-              reason={page.health.emptyReason}
-              next={page.health.emptyNext}
-              action={
-                <Link
-                  to="/console/listings/new"
-                  className={buttonClasses('primary', 'md')}
-                >
-                  {page.newListing}
-                </Link>
-              }
-            />
           )}
         </div>
       </section>
