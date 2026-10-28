@@ -97,3 +97,23 @@ export function formatCountdown(totalSeconds: number): string {
   if (hours <= 0) return `${mm}:${ss}`
   return `${String(hours).padStart(2, '0')}:${mm}:${ss}`
 }
+
+/**
+ * Format relative time (e.g. "5 天前", "从未使用", "刚刚").
+ */
+export function formatRelativeTime(
+  input: ApiTime | null | undefined,
+  nowMs: number = Date.now(),
+): string {
+  if (!input) return '从未使用'
+  const date = parseApiTime(input)
+  if (!date) return '从未使用'
+  const diffSeconds = Math.max(0, Math.floor((nowMs - date.getTime()) / 1000))
+  if (diffSeconds < 60) return '刚刚'
+  if (diffSeconds < 3600) return `${Math.floor(diffSeconds / 60)} 分钟前`
+  if (diffSeconds < 86400) return `${Math.floor(diffSeconds / 3600)} 小时前`
+  if (diffSeconds < 86400 * 30) return `${Math.floor(diffSeconds / 86400)} 天前`
+  if (diffSeconds < 86400 * 365) return `${Math.floor(diffSeconds / (86400 * 30))} 个月前`
+  return `${Math.floor(diffSeconds / (86400 * 365))} 年前`
+}
+
