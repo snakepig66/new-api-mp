@@ -827,45 +827,12 @@ export const adminPoolChannelsQuery = () =>
     staleTime: 15_000,
   })
 
-export const adminPoolChannelModelsQuery = () =>
-  queryOptions({
-    queryKey: ['marketplace', 'admin', 'pool', 'channel-models'],
-    queryFn: () =>
-      listPoolItems(`${adminBase}/pool/channel-models`, normalizeAdminPoolChannelModel),
-    staleTime: 15_000,
-  })
-
 export function putAdminPoolModel(input: AdminPoolModelInput): Promise<AdminPoolModel> {
   return api.put<unknown>(`${adminBase}/pool/models`, input).then(normalizeAdminPoolModel)
 }
 
 export function deleteAdminPoolModel(name: string): Promise<unknown> {
   return api.delete<unknown>(`${adminBase}/pool/models`, { query: { name } })
-}
-
-export function putAdminPoolChannel(input: AdminPoolChannelInput): Promise<AdminPoolChannel> {
-  return api.put<unknown>(`${adminBase}/pool/channels`, input).then(normalizeAdminPoolChannel)
-}
-
-export function deleteAdminPoolChannel(slug: string): Promise<unknown> {
-  return api.delete<unknown>(`${adminBase}/pool/channels`, { query: { slug } })
-}
-
-export function putAdminPoolChannelModel(
-  input: AdminPoolChannelModelInput,
-): Promise<AdminPoolChannelModel> {
-  return api
-    .put<unknown>(`${adminBase}/pool/channel-models`, input)
-    .then(normalizeAdminPoolChannelModel)
-}
-
-export function deleteAdminPoolChannelModel(
-  channelSlug: string,
-  upstreamModel: string,
-): Promise<unknown> {
-  return api.delete<unknown>(`${adminBase}/pool/channel-models`, {
-    query: { channel_slug: channelSlug, upstream_model: upstreamModel },
-  })
 }
 
 // ---------------------------------------------------------------------------

@@ -60,6 +60,14 @@ import {
   type SetListingModelStateInput,
   type UpdateListingSettingsInput,
 } from '@/features/seller/api'
+import {
+  addListingModels,
+  fetchListingUpstreamModels,
+  removeListingModel,
+  type ListingUpstreamModelsResult,
+  type SellerModelConfig,
+} from '@/features/seller/api'
+import { ChannelModelsEditor, editorText, validMultiplierMilli } from '@/features/seller/ChannelModelsEditor'
 import { AsyncError, Field, Skeleton, notify } from '@/features/seller/components'
 import { probeFailReasonLabel, sellerErrorMessage } from '@/features/seller/errors'
 import { historyProbeLatencyMs, probeTypeLabel } from '@/features/seller/probe'
@@ -370,6 +378,11 @@ export function ListingEditDrawer({
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({})
   const [savingModel, setSavingModel] = useState<string | null>(null)
   const [batchText, setBatchText] = useState('')
+  const [addOpen, setAddOpen] = useState(false)
+  const [addDraft, setAddDraft] = useState<SellerModelConfig[]>([])
+  const [upstreamData, setUpstreamData] = useState<ListingUpstreamModelsResult | null>(null)
+  const [addError, setAddError] = useState<string | null>(null)
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
   const [restoreResult, setRestoreResult] = useState<SellerModelsRestoreResult | null>(null)
 
   const [headerRows, setHeaderRows] = useState<HeaderRow[]>([])
@@ -443,6 +456,40 @@ export function ListingEditDrawer({
   const limitsDirty = concurrencyDirty || rpmDirty || dailyCapDirty
 
   const modelRows = models.data?.items ?? []
+
+  const fetchUpstream = useMutation({
+    mutationFn: () => fetchListingUpstreamModels(listingId),
+    onSuccess: (data) => {
+      setUpstreamData(data)
+      setAddError(data.key_valid ? null : data.fail_reason || '上游 Key 不可用')
+    },
+    onError: (error) => setAddError(sellerErrorMessage(error)),
+  })
+  const addModels = useMutation({
+    mutationFn: (configs: SellerModelConfig[]) => addListingModels(listingId, configs),
+    onSuccess: (data) => {
+      setAddDraft([])
+      setAddOpen(false)
+      setAddError(null)
+      notify(toast, { tone: 'success', title: `已添加 ${data.added.length} 个模型，验证通过后接流量` })
+      void queryClient.invalidateQueries({ queryKey: sellerListingModelsQuery(listingId).queryKey })
+      void queryClient.invalidateQueries({ queryKey: sellerListingDetailQuery(listingId).queryKey })
+    },
+    onError: (error) => setAddError(sellerErrorMessage(error)),
+  })
+  const removeModel = useMutation({
+    mutationFn: (model: string) => removeListingModel(listingId, model),
+    onSuccess: (_data, model) => {
+      setConfirmRemove(null)
+      notify(toast, { tone: 'success', title: `已移除 ${model}，进行中的请求不受影响` })
+      void queryClient.invalidateQueries({ queryKey: sellerListingModelsQuery(listingId).queryKey })
+      void queryClient.invalidateQueries({ queryKey: sellerListingDetailQuery(listingId).queryKey })
+    },
+    onError: (error) => {
+      setConfirmRemove(null)
+      notify(toast, { tone: 'error', title: sellerErrorMessage(error) })
+    },
+  })
 
   function rowDraft(row: SellerModelRow): ModelDraft | undefined {
     return modelDrafts[row.model]
@@ -1109,6 +1156,56 @@ export function ListingEditDrawer({
                     </div>
                   ) : null}
 
+                  <div className="space-y-3 rounded-md border border-line p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[14px] font-medium text-ink">添加模型</p>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          const next = !addOpen
+                          setAddOpen(next)
+                          if (next && !upstreamData && !fetchUpstream.isPending) fetchUpstream.mutate()
+                        }}
+                      >
+                        {addOpen ? '收起' : '添加模型'}
+                      </Button>
+                    </div>
+                    <p className="text-[13px] leading-5 text-ink-3">{editorText.editNotice}</p>
+                    {addOpen ? (
+                      <>
+                        <ChannelModelsEditor
+                          upstream={upstreamData?.upstream_models ?? []}
+                          pool={upstreamData?.pool_models ?? []}
+                          coefficients={upstreamData?.coefficients}
+                          excluded={modelRows.map((row) => row.model)}
+                          value={addDraft}
+                          onChange={setAddDraft}
+                          onFetchUpstream={() => fetchUpstream.mutate()}
+                          fetching={fetchUpstream.isPending}
+                        />
+                        {addError ? (
+                          <p role="alert" className="text-[13px] text-danger">
+                            {addError}
+                          </p>
+                        ) : null}
+                        <div className="flex justify-end">
+                          <Button
+                            size="sm"
+                            disabled={
+                              addDraft.length === 0 ||
+                              addDraft.some((c) => !validMultiplierMilli(c.multiplier_milli))
+                            }
+                            loading={addModels.isPending}
+                            onClick={() => addModels.mutate(addDraft)}
+                          >
+                            {`添加 ${addDraft.length} 个模型并验证`}
+                          </Button>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+
                   <div className="space-y-4">
                     {modelRows.map((row) => {
                       const draft = rowDraft(row)
@@ -1131,6 +1228,20 @@ export function ListingEditDrawer({
                                 <Tag tone="danger" dot>
                                   {page.models.disabledTag}
                                 </Tag>
+                              ) : null}
+                              {row.verify_state === 'pending' ? (
+                                <Tag tone="warning" dot>
+                                  验证中
+                                </Tag>
+                              ) : row.verify_state === 'failed' ? (
+                                <Tag tone="danger" dot>
+                                  验证失败
+                                </Tag>
+                              ) : null}
+                              {row.upstream_model && row.upstream_model !== row.model ? (
+                                <span className="truncate font-mono text-[12px] text-ink-3">
+                                  ← {row.upstream_model}
+                                </span>
                               ) : null}
                             </div>
                             <div className="flex items-center gap-2">
@@ -1155,8 +1266,37 @@ export function ListingEditDrawer({
                               >
                                 {page.models.save}
                               </Button>
+                              {confirmRemove === row.model ? (
+                                <>
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    loading={removeModel.isPending}
+                                    onClick={() => removeModel.mutate(row.model)}
+                                  >
+                                    确认移除
+                                  </Button>
+                                  <Button variant="secondary" size="sm" onClick={() => setConfirmRemove(null)}>
+                                    取消
+                                  </Button>
+                                </>
+                              ) : (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  aria-label={`移除 ${row.model}`}
+                                  disabled={modelRows.length <= 1}
+                                  title={modelRows.length <= 1 ? '渠道至少保留一个模型' : undefined}
+                                  onClick={() => setConfirmRemove(row.model)}
+                                >
+                                  移除
+                                </Button>
+                              )}
                             </div>
                           </div>
+                          {row.verify_state === 'failed' && row.disabled_detail ? (
+                            <p className="mt-2 text-[13px] text-danger">{row.disabled_detail}</p>
+                          ) : null}
 
                           {!multiplierValid ? (
                             <p role="alert" className="mt-2 text-[13px] text-danger">

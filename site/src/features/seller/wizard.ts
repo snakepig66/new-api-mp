@@ -114,9 +114,9 @@ export function validCustomURL(raw: string): boolean {
   }
 }
 
-/** 0.1x – 1.0x in 0.1 steps; the backend listing contract accepts 1..1000 milli. */
+/** 0.001x – 1.0x (1..1000 milli), the backend listing contract. */
 export function validModelMultiplier(milli: number): boolean {
-  return Number.isInteger(milli) && milli >= 100 && milli <= 1000 && milli % 100 === 0
+  return Number.isInteger(milli) && milli >= 1 && milli <= 1000
 }
 
 function modelsValid(snapshot: WizardSnapshot): boolean {

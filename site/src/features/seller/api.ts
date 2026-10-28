@@ -223,6 +223,8 @@ export interface SellerModelRow {
   model: string
   upstream_model: string
   enabled: boolean
+  /** '' verified/live, 'pending' verifying, 'failed' verification failed. */
+  verify_state?: '' | 'pending' | 'failed'
   auto_disabled: boolean
   disabled_reason: string
   disabled_detail: string
@@ -344,6 +346,8 @@ export interface CreateListingInput {
   affinity_enabled?: boolean
   /** P4 key weight inside a weighted_round_robin group. */
   weight?: number
+  /** Per-model upstream name and multiplier (overrides multiplier_milli). */
+  model_configs?: SellerModelConfig[]
 }
 
 export interface CreateListingResponse {
@@ -391,6 +395,49 @@ export interface ProbeResult {
   fail_reason: string
   /** Certification-pool recognition; present on new backends. */
   trust_pool?: TrustPoolInfo | null
+  /** Every model name the upstream key exposes, with its suggested pool match. */
+  upstream_models?: UpstreamModelOption[]
+  /** The platform model pool (priced standard models). */
+  pool_models?: PoolModelOption[]
+}
+
+/** Official flat price of a pool model, micro-yuan per million tokens. */
+export interface PoolModelPrice {
+  input_micro_per_mtok: number
+  output_micro_per_mtok: number
+  cache_read_micro_per_mtok: number
+  cache_write_micro_per_mtok: number
+}
+
+/** One upstream `/models` entry and the pool model it maps to. */
+export interface UpstreamModelOption {
+  upstream: string
+  suggested_model: string | null
+  priced: boolean
+}
+
+/** One priced model in the platform pool. */
+export interface PoolModelOption {
+  model: string
+  vendor: string
+  display_name?: string
+  context_length?: number
+  price: PoolModelPrice
+}
+
+/** A seller-chosen model: standard id, upstream name, multiplier. */
+export interface SellerModelConfig {
+  model: string
+  upstream_model: string
+  multiplier_milli: number
+}
+
+export interface ListingUpstreamModelsResult {
+  key_valid: boolean
+  fail_reason: string
+  upstream_models: UpstreamModelOption[]
+  pool_models: PoolModelOption[]
+  coefficients?: Record<string, number>
 }
 
 // ---------------------------------------------------------------------------
@@ -997,6 +1044,24 @@ export function setListingModelState(
     `${sellerBase}/listings/${id}/models/${encodeURIComponent(model)}`,
     input,
   )
+}
+
+/** List the upstream models the listing's key exposes plus the model pool. */
+export function fetchListingUpstreamModels(id: number): Promise<ListingUpstreamModelsResult> {
+  return api.post<ListingUpstreamModelsResult>(`${sellerBase}/listings/${id}/models/upstream`)
+}
+
+/** Add models to a listing; each is verified by a real call before it gets traffic. */
+export function addListingModels(
+  id: number,
+  models: SellerModelConfig[],
+): Promise<{ added: string[]; verifying: string[] }> {
+  return api.post(`${sellerBase}/listings/${id}/models`, { models })
+}
+
+/** Remove a model; new requests stop at once, in-flight requests finish. */
+export function removeListingModel(id: number, model: string): Promise<{ removed: string }> {
+  return api.delete(`${sellerBase}/listings/${id}/models/${encodeURIComponent(model)}`)
 }
 
 /** Probe every auto-disabled model and re-enable the ones that pass. */

@@ -11,7 +11,6 @@ import {
   Button,
   Input,
   PageHeader,
-  Price,
   Table,
   TableBody,
   TableCell,
@@ -24,20 +23,24 @@ import {
 
 import {
   createListing,
-  marketplaceStatusQuery,
   probeListing,
   sellerChannelKind,
   sellerCommonAddressesQuery,
   sellerGroupsQuery,
   sellerListingsQuery,
   sellerVendorsQuery,
-  squareModelForSeller,
   type ProbeResult,
   type SellerQuotaWindow,
   type SellerVendor,
   type SellerCommonAddress,
   type CreateListingInput,
 } from '@/features/seller/api'
+import type {
+  PoolModelOption,
+  SellerModelConfig,
+  UpstreamModelOption,
+} from '@/features/seller/api'
+import { ChannelModelsEditor } from '@/features/seller/ChannelModelsEditor'
 import { Field, notify, Skeleton } from '@/features/seller/components'
 import {
   duplicateKeyIssue,
@@ -45,7 +48,6 @@ import {
   type DuplicateKeyIssue,
 } from '@/features/seller/errors'
 import { parseYuanToMicro } from '@/features/seller/money-input'
-import { DEFAULT_FEE_PERCENT, previewMultiplier } from '@/features/seller/preview'
 import {
   buildVerificationMatrix,
   canLeaveStep,
@@ -386,32 +388,6 @@ function CommonAddressList({
   )
 }
 
-function BuyerPriceCell({
-  model,
-  multiplierMilli,
-  coefficientMilli,
-  feePercent,
-}: {
-  model: string
-  multiplierMilli: number
-  coefficientMilli: number
-  feePercent: number
-}) {
-  const market = useQuery(squareModelForSeller(model))
-  const officialPrice = market.data?.official_prices?.flat?.input_micro_per_mtok
-  if (market.isPending) {
-    return <Skeleton className="h-4 w-20" />
-  }
-  if (officialPrice === undefined || officialPrice === null) {
-    return <span className="text-[13px] text-ink-3">{page.models.buyerUnavailable}</span>
-  }
-  const preview = previewMultiplier(officialPrice, multiplierMilli, feePercent, coefficientMilli)
-  if (!preview) {
-    return <span className="text-[13px] text-ink-3">{page.models.buyerUnavailable}</span>
-  }
-  return <Price value={preview.buyerMicro} size="sm" unit={null} />
-}
-
 function AvailabilityGroup({
   day,
   label,
@@ -479,6 +455,7 @@ export function NewListingPage() {
   const [step, setStep] = useState<WizardStep>(0)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [multipliers, setMultipliers] = useState<Record<string, number>>({})
+  const [upstreamAliases, setUpstreamAliases] = useState<Record<string, string>>({})
   // P4: per-key weight (weighted_round_robin) keyed by the raw key text.
   const [weights, setWeights] = useState<Record<string, number>>({})
   const [batchMultiplier, setBatchMultiplier] = useState('0.5')
@@ -524,8 +501,6 @@ export function NewListingPage() {
   // P4: an existing group for the matched vendor means the new keys join that
   // logical channel instead of creating another one.
   const groups = useQuery(sellerGroupsQuery())
-  const marketplaceStatus = useQuery(marketplaceStatusQuery())
-  const feePercent = marketplaceStatus.data?.platform_fee_percent ?? DEFAULT_FEE_PERCENT
   const allVendors = useMemo(() => vendors.data ?? [], [vendors.data])
   const matchedVendor = vendorForURL(values.url, allVendors)
   const existingGroup = useMemo(
@@ -601,7 +576,35 @@ export function NewListingPage() {
         : defaultEndpointsFor(matchedVendor)
 
   const probed = Boolean(recognition) || Object.keys(keyProbes).length > 0
-  const availableModels = useMemo(() => {
+  // ShareLLM-style catalogue: every upstream name with its suggested pool
+  // match, plus the full priced pool the seller may pick from directly.
+  const upstreamOptions = useMemo(() => {
+    const seen = new Map<string, UpstreamModelOption>()
+    const sources = [recognition, ...Object.values(keyProbes)]
+    for (const probe of sources) {
+      for (const row of probe?.upstream_models ?? []) {
+        if (!seen.has(row.upstream)) seen.set(row.upstream, row)
+      }
+    }
+    return Array.from(seen.values())
+  }, [recognition, keyProbes])
+  const poolOptions = useMemo(() => {
+    const sources = [recognition, ...Object.values(keyProbes)]
+    for (const probe of sources) {
+      if (probe?.pool_models && probe.pool_models.length > 0) return probe.pool_models
+    }
+    return [] as PoolModelOption[]
+  }, [recognition, keyProbes])
+  const poolIds = useMemo(() => new Set(poolOptions.map((p) => p.model)), [poolOptions])
+  const suggestedAlias = useMemo(() => {
+    const out: Record<string, string> = {}
+    for (const row of upstreamOptions) {
+      if (row.suggested_model && !out[row.suggested_model]) out[row.suggested_model] = row.upstream
+    }
+    return out
+  }, [upstreamOptions])
+  const aliasFor = (model: string) => upstreamAliases[model] ?? suggestedAlias[model] ?? model
+  const suggestedModels = useMemo(() => {
     if (!probed) return matchedVendor?.models ?? []
     const union = new Set<string>()
     Object.values(keyProbes).forEach((probe) => {
@@ -612,28 +615,34 @@ export function NewListingPage() {
     }
     return Array.from(union).sort()
   }, [probed, keyProbes, recognition, matchedVendor])
+  // Pool picks the upstream matcher did not suggest still count as available.
+  const availableModels = useMemo(() => {
+    const union = new Set(suggestedModels)
+    for (const model of values.models) if (poolIds.has(model)) union.add(model)
+    return Array.from(union).sort()
+  }, [suggestedModels, values.models, poolIds])
 
   // Keep the selection and multiplier map aligned with what the keys can
   // actually call. When nothing is selected yet, preselect every available
   // model so the common case needs no extra clicks.
   useEffect(() => {
-    const available = new Set(availableModels)
+    const available = new Set(suggestedModels)
     const current = form.getValues('models')
-    const kept = current.filter((model) => available.has(model))
-    const next = kept.length > 0 ? kept : availableModels
+    const kept = current.filter((model) => available.has(model) || poolIds.has(model))
+    const next = kept.length > 0 ? kept : suggestedModels
     if (next.length !== current.length || next.some((model, index) => current[index] !== model)) {
       form.setValue('models', next, { shouldValidate: true })
     }
     setMultipliers((previous) => {
       const updated = { ...previous }
-      for (const model of availableModels) {
+      for (const model of suggestedModels) {
         if (!validModelMultiplier(updated[model])) {
           updated[model] = DEFAULT_MULTIPLIER_MILLI
         }
       }
       return updated
     })
-  }, [availableModels, form])
+  }, [suggestedModels, poolIds, form])
 
   const flatHours = flattenHours(values.availability)
   const headersValid = trust?.trust === 'unlisted' ? validRequestHeaders(values.headers) : true
@@ -736,23 +745,6 @@ export function NewListingPage() {
     if (next <= step) setStep(next)
   }
 
-  function toggleModel(model: string, checked: boolean) {
-    const current = form.getValues('models')
-    const next = checked
-      ? current.includes(model)
-        ? current
-        : [...current, model]
-      : current.filter((item) => item !== model)
-    form.setValue('models', next, { shouldValidate: true, shouldDirty: true })
-  }
-
-  function setModelMultiplier(model: string, text: string) {
-    const parsed = Number(text)
-    if (!Number.isFinite(parsed)) return
-    const milli = Math.min(1000, Math.max(100, Math.round(parsed * 1000)))
-    setMultipliers((current) => ({ ...current, [model]: milli }))
-  }
-
   function applyBatchMultiplier() {
     const parsed = Number(batchMultiplier)
     if (!Number.isFinite(parsed)) return
@@ -793,11 +785,18 @@ export function NewListingPage() {
       const callable = new Set(probe ? probe.verified_models ?? probe.models : [])
       const models =
         mode === 'passing'
-          ? data.models.filter((model) => probe?.key_valid && callable.has(model))
+          ? data.models.filter(
+              (model) => probe?.key_valid && (callable.has(model) || poolIds.has(model)),
+            )
           : [...data.models]
       if (models.length === 0) continue
       const weight = Math.min(10000, Math.max(1, Math.round(weights[key] ?? 100)))
-      payloads.push({ ...base, api_key: key, models, weight })
+      const model_configs = models.map((model) => ({
+        model,
+        upstream_model: aliasFor(model),
+        multiplier_milli: multipliers[model] ?? DEFAULT_MULTIPLIER_MILLI,
+      }))
+      payloads.push({ ...base, api_key: key, models, weight, model_configs })
     }
     return payloads
   }
@@ -828,7 +827,7 @@ export function NewListingPage() {
     const probe = keyProbes[key]
     if (!probe?.key_valid) return false
     const callable = new Set(probe.verified_models ?? probe.models)
-    return values.models.some((model) => callable.has(model))
+    return values.models.some((model) => callable.has(model) || poolIds.has(model))
   })
   // The three fields a submission cannot go without: upstream address, at
   // least one key, at least one model. Everything else has a default.
@@ -1049,70 +1048,42 @@ export function NewListingPage() {
                   <Skeleton className="h-4 w-4 rounded-full" />
                   <span className="text-[13px] text-ink-3">{page.models.loading}</span>
                 </div>
-              ) : availableModels.length === 0 ? (
+              ) : !probed || (upstreamOptions.length === 0 && poolOptions.length === 0) ? (
                 <p className="text-[13px] leading-5 text-warn" role="status">
                   {page.models.noModels}
                 </p>
               ) : (
-                <Table minWidth={760} size="compact">
-                  <TableHead>
-                    <TableRow>
-                      <TableHeaderCell className="w-12">{page.models.columns.select}</TableHeaderCell>
-                      <TableHeaderCell>{page.models.columns.model}</TableHeaderCell>
-                      <TableHeaderCell>{page.models.columns.endpoint}</TableHeaderCell>
-                      <TableHeaderCell>{page.models.columns.multiplier}</TableHeaderCell>
-                      <TableHeaderCell>{page.models.columns.buyer}</TableHeaderCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {availableModels.map((model) => {
-                      const checked = values.models.includes(model)
-                      const multiplierMilli = multipliers[model] ?? DEFAULT_MULTIPLIER_MILLI
-                      const coefficientMilli = recognition?.coefficients?.[model] ?? 1000
-                      return (
-                        <TableRow key={model}>
-                          <TableCell>
-                            <input
-                              type="checkbox"
-                              aria-label={model}
-                              checked={checked}
-                              onChange={(event) => toggleModel(model, event.target.checked)}
-                              className="h-4 w-4 accent-brand"
-                            />
-                          </TableCell>
-                          <TableCell className="font-mono text-[13px]">{model}</TableCell>
-                          <TableCell>
-                            <div className="flex flex-wrap gap-1.5">
-                              {endpoints.map((endpoint) => (
-                                <Tag key={endpoint}>{endpointLabel(endpoint)}</Tag>
-                              ))}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              className="w-24"
-                              type="number"
-                              min={0.1}
-                              max={1}
-                              step={0.1}
-                              aria-label={page.models.multiplierLabel(model)}
-                              value={(multiplierMilli / 1000).toFixed(1)}
-                              onChange={(event) => setModelMultiplier(model, event.target.value)}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <BuyerPriceCell
-                              model={model}
-                              multiplierMilli={multiplierMilli}
-                              coefficientMilli={coefficientMilli}
-                              feePercent={feePercent}
-                            />
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
+                <ChannelModelsEditor
+                  upstream={upstreamOptions}
+                  pool={poolOptions}
+                  coefficients={recognition?.coefficients}
+                  onFetchUpstream={() => void probeAllKeys(true)}
+                  fetching={probingKeys}
+                  value={values.models.map(
+                    (model): SellerModelConfig => ({
+                      model,
+                      upstream_model: aliasFor(model),
+                      multiplier_milli: multipliers[model] ?? DEFAULT_MULTIPLIER_MILLI,
+                    }),
+                  )}
+                  onChange={(next) => {
+                    form.setValue(
+                      'models',
+                      next.map((c) => c.model),
+                      { shouldValidate: true, shouldDirty: true },
+                    )
+                    setMultipliers((current) => {
+                      const updated = { ...current }
+                      for (const c of next) updated[c.model] = c.multiplier_milli
+                      return updated
+                    })
+                    setUpstreamAliases((current) => {
+                      const updated = { ...current }
+                      for (const c of next) updated[c.model] = c.upstream_model
+                      return updated
+                    })
+                  }}
+                />
               )}
               {Object.keys(keyProbes).length < keys.length && !probingKeys ? (
                 <p className="text-[13px] text-ink-3" role="status">

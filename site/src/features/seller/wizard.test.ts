@@ -85,11 +85,11 @@ describe('wizard step gates', () => {
     expect(nextWizardStep(0, snapshot())).toBe(1)
   })
 
-  it('requires a selected model the keys can call and a 0.1x–1.0x multiplier', () => {
+  it('requires a selected model the keys can call and a 0.001x–1.0x multiplier', () => {
     expect(canLeaveStep(1, snapshot({ selectedModels: [] }))).toBe(false)
     expect(canLeaveStep(1, snapshot({ selectedModels: ['not-served'] }))).toBe(false)
     expect(
-      canLeaveStep(1, snapshot({ modelMultipliers: { 'deepseek-flash': 50 } })),
+      canLeaveStep(1, snapshot({ modelMultipliers: { 'deepseek-flash': 0 } })),
     ).toBe(false)
     expect(
       canLeaveStep(1, snapshot({ modelMultipliers: { 'deepseek-flash': 1100 } })),

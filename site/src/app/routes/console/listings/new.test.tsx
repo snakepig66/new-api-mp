@@ -132,6 +132,21 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
         key_valid: !bad,
         fail_reason: bad ? 'key rejected by upstream' : '',
         trust_pool: custom ? unlistedPool : trustedPool,
+        upstream_models: [
+          { upstream: 'deepseek-flash', suggested_model: 'deepseek-flash', priced: true },
+        ],
+        pool_models: [
+          {
+            model: 'deepseek-flash',
+            vendor: 'deepseek',
+            price: {
+              input_micro_per_mtok: 1_000_000,
+              output_micro_per_mtok: 2_000_000,
+              cache_read_micro_per_mtok: 100_000,
+              cache_write_micro_per_mtok: 0,
+            },
+          },
+        ],
       },
     })
   }
@@ -258,15 +273,15 @@ describe('new listing wizard: five steps', () => {
 
     const flash = await screen.findByRole('checkbox', { name: 'deepseek-flash' })
     expect((flash as HTMLInputElement).checked).toBe(true)
-    expect(screen.getByText('接口')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '从模型池选择' })).toBeTruthy()
 
     const batch = screen.getByLabelText('批量倍率') as HTMLInputElement
     fireEvent.change(batch, { target: { value: '0.3' } })
     fireEvent.click(screen.getByRole('button', { name: '应用到全部' }))
 
-    const multiplier = screen.getByLabelText('deepseek-flash 的倍率') as HTMLInputElement
+    const multiplier = screen.getByLabelText('deepseek-flash 倍率') as HTMLInputElement
     expect(multiplier.value).toBe('0.3')
-    expect((await screen.findAllByText('¥0.30', {}, { timeout: 4000 })).length).toBeGreaterThan(0)
+    expect(screen.getByTestId('derived-deepseek-flash').textContent).toContain('0.30')
   })
 
   it('collects limits and hours before the advanced step', async () => {
