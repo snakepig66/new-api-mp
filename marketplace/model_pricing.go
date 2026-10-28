@@ -334,6 +334,13 @@ func SetListingModelsState(db *gorm.DB, listingID, sellerID int64, models []stri
 		}
 		planned := make([]*plannedModelChange, 0, len(rows))
 		for _, row := range rows {
+			// A model added after creation only takes traffic once its real
+			// verification call passed; the seller cannot switch it on early.
+			if input.Enabled != nil && *input.Enabled && row.VerifyState != "" {
+				rejected = append(rejected, *changeError(listing.ID, row.Model, "MODEL_VERIFYING",
+					"model is still being verified or failed verification"))
+				continue
+			}
 			change, cerr := planModelChangeWithDB(tx, listing, row, input, today, now)
 			if cerr != nil {
 				rejected = append(rejected, *cerr)

@@ -205,6 +205,13 @@ type CreateListingInput struct {
 	// Weight is this key's relative share inside a weighted_round_robin group
 	// (0 → 100).
 	Weight int
+	// UpstreamModels maps a standard model id to the seller's upstream alias
+	// (the name the key's /models exposes). Missing entries fall back to a
+	// legacy channel mapping or the standard id.
+	UpstreamModels map[string]string
+	// ModelMultipliers optionally overrides MultiplierMilli per model; each
+	// value is validated against the channel's bounds.
+	ModelMultipliers map[string]int64
 }
 
 // normalizeKeyStrategy maps an arbitrary input onto the two supported group
@@ -329,11 +336,8 @@ func (in CreateListingInput) validate(vendor Vendor) (Vendor, error) {
 	if len(in.Models) == 0 {
 		return Vendor{}, errors.New("marketplace: at least one model is required")
 	}
-	for _, m := range in.Models {
-		if !slices.Contains(vendor.Models, m) {
-			return Vendor{}, fmt.Errorf("marketplace: model %q is not served by vendor %q", m, vendor.ID)
-		}
-	}
+	// Which models may be listed is decided by the platform model pool and
+	// its official prices (CreateListing), not by a per-vendor whitelist.
 	// Every protocol URL must stay outside the denied personal-plan paths;
 	// this is a whitelist invariant (sellers cannot supply URLs).
 	for _, u := range []string{vendor.Protocols.OpenAI, vendor.Protocols.Anthropic} {
@@ -442,11 +446,22 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 	// sellable channel-model pairs, and the official price book must cover the
 	// standard model under its original vendor. Admin-editable; nothing here
 	// guesses a name.
+	// ShareLLM-style: the seller picks any standard pool model with an official
+	// flat price; the upstream name is the seller's alias, else a legacy channel
+	// mapping, else the standard id. Each model is still verified by a real call.
 	channelMapping := make(map[string]string, len(models))
+	perModelMultiplier := make(map[string]int64, len(models))
 	for _, m := range models {
-		cm, ok := VerifiedChannelModelFor(db, vendor.ID, m)
-		if !ok {
-			return Listing{}, fmt.Errorf("%w: %q has no certified upstream on channel %q", ErrVendorModelUnmapped, m, vendor.ID)
+		if _, ok := sellableModelPrice(db, m, time.Now()); !ok {
+			return Listing{}, fmt.Errorf("%w: %q is not a priced platform model", ErrVendorModelUnpriced, m)
+		}
+		upstreamName := strings.TrimSpace(in.UpstreamModels[m])
+		if upstreamName == "" {
+			if cm, found := ChannelModelFor(db, vendor.ID, m); found && strings.TrimSpace(cm.UpstreamModel) != "" {
+				upstreamName = strings.TrimSpace(cm.UpstreamModel)
+			} else {
+				upstreamName = m
+			}
 		}
 		origin := vendor.ID
 		if model, found := ModelPoolByName(db, m); found && strings.TrimSpace(model.OriginVendor) != "" {
@@ -461,7 +476,14 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 		if priced == 0 {
 			return Listing{}, fmt.Errorf("%w: %q has no official price", ErrVendorModelUnpriced, m)
 		}
-		channelMapping[m] = cm.UpstreamModel
+		channelMapping[m] = upstreamName
+		perModelMultiplier[m] = in.MultiplierMilli
+		if v, ok := in.ModelMultipliers[m]; ok && v > 0 {
+			if err := validateMultiplierForVendor(db, vendor.ID, v); err != nil {
+				return Listing{}, err
+			}
+			perModelMultiplier[m] = v
+		}
 	}
 	// Plan channels carry a key pattern; an official-plan key pasted into the
 	// wrong channel is rejected before it is encrypted (MODEL-CHANNEL-POOL §4).
@@ -614,8 +636,11 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 			perModel = append(perModel, ListingModel{
 				ListingID:       listing.ID,
 				Model:           model,
-				MultiplierMilli: listing.MultiplierMilli,
+				MultiplierMilli: perModelMultiplier[model],
 				Enabled:         true,
+				// Only an explicit seller alias is pinned on the row; otherwise
+				// the legacy channel mapping keeps applying (ListingUpstreamModel).
+				UpstreamModel: strings.TrimSpace(in.UpstreamModels[model]),
 			})
 		}
 		if len(perModel) > 0 {

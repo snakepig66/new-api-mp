@@ -107,6 +107,7 @@ func registerSellerRoutes(g *gin.RouterGroup) {
 	g.PUT("/seller/listings/:id/models", batchSellerListingModelState)
 	g.PUT("/seller/listings/:id/models/:model", setSellerModelMultiplier)
 	g.POST("/seller/listings/:id/models/restore", restoreSellerListingModels)
+	registerSellerModelEditRoutes(g)
 	g.GET("/seller/groups", listSellerListingGroups)
 	g.PUT("/seller/groups/:id", updateSellerListingGroup)
 	g.POST("/seller/listings/:id/key", replaceSellerKey)
@@ -225,6 +226,17 @@ type sellerListingRequest struct {
 	KeyStrategy string `json:"key_strategy"`
 	Affinity    *bool  `json:"affinity_enabled"`
 	Weight      int    `json:"weight"`
+	// ModelConfigs is the ShareLLM-style per-model choice: the standard model,
+	// its upstream alias and its multiplier. Models listed here are merged into
+	// Models.
+	ModelConfigs []sellerModelConfig `json:"model_configs"`
+}
+
+// sellerModelConfig is one row of the seller's model picker.
+type sellerModelConfig struct {
+	Model           string `json:"model"`
+	UpstreamModel   string `json:"upstream_model"`
+	MultiplierMilli int64  `json:"multiplier_milli"`
 }
 
 // sellerListingView is one row of the seller's own listing list. It carries
@@ -404,6 +416,30 @@ func postSellerListing(c *gin.Context) {
 		KeyStrategy:       req.KeyStrategy,
 		Affinity:          req.Affinity,
 		Weight:            req.Weight,
+	}
+	if len(req.ModelConfigs) > 0 {
+		in.UpstreamModels = make(map[string]string, len(req.ModelConfigs))
+		in.ModelMultipliers = make(map[string]int64, len(req.ModelConfigs))
+		for _, mc := range req.ModelConfigs {
+			name := strings.TrimSpace(mc.Model)
+			if name == "" {
+				continue
+			}
+			if !slices.Contains(in.Models, name) {
+				in.Models = append(in.Models, name)
+			}
+			in.UpstreamModels[name] = strings.TrimSpace(mc.UpstreamModel)
+			if mc.MultiplierMilli > 0 {
+				in.ModelMultipliers[name] = mc.MultiplierMilli
+			}
+		}
+	}
+	if in.MultiplierMilli <= 0 {
+		for _, v := range in.ModelMultipliers {
+			if in.MultiplierMilli <= 0 || v < in.MultiplierMilli {
+				in.MultiplierMilli = v
+			}
+		}
 	}
 	listing, err := CreateListing(db, in)
 	if err != nil {
@@ -918,6 +954,7 @@ type sellerModelRowView struct {
 	UpstreamModel            string                      `json:"upstream_model"`
 	Enabled                  bool                        `json:"enabled"`
 	AutoDisabled             bool                        `json:"auto_disabled"`
+	VerifyState              string                      `json:"verify_state"`
 	DisabledReason           string                      `json:"disabled_reason"`
 	DisabledDetail           string                      `json:"disabled_detail"`
 	DisabledUpstreamStatus   int                         `json:"disabled_upstream_status"`
@@ -987,10 +1024,7 @@ func getSellerListingModels(c *gin.Context) {
 			coefficient = c
 		}
 		effective := effectiveListingModelMultiplier(row, now)
-		upstream := model
-		if cm, found := ChannelModelFor(db, listing.Vendor, model); found && cm.UpstreamModel != "" {
-			upstream = cm.UpstreamModel
-		}
+		upstream := ListingUpstreamModel(db, listing.ID, listing.Vendor, model)
 		official := make(map[string]squareTierPrices, 3)
 		buyer := make(map[string]squareTierPrices, 3)
 		for _, tier := range []string{TierFlat} {
@@ -1015,6 +1049,7 @@ func getSellerListingModels(c *gin.Context) {
 			UpstreamModel:            upstream,
 			Enabled:                  row.Enabled,
 			AutoDisabled:             row.AutoDisabled,
+			VerifyState:              row.VerifyState,
 			DisabledReason:           row.DisabledReason,
 			DisabledDetail:           row.DisabledDetail,
 			DisabledUpstreamStatus:   row.DisabledHTTPStatus,
@@ -1881,11 +1916,15 @@ func postSellerListingProbe(c *gin.Context) {
 				missing = append(missing, m)
 			}
 		}
-		probeOK := keyRes.KeyValid && len(sellable) > 0 && len(missing) == 0
-		failReason := stripKey(keyRes.FailReason, apiKey)
-		if keyRes.KeyValid && len(sellable) == 0 {
-			failReason = "上游没有平台在售的模型（模型名需要与平台一致）"
+		catalog := sellerModelCatalogFor(db, keyRes.Models, time.Now())
+		missing = missing[:0]
+		for _, m := range req.Models {
+			if _, ok := sellableModelPrice(db, m, time.Now()); !ok && !containsString(missing, m) {
+				missing = append(missing, m)
+			}
 		}
+		probeOK := keyRes.KeyValid && len(missing) == 0
+		failReason := stripKey(keyRes.FailReason, apiKey)
 		common.ApiSuccess(c, gin.H{
 			"ok":                 probeOK,
 			"models":             sellable,
@@ -1898,6 +1937,8 @@ func postSellerListingProbe(c *gin.Context) {
 			"key_valid":          keyRes.KeyValid,
 			"fail_reason":        failReason,
 			"trust_pool":         trustView,
+			"upstream_models":    catalog.UpstreamModels,
+			"pool_models":        catalog.PoolModels,
 		})
 		return
 	}
@@ -1929,32 +1970,19 @@ func postSellerListingProbe(c *gin.Context) {
 	// §4 channel path: which upstream names can this key see on the channel?
 	keyRes := VerifyChannelKey(ctx, client, vendor, apiKey)
 
-	// §4 model path: intersect the channel's verified+active qualifications
-	// with the upstream names the key exposes. The result is standard model
-	// ids, because the seller console only knows the platform catalogue.
-	certified := certifiedChannelModelsFor(db, vendor.ID)
-	available := make([]string, 0, len(certified))
-	// coefficients carries the channel's price coefficient per standard model
-	// (1000 = official price). The wizard multiplies it with the seller's
-	// multiplier for an accurate live buyer-price preview.
-	coefficients := make(map[string]int64, len(certified))
-	probeModel := ""
-	for _, cm := range certified {
-		if !slices.Contains(keyRes.Models, cm.UpstreamModel) {
-			continue
-		}
-		if !slices.Contains(available, cm.Model) {
-			available = append(available, cm.Model)
-			coefficient := cm.CoefficientMilli
-			if coefficient <= 0 {
-				coefficient = 1000
-			}
-			coefficients[cm.Model] = coefficient
-		}
-		if probeModel == "" {
-			probeModel = cm.UpstreamModel
+	// ShareLLM-style model path: return every upstream name the key exposes
+	// with its suggested standard model, plus the full priced model pool. The
+	// sellable set is the priced pool; no admin certification row is needed.
+	now := time.Now()
+	catalog := sellerModelCatalogFor(db, keyRes.Models, now)
+	coefficients := poolCoefficients(db, vendor.ID)
+	available := make([]string, 0, len(catalog.UpstreamModels))
+	for _, um := range catalog.UpstreamModels {
+		if um.Priced && um.SuggestedModel != nil && !slices.Contains(available, *um.SuggestedModel) {
+			available = append(available, *um.SuggestedModel)
 		}
 	}
+	probeModel := upstreamProbeModel(db, keyRes.Models, now)
 
 	// Balance and prompt-cache support stay informational. They are only
 	// requested once the key listed at least one model: an invalid/empty key
@@ -1970,17 +1998,16 @@ func postSellerListingProbe(c *gin.Context) {
 		}
 	}
 
+	// A requested model is "missing" only when it is not a priced pool model;
+	// a seller may list a pool model under an alias the matcher did not guess.
 	missing := make([]string, 0)
 	for _, m := range req.Models {
-		if !slices.Contains(available, m) && !slices.Contains(missing, m) {
+		if _, ok := sellableModelPrice(db, m, now); !ok && !slices.Contains(missing, m) {
 			missing = append(missing, m)
 		}
 	}
-	probeOK := keyRes.OK && len(available) > 0 && len(missing) == 0
+	probeOK := keyRes.OK && len(missing) == 0
 	failReason := stripKey(keyRes.FailReason, apiKey)
-	if keyRes.KeyValid && len(available) == 0 {
-		failReason = "no certified models available for this key"
-	}
 
 	common.ApiSuccess(c, gin.H{
 		"ok":                 probeOK,
@@ -1994,23 +2021,9 @@ func postSellerListingProbe(c *gin.Context) {
 		"key_valid":          keyRes.KeyValid,
 		"fail_reason":        failReason,
 		"trust_pool":         trustView,
+		"upstream_models":    catalog.UpstreamModels,
+		"pool_models":        catalog.PoolModels,
 	})
-}
-
-// certifiedChannelModelsFor lists a channel's verified+active qualifications
-// ordered by upstream name. It is the authority for what a seller's key may
-// list; the request body never grants a model by itself.
-func certifiedChannelModelsFor(db *gorm.DB, channelSlug string) []ChannelModel {
-	out := make([]ChannelModel, 0)
-	if db == nil {
-		return out
-	}
-	if err := db.Where("channel_slug = ? AND verified = ? AND status = ?",
-		strings.TrimSpace(channelSlug), true, PoolStatusActive).
-		Order("upstream_model ASC, id ASC").Find(&out).Error; err != nil {
-		return []ChannelModel{}
-	}
-	return out
 }
 
 // ---------------------------------------------------------------------------

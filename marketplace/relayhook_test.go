@@ -1116,12 +1116,13 @@ func TestPrepareBillingRewritesPassthroughBody(t *testing.T) {
 	assert.Equal(t, pseudo, gjson.GetBytes(raw, "metadata.user").String())
 	assert.NotContains(t, string(raw), "buyer-1")
 
-	// A model without a mapping goes back to conversion on the same channel.
+	// Without an admin mapping the model forwards under its own id, so raw-body
+	// pass-through stays on (seller-chosen models need no mapping row).
 	require.NoError(t, f.db.Where("channel_slug = ? AND model = ?", SeedVendorDeepSeek, "deepseek-flash").
 		Delete(&ChannelModel{}).Error)
 	ApplyRelayChannelKey(c)
 	settings, _ = common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting)
-	assert.False(t, settings.PassThroughBodyEnabled)
+	assert.True(t, settings.PassThroughBodyEnabled)
 }
 
 func TestPrepareBillingRejectsMalformedPassthroughBody(t *testing.T) {

@@ -589,7 +589,7 @@ func migratePoolListings(db *gorm.DB) error {
 		}
 		if mapped {
 			for _, model := range listing.Models {
-				if _, ok := ChannelModelFor(db, listing.Vendor, model); !ok {
+				if _, ok := ModelPoolByName(db, model); !ok {
 					mapped = false
 					break
 				}

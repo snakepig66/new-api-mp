@@ -41,14 +41,14 @@ const (
 
 // squareMetrics is the public reliability summary of one standard model.
 type squareMetrics struct {
-	Status              string     `json:"status"` // available / degraded / offline
+	Status              string     `json:"status"`                 // available / degraded / offline
 	SuccessRate1hMilli  int64      `json:"success_rate_1h_milli"`  // -1 = no sample
 	SuccessRate24hMilli int64      `json:"success_rate_24h_milli"` // -1 = no sample
 	SuccessRate7dMilli  int64      `json:"success_rate_7d_milli"`  // -1 = no sample
 	Requests24h         int64      `json:"requests_24h"`
-	LatencyMs           int64      `json:"latency_ms"`           // 24h avg, 0 = no sample
-	TpsPermille         int64      `json:"tps_permille"`         // output tok/s ×1000, 0 = no sample
-	CacheHitPermille    int64      `json:"cache_hit_permille"`   // -1 = no sample
+	LatencyMs           int64      `json:"latency_ms"`         // 24h avg, 0 = no sample
+	TpsPermille         int64      `json:"tps_permille"`       // output tok/s ×1000, 0 = no sample
+	CacheHitPermille    int64      `json:"cache_hit_permille"` // -1 = no sample
 	LastSuccessAt       *time.Time `json:"last_success_at"`
 	SampledAt           time.Time  `json:"sampled_at"`
 }

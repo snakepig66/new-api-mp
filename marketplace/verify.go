@@ -402,11 +402,7 @@ func VerifyListing(ctx context.Context, db *gorm.DB, client *http.Client, limite
 	// key: a listing whose mapping is incomplete must never pass verification.
 	upstreamByModel := make(map[string]string, len(listing.Models))
 	for _, m := range listing.Models {
-		cm, found := ChannelModelFor(db, listing.Vendor, m)
-		if !found || strings.TrimSpace(cm.UpstreamModel) == "" {
-			return VerifyResult{}, fmt.Errorf("%w: %q has no upstream mapping on channel %q", ErrVendorModelUnmapped, m, listing.Vendor)
-		}
-		upstreamByModel[m] = cm.UpstreamModel
+		upstreamByModel[m] = ListingUpstreamModel(db, listing.ID, listing.Vendor, m)
 	}
 	if err := StartVerification(db, listingID); err != nil {
 		return VerifyResult{}, err

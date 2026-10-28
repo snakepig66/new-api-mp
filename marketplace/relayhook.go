@@ -810,11 +810,7 @@ func startRelaySession(
 	}
 	// MODEL-CHANNEL-POOL §3.4: rewrite the response's upstream model name back
 	// to the standard id. The set is refreshed on every channel switch.
-	if cm, ok := ChannelModelFor(db, listing.Vendor, modelName); ok {
-		installModelRewrite(c, modelName, cm.UpstreamModel)
-	} else {
-		installModelRewrite(c, modelName)
-	}
+	installModelRewrite(c, modelName, ListingUpstreamModel(db, listing.ID, listing.Vendor, modelName))
 	if tookProbe {
 		s.probeListingID = listing.ID
 	}
@@ -898,7 +894,7 @@ func ApplyRelayChannelKey(c *gin.Context) {
 		return
 	}
 	s.mu.Lock()
-	key, listing, modelName := s.realKey, s.listing, s.model
+	key, listing := s.realKey, s.listing
 	s.mu.Unlock()
 	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
 
@@ -921,11 +917,9 @@ func ApplyRelayChannelKey(c *gin.Context) {
 		// Registry-only vendors (MP_EXTRA_VENDORS) have no pool row.
 		passthrough = vendor.PassthroughBody
 	}
-	eligible := passthrough
-	if eligible {
-		_, eligible = ChannelModelFor(db, listing.Vendor, modelName)
-	}
-	settings.PassThroughBodyEnabled = eligible
+	// Every listed model resolves to an upstream name (alias, mapping or its
+	// own id), so pass-through no longer needs an admin mapping row.
+	settings.PassThroughBodyEnabled = passthrough
 	common.SetContextKey(c, constant.ContextKeyChannelSetting, settings)
 }
 
@@ -1892,9 +1886,7 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 	s.mu.Unlock()
 	// MODEL-CHANNEL-POOL §3.4: the new upstream may answer with another model
 	// id; extend the rewrite set so the client still sees the standard name.
-	if cm, ok := ChannelModelFor(db, next.Vendor, s.model); ok {
-		updateModelRewrite(c, cm.UpstreamModel)
-	}
+	updateModelRewrite(c, ListingUpstreamModel(db, next.ID, next.Vendor, s.model))
 	if tookProbe {
 		s.takeProbe(next.ID)
 	}
@@ -2446,10 +2438,8 @@ func (s *RelaySession) rewritePassthroughBody(c *gin.Context, info *relaycommon.
 	modelName := s.model
 	buyerID := s.buyerUserID
 	s.mu.Unlock()
-	mapping, ok := ChannelModelFor(db, listing.Vendor, modelName)
-	if !ok || strings.TrimSpace(mapping.UpstreamModel) == "" {
-		// No mapping means no raw-body forwarding: the channel setting override
-		// in ApplyRelayChannelKey has already turned conversion back on.
+	upstreamName := ListingUpstreamModel(db, listing.ID, listing.Vendor, modelName)
+	if strings.TrimSpace(upstreamName) == "" {
 		return nil
 	}
 	storage, err := common.GetBodyStorage(c)
@@ -2477,7 +2467,7 @@ func (s *RelaySession) rewritePassthroughBody(c *gin.Context, info *relaycommon.
 		}
 	}
 	rewritten, err := rewritePassthroughJSON(body, passthroughRewrite{
-		UpstreamModel:   mapping.UpstreamModel,
+		UpstreamModel:   upstreamName,
 		MaxOutputTokens: maxOut,
 		Stream:          info.IsStream,
 		RelayFormat:     info.RelayFormat,

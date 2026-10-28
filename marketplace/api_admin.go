@@ -76,21 +76,14 @@ func registerAdminRootRoutes(g *gin.RouterGroup) {
 	g.POST("/admin/payouts/:id/mark-paid", adminMarkPayoutPaid)
 	g.POST("/admin/reverse", adminReverse)
 	g.GET("/admin/deanon", adminDeanon)
-	// 渠道模型映射表: 平台标准模型 ID → 上游模型名. Editing this table controls
-	// which托管模型 can be listed, so it shares the same root-only gate.
-	g.GET("/admin/channel-models", adminListChannelModels)
-	g.PUT("/admin/channel-models", adminPutChannelModel)
-	g.DELETE("/admin/channel-models", adminDeleteChannelModel)
 	// 模型池 / 渠道池 (P1): mp_models / mp_channels / mp_channel_models.
 	g.GET("/admin/pool/models", adminPoolListModels)
 	g.PUT("/admin/pool/models", adminPoolPutModel)
 	g.DELETE("/admin/pool/models", adminPoolDeleteModel)
+	// 渠道模板 / 渠道模型映射 are no longer admin-maintained (2026-10-28):
+	// sellers pick models from the upstream list or the model pool themselves.
+	// The channel registry stays readable for the ops console.
 	g.GET("/admin/pool/channels", adminPoolListChannels)
-	g.PUT("/admin/pool/channels", adminPoolPutChannel)
-	g.DELETE("/admin/pool/channels", adminPoolDeleteChannel)
-	g.GET("/admin/pool/channel-models", adminPoolListChannelModels)
-	g.PUT("/admin/pool/channel-models", adminPoolPutChannelModel)
-	g.DELETE("/admin/pool/channel-models", adminPoolDeleteChannelModel)
 	// 派生指标 (P5): mp_ops_metrics with metric_name / since / dimensions
 	// filters.
 	g.GET("/admin/metrics", adminListOpsMetrics)

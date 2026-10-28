@@ -353,10 +353,7 @@ func verifyModelAvailabilityAsync(db *gorm.DB, listingID int64, model string) {
 	if !ok {
 		return
 	}
-	upstreamModel := model
-	if cm, found := ChannelModelFor(db, listing.Vendor, model); found && strings.TrimSpace(cm.UpstreamModel) != "" {
-		upstreamModel = cm.UpstreamModel
-	}
+	upstreamModel := ListingUpstreamModel(db, listing.ID, listing.Vendor, model)
 	sellerVerifyMu.RLock()
 	client := sellerVerifyClient
 	sellerVerifyMu.RUnlock()
@@ -568,10 +565,7 @@ func RestoreAutoDisabledModels(db *gorm.DB, listingID, sellerID int64, now time.
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			upstreamModel := rows[index].Model
-			if cm, found := ChannelModelFor(db, listing.Vendor, rows[index].Model); found && strings.TrimSpace(cm.UpstreamModel) != "" {
-				upstreamModel = cm.UpstreamModel
-			}
+			upstreamModel := ListingUpstreamModel(db, listing.ID, listing.Vendor, rows[index].Model)
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			results[index] = probeResult{

@@ -310,19 +310,15 @@ func patrolOneListingWithClient(db *gorm.DB, limiter *VerifyLimiter, client *htt
 	passed := 0
 	modelResults := make([]ModelVerifyResult, 0, len(l.Models))
 	for _, m := range l.Models {
-		cm, mapped := ChannelModelFor(db, l.Vendor, m)
-		if !mapped {
-			continue
-		}
-		mr := ModelVerifyResult{Model: m, UpstreamModel: cm.UpstreamModel}
+		mr := ModelVerifyResult{Model: m, UpstreamModel: ListingUpstreamModel(db, l.ID, l.Vendor, m)}
 		switch {
 		case !keyRes.KeyValid || len(keyRes.Models) == 0:
 			mr.FailReason = "Key 未能读取模型列表，未进行调用检测"
-		case !keyExposesModel(keyRes.Models, cm.UpstreamModel):
+		case !keyExposesModel(keyRes.Models, mr.UpstreamModel):
 			mr.FailReason = "该模型不在这个 Key 的可用模型列表中"
 		default:
 			mr.OK, mr.PromptCacheSupport, mr.LatencyMs, mr.FailReason =
-				probeModelCall(ctx, client, base, cm.UpstreamModel, apiKey)
+				probeModelCall(ctx, client, base, mr.UpstreamModel, apiKey)
 		}
 		if mr.OK {
 			passed++

@@ -634,7 +634,8 @@ func getSquareModel(c *gin.Context) {
 // qualification for the standard model and an active channel definition.
 // Channels are returned in stable slug order; listing aggregates come from
 // live/canary supply (zero when the channel has no listing right now).
-func loadSquareChannels(db *gorm.DB, model string, s *squareSupply) []squareChannelView {	var rows []ChannelModel
+func loadSquareChannels(db *gorm.DB, model string, s *squareSupply) []squareChannelView {
+	var rows []ChannelModel
 	if err := db.Where("model = ? AND verified = ? AND status = ?", model, true, PoolStatusActive).
 		Order("channel_slug ASC").
 		Find(&rows).Error; err != nil {

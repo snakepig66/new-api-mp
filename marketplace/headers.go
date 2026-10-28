@@ -512,10 +512,7 @@ func verifyPendingHeaders(db *gorm.DB, listingID int64, version int) {
 		return
 	}
 	for _, model := range models {
-		upstreamModel := model
-		if cm, found := ChannelModelFor(db, listing.Vendor, model); found && strings.TrimSpace(cm.UpstreamModel) != "" {
-			upstreamModel = cm.UpstreamModel
-		}
+		upstreamModel := ListingUpstreamModel(db, listing.ID, listing.Vendor, model)
 		out := probeModelCallOutcomeWithHeaders(ctx, client, base, upstreamModel, apiKey, normalized)
 		if out.OK {
 			continue

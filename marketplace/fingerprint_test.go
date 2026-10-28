@@ -533,7 +533,7 @@ func probeData(t *testing.T, f *sellerAPIFixture, vendorID, apiKey string, model
 	return decodeSellerBody(t, w)["data"].(map[string]any)
 }
 
-func TestProbeReturnsCertifiedIntersection(t *testing.T) {
+func TestProbeReturnsModelCatalog(t *testing.T) {
 	f := newSellerAPIFixture(t)
 	resetVendorRegistryForTest()
 	t.Cleanup(resetVendorRegistryForTest)
@@ -554,66 +554,39 @@ func TestProbeReturnsCertifiedIntersection(t *testing.T) {
 		egressMu.Unlock()
 	})
 
-	mockA := httptest.NewServer(&probeVendorMock{models: []string{"up-a1", "up-a2", "up-a3", "foreign-up"}})
+	// ShareLLM-style probe: every upstream name comes back with its suggested
+	// standard model; the sellable set is the priced pool, no certification row.
+	mockA := httptest.NewServer(&probeVendorMock{models: []string{"deepseek-flash-20251025", "totally-unknown"}})
 	t.Cleanup(mockA.Close)
-	mockB := httptest.NewServer(&probeVendorMock{models: []string{"up-b1"}})
-	t.Cleanup(mockB.Close)
-
-	// Channel A: only up-a1 is verified+active AND exposed by /models.
-	seedProbeChannel(t, f.db, "mock-a", mockA.URL, []ChannelModel{
-		{UpstreamModel: "up-a1", Model: "deepseek-flash", Verified: true, Status: PoolStatusActive},
-		{UpstreamModel: "up-a2", Model: "kimi-k2", Verified: false, Status: PoolStatusActive},
-		{UpstreamModel: "up-a3", Model: "glm-4.6", Verified: true, Status: PoolStatusPaused},
-		{UpstreamModel: "up-a4", Model: "deepseek-v4-pro", Verified: true, Status: PoolStatusActive},
-	})
-	// Channel B is a second mock with its own certified model.
-	seedProbeChannel(t, f.db, "mock-b", mockB.URL, []ChannelModel{
-		{UpstreamModel: "up-b1", Model: "minimax-m2", Verified: true, Status: PoolStatusActive},
-	})
-	// Channel C reuses B's /models but its only certified upstream is not
-	// exposed, so the certification intersection is empty.
-	seedProbeChannel(t, f.db, "mock-c", mockB.URL, []ChannelModel{
-		{UpstreamModel: "up-c1", Model: "glm-4.6", Verified: true, Status: PoolStatusActive},
-	})
+	seedProbeChannel(t, f.db, "mock-a", mockA.URL, nil)
 	resetVendorRegistryForTest()
 
 	restore := setSellerVerifyClientForTest(mockA.Client())
 	defer restore()
 
-	// A: request may name a standard id, but the server returns the whole
-	// certified intersection. up-a2 (unverified), up-a3 (paused) and up-a4
-	// (not exposed by /models) are excluded.
 	data := probeData(t, f, "mock-a", verifyTestKey, []string{"deepseek-flash"})
 	assert.Equal(t, true, data["ok"])
 	assert.Equal(t, true, data["key_valid"])
-	assert.Equal(t, true, data["prompt_cache"])
-	assert.Equal(t, true, data["balance_sufficient"], "only enough/not-enough is surfaced")
-	assert.NotContains(t, data, "balance_micro", "the upstream balance itself is never returned")
-	assert.Equal(t, []any{"deepseek-flash"}, data["models"])
-	assert.Equal(t, []any{"deepseek-flash"}, data["verified_models"])
+	assert.Equal(t, []any{"deepseek-flash"}, data["models"], "date suffix matched to the pool model")
 	assert.Equal(t, []any{}, data["missing_models"])
-	assert.Equal(t, "", data["fail_reason"])
-	assert.NotContains(t, data["models"], "kimi-k2")
-	assert.NotContains(t, data["models"], "glm-4.6")
-	assert.NotContains(t, data["models"], "minimax-m2", "another channel's qualification must not leak")
 
-	// Gate: a requested model outside the certified set is reported missing,
-	// never granted, and flips ok to false.
-	data = probeData(t, f, "mock-a", verifyTestKey, []string{"deepseek-flash", "kimi-k2"})
+	ups, ok := data["upstream_models"].([]any)
+	require.True(t, ok, "upstream_models: %v", data)
+	require.Len(t, ups, 2)
+	first := ups[0].(map[string]any)
+	assert.Equal(t, "deepseek-flash-20251025", first["upstream"])
+	assert.Equal(t, "deepseek-flash", first["suggested_model"])
+	assert.Equal(t, true, first["priced"])
+	second := ups[1].(map[string]any)
+	assert.Nil(t, second["suggested_model"], "unknown names are left for the seller")
+	assert.Equal(t, false, second["priced"])
+
+	pool, ok := data["pool_models"].([]any)
+	require.True(t, ok)
+	assert.NotEmpty(t, pool, "the priced model pool is offered for manual picks")
+
+	// A requested name that is not a priced pool model is reported missing.
+	data = probeData(t, f, "mock-a", verifyTestKey, []string{"no-such-model"})
 	assert.Equal(t, false, data["ok"])
-	assert.Equal(t, []any{"deepseek-flash"}, data["models"])
-	assert.Equal(t, []any{"kimi-k2"}, data["missing_models"])
-
-	// B: the second mock's channel returns only its own certified standard id.
-	data = probeData(t, f, "mock-b", verifyTestKey, []string{"minimax-m2"})
-	assert.Equal(t, true, data["ok"])
-	assert.Equal(t, []any{"minimax-m2"}, data["models"])
-	assert.NotContains(t, data["models"], "deepseek-flash")
-
-	// C: valid key, but no verified/active/exposed upstream => explicit reason.
-	data = probeData(t, f, "mock-c", verifyTestKey, nil)
-	assert.Equal(t, false, data["ok"])
-	assert.Equal(t, true, data["key_valid"])
-	assert.Equal(t, []any{}, data["models"])
-	assert.Equal(t, "no certified models available for this key", data["fail_reason"])
+	assert.Equal(t, []any{"no-such-model"}, data["missing_models"])
 }

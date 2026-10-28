@@ -195,8 +195,18 @@ type ListingModel struct {
 	Model           string `gorm:"size:128;not null;uniqueIndex:uk_mp_listing_models_listing_model,priority:2"`
 	MultiplierMilli int64  `gorm:"not null"`
 	Enabled         bool   `gorm:"not null"`
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// UpstreamModel is the seller-chosen alias forwarded to the upstream for
+	// this platform model. Empty means "no per-listing alias": the channel
+	// mapping or the platform model id is used.
+	UpstreamModel string `gorm:"size:128;not null;default:''"`
+	// VerifyState tracks the asynchronous callability check of a model the
+	// seller added to an existing listing. Empty means verified/serving;
+	// ListingModelVerifyPending is in-flight (the row is disabled, so the
+	// selector skips it) and ListingModelVerifyFailed records a failed check
+	// whose reason is in DisabledDetail.
+	VerifyState string `gorm:"size:32;not null;default:''"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 
 	// Automatic disable state. A row may be disabled by the seller or by a
 	// relay/patrol rule; the reason and the upstream evidence are shown in the
