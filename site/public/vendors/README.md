@@ -1,7 +1,7 @@
 # Vendor marks
 
 The marketplace vendor pills read `logo_url` from `/api/marketplace/vendors`.
-Each file is a 24×24 SVG with a brand-color rounded tile and a white mark.
+Each file is a 24×24 SVG: a light brand-tinted glass tile with a brand-color mark (padded so it is never clipped).
 
 - `deepseek.svg`, `qwen.svg`, `kimi.svg`, `minimax.svg`: mark path from
   [Simple Icons](https://simpleicons.org/) (CC0), recolored onto the tile.

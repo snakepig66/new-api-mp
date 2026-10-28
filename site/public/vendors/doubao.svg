@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" role="img">
   <title>Doubao</title>
-  <rect width="24" height="24" rx="6" fill="#3370FF"/>
-  <ellipse cx="11.6" cy="12.4" rx="5.4" ry="3.8" transform="rotate(-28 11.6 12.4)" fill="#fff"/><circle cx="16.9" cy="8.7" r="1.5" fill="#3370FF"/>
+  <rect x="0.5" y="0.5" width="23" height="23" rx="6.5" fill="#3370FF" fill-opacity="0.1" stroke="#3370FF" stroke-opacity="0.22"/>
+  <ellipse cx="11.6" cy="12.4" rx="5.4" ry="3.8" transform="rotate(-28 11.6 12.4)" fill="#3370FF"/><circle cx="16.9" cy="8.7" r="1.5" fill="#FFFFFF"/>
 </svg>
