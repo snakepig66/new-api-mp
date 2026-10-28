@@ -167,8 +167,6 @@ const modelsResponse = {
     },
   ],
   platform_fee_percent: 7,
-  tier: 'flat',
-  tier_label: '统一',
   multiplier_min_milli: 100,
   multiplier_max_milli: 1000,
 }

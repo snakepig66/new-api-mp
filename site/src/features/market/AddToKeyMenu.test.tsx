@@ -20,8 +20,6 @@ const squareModels = [
     aliases: ['GLM-4-Plus'],
     origin_vendor: 'zhipu',
     vendor: 'zhipu',
-    tier: 'flat',
-    tier_label: '平价',
     prices: {
       flat: {
         input_micro_per_mtok: 3_000_000,
@@ -30,7 +28,6 @@ const squareModels = [
         cache_write_micro_per_mtok: 0,
       },
     },
-    next_switch: null,
     listing_count: 1,
     channel_count: 1,
     buyer_price_source: 'market',

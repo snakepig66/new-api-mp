@@ -205,11 +205,8 @@ export interface SellerListingHealth {
   success_rate_7d_milli?: number
 }
 
-/** Price tier used by the model/price table. */
-export type SellerPriceTier = 'peak' | 'offpeak' | 'flat'
-
-/** One tier's per-million-token prices, in 微元 (integer). */
-export interface SellerModelTierPrices {
+/** One price book's per-million-token prices, in 微元 (integer). */
+export interface SellerModelPrices {
   input_micro_per_mtok: number
   output_micro_per_mtok: number
   cache_read_micro_per_mtok: number
@@ -219,7 +216,8 @@ export interface SellerModelTierPrices {
 /**
  * One row of GET /marketplace/seller/listings/:id/models — the console's
  * 模型与价格 table. Buyer prices come from the same Quote path the debit uses.
- * A tier with no price row is omitted, hence Partial.
+ * The price maps only carry the single `flat` key now; pricing no longer has
+ * peak/off-peak tiers.
  */
 export interface SellerModelRow {
   model: string
@@ -239,15 +237,13 @@ export interface SellerModelRow {
   origin_vendor: string
   multiplier_min_milli: number
   multiplier_max_milli: number
-  official_prices: Partial<Record<SellerPriceTier, SellerModelTierPrices>>
-  buyer_prices: Partial<Record<SellerPriceTier, SellerModelTierPrices>>
+  official_prices: { flat?: SellerModelPrices }
+  buyer_prices: { flat?: SellerModelPrices }
 }
 
 export interface SellerListingModelsResponse {
   items: SellerModelRow[]
   platform_fee_percent: number
-  tier: string
-  tier_label: string
   multiplier_min_milli: number
   multiplier_max_milli: number
 }

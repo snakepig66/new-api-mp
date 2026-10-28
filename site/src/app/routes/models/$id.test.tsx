@@ -26,24 +26,21 @@ function detail(overrides: Record<string, unknown> = {}) {
     model: 'deepseek-flash',
     origin_vendor: 'deepseek',
     vendor: 'deepseek',
-    tier: 'offpeak',
-    tier_label: '空闲',
     prices: {
-      offpeak: {
+      flat: {
         input_micro_per_mtok: 2_000_000,
         output_micro_per_mtok: 8_000_000,
         cache_read_micro_per_mtok: 0,
         cache_write_micro_per_mtok: 0,
       },
     },
-    next_switch: null,
     listing_count: 3,
     channel_count: 2,
     buyer_price_source: 'market',
     generated_at: '2030-01-01T00:00:00+08:00',
     multiplier_min_milli: 300,
     multiplier_max_milli: 600,
-    official_prices: { offpeak: officialPrice },
+    official_prices: { flat: officialPrice },
     channels: [
       {
         channel_slug: 'deepseek',

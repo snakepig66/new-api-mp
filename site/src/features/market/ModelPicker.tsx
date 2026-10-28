@@ -39,7 +39,7 @@ export interface ModelPickerProps {
 }
 
 function currentPrices(model: SquareModel): SquareTierPrices | undefined {
-  return model.prices[model.tier] ?? model.prices.peak ?? model.prices.offpeak
+  return model.prices.flat
 }
 
 /** Filter by origin vendor and by standard name/alias only (never by channel). */

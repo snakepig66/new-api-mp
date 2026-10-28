@@ -8,7 +8,6 @@ import { formatDateTime } from '@/lib/time'
 import {
   Empty,
   PageHeader,
-  PeakBadge,
   SellerId,
   Stat,
   Table,
@@ -17,7 +16,6 @@ import {
   TableHead,
   TableHeaderCell,
   TableRow,
-  Tag,
   buttonClasses,
 } from '@/ui'
 
@@ -40,7 +38,6 @@ import { meQuery } from '@/features/seller/api'
 import { isSellerActive } from '@/features/seller/status'
 import { soonestExpiringKey } from '@/features/console/key-expiry'
 import { toUsageRow } from '@/features/console/records'
-import type { UsageTier } from '@/features/console/types'
 
 const UsageChart = lazy(async () => {
   const module = await import('@/features/console/components/UsageChart')
@@ -244,10 +241,7 @@ function ConsoleOverviewPage() {
                       {formatDateTime(row.createdAt)}
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-2">
-                        <span className="truncate font-medium text-ink">{row.model}</span>
-                        <TierBadge tier={row.tier} />
-                      </div>
+                      <span className="truncate font-medium text-ink">{row.model}</span>
                     </TableCell>
                     <TableCell>
                       <SellerId id={row.sellerId} />
@@ -291,11 +285,6 @@ function ConsoleOverviewPage() {
       </Section>
     </>
   )
-}
-
-function TierBadge({ tier }: { tier: UsageTier }) {
-  if (tier === 'peak' || tier === 'offpeak') return <PeakBadge tier={tier} />
-  return <Tag tone="neutral">{copy.pages.consoleRecords.tierFlat}</Tag>
 }
 
 function StatCard({ children }: { children: ReactNode }) {

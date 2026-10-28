@@ -144,6 +144,9 @@ export function RecordDetailContent({ detail, view }: RecordDetailContentProps) 
             value={(buyer ? buyerRecord.token_group : sellerRecord.channel_group) || text.dash}
           />
           <Info label={text.type} value={record.is_stream ? text.stream : text.nonStream} />
+          {record.tier && record.tier !== 'flat' ? (
+            <Info label={text.tier} value={text.legacyTier} />
+          ) : null}
           <div className="min-w-0">
             <dt className="text-ink-3">{text.latency}</dt>
             <dd className="mt-0.5 tabular-nums text-[13px] text-ink">

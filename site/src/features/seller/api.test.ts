@@ -248,7 +248,7 @@ describe('seller console queries (models, bounds, headers, overview, health)', (
           multiplier_min_milli: 100,
           multiplier_max_milli: 1000,
           official_prices: {
-            peak: {
+            flat: {
               input_micro_per_mtok: 1_000,
               output_micro_per_mtok: 2_000,
               cache_read_micro_per_mtok: 100,
@@ -256,7 +256,7 @@ describe('seller console queries (models, bounds, headers, overview, health)', (
             },
           },
           buyer_prices: {
-            peak: {
+            flat: {
               input_micro_per_mtok: 660,
               output_micro_per_mtok: 1_320,
               cache_read_micro_per_mtok: 66,
@@ -287,8 +287,6 @@ describe('seller console queries (models, bounds, headers, overview, health)', (
         },
       ],
       platform_fee_percent: 7,
-      tier: 'peak',
-      tier_label: '高峰',
       multiplier_min_milli: 100,
       multiplier_max_milli: 1000,
     }

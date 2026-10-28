@@ -19,23 +19,14 @@ const squareItems = [
     aliases: ['DeepSeek-V3'],
     origin_vendor: 'deepseek',
     vendor: 'deepseek',
-    tier: 'offpeak',
-    tier_label: '空闲',
     prices: {
-      offpeak: {
+      flat: {
         input_micro_per_mtok: 2_000_000,
         output_micro_per_mtok: 8_000_000,
         cache_read_micro_per_mtok: 0,
         cache_write_micro_per_mtok: 0,
       },
-      peak: {
-        input_micro_per_mtok: 4_000_000,
-        output_micro_per_mtok: 16_000_000,
-        cache_read_micro_per_mtok: 0,
-        cache_write_micro_per_mtok: 0,
-      },
     },
-    next_switch: '2030-01-01T10:00:00+08:00',
     listing_count: 2,
     channel_count: 2,
     official_available: true,
@@ -60,17 +51,14 @@ const squareItems = [
     model: 'deepseek-r1',
     origin_vendor: 'deepseek',
     vendor: 'deepseek',
-    tier: 'peak',
-    tier_label: '高峰',
     prices: {
-      peak: {
+      flat: {
         input_micro_per_mtok: 5_000_000,
         output_micro_per_mtok: 20_000_000,
         cache_read_micro_per_mtok: 0,
         cache_write_micro_per_mtok: 0,
       },
     },
-    next_switch: '2030-01-01T18:00:00+08:00',
     listing_count: 1,
     channel_count: 1,
     official_available: true,
@@ -93,8 +81,6 @@ const squareItems = [
     model: 'glm-4-plus',
     origin_vendor: 'zhipu',
     vendor: 'zhipu',
-    tier: 'flat',
-    tier_label: '平价',
     prices: {
       flat: {
         input_micro_per_mtok: 3_000_000,
@@ -103,7 +89,6 @@ const squareItems = [
         cache_write_micro_per_mtok: 0,
       },
     },
-    next_switch: null,
     listing_count: 0,
     channel_count: 0,
     official_available: false,
@@ -114,8 +99,6 @@ const squareItems = [
     model: 'doubao-pro',
     origin_vendor: 'volcengine-ark',
     vendor: 'volcengine-ark',
-    tier: 'flat',
-    tier_label: '平价',
     prices: {
       flat: {
         input_micro_per_mtok: 2_500_000,
@@ -124,7 +107,6 @@ const squareItems = [
         cache_write_micro_per_mtok: 0,
       },
     },
-    next_switch: null,
     listing_count: 1,
     channel_count: 1,
     official_available: false,

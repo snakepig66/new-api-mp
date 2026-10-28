@@ -240,7 +240,6 @@ function RequestDetails({ request }: { request: AdminTraceRequest }) {
         <DetailItem label={page.request.upstreamModel}>
           {request.upstream_model || page.labels.none}
         </DetailItem>
-        <DetailItem label={page.request.tier}>{request.tier || page.labels.none}</DetailItem>
         <DetailItem label={page.request.priceVersion}>{request.price_version}</DetailItem>
         <DetailItem label={page.request.multiplier}>
           <Multiplier milli={request.multiplier_milli} showSaving={false} />

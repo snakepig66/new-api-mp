@@ -200,8 +200,8 @@ function DocsPage() {
         docs.billing.formulaNote,
         docs.billing.cacheTitle,
         docs.billing.cacheBody,
-        docs.billing.peakTitle,
-        docs.billing.peakNote,
+        docs.billing.flatTitle,
+        docs.billing.flatBody,
         docs.billing.sellerFeeTitle,
         docs.billing.sellerFee,
         ...docs.billing.items,
@@ -469,26 +469,8 @@ function DocsPage() {
               <h3 className="mt-6 text-[18px] font-semibold text-ink">{docs.billing.cacheTitle}</h3>
               <p>{docs.billing.cacheBody}</p>
 
-              <h3 className="mt-6 text-[18px] font-semibold text-ink">{docs.billing.peakTitle}</h3>
-              <Table minWidth={520} size="compact">
-                <TableHead>
-                  <TableRow interactive={false}>
-                    <TableHeaderCell>{docs.billing.peakColumns.tier}</TableHeaderCell>
-                    <TableHeaderCell>{docs.billing.peakColumns.window}</TableHeaderCell>
-                    <TableHeaderCell>{docs.billing.peakColumns.rule}</TableHeaderCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {docs.billing.peakRows.map((row) => (
-                    <TableRow key={row.tier}>
-                      <TableCell className="whitespace-nowrap font-medium">{row.tier}</TableCell>
-                      <TableCell>{row.window}</TableCell>
-                      <TableCell className="text-ink-2">{row.rule}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              <p className="text-[13px] leading-6 text-ink-3">{docs.billing.peakNote}</p>
+              <h3 className="mt-6 text-[18px] font-semibold text-ink">{docs.billing.flatTitle}</h3>
+              <p>{docs.billing.flatBody}</p>
 
               <div className="rounded-lg border border-line px-4 py-3">
                 <div className="text-[14px] font-medium text-ink">

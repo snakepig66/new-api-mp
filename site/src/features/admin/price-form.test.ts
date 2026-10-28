@@ -15,7 +15,7 @@ function validForm() {
   return {
     model: 'deepseek-v4-pro',
     vendor: 'deepseek',
-    tier: 'offpeak',
+    tier: 'flat',
     input_micro_per_mtok: '2',
     output_micro_per_mtok: '5',
     cache_read_micro_per_mtok: '0.04',
@@ -32,7 +32,7 @@ describe('priceFormSchema', () => {
     if (!result.success) return
     const input = priceFormToInput(result.data)
     expect(input.model).toBe('deepseek-v4-pro')
-    expect(input.tier).toBe('offpeak')
+    expect(input.tier).toBe('flat')
     expect(input.input_micro_per_mtok).toBe(2_000_000)
     expect(input.version).toBeUndefined()
     expect(input.effective_at).toBe('2026-10-24T06:01:00.000Z')
@@ -42,7 +42,7 @@ describe('priceFormSchema', () => {
     const result = priceFormSchema(NOW).safeParse({ ...validForm(), tier: 'weekend' })
     expect(result.success).toBe(false)
     if (result.success) return
-    expect(result.error.issues[0]?.message).toBe('时段只能是 peak、offpeak 或 flat')
+    expect(result.error.issues[0]?.message).toBe('价格类型只能是 flat')
   })
 
   it.each(['0', '-1', 'abc', '', '1.2345678'])('rejects an invalid price: %s', (value) => {

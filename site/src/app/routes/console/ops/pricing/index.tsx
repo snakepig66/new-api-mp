@@ -16,23 +16,19 @@ import {
   TableHead,
   TableHeaderCell,
   TableRow,
-  Tag,
   useToast,
-  type TagTone,
 } from '@/ui'
 
 import {
   adminPricesQuery,
   createAdminPrice,
   type AdminPrice,
-  type AdminTier,
 } from '@/features/admin/api'
 import {
   ErrorBlock,
   Field,
   PageSkeleton,
   Section,
-  Select,
   TextInput,
 } from '@/features/admin/components'
 import { adminErrorMessage } from '@/features/admin/errors'
@@ -49,17 +45,6 @@ export const Route = createFileRoute('/console/ops/pricing/')({
 
 const page = copy.pages.adminPrices
 const common = copy.pages.adminCommon
-
-const tierTones: Record<AdminTier, TagTone> = {
-  peak: 'neutral',
-  offpeak: 'brand',
-  flat: 'neutral',
-}
-
-function tierLabel(tier: string): string {
-  if (tier === 'peak' || tier === 'offpeak' || tier === 'flat') return copy.tiers[tier]
-  return tier || common.none
-}
 
 function groupByModel(rows: AdminPrice[]): { model: string; rows: AdminPrice[] }[] {
   const groups = new Map<string, AdminPrice[]>()
@@ -116,7 +101,6 @@ function PricesContent() {
                   <TableHead>
                     <TableRow>
                       <TableHeaderCell>{page.columns.vendor}</TableHeaderCell>
-                      <TableHeaderCell>{page.columns.tier}</TableHeaderCell>
                       <TableHeaderCell numeric>
                         {page.columns.input} / {page.unit}
                       </TableHeaderCell>
@@ -137,11 +121,6 @@ function PricesContent() {
                     {group.rows.map((row) => (
                       <TableRow key={row.id}>
                         <TableCell className=" text-[13px]">{row.vendor}</TableCell>
-                        <TableCell>
-                          <Tag tone={tierTones[row.tier as AdminTier] ?? 'neutral'}>
-                            {tierLabel(row.tier)}
-                          </Tag>
-                        </TableCell>
                         <TableCell numeric>{formatYuan(row.input_micro_per_mtok)}</TableCell>
                         <TableCell numeric>{formatYuan(row.output_micro_per_mtok)}</TableCell>
                         <TableCell numeric className="text-ink-3">
@@ -275,17 +254,6 @@ function PriceDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
             invalid={Boolean(errors.vendor)}
             onChange={(event) => update('vendor', event.target.value)}
           />
-        </Field>
-        <Field label={page.dialog.tier} htmlFor="price-tier" error={errors.tier}>
-          <Select
-            id="price-tier"
-            value={form.tier}
-            onChange={(event) => update('tier', event.target.value)}
-          >
-            <option value="peak">{copy.tiers.peak}</option>
-            <option value="offpeak">{copy.tiers.offpeak}</option>
-            <option value="flat">{copy.tiers.flat}</option>
-          </Select>
         </Field>
         <Field
           label={page.dialog.version}

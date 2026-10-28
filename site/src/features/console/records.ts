@@ -11,8 +11,6 @@ export interface UsageRow {
   createdAt: string
   model: string
   sellerId: number
-  tier: string
-  tierLabel: string
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number
@@ -42,8 +40,6 @@ export function toUsageRow(record: UsageRecord): UsageRow {
     createdAt: record.created_at ?? '',
     model: record.model ?? '',
     sellerId: safeInt(record.seller_id),
-    tier: record.tier ?? 'flat',
-    tierLabel: record.tier_label ?? '',
     inputTokens: safeInt(record.input_tokens),
     outputTokens: safeInt(record.output_tokens),
     cacheReadTokens: safeInt(record.cache_read_tokens),

@@ -4,7 +4,6 @@ import { Link, createFileRoute } from '@tanstack/react-router'
 import { copy } from '@/copy'
 import {
   squareModelQuery,
-  type MarketTier,
   type SquareChannel,
   type SquareModelDetail,
   type SquareTierPrices,
@@ -13,17 +12,14 @@ import { AddToKeyMenu } from '@/features/market/AddToKeyMenu'
 import { capabilitiesOf } from '@/features/market/capabilities'
 import { CodeBlock } from '@/features/market/code-block'
 import { CopyButton } from '@/features/market/copy-button'
-import { PeakBar } from '@/features/market/peak-bar'
 import { QueryError } from '@/features/market/query-error'
 import { currentBaseUrl } from '@/features/market/url'
 import { isOfficialVendor, toVendorLookup, vendorLabel } from '@/features/market/vendors'
 import { vendorsQuery } from '@/features/seller/api'
 import { ApiError } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import { formatYuan } from '@/lib/money'
 import {
   Empty,
-  PeakBadge,
   Price,
   Table,
   TableBody,
@@ -41,10 +37,8 @@ export const Route = createFileRoute('/models/$id')({
 
 type CodeTab = 'curl' | 'python' | 'node'
 
-const PRICE_TIERS: MarketTier[] = ['peak', 'offpeak', 'flat']
-
 function currentPrices(detail: SquareModelDetail): SquareTierPrices | undefined {
-  return detail.prices[detail.tier] ?? detail.prices.peak ?? detail.prices.offpeak
+  return detail.prices.flat
 }
 
 /** 128000 -> "128K"; smaller values keep their digits. */
@@ -187,15 +181,10 @@ export function ModelDetailPage() {
   const data = detail.data
   const originVendor = data.origin_vendor || data.vendor
   const price = currentPrices(data)
-  const tiers = PRICE_TIERS.filter((tier) => data.official_prices[tier])
+  const officialCurrent = data.official_prices.flat
   const capabilities = capabilitiesOf(data.model)
   const officialOnly =
     data.buyer_price_source === 'official' || data.listing_count === 0
-  const officialCurrent =
-    data.official_prices[data.tier] ??
-    data.official_prices.flat ??
-    data.official_prices.peak ??
-    data.official_prices.offpeak
   const officialInput = officialCurrent?.input_micro_per_mtok
   const officialMicro = officialInput === undefined ? null : Number(officialInput)
   const currentMicro = price ? Number(price.input_micro_per_mtok) : null
@@ -255,7 +244,7 @@ export function ModelDetailPage() {
                 </div>
                 {price ? (
                   <div className="mt-2">
-                    <Price value={price.input_micro_per_mtok} tier={data.tier} showTier={false} size="lg" />
+                    <Price value={price.input_micro_per_mtok} size="lg" />
                     {!officialOnly && officialInput ? (
                       <p className="mt-2 text-[14px] text-ink-2">
                         官方 <span className="tabular-nums">{formatYuan(officialInput)}</span>
@@ -271,11 +260,7 @@ export function ModelDetailPage() {
                   <p className="mt-2 text-[15px] text-ink-3">{copy.common.none}</p>
                 )}
               </div>
-              {data.tier === 'flat' ? (
-                <Tag>{copy.pages.models.flat}</Tag>
-              ) : (
-                <PeakBadge tier={data.tier} nextSwitchAt={data.next_switch} />
-              )}
+              <Tag>{page.flatPrice}</Tag>
             </div>
 
             <details className="mt-8 border-t border-line pt-6">
@@ -284,7 +269,7 @@ export function ModelDetailPage() {
               </summary>
               <p className="mt-1 text-[13px] text-ink-3">{page.tierNote}</p>
 
-              {tiers.length === 0 ? (
+              {!officialCurrent ? (
                 <div className="mt-3">
                   <Empty
                     title={page.noOfficial.title}
@@ -298,54 +283,22 @@ export function ModelDetailPage() {
                     <TableHead>
                       <TableRow interactive={false}>
                         <TableHeaderCell>{page.officialColumns.dimension}</TableHeaderCell>
-                        {tiers.map((tier) => (
-                          <TableHeaderCell key={tier} numeric>
-                            <span className="inline-flex items-center gap-1.5">
-                              {tier === 'flat'
-                                ? page.officialColumns.flat
-                                : copy.tiers[tier]}
-                              {tier === data.tier ? (
-                                <span
-                                  className="h-1.5 w-1.5 rounded-full bg-brand"
-                                  aria-hidden="true"
-                                />
-                              ) : null}
-                            </span>
-                          </TableHeaderCell>
-                        ))}
+                        <TableHeaderCell numeric>{page.officialColumns.flat}</TableHeaderCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
                       {dimensions.map((dimension) => (
                         <TableRow key={dimension.key}>
                           <TableCell className="text-ink-2">{dimension.label}</TableCell>
-                          {tiers.map((tier) => (
-                            <TableCell
-                              key={tier}
-                              numeric
-                              className={cn(
-                                'tabular-nums',
-                                tier === data.tier ? 'bg-brand-soft/50' : undefined,
-                              )}
-                            >
-                              {formatYuan(data.official_prices[tier]![dimension.key])}
-                            </TableCell>
-                          ))}
+                          <TableCell numeric className="tabular-nums">
+                            {formatYuan(officialCurrent[dimension.key])}
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
                 </div>
               )}
-
-              {data.tier !== 'flat' ? (
-                <div className="mt-8 border-t border-line pt-6">
-                  <h3 className="text-[16px] font-semibold tracking-tight text-ink">
-                    {page.peakBar.title}
-                  </h3>
-                  <PeakBar nextSwitchAt={data.next_switch} className="mt-4" />
-                </div>
-              ) : null}
             </details>
           </section>
 

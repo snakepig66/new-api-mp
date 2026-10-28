@@ -278,7 +278,7 @@ function ReplaceKeyDialog({
 }
 
 // ---------------------------------------------------------------------------
-// 模型价格表：每个模型一张 时段 × 计费项 的小表，官方价/买家价/到手价。
+// 模型价格表：每个模型一张 计费项 的小表，官方价/买家价/到手价。
 // ---------------------------------------------------------------------------
 
 const PRICE_DIMENSIONS: {
@@ -291,13 +291,10 @@ const PRICE_DIMENSIONS: {
   { key: 'cache_write_micro_per_mtok', label: page.models.dimensions.cache_write },
 ]
 
-const PRICE_TIERS: ('peak' | 'offpeak' | 'flat')[] = ['peak', 'offpeak', 'flat']
-
 function ModelPriceTable({ row, feePercent }: { row: SellerModelRow; feePercent: number }) {
-  const tiers = PRICE_TIERS.filter(
-    (tier) => row.official_prices[tier] !== undefined || row.buyer_prices[tier] !== undefined,
-  )
-  if (tiers.length === 0) {
+  const officialPrices = row.official_prices.flat
+  const buyerPrices = row.buyer_prices.flat
+  if (officialPrices === undefined && buyerPrices === undefined) {
     return <p className="mt-3 text-[13px] text-ink-3">{page.models.noPrices}</p>
   }
   return (
@@ -305,7 +302,6 @@ function ModelPriceTable({ row, feePercent }: { row: SellerModelRow; feePercent:
       <Table minWidth={440} size="compact">
         <TableHead>
           <TableRow interactive={false}>
-            <TableHeaderCell>{page.models.priceColumns.tier}</TableHeaderCell>
             <TableHeaderCell>{page.models.priceColumns.dimension}</TableHeaderCell>
             <TableHeaderCell numeric>{page.models.priceColumns.official}</TableHeaderCell>
             <TableHeaderCell numeric>{page.models.priceColumns.buyer}</TableHeaderCell>
@@ -313,32 +309,27 @@ function ModelPriceTable({ row, feePercent }: { row: SellerModelRow; feePercent:
           </TableRow>
         </TableHead>
         <TableBody>
-          {tiers.flatMap((tier) =>
-            PRICE_DIMENSIONS.map((dimension) => {
-              const official = row.official_prices[tier]?.[dimension.key]
-              const buyer = row.buyer_prices[tier]?.[dimension.key]
-              // 到手价 = 买家价 × (1 - 平台费)。整数微元上取整，仅用于展示。
-              const net =
-                buyer !== undefined ? Math.round((buyer * (100 - feePercent)) / 100) : undefined
-              return (
-                <TableRow key={`${tier}-${dimension.key}`} interactive={false}>
-                  <TableCell className="text-[13px] text-ink-3">
-                    {page.models.tierNames[tier]}
-                  </TableCell>
-                  <TableCell className="text-[13px]">{dimension.label}</TableCell>
-                  <TableCell numeric className="text-[13px] text-ink-3">
-                    {official === undefined ? '—' : formatYuan(official)}
-                  </TableCell>
-                  <TableCell numeric className="text-[13px]">
-                    {buyer === undefined ? '—' : formatYuan(buyer)}
-                  </TableCell>
-                  <TableCell numeric className="text-[13px] text-ink-2">
-                    {net === undefined ? '—' : formatYuan(net)}
-                  </TableCell>
-                </TableRow>
-              )
-            }),
-          )}
+          {PRICE_DIMENSIONS.map((dimension) => {
+            const official = officialPrices?.[dimension.key]
+            const buyer = buyerPrices?.[dimension.key]
+            // 到手价 = 买家价 × (1 - 平台费)。整数微元上取整，仅用于展示。
+            const net =
+              buyer !== undefined ? Math.round((buyer * (100 - feePercent)) / 100) : undefined
+            return (
+              <TableRow key={dimension.key} interactive={false}>
+                <TableCell className="text-[13px]">{dimension.label}</TableCell>
+                <TableCell numeric className="text-[13px] text-ink-3">
+                  {official === undefined ? '—' : formatYuan(official)}
+                </TableCell>
+                <TableCell numeric className="text-[13px]">
+                  {buyer === undefined ? '—' : formatYuan(buyer)}
+                </TableCell>
+                <TableCell numeric className="text-[13px] text-ink-2">
+                  {net === undefined ? '—' : formatYuan(net)}
+                </TableCell>
+              </TableRow>
+            )
+          })}
         </TableBody>
       </Table>
     </div>

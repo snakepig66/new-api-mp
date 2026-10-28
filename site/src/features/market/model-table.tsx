@@ -4,7 +4,6 @@ import { Fragment, useState } from 'react'
 import { copy } from '@/copy'
 import { formatYuan } from '@/lib/money'
 import {
-  PeakBadge,
   StatusDot,
   Table,
   TableBody,
@@ -43,7 +42,7 @@ export interface ModelTableProps {
 }
 
 function currentPrices(model: SquareModel): SquareTierPrices | undefined {
-  return model.prices[model.tier] ?? model.prices.peak ?? model.prices.offpeak
+  return model.prices.flat
 }
 
 /** The standard model's 原厂 slug, with a fallback for older payloads. */
@@ -74,7 +73,7 @@ function channelInputPrice(officialInput: number | string | undefined, channel: 
   return Math.round((base * coefficient * channel.min_multiplier_milli) / 1_000_000)
 }
 
-/** Saving versus the official price of the same tier, in percent. */
+/** Saving versus the official price, in percent. */
 function savingOf(official: number | string | undefined, market: number | string | undefined): number | null {
   const o = Number(official)
   const m = Number(market)
@@ -127,7 +126,7 @@ function ExpandedRow({
   columns: number
 }) {
   const t = copy.pages.models.expand
-  const official = detail?.official_prices?.[model.tier]
+  const official = detail?.official_prices?.flat
   const market = currentPrices(model)
   const rows: { key: string; label: string; official?: number | string; market?: number | string }[] = [
     { key: 'input', label: t.input, official: official?.input_micro_per_mtok, market: market?.input_micro_per_mtok },
@@ -340,7 +339,7 @@ function formatContext(tokens: number): string {
  * The model board shared by the homepage (top 6) and the full square.
  *
  * One row is one standard model: upstream channels are aggregated behind it.
- * Clicking a row expands the four-tier price comparison, the per-channel
+ * Clicking a row expands the official-vs-market price comparison, the per-channel
  * reliability and the context/protocol facts in place; the model name links
  * to the detail page that carries the trend chart and code samples.
  */
@@ -368,7 +367,6 @@ export function ModelTable({
     (anyOfficial ? 1 : 0) +
     (anyMetrics ? 3 : 0) +
     1 + // channels
-    1 + // tier
     (showAddToKey ? 1 : 0)
 
   const headCells = (
@@ -379,7 +377,6 @@ export function ModelTable({
       {anyMetrics ? <TableHeaderCell numeric>{columns.success}</TableHeaderCell> : null}
       {anyMetrics ? <TableHeaderCell numeric>{columns.latency}</TableHeaderCell> : null}
       <TableHeaderCell numeric>{columns.channels}</TableHeaderCell>
-      <TableHeaderCell>{columns.tier}</TableHeaderCell>
       {showAddToKey ? <TableHeaderCell>{columns.actions}</TableHeaderCell> : null}
     </>
   )
@@ -415,7 +412,6 @@ export function ModelTable({
                 <TableCell numeric>
                   <div className="flex justify-end">{skeletonCell('w-8')}</div>
                 </TableCell>
-                <TableCell>{skeletonCell('w-20')}</TableCell>
                 {showAddToKey ? (
                   <TableCell>
                     <div className="flex justify-end">{skeletonCell('w-16')}</div>
@@ -427,7 +423,7 @@ export function ModelTable({
               const origin = originVendorOf(model)
               const row = currentPrices(model)
               const detail = details?.get(model.model)
-              const official = detail?.official_prices?.[model.tier]
+              const official = detail?.official_prices?.flat
               const saving = savingOf(official?.input_micro_per_mtok, row?.input_micro_per_mtok)
               const metrics = model.metrics
               const isOpen = expanded === model.model
@@ -522,15 +518,6 @@ export function ModelTable({
                         <StatusDot level={statusLevel(metrics)} />
                         <span>{model.channel_count}</span>
                       </span>
-                    </TableCell>
-                    <TableCell>
-                      {model.tier === 'flat' ? (
-                        <span title={copy.pages.models.flatHint}>
-                          <Tag>{copy.pages.models.flat}</Tag>
-                        </span>
-                      ) : (
-                        <PeakBadge tier={model.tier} nextSwitchAt={model.next_switch} />
-                      )}
                     </TableCell>
                     {showAddToKey ? (
                       <TableCell className="relative z-10 w-px whitespace-nowrap">

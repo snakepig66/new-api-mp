@@ -10,8 +10,6 @@ import { queryOptions, useQueries } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
 
-export type MarketTier = 'peak' | 'offpeak' | 'flat'
-
 /** Channel pool kind: official vendor, subscription plan, or third-party relay. */
 export type ChannelKind = 'official' | 'plan' | 'third_party'
 
@@ -66,11 +64,8 @@ export interface SquareModel {
   /** Original vendor (原厂) used for the vendor pills and price books. */
   origin_vendor: string
   vendor: string
-  tier: MarketTier
-  tier_label: string
-  prices: Partial<Record<MarketTier, SquareTierPrices>>
-  /** RFC 3339 timestamp, or null when the calendar has no switch ahead. */
-  next_switch: string | null
+  /** Buyer prices; pricing is a single flat price per model. */
+  prices: { flat?: SquareTierPrices }
   listing_count: number
   /** Number of distinct channels currently serving this model. */
   channel_count: number
@@ -109,9 +104,8 @@ export interface SquareChannel {
 export interface SquareModelDetail extends SquareModel {
   multiplier_min_milli: number
   multiplier_max_milli: number
-  official_prices: Partial<
-    Record<MarketTier, SquareTierPrices & { version: number }>
-  >
+  /** Official price book; absent when the vendor published none. */
+  official_prices: { flat?: SquareTierPrices & { version: number } }
   channels: SquareChannel[]
 }
 

@@ -49,7 +49,8 @@ function micro(value: unknown): number | string {
 // 价目表
 // ---------------------------------------------------------------------------
 
-export type AdminTier = 'peak' | 'offpeak' | 'flat'
+/** New price rows are always billed at the single flat price. */
+export type AdminTier = 'flat'
 
 export interface AdminPrice {
   id: number

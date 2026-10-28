@@ -77,10 +77,10 @@ type DayKey = (typeof DAY_KEYS)[number]
 
 const windowGroupSchema = z.object({
   enabled: z.boolean(),
-  peakStart: z.string(),
-  peakEnd: z.string(),
-  idleStart: z.string(),
-  idleEnd: z.string(),
+  firstStart: z.string(),
+  firstEnd: z.string(),
+  secondStart: z.string(),
+  secondEnd: z.string(),
 })
 
 const wizardSchema = z
@@ -118,8 +118,8 @@ const wizardSchema = z
       const group = value.availability[day]
       if (!group.enabled) continue
       for (const [startKey, endKey] of [
-        ['peakStart', 'peakEnd'],
-        ['idleStart', 'idleEnd'],
+        ['firstStart', 'firstEnd'],
+        ['secondStart', 'secondEnd'],
       ] as const) {
         const start = group[startKey]
         const end = group[endKey]
@@ -141,10 +141,10 @@ type WizardForm = z.infer<typeof wizardSchema>
 
 const emptyWindowGroup = {
   enabled: false,
-  peakStart: '09:00',
-  peakEnd: '12:00',
-  idleStart: '12:00',
-  idleEnd: '18:00',
+  firstStart: '09:00',
+  firstEnd: '12:00',
+  secondStart: '12:00',
+  secondEnd: '18:00',
 }
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
@@ -212,8 +212,8 @@ function flattenHours(availability: WizardForm['availability']): FlatHours {
     if (!group.enabled) continue
     any = true
     for (const [start, end] of [
-      [group.peakStart, group.peakEnd],
-      [group.idleStart, group.idleEnd],
+      [group.firstStart, group.firstEnd],
+      [group.secondStart, group.secondEnd],
     ]) {
       if (!timeRe.test(start) || !timeRe.test(end) || end <= start) {
         valid = false
@@ -398,8 +398,7 @@ function BuyerPriceCell({
   feePercent: number
 }) {
   const market = useQuery(squareModelForSeller(model))
-  const tier = market.data?.tier ?? 'flat'
-  const officialPrice = market.data?.official_prices?.[tier]?.input_micro_per_mtok
+  const officialPrice = market.data?.official_prices?.flat?.input_micro_per_mtok
   if (market.isPending) {
     return <Skeleton className="h-4 w-20" />
   }
@@ -410,7 +409,7 @@ function BuyerPriceCell({
   if (!preview) {
     return <span className="text-[13px] text-ink-3">{page.models.buyerUnavailable}</span>
   }
-  return <Price value={preview.buyerMicro} tier={tier} size="sm" unit={null} />
+  return <Price value={preview.buyerMicro} size="sm" unit={null} />
 }
 
 function AvailabilityGroup({
@@ -437,31 +436,32 @@ function AvailabilityGroup({
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         {(
           [
-            ['peak', 'peakStart', 'peakEnd'],
-            ['idle', 'idleStart', 'idleEnd'],
+            ['first', 'firstStart', 'firstEnd'],
+            ['second', 'secondStart', 'secondEnd'],
           ] as const
-        ).map(([tier, startKey, endKey]) => (
-          <div key={tier}>
-            <span className="block text-[13px] text-ink-3">
-              {tier === 'peak' ? page.limits.peak : page.limits.idle}
-            </span>
-            <div className="mt-1 flex items-center gap-2">
-              <Input
-                type="time"
-                aria-label={`${label}${tier === 'peak' ? page.limits.peak : page.limits.idle}${page.limits.start}`}
-                {...register(`availability.${day}.${startKey}` as const)}
-              />
-              <span className="text-ink-3" aria-hidden="true">
-                –
-              </span>
-              <Input
-                type="time"
-                aria-label={`${label}${tier === 'peak' ? page.limits.peak : page.limits.idle}${page.limits.end}`}
-                {...register(`availability.${day}.${endKey}` as const)}
-              />
+        ).map(([slot, startKey, endKey]) => {
+          const slotLabel = slot === 'first' ? page.limits.first : page.limits.second
+          return (
+            <div key={slot}>
+              <span className="block text-[13px] text-ink-3">{slotLabel}</span>
+              <div className="mt-1 flex items-center gap-2">
+                <Input
+                  type="time"
+                  aria-label={`${label}${slotLabel}${page.limits.start}`}
+                  {...register(`availability.${day}.${startKey}` as const)}
+                />
+                <span className="text-ink-3" aria-hidden="true">
+                  –
+                </span>
+                <Input
+                  type="time"
+                  aria-label={`${label}${slotLabel}${page.limits.end}`}
+                  {...register(`availability.${day}.${endKey}` as const)}
+                />
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
       {error ? (
         <p className="mt-2 text-[13px] text-danger" role="alert">
@@ -1205,8 +1205,8 @@ export function NewListingPage() {
                       label={page.limits.dayTypes[day]}
                       register={form.register}
                       error={
-                        form.formState.errors.availability?.[day]?.idleEnd?.message ??
-                        form.formState.errors.availability?.[day]?.peakEnd?.message
+                        form.formState.errors.availability?.[day]?.secondEnd?.message ??
+                        form.formState.errors.availability?.[day]?.firstEnd?.message
                       }
                     />
                   ))}

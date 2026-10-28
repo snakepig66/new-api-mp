@@ -37,8 +37,6 @@ const squareModels = [
     model: 'glm-5.3',
     origin_vendor: 'zhipu',
     vendor: 'zhipu',
-    tier: 'flat',
-    tier_label: '平价',
     prices: {
       flat: {
         input_micro_per_mtok: 8_000_000,
@@ -47,7 +45,6 @@ const squareModels = [
         cache_write_micro_per_mtok: 0,
       },
     },
-    next_switch: null,
     listing_count: 1,
     channel_count: 1,
     multiplier_min_milli: 900,
@@ -59,8 +56,6 @@ const squareModels = [
     model: 'no-official',
     origin_vendor: 'zhipu',
     vendor: 'zhipu',
-    tier: 'flat',
-    tier_label: '平价',
     prices: {
       flat: {
         input_micro_per_mtok: 1_000_000,
@@ -69,7 +64,6 @@ const squareModels = [
         cache_write_micro_per_mtok: 0,
       },
     },
-    next_switch: null,
     listing_count: 1,
     channel_count: 1,
     multiplier_min_milli: 500,

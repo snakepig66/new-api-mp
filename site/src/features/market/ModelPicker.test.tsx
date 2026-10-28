@@ -24,8 +24,6 @@ function model(
     aliases,
     origin_vendor: vendor,
     vendor,
-    tier: 'flat',
-    tier_label: '平价',
     prices: {
       flat: {
         input_micro_per_mtok: input,
@@ -34,7 +32,6 @@ function model(
         cache_write_micro_per_mtok: 0,
       },
     },
-    next_switch: null,
     listing_count: 1,
     channel_count: 1,
     multiplier_min_milli: lowestMilli,

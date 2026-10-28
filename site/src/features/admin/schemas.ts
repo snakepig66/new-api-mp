@@ -20,7 +20,7 @@ import type {
   PerCallItem,
 } from './api'
 
-export const PRICE_TIERS = ['peak', 'offpeak', 'flat'] as const
+export const PRICE_TIERS = ['flat'] as const
 export const PER_CALL_ITEMS = ['search', 'fetch'] as const
 export const HOLIDAY_KINDS = ['holiday', 'workday'] as const
 
@@ -160,7 +160,7 @@ export function emptyPriceForm(now: number = Date.now()): PriceFormValues {
 }
 
 /**
- * 价目表单。tier 必须是 peak/offpeak/flat；四个价格按元填写；
+ * 价目表单。tier 只能是 flat；四个价格按元填写；
  * version 留空表示由后端自动分配；effective_at 按 Asia/Shanghai 解析且
  * 不得早于当前分钟（后端还会做一次精确校验）。
  */

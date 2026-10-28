@@ -16,17 +16,14 @@ const squareItems = [
     model: 'deepseek-chat',
     origin_vendor: 'deepseek',
     vendor: 'deepseek',
-    tier: 'offpeak',
-    tier_label: '空闲',
     prices: {
-      offpeak: {
+      flat: {
         input_micro_per_mtok: 2_000_000,
         output_micro_per_mtok: 8_000_000,
         cache_read_micro_per_mtok: 0,
         cache_write_micro_per_mtok: 0,
       },
     },
-    next_switch: '2030-01-01T10:00:00+08:00',
     listing_count: 2,
     channel_count: 1,
     buyer_price_source: 'market',
@@ -57,7 +54,7 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         ...item,
         multiplier_min_milli: 300,
         multiplier_max_milli: 480,
-        official_prices: { offpeak: { ...item.prices.offpeak, version: 1 } },
+        official_prices: { flat: { ...item.prices.flat, version: 1 } },
         channels: [],
       },
     })

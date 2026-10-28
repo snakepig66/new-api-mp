@@ -16,7 +16,6 @@ const trace = {
     listing_id: 9,
     model: 'deepseek-flash',
     upstream_model: 'deepseek-flash-0901',
-    tier: 'offpeak',
     price_version: 1,
     multiplier_milli: 500,
     input_tokens: 10,

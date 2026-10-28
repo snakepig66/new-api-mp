@@ -83,7 +83,12 @@ export interface KeyDetail {
   models: KeyModel[]
 }
 
-export type UsageTier = 'peak' | 'offpeak' | 'flat' | string
+/**
+ * Billing tier stored on a historical record. New requests are always `flat`;
+ * older rows keep whatever tier they were billed at, so this stays a raw
+ * string and the UI never interprets it.
+ */
+export type UsageTier = string
 
 /**
  * One row of GET /api/marketplace/records/usage. Amounts are 微元. The
