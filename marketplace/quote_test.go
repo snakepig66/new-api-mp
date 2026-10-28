@@ -34,29 +34,7 @@ func flashUsage(mult int64, at time.Time) QuoteInput {
 	}
 }
 
-func TestQuotePeak(t *testing.T) {
-	db, cal := newQuoteFixture(t)
-
-	// 2026-10-21 10:00 CST is a Wednesday inside the 09:00–12:00 peak window.
-	// deepseek-flash 高峰: input 2 元/M = 2e6 微元/M, output 8 元/M = 8e6 微元/M.
-	// Σ = 1e6×2e6 + 0.5e6×8e6 = 6e12
-	// TokenDebit   = ceil(6e12 × 300 / 1e9)  = 1_800_000 微元 (0.3x of ¥6)
-	// OfficialCost = ceil(6e12 × 1000 / 1e9) = 6_000_000 微元
-	res, err := Quote(db, cal, flashUsage(300, shTime(2026, time.October, 21, 10, 0, 0)))
-	require.NoError(t, err)
-
-	assert.Equal(t, TierPeak, res.Tier)
-	assert.Equal(t, int64(1), res.PriceVersion)
-	assert.Equal(t, int64(300), res.MultiplierMilli)
-	assert.Equal(t, Micro(1_800_000), res.TokenDebit)
-	assert.Equal(t, Micro(0), res.ToolDebit)
-	assert.Equal(t, Micro(1_800_000), res.TotalDebit)
-	assert.Equal(t, Micro(6_000_000), res.OfficialCost)
-	assert.Equal(t, res.TokenDebit+res.ToolDebit, res.TotalDebit)
-	assert.Empty(t, res.ToolPriceVersions)
-}
-
-func TestQuoteOffpeak(t *testing.T) {
+func TestQuoteFlat(t *testing.T) {
 	db, cal := newQuoteFixture(t)
 
 	// 20:00 is off-peak: input 1 元/M = 1e6 微元/M, output 4 元/M = 4e6 微元/M.
@@ -66,7 +44,7 @@ func TestQuoteOffpeak(t *testing.T) {
 	res, err := Quote(db, cal, flashUsage(300, shTime(2026, time.October, 21, 20, 0, 0)))
 	require.NoError(t, err)
 
-	assert.Equal(t, TierOffpeak, res.Tier)
+	assert.Equal(t, TierFlat, res.Tier)
 	assert.Equal(t, int64(1), res.PriceVersion)
 	assert.Equal(t, Micro(900_000), res.TokenDebit)
 	assert.Equal(t, Micro(0), res.ToolDebit)
@@ -87,12 +65,12 @@ func TestQuoteNoSplitAcrossTiers(t *testing.T) {
 		wantTier  string
 		wantDebit Micro
 	}{
-		{shTime(2026, time.October, 21, 11, 59, 59), TierPeak, 6_000_000},
-		{shTime(2026, time.October, 21, 12, 0, 0), TierOffpeak, 3_000_000},
-		{shTime(2026, time.October, 21, 13, 59, 59), TierOffpeak, 3_000_000},
-		{shTime(2026, time.October, 21, 14, 0, 0), TierPeak, 6_000_000},
-		{shTime(2026, time.October, 21, 17, 59, 59), TierPeak, 6_000_000},
-		{shTime(2026, time.October, 21, 18, 0, 0), TierOffpeak, 3_000_000},
+		// Peak/off-peak is retired: every instant bills the flat (former
+		// off-peak) price, Σ = 3e12 → 3_000_000.
+		{shTime(2026, time.October, 21, 11, 59, 59), TierFlat, 3_000_000},
+		{shTime(2026, time.October, 21, 12, 0, 0), TierFlat, 3_000_000},
+		{shTime(2026, time.October, 21, 14, 0, 0), TierFlat, 3_000_000},
+		{shTime(2026, time.October, 21, 18, 0, 0), TierFlat, 3_000_000},
 	}
 	for _, tc := range cases {
 		res, err := Quote(db, cal, flashUsage(1000, tc.at))
@@ -117,7 +95,7 @@ func TestQuoteCacheBuckets(t *testing.T) {
 		want Micro
 	}{
 		{"offpeak", shTime(2026, time.October, 21, 20, 0, 0), 1_020_000},
-		{"peak", shTime(2026, time.October, 21, 10, 0, 0), 2_040_000},
+		{"former peak hour", shTime(2026, time.October, 21, 10, 0, 0), 1_020_000},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -170,10 +148,10 @@ func TestQuoteRoundsUpExactlyOnce(t *testing.T) {
 	eff := shTime(2026, time.January, 1, 0, 0, 0)
 
 	// A 1 微元/M price book: the smallest possible positive charge.
-	mustInsertBook(t, db, PriceBook{Model: "tiny-one", Vendor: "test", Tier: TierOffpeak, Version: 1,
+	mustInsertBook(t, db, PriceBook{Model: "tiny-one", Vendor: "test", Tier: TierFlat, Version: 1,
 		InputMicroPerMTok: 1, EffectiveAt: eff})
 	// A 3 微元/M price book on both the input and the output bucket.
-	mustInsertBook(t, db, PriceBook{Model: "tiny-three", Vendor: "test", Tier: TierOffpeak, Version: 1,
+	mustInsertBook(t, db, PriceBook{Model: "tiny-three", Vendor: "test", Tier: TierFlat, Version: 1,
 		InputMicroPerMTok: 3, OutputMicroPerMTok: 3, EffectiveAt: eff})
 
 	// 1 token × 1 微元/M × mult=1 → ceil(1/1e9) = 1 微元, never 0 (§3.2 向上取整).

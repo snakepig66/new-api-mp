@@ -153,10 +153,8 @@ func TestSeedPrices(t *testing.T) {
 			model, tier     string
 			in, out, cr, cw int64
 		}{
-			{"deepseek-flash", TierOffpeak, 1_000_000, 4_000_000, 20_000, 1_000_000},
-			{"deepseek-flash", TierPeak, 2_000_000, 8_000_000, 40_000, 2_000_000},
-			{"deepseek-v4-pro", TierOffpeak, 4_500_000, 13_500_000, 150_000, 4_500_000},
-			{"deepseek-v4-pro", TierPeak, 9_000_000, 27_000_000, 300_000, 9_000_000},
+			{"deepseek-flash", TierFlat, 1_000_000, 4_000_000, 20_000, 1_000_000},
+			{"deepseek-v4-pro", TierFlat, 4_500_000, 13_500_000, 150_000, 4_500_000},
 		}
 		for _, w := range wants {
 			var pb PriceBook
@@ -190,7 +188,7 @@ func TestSeedPrices(t *testing.T) {
 			return books, perCall
 		}
 		booksBefore, perCallBefore := countRows()
-		assert.Equal(t, int64(27), booksBefore, "4 deepseek + 8 copied cloud rows + 15 catalog rows (Kimi/GLM/MiniMax/Qwen/Doubao); tipig is not seeded (H8)")
+		assert.Equal(t, int64(21), booksBefore, "2 deepseek flat + 4 copied cloud rows + 15 catalog rows (Kimi/GLM/MiniMax/Qwen/Doubao); tipig is not seeded (H8)")
 		assert.Equal(t, int64(2), perCallBefore, "search + fetch")
 
 		require.NoError(t, SeedPrices(db), "a second run on the same database must succeed")
@@ -212,10 +210,10 @@ func TestSeedPricesTipigInjected(t *testing.T) {
 
 	var books int64
 	require.NoError(t, db.Model(&PriceBook{}).Count(&books).Error)
-	assert.Equal(t, int64(31), books, "27 catalog rows + 4 injected tipig rows")
+	assert.Equal(t, int64(23), books, "21 catalog rows + 2 injected tipig flat rows")
 
 	for _, model := range []string{"deepseek-v4.1-flash-1017", "deepseek-v4-pro-0813"} {
-		for _, tier := range []string{TierOffpeak, TierPeak} {
+		for _, tier := range []string{TierFlat} {
 			var pb PriceBook
 			require.NoError(t, db.Where("model = ? AND vendor = ? AND tier = ?", model, seedVendorTipig, tier).Take(&pb).Error,
 				"seeded row %s/%s", model, tier)

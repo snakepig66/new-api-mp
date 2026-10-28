@@ -182,36 +182,24 @@ func TestApiSquareModels(t *testing.T) {
 	assert.Equal(t, tier, flash["tier"])
 	assert.Equal(t, tierLabel(tier), flash["tier_label"])
 
-	// next_switch is in the future and actually flips the tier.
-	nsStr, ok := flash["next_switch"].(string)
-	require.True(t, ok && nsStr != "", "next_switch must be set, entry: %v", flash)
-	next, err := time.Parse(time.RFC3339Nano, nsStr)
-	require.NoError(t, err)
-	assert.True(t, next.After(genAt), "next_switch %s must be after generated_at %s", next, genAt)
-	assert.NotEqual(t, tier, f.cal.TierAt(next), "next_switch must flip the tier")
-	assert.Equal(t, f.cal.NextSwitch(genAt).UTC(), next.UTC(), "next_switch is Calendar.NextSwitch")
+	// Peak/off-peak is retired: no tier switch, a single flat price.
+	assert.Equal(t, TierFlat, tier)
+	_, hasSwitch := flash["next_switch"]
+	if hasSwitch {
+		assert.Nil(t, flash["next_switch"], "no next_switch with a single tier")
+	}
 
-	// Buyer prices: official price book × min multiplier 300 (§3.2), per
-	// dimension, with Quote's ceil rounding.
+	// Buyer prices: official flat price (the former off-peak rate) × min
+	// multiplier 300 (§3.2), per dimension, with Quote's ceil rounding.
 	prices, ok := flash["prices"].(map[string]any)
 	require.True(t, ok, "prices must be an object, entry: %v", flash)
-	peak, ok := prices[TierPeak].(map[string]any)
-	require.True(t, ok, "peak prices must be present, prices: %v", prices)
-	offpeak, ok := prices[TierOffpeak].(map[string]any)
-	require.True(t, ok, "offpeak prices must be present, prices: %v", prices)
-
-	// deepseek-flash seed (§3.3): peak input 2 元/M, output 8 元/M,
-	// cache read 0.04 元/M, cache write 2 元/M; off-peak is half.
-	assert.Equal(t, int64(600_000), apiNum(t, peak, "input_micro_per_mtok"), "2e6 × 0.3")
-	assert.Equal(t, int64(2_400_000), apiNum(t, peak, "output_micro_per_mtok"), "8e6 × 0.3")
-	assert.Equal(t, int64(12_000), apiNum(t, peak, "cache_read_micro_per_mtok"), "4e4 × 0.3")
-	assert.Equal(t, int64(600_000), apiNum(t, peak, "cache_write_micro_per_mtok"), "2e6 × 0.3")
-	assert.Equal(t, int64(300_000), apiNum(t, offpeak, "input_micro_per_mtok"), "1e6 × 0.3")
-	assert.Equal(t, int64(1_200_000), apiNum(t, offpeak, "output_micro_per_mtok"), "4e6 × 0.3")
-	assert.Equal(t, int64(6_000), apiNum(t, offpeak, "cache_read_micro_per_mtok"), "2e4 × 0.3")
-	assert.Equal(t, int64(300_000), apiNum(t, offpeak, "cache_write_micro_per_mtok"), "1e6 × 0.3")
-	assert.Equal(t, apiNum(t, offpeak, "input_micro_per_mtok")*2, apiNum(t, peak, "input_micro_per_mtok"),
-		"§3.3: 高峰 = 空闲 × 2")
+	require.Len(t, prices, 1, "only the flat tier, prices: %v", prices)
+	flat, ok := prices[TierFlat].(map[string]any)
+	require.True(t, ok, "flat prices must be present, prices: %v", prices)
+	assert.Equal(t, int64(300_000), apiNum(t, flat, "input_micro_per_mtok"), "1e6 × 0.3")
+	assert.Equal(t, int64(1_200_000), apiNum(t, flat, "output_micro_per_mtok"), "4e6 × 0.3")
+	assert.Equal(t, int64(6_000), apiNum(t, flat, "cache_read_micro_per_mtok"), "2e4 × 0.3")
+	assert.Equal(t, int64(300_000), apiNum(t, flat, "cache_write_micro_per_mtok"), "1e6 × 0.3")
 
 	// The displayed price must come out of the single Quote function (§3.7):
 	// re-pricing the same dimension at the entry's instant reproduces it.
@@ -232,7 +220,7 @@ func TestApiSquareModels(t *testing.T) {
 	assert.Equal(t, int64(800), apiNum(t, pro, "multiplier_min_milli"), "canary supply counts")
 	assert.Equal(t, true, pro["official_available"], "canary on the official channel is reachable")
 	proPrices := pro["prices"].(map[string]any)
-	proOff := proPrices[TierOffpeak].(map[string]any)
+	proOff := proPrices[TierFlat].(map[string]any)
 	assert.Equal(t, int64(3_600_000), apiNum(t, proOff, "input_micro_per_mtok"), "4.5e6 × 0.8 (canary)")
 
 	// Aggregate-only output: no seller/listing identifiers anywhere (§3.1).
@@ -265,10 +253,8 @@ func TestApiSquareUnlistedModelsUseOfficialPrice(t *testing.T) {
 	assert.Equal(t, "deepseek", flash["vendor"])
 
 	prices := flash["prices"].(map[string]any)
-	peak := prices[TierPeak].(map[string]any)
-	offpeak := prices[TierOffpeak].(map[string]any)
-	assert.Equal(t, int64(2_000_000), apiNum(t, peak, "input_micro_per_mtok"), "official peak input, ×1.0")
-	assert.Equal(t, int64(1_000_000), apiNum(t, offpeak, "input_micro_per_mtok"), "official off-peak input, ×1.0")
+	flat := prices[TierFlat].(map[string]any)
+	assert.Equal(t, int64(1_000_000), apiNum(t, flat, "input_micro_per_mtok"), "official flat input, ×1.0")
 
 	// The detail page is reachable too, with the neutral multiplier band.
 	w = f.get(t, "/api/marketplace/square/models/deepseek-flash")
@@ -315,12 +301,10 @@ func TestApiSquarePriceAppliesChannelCoefficient(t *testing.T) {
 	assert.Equal(t, int64(2), apiNum(t, flash, "channel_count"))
 
 	prices := flash["prices"].(map[string]any)
-	peak := prices[TierPeak].(map[string]any)
-	offpeak := prices[TierOffpeak].(map[string]any)
-	// official peak input 2e6 × 0.5 (coefficient) × 0.5 (multiplier).
-	assert.Equal(t, int64(500_000), apiNum(t, peak, "input_micro_per_mtok"))
-	assert.Equal(t, int64(250_000), apiNum(t, offpeak, "input_micro_per_mtok"))
-	assert.Equal(t, int64(2_000_000), apiNum(t, peak, "output_micro_per_mtok"))
+	flat := prices[TierFlat].(map[string]any)
+	// official flat input 1e6 × 0.5 (coefficient) × 0.5 (multiplier).
+	assert.Equal(t, int64(250_000), apiNum(t, flat, "input_micro_per_mtok"))
+	assert.Equal(t, int64(1_000_000), apiNum(t, flat, "output_micro_per_mtok"))
 
 	// The same factor comes out of Quote.
 	q, err := Quote(f.db, f.cal, QuoteInput{
@@ -425,23 +409,19 @@ func TestApiSquareModelDetail(t *testing.T) {
 
 	official, ok := detail["official_prices"].(map[string]any)
 	require.True(t, ok, "official_prices must be an object, detail: %v", detail)
-	peak, ok := official[TierPeak].(map[string]any)
-	require.True(t, ok, "peak official price must be present")
-	assert.Equal(t, int64(2_000_000), apiNum(t, peak, "input_micro_per_mtok"))
-	assert.Equal(t, int64(8_000_000), apiNum(t, peak, "output_micro_per_mtok"))
-	assert.Equal(t, int64(1), apiNum(t, peak, "version"))
-	offpeak, ok := official[TierOffpeak].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, int64(1_000_000), apiNum(t, offpeak, "input_micro_per_mtok"))
-	_, hasFlat := official[TierFlat]
-	assert.False(t, hasFlat, "no flat price book is seeded for DeepSeek (§3.3)")
+	flatOfficial, ok := official[TierFlat].(map[string]any)
+	require.True(t, ok, "flat official price must be present")
+	assert.Equal(t, int64(1_000_000), apiNum(t, flatOfficial, "input_micro_per_mtok"))
+	assert.Equal(t, int64(4_000_000), apiNum(t, flatOfficial, "output_micro_per_mtok"))
+	assert.Equal(t, int64(1), apiNum(t, flatOfficial, "version"))
+	assert.Len(t, official, 1, "peak/off-peak are retired; only the flat tier")
 
 	// The detail view carries the same buyer prices as the list view.
 	prices, ok := detail["prices"].(map[string]any)
 	require.True(t, ok)
-	peakBuyer, ok := prices[TierPeak].(map[string]any)
+	flatBuyer, ok := prices[TierFlat].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, int64(600_000), apiNum(t, peakBuyer, "input_micro_per_mtok"))
+	assert.Equal(t, int64(300_000), apiNum(t, flatBuyer, "input_micro_per_mtok"))
 
 	// channels: every verified+active qualification with an active channel is
 	// listed — including channels with no listing right now (badges/detail).
@@ -475,70 +455,6 @@ func TestApiSquareModelDetail(t *testing.T) {
 		assert.NotEqual(t, "volcengine-ark-coding-plan", c.(map[string]any)["channel_slug"])
 		assert.NotEqual(t, "aliyun-bailian-coding-plan", c.(map[string]any)["channel_slug"])
 	}
-}
-
-// ---------------------------------------------------------------------------
-// 3. Calendar.NextSwitch
-// ---------------------------------------------------------------------------
-
-func TestNextSwitch(t *testing.T) {
-	// Fixture calendar: zero holiday rows. 2026-10-21 is a Wednesday (pinned
-	// by the TierAt tests), so 10-23 is Friday, 10-24/25 the weekend and
-	// 10-26 Monday.
-	_, cal := newTestCalendar(t)
-
-	cases := []struct {
-		name string
-		at   time.Time
-		want time.Time
-	}{
-		{"weekday peak → 12:00", shTime(2026, time.October, 21, 10, 0, 0), shTime(2026, time.October, 21, 12, 0, 0)},
-		{"lunch break → 14:00", shTime(2026, time.October, 21, 12, 30, 0), shTime(2026, time.October, 21, 14, 0, 0)},
-		{"17:59 → 18:00", shTime(2026, time.October, 21, 17, 59, 0), shTime(2026, time.October, 21, 18, 0, 0)},
-		{"morning off-peak → 09:00", shTime(2026, time.October, 21, 8, 0, 0), shTime(2026, time.October, 21, 9, 0, 0)},
-		{"evening → next weekday 09:00", shTime(2026, time.October, 21, 20, 0, 0), shTime(2026, time.October, 22, 9, 0, 0)},
-		{"exact boundary 12:00:00 → 14:00", shTime(2026, time.October, 21, 12, 0, 0), shTime(2026, time.October, 21, 14, 0, 0)},
-		// §3.3's peak window is 14:00–18:00, so Friday 17:00 is still peak and
-		// flips at 18:00 the same day; the weekend crossing starts at 18:00.
-		{"friday 17:00 (still peak) → 18:00", shTime(2026, time.October, 23, 17, 0, 0), shTime(2026, time.October, 23, 18, 0, 0)},
-		{"friday 18:00 → monday 09:00", shTime(2026, time.October, 23, 18, 0, 0), shTime(2026, time.October, 26, 9, 0, 0)},
-		{"friday evening → monday 09:00", shTime(2026, time.October, 23, 20, 0, 0), shTime(2026, time.October, 26, 9, 0, 0)},
-		{"saturday → monday 09:00", shTime(2026, time.October, 24, 10, 0, 0), shTime(2026, time.October, 26, 9, 0, 0)},
-		{"sunday night → monday 09:00", shTime(2026, time.October, 25, 23, 30, 0), shTime(2026, time.October, 26, 9, 0, 0)},
-		{"sub-second input truncates to the second",
-			time.Date(2026, time.October, 21, 11, 59, 59, 500_000_000, shanghaiTestLoc),
-			shTime(2026, time.October, 21, 12, 0, 0)},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := cal.NextSwitch(tc.at)
-			assert.Equal(t, tc.want, got)
-			if !tc.want.IsZero() {
-				assert.True(t, got.After(tc.at.Truncate(time.Second)), "NextSwitch is strictly after t")
-				assert.NotEqual(t, cal.TierAt(tc.at), cal.TierAt(got), "NextSwitch flips the tier")
-			}
-		})
-	}
-}
-
-func TestNextSwitchHoliday(t *testing.T) {
-	db, cal := newTestCalendar(t)
-
-	// 法定节假日 (Wednesday): off-peak all day, so from mid-morning the next
-	// flip is the following ordinary day's rules — Thursday 09:00.
-	require.NoError(t, ImportHolidays(db, []Holiday{{Date: "2026-10-21", Kind: HolidayKindHoliday}}))
-	require.NoError(t, cal.Reload(db))
-	assert.Equal(t, shTime(2026, time.October, 22, 9, 0, 0),
-		cal.NextSwitch(shTime(2026, time.October, 21, 10, 0, 0)),
-		"holiday all day off-peak → next day follows the normal rules")
-
-	// 调休上班 Saturday: the weekday windows apply, so 10:00 is peak and the
-	// next flip is the same day's 12:00 lunch break.
-	require.NoError(t, ImportHolidays(db, []Holiday{{Date: "2026-10-24", Kind: HolidayKindWorkday}}))
-	require.NoError(t, cal.Reload(db))
-	assert.Equal(t, shTime(2026, time.October, 24, 12, 0, 0),
-		cal.NextSwitch(shTime(2026, time.October, 24, 10, 0, 0)),
-		"调休周六 10:00 高峰 → 当天 12:00")
 }
 
 // ---------------------------------------------------------------------------

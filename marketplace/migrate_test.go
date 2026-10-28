@@ -1,6 +1,8 @@
 package marketplace
 
 import (
+	"time"
+
 	"strings"
 	"testing"
 
@@ -178,4 +180,34 @@ func TestMigrateIdempotent(t *testing.T) {
 	migrateAll(t, db)
 	require.NoError(t, Migrate(db))
 	require.NoError(t, Migrate(db))
+}
+
+// TestFlattenPeakPrices: every (model, vendor) with an off-peak row gets one
+// flat row at the off-peak price; peak/off-peak rows stay; a re-run adds
+// nothing.
+func TestFlattenPeakPrices(t *testing.T) {
+	db := newTestDB(t)
+	migrateAll(t, db)
+	eff := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, db.Create(&PriceBook{Model: "m", Vendor: "v", Tier: TierPeak, Version: 1,
+		InputMicroPerMTok: 2, OutputMicroPerMTok: 8, EffectiveAt: eff}).Error)
+	require.NoError(t, db.Create(&PriceBook{Model: "m", Vendor: "v", Tier: TierOffpeak, Version: 1,
+		InputMicroPerMTok: 1, OutputMicroPerMTok: 4, CacheReadMicroPerMTok: 3, CacheWriteMicroPerMTok: 5, EffectiveAt: eff}).Error)
+
+	now := time.Date(2026, 10, 28, 2, 0, 0, 0, time.UTC)
+	require.NoError(t, flattenPeakPrices(db, now))
+	require.NoError(t, flattenPeakPrices(db, now.Add(time.Minute)))
+
+	var flats []PriceBook
+	require.NoError(t, db.Where("model = ? AND vendor = ? AND tier = ?", "m", "v", TierFlat).Find(&flats).Error)
+	require.Len(t, flats, 1, "idempotent")
+	assert.EqualValues(t, 1, flats[0].InputMicroPerMTok)
+	assert.EqualValues(t, 4, flats[0].OutputMicroPerMTok)
+	assert.EqualValues(t, 3, flats[0].CacheReadMicroPerMTok)
+	assert.EqualValues(t, 5, flats[0].CacheWriteMicroPerMTok)
+	assert.True(t, flats[0].EffectiveAt.Equal(now))
+
+	var total int64
+	require.NoError(t, db.Model(&PriceBook{}).Where("model = ?", "m").Count(&total).Error)
+	assert.EqualValues(t, 3, total, "peak/off-peak history rows are kept")
 }

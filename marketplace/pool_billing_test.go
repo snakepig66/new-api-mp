@@ -43,9 +43,9 @@ func TestQuoteCoefficient(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// deepseek-flash peak input = 2,000,000 微元 / 1M tokens.
-	assert.Equal(t, Micro(2_000_000), base.TokenDebit)
-	assert.Equal(t, Micro(1_000_000), half.TokenDebit, "0.5 coefficient halves the debit")
+	// deepseek-flash flat input = 1,000,000 微元 / 1M tokens.
+	assert.Equal(t, Micro(1_000_000), base.TokenDebit)
+	assert.Equal(t, Micro(500_000), half.TokenDebit, "0.5 coefficient halves the debit")
 	assert.Equal(t, base.OfficialCost, half.OfficialCost, "official cost ignores the coefficient")
 }
 

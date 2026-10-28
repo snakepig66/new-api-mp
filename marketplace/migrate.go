@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -56,6 +57,9 @@ func Migrate(db *gorm.DB) error {
 	// and a no-op on a fresh database.
 	if err := BackfillSellerChannels(db); err != nil {
 		return fmt.Errorf("marketplace backfill seller channels: %w", err)
+	}
+	if err := flattenPeakPrices(db, time.Now()); err != nil {
+		return fmt.Errorf("marketplace flatten peak prices: %w", err)
 	}
 	if err := ensureUserIDStart(db, FirstUserID); err != nil {
 		return fmt.Errorf("marketplace user id watermark: %w", err)
@@ -117,4 +121,44 @@ func ensureUserIDStart(db *gorm.DB, start int64) error {
 	default:
 		return fmt.Errorf("unsupported dialect %q", db.Dialector.Name())
 	}
+}
+
+// flattenPeakPrices retires peak/off-peak pricing (2026-10-28): for every
+// (model, vendor) that has an off-peak row but no flat row in effect at now,
+// it inserts a flat row carrying the current off-peak unit prices, effective
+// now. Old peak/off-peak rows stay as history. Idempotent.
+func flattenPeakPrices(db *gorm.DB, now time.Time) error {
+	type pair struct{ Model, Vendor string }
+	var pairs []pair
+	if err := db.Model(&PriceBook{}).Where("tier = ?", TierOffpeak).
+		Distinct("model", "vendor").Find(&pairs).Error; err != nil {
+		return err
+	}
+	for _, p := range pairs {
+		if _, err := priceAt(db, p.Model, p.Vendor, TierFlat, now); err == nil {
+			continue
+		}
+		off, err := priceAt(db, p.Model, p.Vendor, TierOffpeak, now)
+		if err != nil {
+			continue // no off-peak row in effect yet; nothing to copy
+		}
+		var maxVersion int64
+		if err := db.Model(&PriceBook{}).
+			Where("model = ? AND vendor = ? AND tier = ?", p.Model, p.Vendor, TierFlat).
+			Select("COALESCE(MAX(version), 0)").Scan(&maxVersion).Error; err != nil {
+			return err
+		}
+		row := PriceBook{
+			Model: p.Model, Vendor: p.Vendor, Tier: TierFlat, Version: maxVersion + 1,
+			InputMicroPerMTok:      off.InputMicroPerMTok,
+			OutputMicroPerMTok:     off.OutputMicroPerMTok,
+			CacheReadMicroPerMTok:  off.CacheReadMicroPerMTok,
+			CacheWriteMicroPerMTok: off.CacheWriteMicroPerMTok,
+			EffectiveAt:            now,
+		}
+		if err := db.Create(&row).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -993,7 +993,7 @@ func getSellerListingModels(c *gin.Context) {
 		}
 		official := make(map[string]squareTierPrices, 3)
 		buyer := make(map[string]squareTierPrices, 3)
-		for _, tier := range []string{TierPeak, TierOffpeak, TierFlat} {
+		for _, tier := range []string{TierFlat} {
 			pb, err := PriceAt(db, model, origin, tier, now)
 			if err != nil {
 				continue

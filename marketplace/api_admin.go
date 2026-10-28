@@ -219,8 +219,9 @@ func adminPostPrice(c *gin.Context) {
 		return
 	}
 	// M11: the tier is an enum; an unknown value would silently price nothing.
-	if req.Tier != TierPeak && req.Tier != TierOffpeak && req.Tier != TierFlat {
-		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("tier must be peak, offpeak or flat"))
+	// Peak/off-peak pricing is retired: one flat price per model.
+	if req.Tier != TierFlat {
+		common.ApiErrorStatus(c, http.StatusBadRequest, errors.New("tier must be flat"))
 		return
 	}
 	if req.InputMicroPerMTok < 0 || req.OutputMicroPerMTok < 0 ||

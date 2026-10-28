@@ -279,7 +279,7 @@ func TestSeedModelChannelPoolPriceDedupe(t *testing.T) {
 	var origin int64
 	require.NoError(t, db.Model(&PriceBook{}).
 		Where("model = ? AND vendor = ?", "deepseek-flash", "deepseek").Count(&origin).Error)
-	assert.EqualValues(t, 2, origin, "origin vendor price rows are kept")
+	assert.EqualValues(t, 1, origin, "origin vendor flat price row is kept")
 
 	// A deliberately different price is kept and only logged.
 	custom := PriceBook{

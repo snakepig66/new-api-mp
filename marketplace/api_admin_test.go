@@ -209,9 +209,9 @@ func (f *adminAPIFixture) addAdminListing(t *testing.T, status string) Listing {
 func TestAdminPriceBookAddVersionAndList(t *testing.T) {
 	f := newAdminAPIFixture(t)
 
-	// POST a new version row for deepseek-flash/offpeak.
+	// POST a new version row for deepseek-flash/flat.
 	w := f.do(t, http.MethodPost, "/api/marketplace/admin/prices", map[string]any{
-		"model": "deepseek-flash", "vendor": "deepseek", "tier": "offpeak",
+		"model": "deepseek-flash", "vendor": "deepseek", "tier": "flat",
 		"input_micro_per_mtok": 2_000_000, "output_micro_per_mtok": 5_000_000,
 		"cache_read_micro_per_mtok": 40_000, "cache_write_micro_per_mtok": 2_000_000,
 	}, f.adminID)
@@ -226,7 +226,7 @@ func TestAdminPriceBookAddVersionAndList(t *testing.T) {
 	assert.EqualValues(t, 2_000_000, row.InputMicroPerMTok)
 
 	// Listing with ?model=&vendor=&tier= returns both versions, newest first.
-	w = f.do(t, http.MethodGet, "/api/marketplace/admin/prices?model=deepseek-flash&vendor=deepseek&tier=offpeak", nil, f.adminID)
+	w = f.do(t, http.MethodGet, "/api/marketplace/admin/prices?model=deepseek-flash&vendor=deepseek&tier=flat", nil, f.adminID)
 	require.Equal(t, http.StatusOK, w.Code)
 	body = decodeAdminBody(t, w)
 	items, ok := body["data"].([]any)
@@ -240,7 +240,7 @@ func TestAdminPriceBookAddVersionAndList(t *testing.T) {
 
 	// Re-posting the same version for the same key is rejected (价目只增不改).
 	w = f.do(t, http.MethodPost, "/api/marketplace/admin/prices", map[string]any{
-		"model": "deepseek-flash", "vendor": "deepseek", "tier": "offpeak",
+		"model": "deepseek-flash", "vendor": "deepseek", "tier": "flat",
 		"input_micro_per_mtok": 9_000_000, "output_micro_per_mtok": 9_000_000,
 		"cache_read_micro_per_mtok": 9_000_000, "cache_write_micro_per_mtok": 9_000_000,
 		"version": 2,
@@ -250,7 +250,7 @@ func TestAdminPriceBookAddVersionAndList(t *testing.T) {
 	// The original version-1 row is untouched.
 	var v1 PriceBook
 	require.NoError(t, f.db.Where("model = ? AND vendor = ? AND tier = ? AND version = ?",
-		"deepseek-flash", "deepseek", "offpeak", 1).Take(&v1).Error)
+		"deepseek-flash", "deepseek", "flat", 1).Take(&v1).Error)
 	assert.EqualValues(t, 1_000_000, v1.InputMicroPerMTok)
 }
 
@@ -850,7 +850,7 @@ func TestAdminPriceValidation(t *testing.T) {
 
 	past := time.Now().Add(-time.Hour).Format(time.RFC3339)
 	w := f.do(t, http.MethodPost, "/api/marketplace/admin/prices", map[string]any{
-		"model": "deepseek-flash", "vendor": "deepseek", "tier": "offpeak",
+		"model": "deepseek-flash", "vendor": "deepseek", "tier": "flat",
 		"input_micro_per_mtok": 1_000_000, "output_micro_per_mtok": 4_000_000,
 		"cache_read_micro_per_mtok": 20_000, "cache_write_micro_per_mtok": 1_000_000,
 		"effective_at": past,
@@ -862,11 +862,19 @@ func TestAdminPriceValidation(t *testing.T) {
 		"input_micro_per_mtok": 1, "output_micro_per_mtok": 1,
 		"cache_read_micro_per_mtok": 1, "cache_write_micro_per_mtok": 1,
 	}, f.adminID)
-	assert.Equal(t, http.StatusBadRequest, w.Code, "tier must be peak/offpeak/flat")
+	assert.Equal(t, http.StatusBadRequest, w.Code, "tier must be flat")
+
+	// Peak/off-peak pricing is retired: those tiers are rejected too.
+	w = f.do(t, http.MethodPost, "/api/marketplace/admin/prices", map[string]any{
+		"model": "deepseek-flash", "vendor": "deepseek", "tier": "peak",
+		"input_micro_per_mtok": 1, "output_micro_per_mtok": 1,
+		"cache_read_micro_per_mtok": 1, "cache_write_micro_per_mtok": 1,
+	}, f.adminID)
+	assert.Equal(t, http.StatusBadRequest, w.Code, "peak is retired")
 
 	future := time.Now().Add(time.Hour).Format(time.RFC3339)
 	w = f.do(t, http.MethodPost, "/api/marketplace/admin/prices", map[string]any{
-		"model": "deepseek-flash", "vendor": "deepseek", "tier": "offpeak",
+		"model": "deepseek-flash", "vendor": "deepseek", "tier": "flat",
 		"input_micro_per_mtok": 1_100_000, "output_micro_per_mtok": 4_100_000,
 		"cache_read_micro_per_mtok": 21_000, "cache_write_micro_per_mtok": 1_100_000,
 		"effective_at": future,
@@ -929,7 +937,7 @@ func TestHolidaysCalendarReload(t *testing.T) {
 	require.NotEmpty(t, date, "a weekday in early January must exist")
 	at, err := time.ParseInLocation("2006-01-02 15:04", date+" 10:00", cal.loc)
 	require.NoError(t, err)
-	require.Equal(t, TierPeak, cal.TierAt(at), "before import the weekday is peak")
+	require.Equal(t, TierFlat, cal.TierAt(at), "billing is flat since peak/off-peak was retired")
 
 	// next_year_imported starts false (seed contains no next-year rows).
 	w := f.do(t, http.MethodGet, "/api/marketplace/admin/holidays", nil, f.adminID)
@@ -942,8 +950,8 @@ func TestHolidaysCalendarReload(t *testing.T) {
 	}, f.adminID)
 	require.Equal(t, http.StatusOK, w.Code)
 
-	// No waiting for the hourly job: the same instant is off-peak now.
-	assert.Equal(t, TierOffpeak, cal.TierAt(at), "import must reload the calendar immediately")
+	// Holidays no longer change the billing tier.
+	assert.Equal(t, TierFlat, cal.TierAt(at), "holidays do not affect the flat tier")
 
 	w = f.do(t, http.MethodGet, "/api/marketplace/admin/holidays", nil, f.adminID)
 	require.Equal(t, http.StatusOK, w.Code)

@@ -47,27 +47,19 @@ func SeedPrices(db *gorm.DB) error {
 	toolEffective := time.Date(2026, 11, 1, 0, 0, 0, 0, loc) // §3.4 switch-on
 
 	books := []PriceBook{
-		{Model: "deepseek-flash", Vendor: SeedVendorDeepSeek, Tier: TierOffpeak, Version: 1,
+		{Model: "deepseek-flash", Vendor: SeedVendorDeepSeek, Tier: TierFlat, Version: 1,
 			InputMicroPerMTok: 1_000_000, OutputMicroPerMTok: 4_000_000,
 			CacheReadMicroPerMTok: 20_000, CacheWriteMicroPerMTok: 1_000_000,
 			EffectiveAt: tokenEffective},
-		{Model: "deepseek-flash", Vendor: SeedVendorDeepSeek, Tier: TierPeak, Version: 1,
-			InputMicroPerMTok: 2_000_000, OutputMicroPerMTok: 8_000_000,
-			CacheReadMicroPerMTok: 40_000, CacheWriteMicroPerMTok: 2_000_000,
-			EffectiveAt: tokenEffective},
-		{Model: "deepseek-v4-pro", Vendor: SeedVendorDeepSeek, Tier: TierOffpeak, Version: 1,
+		{Model: "deepseek-v4-pro", Vendor: SeedVendorDeepSeek, Tier: TierFlat, Version: 1,
 			InputMicroPerMTok: 4_500_000, OutputMicroPerMTok: 13_500_000,
 			CacheReadMicroPerMTok: 150_000, CacheWriteMicroPerMTok: 4_500_000,
-			EffectiveAt: tokenEffective},
-		{Model: "deepseek-v4-pro", Vendor: SeedVendorDeepSeek, Tier: TierPeak, Version: 1,
-			InputMicroPerMTok: 9_000_000, OutputMicroPerMTok: 27_000_000,
-			CacheReadMicroPerMTok: 300_000, CacheWriteMicroPerMTok: 9_000_000,
 			EffectiveAt: tokenEffective},
 	}
 	// Catalog prices for the other official channels, fetched 2026-10-25 from
 	// each vendor's public price page (元/百万 tokens → 微元/百万 tokens).
 	// They all publish a single price tier, so they use TierFlat; DeepSeek
-	// remains the only peak/off-peak vendor.
+	// is flat too since peak/off-peak pricing was retired (off-peak rate).
 	//
 	// Sources:
 	//   https://platform.kimi.com/docs/pricing/chat
@@ -159,21 +151,13 @@ func SeedPrices(db *gorm.DB) error {
 		// tipig gateway serves the same DeepSeek V4.1/V4 Pro models under their
 		// upstream model ids; the official price list applies (§3.2/§7 E2E).
 		books = append(books,
-			PriceBook{Model: "deepseek-v4.1-flash-1017", Vendor: seedVendorTipig, Tier: TierOffpeak, Version: 1,
+			PriceBook{Model: "deepseek-v4.1-flash-1017", Vendor: seedVendorTipig, Tier: TierFlat, Version: 1,
 				InputMicroPerMTok: 1_000_000, OutputMicroPerMTok: 4_000_000,
 				CacheReadMicroPerMTok: 20_000, CacheWriteMicroPerMTok: 1_000_000,
 				EffectiveAt: tokenEffective},
-			PriceBook{Model: "deepseek-v4.1-flash-1017", Vendor: seedVendorTipig, Tier: TierPeak, Version: 1,
-				InputMicroPerMTok: 2_000_000, OutputMicroPerMTok: 8_000_000,
-				CacheReadMicroPerMTok: 40_000, CacheWriteMicroPerMTok: 2_000_000,
-				EffectiveAt: tokenEffective},
-			PriceBook{Model: "deepseek-v4-pro-0813", Vendor: seedVendorTipig, Tier: TierOffpeak, Version: 1,
+			PriceBook{Model: "deepseek-v4-pro-0813", Vendor: seedVendorTipig, Tier: TierFlat, Version: 1,
 				InputMicroPerMTok: 4_500_000, OutputMicroPerMTok: 13_500_000,
 				CacheReadMicroPerMTok: 150_000, CacheWriteMicroPerMTok: 4_500_000,
-				EffectiveAt: tokenEffective},
-			PriceBook{Model: "deepseek-v4-pro-0813", Vendor: seedVendorTipig, Tier: TierPeak, Version: 1,
-				InputMicroPerMTok: 9_000_000, OutputMicroPerMTok: 27_000_000,
-				CacheReadMicroPerMTok: 300_000, CacheWriteMicroPerMTok: 9_000_000,
 				EffectiveAt: tokenEffective},
 		)
 	}

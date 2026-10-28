@@ -612,7 +612,7 @@ func getSquareModel(c *gin.Context) {
 	// 各时段官方价: raw price-book rows per tier, no flat fallback — a
 	// flat-only vendor shows its single flat row, not three copies of it.
 	origin := originVendorOf(model)
-	for _, tier := range []string{TierPeak, TierOffpeak, TierFlat} {
+	for _, tier := range []string{TierFlat} {
 		pb, err := priceAt(db, model.Name, origin, tier, entry.GeneratedAt)
 		if err != nil {
 			continue
