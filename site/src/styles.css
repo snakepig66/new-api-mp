@@ -46,6 +46,23 @@
   --radius-md: 12px;
   --radius-lg: 20px;
   --radius-pill: 999px;
+
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+  --text-meta: 13px;
+  --text-meta--line-height: 18px;
+  --text-body: 14px;
+  --text-body--line-height: 22px;
+  --text-title: 16px;
+  --text-title--line-height: 24px;
+  --text-h3: 18px;
+  --text-h3--line-height: 26px;
+  --text-h2: 22px;
+  --text-h2--line-height: 30px;
+  --text-h1: 28px;
+  --text-h1--line-height: 36px;
+  --text-display: 44px;
+  --text-display--line-height: 52px;
 }
 
 @layer base {
@@ -61,9 +78,9 @@
   }
 
   body {
-    @apply font-sans text-ink antialiased;
-    font-size: 15px;
-    line-height: 1.75;
+    @apply font-sans text-ink antialiased text-body;
+    font-size: 14px;
+    line-height: 1.6;
     background: transparent;
     min-height: 100dvh;
   }
@@ -274,7 +291,7 @@
   }
 
   .prose-doc {
-    @apply text-[15px] leading-7 text-ink;
+    @apply text-body leading-7 text-ink;
   }
 
   .prose-doc p {
@@ -282,19 +299,19 @@
   }
 
   .prose-doc h2 {
-    @apply mt-10 mb-3 scroll-mt-24 text-[24px] font-semibold tracking-tight text-ink;
+    @apply mt-10 mb-3 scroll-mt-24 text-h2 font-semibold tracking-tight text-ink;
   }
 
   .prose-doc h3 {
-    @apply mt-6 mb-2 scroll-mt-24 text-[18px] font-semibold text-ink;
+    @apply mt-6 mb-2 scroll-mt-24 text-h3 font-semibold text-ink;
   }
 
   .prose-doc code:not(pre code) {
-    @apply rounded-sm border border-line bg-bg-soft px-1.5 py-0.5 font-mono text-[13px] text-ink;
+    @apply rounded-sm border border-line bg-bg-soft px-1.5 py-0.5 font-mono text-meta text-ink;
   }
 
   .code-block {
-    @apply overflow-x-auto rounded-md border border-[#1f242c] bg-[#0d1117] p-4 font-mono text-[13px] leading-6 text-[#e6edf3];
+    @apply overflow-x-auto rounded-md border border-[#1f242c] bg-[#0d1117] p-4 font-mono text-meta leading-6 text-[#e6edf3];
   }
 }
 
