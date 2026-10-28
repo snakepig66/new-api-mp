@@ -104,6 +104,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [signingOut, setSigningOut] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
 
+  // The console is a viewport-height app shell with its own internal
+  // scrolling; the marketing footer would sit below the fold and push the
+  // shell around, so app routes drop it. Its links live on the public pages.
+  const isAppArea = pathname === '/console' || pathname.startsWith('/console/')
+
   useEffect(() => {
     setMenuOpen(false)
   }, [pathname])
@@ -239,23 +244,25 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <main className="flex-1 overflow-x-clip">{children}</main>
 
-      <footer className="border-t border-line">
-        <div className="mx-auto flex max-w-[1200px] flex-col gap-3 px-5 py-8 text-[13px] text-ink-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span>{copy.footer.copyright}</span>
-            {company ? <span>{copy.footer.company}</span> : null}
-            {icp ? <span>{copy.footer.icp}</span> : null}
+      {isAppArea ? null : (
+        <footer className="border-t border-line">
+          <div className="mx-auto flex max-w-[1200px] flex-col gap-3 px-5 py-8 text-[13px] text-ink-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span>{copy.footer.copyright}</span>
+              {company ? <span>{copy.footer.company}</span> : null}
+              {icp ? <span>{copy.footer.icp}</span> : null}
+            </div>
+            <div className="flex items-center gap-5">
+              <Link to="/agreement" className="text-ink-2 transition-colors hover:text-ink">
+                {copy.footer.terms}
+              </Link>
+              <Link to="/privacy" className="text-ink-2 transition-colors hover:text-ink">
+                {copy.footer.privacy}
+              </Link>
+            </div>
           </div>
-          <div className="flex items-center gap-5">
-            <Link to="/agreement" className="text-ink-2 transition-colors hover:text-ink">
-              {copy.footer.terms}
-            </Link>
-            <Link to="/privacy" className="text-ink-2 transition-colors hover:text-ink">
-              {copy.footer.privacy}
-            </Link>
-          </div>
-        </div>
-      </footer>
+        </footer>
+      )}
     </div>
   )
 }
