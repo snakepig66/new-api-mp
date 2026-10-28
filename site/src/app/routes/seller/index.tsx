@@ -51,7 +51,7 @@ function limitText(concurrency: number, rpm: number, dailyCapMicro: number | str
 }
 
 function StatCard({ children }: { children: ReactNode }) {
-  return <div className="min-w-0 rounded-md border border-line bg-bg p-5">{children}</div>
+  return <div className="min-w-0 glass p-5">{children}</div>
 }
 
 function stepLabel(id: PayoutGateStepId): string {
@@ -103,7 +103,7 @@ function PayoutGate({
   return (
     <section
       aria-label={page.payoutGate.title}
-      className="mt-6 rounded-md border border-line bg-bg p-6"
+      className="mt-6 glass p-6"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -125,7 +125,7 @@ function PayoutGate({
         {state.steps.map((step) => (
           <li
             key={step.id}
-            className="flex items-start justify-between gap-3 rounded-md border border-line px-4 py-3"
+            className="flex items-start justify-between gap-3 glass-inset px-4 py-3"
           >
             <div className="min-w-0">
               <div className="text-[13px] font-medium text-ink">{stepLabel(step.id)}</div>
@@ -219,7 +219,7 @@ function SellerOverviewPage() {
         </StatCard>
       </div>
 
-      <section className="mt-6 rounded-md border border-line bg-bg p-6">
+      <section className="mt-6 glass p-6">
         <SectionHeading title={page.chart.title} lead={page.chart.lead} />
         <div className="mt-4">
           {hasIncome ? (
@@ -234,7 +234,7 @@ function SellerOverviewPage() {
         </div>
       </section>
 
-      <section className="mt-6 rounded-md border border-line bg-bg p-6">
+      <section className="mt-6 glass p-6">
         <SectionHeading
           title={page.health.title}
           lead={page.health.lead}
@@ -260,7 +260,7 @@ function SellerOverviewPage() {
           {listings.isPending ? (
             <div className="space-y-2 border-t border-line pt-3" aria-busy="true">
               {Array.from({ length: 3 }, (_, index) => (
-                <div key={index} className="h-9 animate-pulse rounded-sm bg-bg-soft" />
+                <div key={index} className="h-9 animate-pulse rounded-sm bg-white/60" />
               ))}
             </div>
           ) : listings.isError ? (

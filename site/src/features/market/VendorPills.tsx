@@ -42,13 +42,13 @@ export function VendorPill({ label, logoUrl, count, active, onClick }: VendorPil
         'inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border px-2.5 py-1.5 text-[13px] transition-colors',
         active
           ? 'border-brand bg-brand-soft text-brand-ink'
-          : 'border-line bg-bg text-ink-2 hover:border-line-strong hover:text-ink',
+          : 'border-white/70 bg-white/60 text-ink-2 hover:border-line-strong hover:text-ink',
       )}
     >
       <span
         className={cn(
           'grid h-6 w-6 shrink-0 place-items-center overflow-hidden rounded-full text-[11px] font-semibold',
-          active ? 'bg-bg text-brand-ink' : 'bg-bg-soft text-ink-2',
+          active ? 'bg-white/85 text-brand-ink' : 'bg-white/50 text-ink-2',
         )}
         aria-hidden="true"
       >
@@ -69,7 +69,7 @@ export function VendorPill({ label, logoUrl, count, active, onClick }: VendorPil
       <span
         className={cn(
           'rounded-full px-1.5 py-0.5 text-[11px] tabular-nums',
-          active ? 'bg-bg text-brand-ink' : 'bg-bg-soft text-ink-3',
+          active ? 'bg-white/85 text-brand-ink' : 'bg-white/50 text-ink-3',
         )}
       >
         {copy.pages.models.vendorCount(count)}

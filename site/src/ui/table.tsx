@@ -31,7 +31,7 @@ export function Table({ children, className, minWidth = 720, size = 'default' }:
       {/* `relative` anchors absolutely positioned descendants (the sr-only
           labels inside cells); without it they escape the scroll container and
           inflate the document's scrollWidth on 390px screens. */}
-      <div className="relative w-full overflow-x-auto">
+      <div className="glass-inset relative w-full overflow-x-auto p-1">
         <table
           className={cn('w-full border-collapse text-[14px]', className)}
           style={{ minWidth }}
@@ -68,7 +68,7 @@ export function TableRow({
   return (
     <tr
       className={cn(
-        'border-b border-line transition-colors last:border-b-0 hover:bg-bg-soft',
+        'border-b border-line transition-colors last:border-b-0 hover:bg-brand/[0.05]',
         interactive && 'cursor-pointer',
         className,
       )}
@@ -88,7 +88,7 @@ export function TableHeaderCell({ numeric = false, className, children, ...props
     <th
       scope="col"
       className={cn(
-        'whitespace-nowrap bg-bg-soft px-4 py-3 text-left text-[13px] font-medium text-ink-3 first:rounded-l-md last:rounded-r-md',
+        'whitespace-nowrap bg-brand-soft/60 px-4 py-3 text-left text-[13px] font-medium text-ink-3 first:rounded-l-md last:rounded-r-md',
         numeric && 'text-right',
         className,
       )}

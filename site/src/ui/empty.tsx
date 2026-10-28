@@ -19,7 +19,7 @@ export interface EmptyProps {
  */
 export function Empty({ title, reason, next, action, className }: EmptyProps) {
   return (
-    <div className={cn('py-10', className)}>
+    <div className={cn('glass-inset px-6 py-10', className)}>
       <div className="min-w-0 max-w-xl">
         <h3 className="text-[16px] font-semibold tracking-tight text-ink">
           {title ?? copy.common.emptyTitle}

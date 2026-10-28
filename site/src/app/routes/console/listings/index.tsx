@@ -350,7 +350,7 @@ function KeyDialog({
           />
         </Field>
 
-        <div className="rounded-md bg-bg-soft px-4 py-3">
+        <div className="glass-inset px-4 py-3">
           <div className="text-[13px] text-ink-3">{common.keyPreviewHint}</div>
           <div className="mt-1 tabular-nums text-[14px] text-ink">{preview}</div>
         </div>
@@ -379,7 +379,7 @@ function FilterChip({
       className={
         active
           ? 'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-brand-soft px-3.5 text-[13px] font-medium text-brand-ink'
-          : 'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13px] text-ink-2 transition-colors hover:bg-bg-soft hover:text-ink'
+          : 'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13px] text-ink-2 transition-colors hover:bg-brand/[0.06] hover:text-ink'
       }
     >
       <span>{label}</span>

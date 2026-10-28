@@ -37,7 +37,7 @@ function EarningsLayout() {
                 'inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-full px-3.5 text-[14px] transition-colors',
                 active
                   ? 'bg-brand-soft font-medium text-brand-ink'
-                  : 'text-ink-2 hover:bg-bg-soft hover:text-ink',
+                  : 'text-ink-2 hover:bg-brand/[0.06] hover:text-ink',
               )}
             >
               {tab.label}

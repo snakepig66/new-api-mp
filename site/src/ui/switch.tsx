@@ -83,14 +83,14 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
         className={cn(
           'relative inline-flex h-6 w-10 shrink-0 items-center rounded-full border transition-colors',
           'focus-visible:border-brand focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand-soft',
-          value ? 'border-brand bg-brand' : 'border-line-strong bg-bg-soft',
+          value ? 'border-brand bg-brand' : 'border-line-strong bg-white/60',
           locked && 'cursor-not-allowed opacity-50',
           switchClassName,
         )}
       >
         <span
           className={cn(
-            'pointer-events-none grid h-4 w-4 place-items-center rounded-full bg-white transition-transform',
+            'pointer-events-none grid h-4 w-4 place-items-center rounded-full bg-white shadow-[0_1px_3px_rgba(15,17,21,0.18)] transition-transform',
             value ? 'translate-x-[19px]' : 'translate-x-[3px]',
           )}
         >

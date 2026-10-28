@@ -94,7 +94,7 @@ export const Segmented = forwardRef<HTMLDivElement, SegmentedProps>(function Seg
       aria-disabled={disabled || undefined}
       onKeyDown={handleKeyDown}
       className={cn(
-        'inline-flex items-center gap-0.5 rounded-full bg-bg-soft p-0.5',
+        'inline-flex items-center gap-0.5 rounded-full border border-white/70 bg-white/45 p-0.5 shadow-[inset_0_1px_2px_rgba(77,107,254,0.08)] backdrop-blur-md',
         disabled && 'opacity-50',
         className,
       )}
@@ -122,7 +122,7 @@ export const Segmented = forwardRef<HTMLDivElement, SegmentedProps>(function Seg
               'rounded-full border font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand',
               size === 'sm' ? 'h-7 px-2.5 text-[12px]' : 'h-8 px-3 text-[13px]',
               selected
-                ? 'border-line bg-bg text-ink'
+                ? 'border-white/80 bg-white/90 text-brand-ink shadow-[0_2px_8px_rgba(77,107,254,0.14)]'
                 : 'border-transparent text-ink-3 hover:text-ink',
               locked && 'cursor-not-allowed',
             )}

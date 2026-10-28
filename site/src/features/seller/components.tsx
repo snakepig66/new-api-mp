@@ -13,7 +13,7 @@ export function Skeleton({ className }: { className?: string }) {
   return (
     <span
       aria-hidden="true"
-      className={cn('block animate-pulse rounded-sm bg-bg-soft', className)}
+      className={cn('block animate-pulse rounded-sm bg-white/60', className)}
     />
   )
 }
@@ -27,7 +27,7 @@ export function PageSkeleton({ rows = 5 }: { rows?: number }) {
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 4 }, (_, index) => (
-          <div key={index} className="rounded-md border border-line bg-bg p-5">
+          <div key={index} className="glass p-5">
             <Skeleton className="h-3 w-20" />
             <Skeleton className="mt-2 h-7 w-28" />
           </div>
@@ -114,7 +114,7 @@ export function Field({
 }
 
 export const selectClass =
-  'h-12 w-full rounded-md border border-transparent bg-bg-soft px-4 text-[15px] text-ink transition-colors focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft disabled:cursor-not-allowed disabled:bg-bg-soft disabled:text-ink-3'
+  'h-12 w-full rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 text-[15px] text-ink transition-colors focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20 disabled:cursor-not-allowed disabled:bg-white/35 disabled:text-ink-3'
 
 export function SectionHeading({
   title,

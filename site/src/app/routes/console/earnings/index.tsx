@@ -33,7 +33,7 @@ const common = copy.pages.sellerCommon
 const earnings = copy.pages.consoleEarnings
 
 function StatCard({ children }: { children: ReactNode }) {
-  return <div className="min-w-0 rounded-md border border-line bg-bg p-5">{children}</div>
+  return <div className="min-w-0 glass p-5">{children}</div>
 }
 
 function stepLabel(id: PayoutGateStepId): string {
@@ -85,7 +85,7 @@ function PayoutGate({
   return (
     <section
       aria-label={page.payoutGate.title}
-      className="mt-6 rounded-md border border-line bg-bg p-6"
+      className="mt-6 glass p-6"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -107,7 +107,7 @@ function PayoutGate({
         {state.steps.map((step) => (
           <li
             key={step.id}
-            className="flex items-start justify-between gap-3 rounded-md border border-line px-4 py-3"
+            className="flex items-start justify-between gap-3 glass-inset px-4 py-3"
           >
             <div className="min-w-0">
               <div className="text-[13px] font-medium text-ink">{stepLabel(step.id)}</div>
@@ -243,7 +243,7 @@ export function SellerOverviewPage() {
         {page.stats.platformFee} {data ? formatYuan(data.platform_fee_total_micro) : copy.common.none}
       </p>
 
-      <section className="mt-6 rounded-md border border-line bg-bg p-6">
+      <section className="mt-6 glass p-6">
         <SectionHeading
           title={earnings.charts.title}
           lead={
@@ -263,7 +263,7 @@ export function SellerOverviewPage() {
         </div>
       </section>
 
-      <section className="mt-6 rounded-md border border-line bg-bg p-6">
+      <section className="mt-6 glass p-6">
         <SectionHeading
           title={earnings.channels.title}
           lead={earnings.channels.lead}

@@ -82,7 +82,7 @@ export function NotificationBell() {
         aria-label={t.aria}
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="relative grid h-10 w-10 place-items-center rounded-full text-ink-2 transition-colors hover:bg-bg-soft hover:text-ink"
+        className="relative grid h-10 w-10 place-items-center rounded-full text-ink-2 transition-colors hover:bg-brand/[0.06] hover:text-ink"
       >
         <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path
@@ -101,7 +101,7 @@ export function NotificationBell() {
       </button>
 
       {open ? (
-        <div className="absolute right-0 top-full z-40 mt-2 w-[320px] overflow-hidden rounded-md border border-line bg-bg">
+        <div className="absolute right-0 top-full z-40 mt-2 w-[320px] overflow-hidden glass">
           <div className="flex items-center justify-between border-b border-line px-4 py-3">
             <span className="text-[14px] font-medium text-ink">{t.title}</span>
             <button
@@ -165,7 +165,7 @@ export function NotificationBell() {
                       <Link
                         to={item.link}
                         onClick={() => openItem(item)}
-                        className="block px-4 py-3 transition-colors hover:bg-bg-soft"
+                        className="block px-4 py-3 transition-colors hover:bg-brand/[0.06]"
                       >
                         {body}
                       </Link>
@@ -173,7 +173,7 @@ export function NotificationBell() {
                       <button
                         type="button"
                         onClick={() => openItem(item)}
-                        className="block w-full px-4 py-3 text-left transition-colors hover:bg-bg-soft"
+                        className="block w-full px-4 py-3 text-left transition-colors hover:bg-brand/[0.06]"
                       >
                         {body}
                       </button>

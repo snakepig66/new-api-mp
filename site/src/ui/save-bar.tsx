@@ -54,7 +54,7 @@ export function SaveBar({
   return (
     <div
       className={cn(
-        'flex flex-wrap items-center justify-between gap-3 border-t border-line bg-bg px-5 py-4',
+        'glass-bar flex flex-wrap items-center justify-between gap-3 border-t border-white/70 px-5 py-4',
         fixed && 'fixed inset-x-0 bottom-0 z-30',
         className,
       )}

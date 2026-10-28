@@ -59,13 +59,13 @@ function ConsoleLayout() {
       )?.label ?? copy.pages.console.nav.overview
 
   return (
-    <div className="min-h-screen bg-bg-soft lg:h-[calc(100dvh-4rem)] lg:min-h-0">
+    <div className="min-h-screen lg:h-[calc(100dvh-4rem)] lg:min-h-0">
       <div className="mx-auto flex w-full max-w-[1440px] flex-col lg:h-full lg:flex-row">
-        <aside className="hidden shrink-0 flex-col gap-6 border-r border-line bg-bg px-5 py-6 lg:flex lg:h-full lg:w-[220px] lg:overflow-y-auto">
+        <aside className="glass hidden shrink-0 flex-col gap-6 rounded-none border-y-0 border-l-0 px-5 py-6 lg:flex lg:h-full lg:w-[220px] lg:overflow-y-auto">
           <ConsoleSidebar groups={groups} />
         </aside>
 
-        <div className="sticky top-16 z-20 flex items-center gap-3 border-b border-line bg-bg px-4 py-2 lg:hidden">
+        <div className="glass-bar sticky top-16 z-20 flex items-center gap-3 border-b border-white/60 px-4 py-2 lg:hidden">
           <Button variant="secondary" size="sm" onClick={() => setMenuOpen(true)}>
             {shell.menu}
           </Button>
@@ -74,8 +74,8 @@ function ConsoleLayout() {
 
         <DialogPrimitive.Root open={menuOpen} onOpenChange={setMenuOpen}>
           <DialogPrimitive.Portal>
-            <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-black/40 lg:hidden" />
-            <DialogPrimitive.Content className="fixed inset-y-0 left-0 z-50 w-[280px] overflow-y-auto border-r border-line bg-bg p-5 lg:hidden">
+            <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-[rgba(30,45,110,0.28)] backdrop-blur-[3px] lg:hidden" />
+            <DialogPrimitive.Content className="glass-strong fixed inset-y-0 left-0 z-50 w-[280px] overflow-y-auto rounded-none border-y-0 border-l-0 p-5 lg:hidden">
               <DialogPrimitive.Title className="sr-only">{shell.menuTitle}</DialogPrimitive.Title>
               <DialogPrimitive.Description className="sr-only">
                 {shell.menuTitle}

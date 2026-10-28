@@ -6,13 +6,14 @@ export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'link
 export type ButtonSize = 'sm' | 'md' | 'lg'
 
 const variants: Record<ButtonVariant, string> = {
-  /* Near-black pill: the single loud action on a page. */
-  primary: 'bg-cta text-white hover:bg-cta-hover active:bg-ink',
-  /* White pill with a hairline border. */
-  secondary: 'border border-line-strong bg-bg text-ink hover:bg-bg-soft active:bg-bg-soft',
-  ghost: 'text-ink-2 hover:bg-bg-soft hover:text-ink',
-  /* Destructive only: red type on white, never a red block. */
-  danger: 'border border-danger/30 bg-bg text-danger hover:bg-danger/5 active:bg-danger/10',
+  /* Brand-blue gradient pill with a soft glow: the single loud action on a page. */
+  primary: 'btn-primary',
+  /* Frosted glass pill. */
+  secondary: 'btn-glass text-ink',
+  ghost: 'text-ink-2 hover:bg-white/60 hover:text-ink',
+  /* Destructive only: red type on glass, never a red block. */
+  danger:
+    'border border-danger/30 bg-white/60 text-danger backdrop-blur-md hover:bg-danger/5 active:bg-danger/10',
   link: 'h-auto px-0 text-brand underline-offset-4 hover:text-brand-hover hover:underline',
 }
 
@@ -29,7 +30,7 @@ export function buttonClasses(
   className?: string,
 ): string {
   return cn(
-    'inline-flex select-none items-center justify-center whitespace-nowrap rounded-full font-medium transition-colors',
+    'inline-flex select-none items-center justify-center whitespace-nowrap rounded-full font-medium transition-[color,background-color,border-color,box-shadow,filter,transform] duration-200',
     variant !== 'link' &&
       'disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50',
     variants[variant],

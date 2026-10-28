@@ -141,12 +141,12 @@ function ExpandedRow({
   const cache = metrics && metrics.cache_hit_permille >= 0 ? `${(metrics.cache_hit_permille / 10).toFixed(0)}%` : null
 
   return (
-    <TableRow interactive={false} className="bg-bg-soft/60">
+    <TableRow interactive={false} className="bg-brand-soft/30">
       <TableCell colSpan={columns} className="px-4 py-5">
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
           <div>
             <h3 className="text-[13px] font-medium text-ink-3">{t.priceTable}</h3>
-            <div className="mt-2 overflow-hidden rounded-sm border border-line bg-bg">
+            <div className="mt-2 overflow-hidden glass-inset rounded-sm">
               <table className="w-full text-[13px]">
                 <thead>
                   <tr className="text-ink-3">
@@ -191,7 +191,7 @@ function ExpandedRow({
                 <SkeletonLine />
               </div>
             ) : detail && detail.channels.length > 0 ? (
-              <div className="mt-2 overflow-hidden rounded-sm border border-line bg-bg">
+              <div className="mt-2 overflow-hidden glass-inset rounded-sm">
                 <table className="w-full text-[13px]">
                   <thead>
                     <tr className="text-ink-3">
@@ -246,7 +246,7 @@ function ExpandedRow({
           <div>
             <h3 className="text-[13px] font-medium text-ink-3">{t.reliability}</h3>
             {metrics ? (
-              <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 rounded-sm border border-line bg-bg px-4 py-3 text-[13px]">
+              <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 glass-inset rounded-sm px-4 py-3 text-[13px]">
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-ink-3">{t.realtime}</dt>
                   <dd className="tabular-nums text-ink">{rate(metrics.success_rate_1h_milli)}</dd>

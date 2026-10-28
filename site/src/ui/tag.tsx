@@ -10,10 +10,10 @@ import { cn } from '@/lib/cn'
 export type TagTone = 'neutral' | 'brand' | 'success' | 'warning' | 'danger'
 
 const tones: Record<TagTone, string> = {
-  neutral: 'bg-bg-soft text-ink-2',
+  neutral: 'bg-white/60 text-ink-2 ring-1 ring-inset ring-line',
   brand: 'bg-brand-soft text-brand-ink',
   success: 'bg-brand-soft text-brand-ink',
-  warning: 'bg-bg-soft text-ink-2',
+  warning: 'bg-white/60 text-ink-2 ring-1 ring-inset ring-line',
   danger: 'bg-danger/10 text-danger',
 }
 

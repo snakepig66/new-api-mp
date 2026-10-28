@@ -74,7 +74,7 @@ function Board({
   children: React.ReactNode
 }) {
   return (
-    <section className="min-w-0 rounded-md border border-line bg-bg p-4 sm:p-6">
+    <section className="min-w-0 glass p-4 sm:p-6">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-line pb-3">
         <h2 className="text-[16px] font-semibold tracking-tight text-ink">{title}</h2>
         <span className="text-[12px] text-ink-3">{hint}</span>
@@ -369,7 +369,7 @@ export function LeaderboardPage() {
           <div
             role="tablist"
             aria-label={page.rangeAria}
-            className="inline-flex rounded-md border border-line bg-bg-soft p-1"
+            className="inline-flex glass-inset p-1"
           >
             {RANGES.map((value) => (
               <button

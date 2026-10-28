@@ -95,7 +95,7 @@ function hoursText(hours: string): string {  if (!hours.trim()) return page.fiel
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="rounded-md bg-bg-soft px-4 py-3">
+    <div className="glass-inset px-4 py-3">
       <dt className="text-[13px] text-ink-3">{label}</dt>
       <dd className="mt-1 text-[14px] text-ink">{children}</dd>
     </div>
@@ -185,7 +185,7 @@ function SellerListingDetailPage() {
           <>
             <Link
               to="/console/listings"
-              className="inline-flex h-9 items-center rounded-md border border-line bg-bg px-3.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg-soft"
+              className="inline-flex h-9 items-center glass px-3.5 text-[13px] font-medium text-ink transition-colors hover:bg-brand/[0.06]"
             >
               {page.back}
             </Link>
@@ -210,7 +210,7 @@ function SellerListingDetailPage() {
         }
       />
 
-      <section className="mt-6 rounded-md border border-line bg-bg p-6">
+      <section className="mt-6 glass p-6">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
           <div>
             <h2 className="text-[16px] font-semibold tracking-tight text-ink">
@@ -243,7 +243,7 @@ function SellerListingDetailPage() {
         </div>
       </section>
 
-      <section className="mt-6 rounded-md border border-line bg-bg p-6">
+      <section className="mt-6 glass p-6">
         <h2 className="text-[16px] font-semibold tracking-tight text-ink">
           {page.groupTitle}
         </h2>
@@ -305,7 +305,7 @@ function SellerListingDetailPage() {
         )}
       </section>
 
-      <section className="mt-6 rounded-md border border-line bg-bg p-6">
+      <section className="mt-6 glass p-6">
         <h2 className="text-[16px] font-semibold tracking-tight text-ink">
           {page.modelMultiplierTitle}
         </h2>
@@ -390,7 +390,7 @@ function SellerListingDetailPage() {
         ) : null}
       </section>
 
-      <section className="mt-6 rounded-md border border-line bg-bg p-6">
+      <section className="mt-6 glass p-6">
         <h2 className="text-[16px] font-semibold tracking-tight text-ink">
           {verificationCopy.title}
         </h2>
@@ -411,7 +411,7 @@ function SellerListingDetailPage() {
         ) : null}
       </section>
 
-      <section className="mt-6 rounded-md border border-line bg-bg p-6">
+      <section className="mt-6 glass p-6">
         <h2 className="text-[16px] font-semibold tracking-tight text-ink">
           {page.pauseTitle}
         </h2>
@@ -431,7 +431,7 @@ function SellerListingDetailPage() {
         )}
       </section>
 
-      <section className="mt-6 rounded-md border border-line bg-bg p-6">
+      <section className="mt-6 glass p-6">
         <h2 className="text-[16px] font-semibold tracking-tight text-ink">
           {page.historyTitle}
         </h2>

@@ -246,7 +246,7 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-ink-3">
             <span>{page.maskedKey}</span>
-            <code className="rounded-sm bg-bg-soft px-2 py-0.5 text-[13px] tabular-nums text-ink">
+            <code className="glass-inset rounded-sm px-2 py-0.5 text-[13px] tabular-nums text-ink">
               {token.key}
             </code>
             <span>{page.copyKeyHint}</span>
@@ -523,7 +523,7 @@ function KeyLimitsSection({ tokenId, token }: { tokenId: number; token: TokenRec
             id="key-limits-allow-ips"
             rows={3}
             spellCheck={false}
-            className="w-full resize-y rounded-md border border-transparent bg-bg-soft px-3 py-2 font-mono text-[13px] text-ink transition-colors placeholder:text-ink-3 focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft"
+            className="w-full resize-y rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-3 py-2 font-mono text-[13px] text-ink transition-colors placeholder:text-ink-3 focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20"
             placeholder={page.limits.allowIpsPlaceholder}
             value={allowIps}
             onChange={(event) => setAllowIps(event.target.value)}
@@ -620,7 +620,7 @@ function ModelsSection({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-[14px] font-medium text-ink">{page.models.scopeLabel}</div>
-          <div className="mt-2 inline-flex rounded-md border border-line bg-bg-soft p-0.5">
+          <div className="mt-2 inline-flex glass-inset p-0.5">
             <ScopeButton active={scope === 'all'} onClick={() => setScope('all')} label={page.models.allScopeTitle} />
             <ScopeButton
               active={scope === 'selected'}
@@ -676,7 +676,7 @@ function ScopeButton({
       onClick={onClick}
       className={
         active
-          ? 'rounded-sm bg-bg px-3 py-1.5 text-[13px] font-medium text-ink shadow-sm'
+          ? 'rounded-sm bg-white/90 px-3 py-1.5 text-[13px] font-medium text-brand-ink shadow-sm'
           : 'rounded-sm px-3 py-1.5 text-[13px] text-ink-3 hover:text-ink'
       }
     >

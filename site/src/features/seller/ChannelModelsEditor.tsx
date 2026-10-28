@@ -217,7 +217,7 @@ export function ChannelModelsEditor({
       </div>
 
       {showEditNotice ? (
-        <p className="rounded-md bg-bg-soft px-3.5 py-2.5 text-[13px] leading-5 text-ink-2">
+        <p className="glass-inset px-3.5 py-2.5 text-[13px] leading-5 text-ink-2">
           {editorText.editNotice}
         </p>
       ) : null}
@@ -225,7 +225,7 @@ export function ChannelModelsEditor({
       {upstream.length > 0 ? (
         <div className="space-y-2">
           <p className="text-[13px] font-medium text-ink">{editorText.upstreamTitle}</p>
-          <ul className="max-h-72 divide-y divide-line overflow-auto rounded-md border border-line">
+          <ul className="max-h-72 divide-y divide-line overflow-auto glass-inset">
             {upstream.map((row) => {
               const model = overrides[row.upstream] ?? (row.priced ? row.suggested_model : null) ?? ''
               const listed = model !== '' && excluded.includes(model)
@@ -244,7 +244,7 @@ export function ChannelModelsEditor({
                   <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{row.upstream}</span>
                   <select
                     aria-label={`${row.upstream} ${editorText.standardModel}`}
-                    className="h-8 max-w-[14rem] rounded-md bg-bg-soft px-2 text-[13px]"
+                    className="h-8 max-w-[14rem] glass-inset px-2 text-[13px]"
                     value={model}
                     onChange={(event) => setOverride(row.upstream, event.target.value)}
                   >
@@ -282,7 +282,7 @@ export function ChannelModelsEditor({
               const invalid = parseMultiplierText(text) === null
               const coefficient = coefficients?.[config.model] ?? 1000
               return (
-                <li key={config.model} className="rounded-md border border-line p-3">
+                <li key={config.model} className="glass-inset p-3">
                   <div className="flex flex-wrap items-center gap-3">
                     <span className="font-mono text-[13px] text-ink">{config.model}</span>
                     {config.upstream_model && config.upstream_model !== config.model ? (

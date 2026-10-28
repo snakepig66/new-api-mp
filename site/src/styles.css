@@ -14,19 +14,29 @@
   --font-mono:
     'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
 
-  --color-bg: #ffffff;
-  --color-bg-soft: #f7f8fa;
+  /*
+   * Blue-white glass: surface tokens are translucent so every `bg-bg` /
+   * `bg-bg-soft` / `border-line` surface lets the page gradient through.
+   * `--color-surface` is the opaque fallback for engines without
+   * backdrop-filter (see the @supports block at the bottom).
+   */
+  --color-bg: rgb(255 255 255 / 0.62);
+  --color-bg-soft: rgb(232 239 255 / 0.55);
+  --color-bg-subtle: rgb(238 243 255 / 0.6);
+  --color-surface: rgb(255 255 255 / 0.72);
   --color-ink: #0f1115;
-  --color-ink-2: #4b5160;
-  --color-ink-3: #8a909c;
-  --color-line: #eceef2;
-  --color-line-strong: #dfe2e8;
+  --color-ink-2: #454c5c;
+  /* A touch darker than before so tertiary text holds up on tinted glass. */
+  --color-ink-3: #767d8c;
+  --color-line: rgb(120 140 200 / 0.18);
+  --color-line-strong: rgb(100 125 200 / 0.28);
   --color-brand: #4d6bfe;
   --color-brand-hover: #3b58f0;
   --color-brand-soft: #eef1ff;
   --color-brand-ink: #2f4bd8;
-  --color-cta: #0f1115;
-  --color-cta-hover: #2a2d34;
+  --color-cta: #4d6bfe;
+  --color-cta-hover: #3b58f0;
+  --color-brand-2: #6a8bff;
   --color-danger: #e5484d;
   --color-warn: #f59e0b;
   /* Status-only green: appears in health dots, never as a surface or accent. */
@@ -42,13 +52,73 @@
   html {
     color-scheme: light;
     -webkit-text-size-adjust: 100%;
+    min-height: 100%;
+    background-color: #f5f8ff;
+    background-image:
+      radial-gradient(60rem 40rem at 50% -10%, rgb(255 255 255 / 0.9), transparent 70%),
+      linear-gradient(180deg, #eaf1ff 0%, #f5f8ff 45%, #ffffff 100%);
+    background-attachment: fixed;
   }
 
   body {
-    @apply bg-bg font-sans text-ink antialiased;
+    @apply font-sans text-ink antialiased;
     font-size: 15px;
     line-height: 1.75;
-    background: var(--color-bg);
+    background: transparent;
+    min-height: 100dvh;
+  }
+
+  /*
+   * Fixed, blurred light blobs behind everything. z-index -1 keeps them
+   * under all content in the root stacking context; pointer-events none so
+   * they never eat clicks.
+   */
+  body::before,
+  body::after {
+    content: '';
+    position: fixed;
+    z-index: -1;
+    pointer-events: none;
+    border-radius: 9999px;
+    filter: blur(60px);
+  }
+
+  body::before {
+    top: -12vh;
+    left: -10vw;
+    width: 52vw;
+    height: 52vw;
+    max-width: 720px;
+    max-height: 720px;
+    background: radial-gradient(circle, rgb(77 107 254 / 0.22) 0%, rgb(77 107 254 / 0) 70%);
+  }
+
+  body::after {
+    right: -12vw;
+    bottom: -14vh;
+    width: 56vw;
+    height: 56vw;
+    max-width: 780px;
+    max-height: 780px;
+    background:
+      radial-gradient(circle at 35% 35%, rgb(56 189 248 / 0.2) 0%, rgb(56 189 248 / 0) 60%),
+      radial-gradient(circle at 70% 70%, rgb(106 139 255 / 0.16) 0%, rgb(106 139 255 / 0) 65%);
+  }
+
+  #root::before {
+    content: '';
+    position: fixed;
+    z-index: -1;
+    pointer-events: none;
+    top: 38vh;
+    right: 18vw;
+    width: 30vw;
+    height: 30vw;
+    max-width: 420px;
+    max-height: 420px;
+    border-radius: 9999px;
+    filter: blur(70px);
+    background: radial-gradient(circle, rgb(125 211 252 / 0.16) 0%, rgb(125 211 252 / 0) 70%);
   }
 
   ::selection {
@@ -98,6 +168,111 @@
 }
 
 @layer components {
+  /*
+   * Glass surfaces. Radius comes from the existing tokens: `.glass` defaults
+   * to --radius-md and any rounded-* utility overrides it (utilities layer).
+   */
+  .glass,
+  .glass-strong,
+  .glass-bar,
+  .glass-inset {
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+    backdrop-filter: blur(18px) saturate(160%);
+  }
+
+  .glass {
+    border-radius: var(--radius-md);
+    border: 1px solid rgb(255 255 255 / 0.65);
+    background-color: rgb(255 255 255 / 0.6);
+    box-shadow:
+      0 8px 32px rgb(77 107 254 / 0.1),
+      inset 0 1px 0 rgb(255 255 255 / 0.7);
+  }
+
+  .glass-strong {
+    border-radius: var(--radius-md);
+    border: 1px solid rgb(255 255 255 / 0.7);
+    background-color: rgb(255 255 255 / 0.72);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
+    box-shadow:
+      0 16px 48px rgb(77 107 254 / 0.16),
+      0 2px 8px rgb(15 17 21 / 0.04),
+      inset 0 1px 0 rgb(255 255 255 / 0.8);
+  }
+
+  /* Edge-to-edge bars (top bar, sidebar, save bar): no radius, no ring. */
+  .glass-bar {
+    background-color: rgb(255 255 255 / 0.58);
+    box-shadow: 0 1px 24px rgb(77 107 254 / 0.06);
+  }
+
+  /* Quiet nested glass, e.g. a table well inside a card. */
+  .glass-inset {
+    border-radius: var(--radius-md);
+    border: 1px solid rgb(255 255 255 / 0.6);
+    background-color: rgb(255 255 255 / 0.4);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    backdrop-filter: blur(12px) saturate(140%);
+  }
+
+  /* Primary action: brand gradient with a soft glow. */
+  .btn-primary {
+    color: #fff;
+    background-image: linear-gradient(135deg, var(--color-brand) 0%, var(--color-brand-2) 100%);
+    box-shadow:
+      0 4px 14px rgb(77 107 254 / 0.32),
+      inset 0 1px 0 rgb(255 255 255 / 0.25);
+  }
+
+  .btn-primary:hover {
+    filter: brightness(1.05);
+    box-shadow:
+      0 8px 22px rgb(77 107 254 / 0.42),
+      inset 0 1px 0 rgb(255 255 255 / 0.3);
+    transform: translateY(-1px);
+  }
+
+  .btn-primary:active {
+    filter: brightness(0.96);
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgb(77 107 254 / 0.3);
+  }
+
+  .btn-glass {
+    border: 1px solid rgb(255 255 255 / 0.75);
+    background-color: rgb(255 255 255 / 0.6);
+    -webkit-backdrop-filter: blur(12px) saturate(150%);
+    backdrop-filter: blur(12px) saturate(150%);
+    box-shadow:
+      0 2px 10px rgb(77 107 254 / 0.08),
+      inset 0 1px 0 rgb(255 255 255 / 0.7);
+  }
+
+  .btn-glass:hover {
+    background-color: rgb(255 255 255 / 0.82);
+    box-shadow:
+      0 4px 16px rgb(77 107 254 / 0.14),
+      inset 0 1px 0 rgb(255 255 255 / 0.8);
+  }
+
+  /* Cards that respond to the pointer: a small lift and a deeper shadow. */
+  .glass-lift {
+    transition:
+      transform 220ms ease,
+      box-shadow 220ms ease,
+      border-color 220ms ease;
+  }
+
+  .glass-lift:hover {
+    transform: translateY(-3px);
+    border-color: rgb(255 255 255 / 0.9);
+    box-shadow:
+      0 18px 44px rgb(77 107 254 / 0.18),
+      0 2px 8px rgb(15 17 21 / 0.05),
+      inset 0 1px 0 rgb(255 255 255 / 0.85);
+  }
+
   .prose-doc {
     @apply text-[15px] leading-7 text-ink;
   }
@@ -174,7 +349,43 @@
   transition: opacity 120ms ease-in;
 }
 
+/*
+ * Without backdrop-filter translucent glass reads as washed out, so fall back
+ * to near-opaque white surfaces.
+ */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --color-bg: rgb(255 255 255 / 0.96);
+    --color-bg-soft: #f1f5ff;
+    --color-bg-subtle: #f3f6ff;
+    --color-surface: #ffffff;
+  }
+
+  .glass,
+  .glass-strong,
+  .glass-bar,
+  .btn-glass {
+    background-color: rgb(255 255 255 / 0.96);
+  }
+
+  .glass-inset {
+    background-color: rgb(255 255 255 / 0.9);
+  }
+
+  body::before,
+  body::after,
+  #root::before {
+    filter: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .btn-primary:hover,
+  .btn-primary:active,
+  .glass-lift:hover {
+    transform: none;
+  }
+
   *,
   *::before,
   *::after {

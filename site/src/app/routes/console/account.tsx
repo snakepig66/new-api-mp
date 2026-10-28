@@ -65,7 +65,7 @@ function AccountPage() {
         )}
       </Section>
 
-      <section className="mt-6 rounded-md border border-line bg-bg p-6">
+      <section className="mt-6 glass p-6">
         <h2 className="text-[16px] font-semibold tracking-tight text-ink">
           {passwordCopy.title}
         </h2>

@@ -71,7 +71,7 @@ export function ToastProvider({ children, duration = 4000 }: ToastProviderProps)
               if (!open) remove(item.id)
             }}
             className={cn(
-              'toast-root flex items-start gap-3 rounded-md border border-line border-l-4 bg-bg px-4 py-3',
+              'toast-root glass-strong flex items-start gap-3 rounded-md border-l-4 px-4 py-3',
               accent[item.tone ?? 'default'],
             )}
           >
@@ -87,7 +87,7 @@ export function ToastProvider({ children, duration = 4000 }: ToastProviderProps)
             </div>
             <ToastPrimitive.Close
               aria-label={copy.actions.close}
-              className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full text-ink-3 transition-colors hover:bg-bg-soft hover:text-ink"
+              className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full text-ink-3 transition-colors hover:bg-white/70 hover:text-ink"
             >
               <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                 <path d="M1.5 1.5l9 9M10.5 1.5l-9 9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />

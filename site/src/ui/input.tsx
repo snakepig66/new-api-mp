@@ -7,12 +7,12 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   mono?: boolean
 }
 
-/* 48px field on a soft grey bed; focus is a 1px blue border + 3px blue halo. */
+/* 48px field on a frosted bed; focus is a blue border + 3px blue halo. */
 const inputBase = cn(
-  'h-12 w-full rounded-md border border-transparent bg-bg-soft px-4 text-[15px] text-ink transition-colors',
+  'h-12 w-full rounded-md border border-white/70 bg-white/55 px-4 text-[15px] text-ink shadow-[inset_0_1px_2px_rgba(77,107,254,0.06)] backdrop-blur-md transition-[color,background-color,border-color,box-shadow]',
   'placeholder:text-ink-3',
-  'focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft',
-  'disabled:cursor-not-allowed disabled:bg-bg-soft disabled:text-ink-3',
+  'focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20',
+  'disabled:cursor-not-allowed disabled:bg-white/35 disabled:text-ink-3',
   'aria-[invalid=true]:border-danger aria-[invalid=true]:focus:ring-danger/10',
 )
 
@@ -54,7 +54,7 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(
           aria-label={visible ? '隐藏密码' : '显示密码'}
           aria-pressed={visible}
           onClick={() => setVisible((current) => !current)}
-          className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full text-ink-3 transition-colors hover:bg-line/60 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+          className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full text-ink-3 transition-colors hover:bg-brand-soft/70 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         >
           <svg
             width="16"

@@ -162,7 +162,7 @@ export function DropdownMenu({
           aria-label={menuLabel}
           onKeyDown={handleMenuKeyDown}
           className={cn(
-            'absolute top-full z-50 mt-1 min-w-[180px] rounded-md border border-line bg-bg p-1',
+            'glass-strong absolute top-full z-50 mt-1 min-w-[180px] rounded-md p-1',
             align === 'end' ? 'right-0' : 'left-0',
             menuClassName,
           )}
@@ -183,7 +183,7 @@ export function DropdownMenu({
                 'flex w-full items-center gap-2 rounded-sm px-3 py-2 text-left text-[13px] leading-5 transition-colors focus:outline-none',
                 item.danger
                   ? 'text-danger hover:bg-danger/5 focus:bg-danger/5'
-                  : 'text-ink hover:bg-bg-soft focus:bg-bg-soft',
+                  : 'text-ink hover:bg-brand/[0.07] focus:bg-brand/[0.07]',
                 item.disabled &&
                   'cursor-not-allowed opacity-50 hover:bg-transparent focus:bg-transparent',
               )}

@@ -4,9 +4,9 @@ import { cn } from '@/lib/cn'
 export type StatusLevel = 'available' | 'degraded' | 'offline'
 
 const TONES: Record<StatusLevel, string> = {
-  available: 'bg-[var(--color-ok)]',
-  degraded: 'bg-warn',
-  offline: 'bg-ink-3',
+  available: 'bg-[var(--color-ok)] shadow-[0_0_0_3px_rgb(22_163_74/0.14)]',
+  degraded: 'bg-warn shadow-[0_0_0_3px_rgb(245_158_11/0.16)]',
+  offline: 'bg-ink-3 shadow-[0_0_0_3px_rgb(118_125_140/0.12)]',
 }
 
 const LABELS: Record<StatusLevel, string> = {
@@ -34,7 +34,7 @@ export function StatusDot({
   showLabel?: boolean
   className?: string
 }) {
-  const tone = level === 'unknown' ? 'bg-line-strong' : TONES[level]
+  const tone = level === 'unknown' ? 'bg-line-strong shadow-[0_0_0_3px_rgb(100_125_200/0.1)]' : TONES[level]
   const text = label ?? (level === 'unknown' ? '' : LABELS[level])
   return (
     <span className={cn('inline-flex items-center gap-1.5 text-[13px] text-ink-3', className)}>

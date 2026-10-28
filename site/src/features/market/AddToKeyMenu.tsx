@@ -258,7 +258,7 @@ export function AddToKeyMenu({
                 bottom: position.bottom,
                 zIndex: 50,
               }}
-              className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-line bg-bg shadow-xl"
+              className="flex min-h-0 flex-col overflow-hidden glass rounded-lg shadow-xl"
             >
               <div className="shrink-0 border-b border-line px-4 py-3">
                 <p className="text-[14px] font-semibold text-ink">{page.title}</p>

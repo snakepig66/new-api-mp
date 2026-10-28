@@ -49,10 +49,10 @@ export function ConsoleSidebar({
                   onClick={onNavigate}
                   aria-current={active ? 'page' : undefined}
                   className={cn(
-                    'inline-flex h-9 items-center rounded-full px-3 text-[14px] transition-colors',
+                    'inline-flex h-9 items-center rounded-full px-3 text-[14px] transition-[color,background-color]',
                     active
-                      ? 'bg-brand-soft font-medium text-brand-ink'
-                      : 'text-ink-2 hover:bg-bg-soft hover:text-ink',
+                      ? 'bg-brand/10 font-medium text-brand-ink'
+                      : 'text-ink-2 hover:bg-white/60 hover:text-ink',
                   )}
                 >
                   {item.label}

@@ -10,7 +10,7 @@ export function Skeleton({ className }: { className?: string }) {
   return (
     <div
       aria-hidden="true"
-      className={cn('animate-pulse rounded-sm bg-bg-soft motion-reduce:animate-none', className)}
+      className={cn('animate-pulse rounded-sm bg-white/60 motion-reduce:animate-none', className)}
     />
   )
 }
@@ -109,7 +109,7 @@ export interface SectionProps {
 /** A white console card: 12px radius, one hairline, no shadow. */
 export function Section({ title, hint, action, children, className }: SectionProps) {
   return (
-    <section className={cn('min-w-0 rounded-md border border-line bg-bg p-6', className)}>
+    <section className={cn('min-w-0 glass p-6', className)}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-line pb-4">
         <div className="flex min-w-0 flex-wrap items-baseline gap-2.5">
           <h2 className="text-[16px] font-semibold tracking-tight text-ink">{title}</h2>

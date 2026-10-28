@@ -73,7 +73,7 @@ function ConsoleOverviewPage() {
       />
 
       {!sellerActive ? (
-        <section className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-md border border-line bg-bg p-6">
+        <section className="mt-6 flex flex-wrap items-center justify-between gap-4 glass p-6">
           <div className="min-w-0">
             <h2 className="text-[16px] font-semibold tracking-tight text-ink">
               {page.shareCard.title}
@@ -288,5 +288,5 @@ function ConsoleOverviewPage() {
 }
 
 function StatCard({ children }: { children: ReactNode }) {
-  return <div className="min-w-0 rounded-md border border-line bg-bg p-5">{children}</div>
+  return <div className="min-w-0 glass p-5">{children}</div>
 }

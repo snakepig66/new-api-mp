@@ -208,7 +208,7 @@ function SellerPayoutsPage() {
       />
 
       {needsPayoutAccount ? (
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-bg px-5 py-4">
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 glass px-5 py-4">
           <p className="text-[13px] leading-6 text-ink-2">
             {copy.pages.sellerOnboarding.payoutNotice}
           </p>
@@ -218,7 +218,7 @@ function SellerPayoutsPage() {
         </div>
       ) : null}
 
-      <section className="mt-6 grid gap-6 rounded-md border border-line bg-bg p-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+      <section className="mt-6 grid gap-6 glass p-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <div>
           <div className="text-[13px] text-ink-3">{page.available}</div>
           <div className="mt-1 break-words text-[32px] font-semibold leading-tight tracking-tight tabular-nums text-brand-ink">
@@ -250,7 +250,7 @@ function SellerPayoutsPage() {
         </div>
       </section>
 
-      <section className="mt-6 rounded-md border border-line bg-bg p-6">
+      <section className="mt-6 glass p-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h2 className="text-[16px] font-semibold tracking-tight text-ink">

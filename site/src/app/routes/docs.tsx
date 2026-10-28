@@ -66,7 +66,7 @@ function BaseUrl({
   }
 
   return (
-    <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-bg-soft px-4 py-3">
+    <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 glass-inset rounded-lg px-4 py-3">
       <span className="text-[12px] font-medium tracking-wide text-ink-3">{label}</span>
       <code className="min-w-0 break-all font-mono text-[21px] font-medium leading-7 tracking-tight text-ink sm:text-[24px]">
         {value}
@@ -75,7 +75,7 @@ function BaseUrl({
         type="button"
         onClick={() => void handleCopy()}
         className={cn(
-          'ml-auto shrink-0 rounded-full border border-line-strong bg-bg px-3 py-1 text-[13px] transition-colors',
+          'ml-auto shrink-0 rounded-full border border-white/70 bg-white/70 px-3 py-1 text-[13px] transition-colors',
           state === 'failed'
             ? 'text-danger'
             : 'text-ink-2 hover:border-brand/40 hover:text-brand-ink',
@@ -272,7 +272,7 @@ function DocsPage() {
             aria-label={docs.searchAria}
             className="h-10 rounded-full pl-10 pr-14 text-[14px]"
           />
-          <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-sm border border-line-strong bg-bg px-1.5 py-0.5 text-[12px] text-ink-3">
+          <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 glass-inset rounded-sm px-1.5 py-0.5 text-[12px] text-ink-3">
             ⌘K
           </kbd>
         </div>
@@ -295,7 +295,7 @@ function DocsPage() {
                         'block rounded-full px-3 py-1.5 text-[14px] transition-colors',
                         active === id
                           ? 'bg-brand-soft font-medium text-brand-ink'
-                          : 'text-ink-2 hover:bg-bg-soft hover:text-ink',
+                          : 'text-ink-2 hover:bg-brand/[0.06] hover:text-ink',
                       )}
                     >
                       {docs.sections[id]}
@@ -317,7 +317,7 @@ function DocsPage() {
                   'rounded-full px-3 py-1.5 text-[14px]',
                   active === id
                     ? 'bg-brand-soft font-medium text-brand-ink'
-                    : 'bg-bg-soft text-ink-2',
+                    : 'bg-white/55 text-ink-2',
                 )}
               >
                 {docs.sections[id]}
@@ -335,7 +335,7 @@ function DocsPage() {
 
               <ol className="grid gap-3 sm:grid-cols-3">
                 {docs.quickstart.steps.map((step, index) => (
-                  <li key={step.title} className="rounded-lg border border-line bg-bg p-3">
+                  <li key={step.title} className="glass rounded-lg p-3">
                     <span className="grid h-6 w-6 place-items-center rounded-full bg-brand-soft text-[12px] font-medium tabular-nums text-brand-ink">
                       {index + 1}
                     </span>
@@ -362,7 +362,7 @@ function DocsPage() {
                         key={m.model}
                         to="/models/$id"
                         params={{ id: m.model }}
-                        className="rounded-md border border-line bg-surface px-2.5 py-1 font-mono text-[13px] text-ink-2 transition-colors hover:border-brand-ink/40 hover:text-brand-ink"
+                        className="glass-inset px-2.5 py-1 font-mono text-[13px] text-ink-2 transition-colors hover:border-brand-ink/40 hover:text-brand-ink"
                       >
                         {m.model}
                       </Link>
@@ -472,7 +472,7 @@ function DocsPage() {
               <h3 className="mt-6 text-[18px] font-semibold text-ink">{docs.billing.flatTitle}</h3>
               <p>{docs.billing.flatBody}</p>
 
-              <div className="rounded-lg border border-line px-4 py-3">
+              <div className="glass-inset rounded-lg px-4 py-3">
                 <div className="text-[14px] font-medium text-ink">
                   {docs.billing.sellerFeeTitle}
                 </div>
@@ -490,7 +490,7 @@ function DocsPage() {
               <p>{docs.clients.body}</p>
               <div className="space-y-4">
                 {docs.clients.items.map((item) => (
-                  <div key={item.name} className="rounded-lg border border-line bg-bg p-4">
+                  <div key={item.name} className="glass rounded-lg p-4">
                     <h3 className="text-[16px] font-semibold text-ink">{item.name}</h3>
                     <p className="mt-1 text-[14px] leading-6 text-ink-2">{item.body}</p>
                     <CodeBlock className="mt-3" code={item.code} label={item.name} />

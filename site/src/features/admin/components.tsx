@@ -23,7 +23,7 @@ export function Skeleton({ className }: { className?: string }) {
   return (
     <div
       aria-hidden="true"
-      className={cn('animate-pulse rounded-sm bg-bg-soft motion-reduce:animate-none', className)}
+      className={cn('animate-pulse rounded-sm bg-white/60 motion-reduce:animate-none', className)}
     />
   )
 }
@@ -107,7 +107,7 @@ export function Section({
   className?: string
 }) {
   return (
-    <section className={cn('min-w-0 rounded-md border border-line bg-bg p-6', className)}>
+    <section className={cn('min-w-0 glass p-6', className)}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-line pb-4">
         <div className="flex min-w-0 flex-wrap items-baseline gap-2.5">
           <h2 className="text-[16px] font-semibold tracking-tight text-ink">{title}</h2>
@@ -156,9 +156,9 @@ export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectE
   return (
     <select
       className={cn(
-        'h-12 w-full rounded-md border border-transparent bg-bg-soft px-4 text-[15px] text-ink transition-colors',
-        'focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft',
-        'disabled:cursor-not-allowed disabled:bg-bg-soft disabled:text-ink-3',
+        'h-12 w-full rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 text-[15px] text-ink transition-colors',
+        'focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20',
+        'disabled:cursor-not-allowed disabled:bg-white/35 disabled:text-ink-3',
         className,
       )}
       {...props}
@@ -192,10 +192,10 @@ export function TextArea({
     <textarea
       aria-invalid={invalid || undefined}
       className={cn(
-        'w-full resize-y rounded-md border border-transparent bg-bg-soft px-4 py-3 text-[15px] leading-6 text-ink transition-colors',
+        'w-full resize-y rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 py-3 text-[15px] leading-6 text-ink transition-colors',
         'placeholder:text-ink-3',
-        'focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft',
-        'disabled:cursor-not-allowed disabled:bg-bg-soft disabled:text-ink-3',
+        'focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20',
+        'disabled:cursor-not-allowed disabled:bg-white/35 disabled:text-ink-3',
         'aria-[invalid=true]:border-danger aria-[invalid=true]:focus:ring-danger/10',
         className,
       )}
@@ -216,7 +216,7 @@ export function Notice({
   className?: string
 }) {
   const tones = {
-    neutral: 'border-line bg-bg-soft text-ink-3',
+    neutral: 'border-white/70 bg-white/45 text-ink-3 backdrop-blur-md',
     warning: 'border-warn/25 bg-warn/10 text-warn',
     brand: 'border-brand/25 bg-brand-soft text-brand-ink',
   }
@@ -278,7 +278,7 @@ export function FilterTabs<T extends string>({
               'inline-flex h-9 shrink-0 items-center rounded-full px-3.5 text-[14px] transition-colors',
               active
                 ? 'bg-brand-soft font-medium text-brand-ink'
-                : 'text-ink-2 hover:bg-bg-soft hover:text-ink',
+                : 'text-ink-2 hover:bg-brand/[0.06] hover:text-ink',
             )}
           >
             {option.label}
@@ -325,7 +325,7 @@ export function OpsTabNav({
               'inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-full px-3.5 text-[14px] transition-colors',
               active
                 ? 'bg-brand-soft font-medium text-brand-ink'
-                : 'text-ink-2 hover:bg-bg-soft hover:text-ink',
+                : 'text-ink-2 hover:bg-brand/[0.06] hover:text-ink',
             )}
           >
             {tab.label}

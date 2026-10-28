@@ -159,7 +159,7 @@ function headerSignature(rows: HeaderRow[]): string {
 
 function InfoField({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="rounded-md bg-bg-soft px-3.5 py-3">
+    <div className="glass-inset px-3.5 py-3">
       <dt className="text-[12px] text-ink-3">{label}</dt>
       <dd className="mt-1 text-[14px] leading-5 text-ink">{children}</dd>
     </div>
@@ -184,7 +184,7 @@ function Section({
       id={sectionId(id)}
       aria-label={title}
       className={cn(
-        'scroll-mt-2 rounded-md border border-line bg-bg p-5',
+        'scroll-mt-2 glass p-5',
         failing && 'border-danger/40 ring-2 ring-danger/30',
       )}
     >
@@ -276,7 +276,7 @@ function ReplaceKeyDialog({
           />
         </Field>
 
-        <div className="rounded-md bg-bg-soft px-4 py-3">
+        <div className="glass-inset px-4 py-3">
           <div className="text-[13px] text-ink-3">{common.keyPreviewHint}</div>
           <div className="mt-1 tabular-nums text-[14px] text-ink">{preview}</div>
         </div>
@@ -934,7 +934,7 @@ export function ListingEditDrawer({
                 'w-full rounded-md px-2.5 py-1.5 text-left text-[13px] leading-5 transition-colors',
                 activeSection === key
                   ? 'bg-brand-soft font-medium text-brand-ink'
-                  : 'text-ink-3 hover:bg-bg-soft hover:text-ink',
+                  : 'text-ink-3 hover:bg-brand/[0.06] hover:text-ink',
               )}
             >
               {sectionLabel(key)}
@@ -1087,7 +1087,7 @@ export function ListingEditDrawer({
                 <p className="text-[13px] text-ink-3">{page.models.empty}</p>
               ) : (
                 <>
-                  <div className="flex flex-wrap items-end gap-3 rounded-md bg-bg-soft px-3.5 py-3">
+                  <div className="flex flex-wrap items-end gap-3 glass-inset px-3.5 py-3">
                     <div className="w-32">
                       <label
                         htmlFor="listing-edit-batch-multiplier"
@@ -1134,7 +1134,7 @@ export function ListingEditDrawer({
                   </div>
 
                   {restoreResult ? (
-                    <div role="status" className="rounded-md border border-line bg-bg-soft px-3.5 py-3">
+                    <div role="status" className="glass-inset px-3.5 py-3">
                       <p className="text-[13px] text-ink">
                         {page.models.batch.restoreResult(restoreResult.restored)}
                       </p>
@@ -1156,7 +1156,7 @@ export function ListingEditDrawer({
                     </div>
                   ) : null}
 
-                  <div className="space-y-3 rounded-md border border-line p-4">
+                  <div className="space-y-3 glass-inset p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-[14px] font-medium text-ink">添加模型</p>
                       <Button
@@ -1213,7 +1213,7 @@ export function ListingEditDrawer({
                       const multiplierValid = rowMultiplierValid(row)
                       const dirty = rowDirty(row)
                       return (
-                        <div key={row.model} className="rounded-md border border-line p-4">
+                        <div key={row.model} className="glass-inset p-4">
                           <div className="flex flex-wrap items-center justify-between gap-3">
                             <div className="flex min-w-0 items-center gap-3">
                               <Switch
@@ -1615,7 +1615,7 @@ export function ListingEditDrawer({
                       {headersView.headers.map((entry) => (
                         <li
                           key={entry.name}
-                          className="flex items-center justify-between gap-3 rounded-md bg-bg-soft px-3.5 py-2 text-[13px]"
+                          className="flex items-center justify-between gap-3 glass-inset px-3.5 py-2 text-[13px]"
                         >
                           <span className="min-w-0 truncate font-mono text-ink">{entry.name}</span>
                           <span className="font-mono text-ink-3">{entry.value_masked}</span>

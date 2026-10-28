@@ -34,11 +34,11 @@ export function Dialog({
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       {trigger ? <DialogPrimitive.Trigger asChild>{trigger}</DialogPrimitive.Trigger> : null}
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="dialog-overlay fixed inset-0 z-40 bg-black/40" />
+        <DialogPrimitive.Overlay className="dialog-overlay fixed inset-0 z-40 bg-[rgba(30,45,110,0.28)] backdrop-blur-[3px]" />
         <DialogPrimitive.Content
           className={cn(
             'dialog-content fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2',
-            'rounded-md border border-line bg-bg p-6',
+            'glass-strong rounded-lg p-6',
             className,
           )}
         >
@@ -59,7 +59,7 @@ export function Dialog({
             </div>
           ) : null}
           <DialogPrimitive.Close
-            className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-full text-ink-3 transition-colors hover:bg-bg-soft hover:text-ink"
+            className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-full text-ink-3 transition-colors hover:bg-white/70 hover:text-ink"
             aria-label={copy.actions.close}
           >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">

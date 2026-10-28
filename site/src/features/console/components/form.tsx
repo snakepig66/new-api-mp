@@ -33,9 +33,9 @@ export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectE
   return (
     <select
       className={cn(
-        'h-12 w-full rounded-md border border-transparent bg-bg-soft px-4 text-[15px] text-ink transition-colors',
-        'focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft',
-        'disabled:cursor-not-allowed disabled:bg-bg-soft disabled:text-ink-3',
+        'h-12 w-full rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 text-[15px] text-ink transition-colors',
+        'focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20',
+        'disabled:cursor-not-allowed disabled:bg-white/35 disabled:text-ink-3',
         className,
       )}
       {...props}
@@ -72,7 +72,7 @@ export function Notice({
   className?: string
 }) {
   const tones = {
-    neutral: 'border-line bg-bg-soft text-ink-3',
+    neutral: 'border-white/70 bg-white/45 text-ink-3 backdrop-blur-md',
     warning: 'border-warn/25 bg-warn/10 text-warn',
     brand: 'border-brand/25 bg-brand-soft text-brand-ink',
   }

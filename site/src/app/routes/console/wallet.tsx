@@ -212,7 +212,7 @@ export function WalletPage() {
       </Notice>
 
       {wallet.isPending ? (
-        <div className="mt-6 grid grid-cols-2 gap-4 rounded-md border border-line bg-bg p-6 sm:grid-cols-3">
+        <div className="mt-6 grid grid-cols-2 gap-4 glass p-6 sm:grid-cols-3">
           <StatSkeleton />
           <StatSkeleton />
           <StatSkeleton />
@@ -224,7 +224,7 @@ export function WalletPage() {
           onRetry={() => void wallet.refetch()}
         />
       ) : (
-        <div className="mt-6 grid gap-6 rounded-md border border-line bg-bg p-6 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)] sm:divide-x sm:divide-line">
+        <div className="mt-6 grid gap-6 glass p-6 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)] sm:divide-x sm:divide-line">
           <div className="min-w-0 sm:pr-6">
             <div className="text-[13px] text-ink-3">{page.balance}</div>
             <div className="mt-1 break-all text-[32px] font-semibold leading-tight tracking-tight tabular-nums text-brand-ink">
@@ -256,7 +256,7 @@ export function WalletPage() {
           <div
             role="tablist"
             aria-label={tx.title}
-            className="inline-flex flex-wrap rounded-md border border-line bg-bg-subtle p-1"
+            className="inline-flex flex-wrap glass-inset p-1"
           >
             {WALLET_TABS.map((tab) => (
               <button
@@ -504,7 +504,7 @@ function RechargePanel() {
     : undefined
 
   return (
-    <section className="rounded-md border border-line bg-bg p-6">
+    <section className="glass p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-[16px] font-semibold tracking-tight text-ink">
           {page.recharge.title}
@@ -566,7 +566,7 @@ function RechargePanel() {
                       className={
                         active
                           ? 'rounded-full border border-brand bg-brand-soft px-3.5 py-1.5 text-[13px] font-medium text-brand-ink'
-                          : 'rounded-full border border-line bg-bg px-3.5 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-line-strong hover:text-ink'
+                          : 'rounded-full border border-white/70 bg-white/70 px-3.5 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-line-strong hover:text-ink'
                       }
                     >
                       {option} 元
@@ -592,7 +592,7 @@ function RechargePanel() {
             </p>
             <div
               data-testid="topup-payable"
-              className="mt-3 rounded-md border border-line bg-bg-subtle px-3.5 py-2.5"
+              className="mt-3 glass-inset px-3.5 py-2.5"
             >
               <div className="text-[15px] font-semibold tabular-nums text-ink">
                 {amountValid && amountValue >= minAmount
@@ -626,7 +626,7 @@ function RechargePanel() {
                     className={
                       method === item.type
                         ? 'rounded-full border border-brand bg-brand-soft px-3.5 py-1.5 text-[13px] font-medium text-brand-ink'
-                        : 'rounded-full border border-line bg-bg px-3.5 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-line-strong hover:text-ink'
+                        : 'rounded-full border border-white/70 bg-white/70 px-3.5 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-line-strong hover:text-ink'
                     }
                   >
                     {item.name}
@@ -815,7 +815,7 @@ function RedeemPanel() {
   }
 
   return (
-    <section className="rounded-md border border-line bg-bg p-6">
+    <section className="glass p-6">
       <h2 className="text-[16px] font-semibold tracking-tight text-ink">{page.redeem.title}</h2>
       <p className="mt-2 text-[13px] leading-6 text-ink-3">{page.redeem.hint}</p>
       <form

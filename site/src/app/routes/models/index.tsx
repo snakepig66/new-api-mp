@@ -86,7 +86,7 @@ function savingsOf(
 
 function FlatPriceNote() {
   return (
-    <div className="mb-6 rounded-md border border-line bg-bg-soft px-4 py-3 text-[13px] text-ink-2">
+    <div className="mb-6 glass-inset px-4 py-3 text-[13px] text-ink-2">
       {copy.pages.models.flatPriceNote}
     </div>
   )

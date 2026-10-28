@@ -191,7 +191,7 @@ function SellerChips({ ids, onRemove }: { ids: number[]; onRemove: (id: number) 
           key={id}
           type="button"
           onClick={() => onRemove(id)}
-          className="rounded-sm border border-line bg-bg-soft px-2 py-0.5 text-[13px] text-ink-2 hover:border-line-strong"
+          className="glass-inset rounded-sm px-2 py-0.5 text-[13px] text-ink-2 hover:border-line-strong"
         >
           #{id} ×
         </button>

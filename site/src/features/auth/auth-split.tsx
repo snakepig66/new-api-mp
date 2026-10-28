@@ -21,7 +21,7 @@ export interface AuthSplitProps {
  */
 export function AuthSplit({ headline, body, points, children }: AuthSplitProps) {
   return (
-    <div className="min-h-dvh bg-bg lg:grid lg:grid-cols-[45%_55%]">
+    <div className="min-h-dvh lg:grid lg:grid-cols-[45%_55%]">
       <div className="relative overflow-hidden bg-[linear-gradient(160deg,#1c2b8f_0%,#4d6bfe_100%)] px-6 py-8 text-white sm:px-10 lg:flex lg:flex-col lg:justify-between lg:px-16 lg:py-16">
         <div>
           <Logo markSize={20} mono className="text-white" />

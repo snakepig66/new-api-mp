@@ -231,7 +231,7 @@ function flattenHours(availability: WizardForm['availability']): FlatHours {
 
 function StepRail({ step, onJump }: { step: number; onJump: (next: WizardStep) => void }) {
   return (
-    <ol className="mt-6 grid grid-cols-2 gap-3 rounded-md border border-line bg-bg p-4 sm:grid-cols-5">
+    <ol className="mt-6 grid grid-cols-2 gap-3 glass p-4 sm:grid-cols-5">
       {page.steps.map((title, index) => {
         const completed = index < step
         const active = index === step
@@ -241,7 +241,7 @@ function StepRail({ step, onJump }: { step: number; onJump: (next: WizardStep) =
             aria-current={active ? 'step' : undefined}
             className={cn(
               'rounded-md border p-3.5',
-              active ? 'border-brand bg-brand-soft/50' : 'border-line bg-bg',
+              active ? 'border-brand bg-brand-soft/50' : 'border-white/70 bg-white/45 backdrop-blur-md',
             )}
           >
             <button
@@ -261,7 +261,7 @@ function StepRail({ step, onJump }: { step: number; onJump: (next: WizardStep) =
                     ? 'border-transparent bg-brand-soft text-brand-ink'
                     : active
                       ? 'border-transparent bg-brand text-white'
-                      : 'border-line bg-bg-soft text-ink-3',
+                      : 'glass-inset text-ink-3',
                 )}
               >
                 {completed ? (
@@ -376,7 +376,7 @@ function CommonAddressList({
               key={address.host}
               type="button"
               onClick={() => onPick(address)}
-              className="flex items-center gap-2 rounded-md border border-line bg-bg px-3 py-2 text-left text-[13px] transition-colors hover:border-brand/40"
+              className="flex items-center gap-2 glass px-3 py-2 text-left text-[13px] transition-colors hover:border-brand/40"
             >
               <span className="font-medium text-ink">{address.vendor_name || address.host}</span>
               <span className="font-mono text-[12px] text-ink-3">{address.host}</span>
@@ -400,7 +400,7 @@ function AvailabilityGroup({
   error?: string
 }) {
   return (
-    <div className="rounded-md border border-line p-4">
+    <div className="glass-inset p-4">
       <label className="flex items-center gap-2 text-[13px] font-medium text-ink">
         <input
           type="checkbox"
@@ -852,7 +852,7 @@ export function NewListingPage() {
       <StepRail step={step} onJump={handleJump} />
 
       <form
-        className="mt-6 rounded-md border border-line bg-bg p-6"
+        className="mt-6 glass p-6"
         onSubmit={(event) => event.preventDefault()}
       >
         <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-4">
@@ -897,7 +897,7 @@ export function NewListingPage() {
                     spellCheck={false}
                     placeholder={page.key.placeholder}
                     aria-invalid={Boolean(form.formState.errors.api_keys) || undefined}
-                    className="w-full rounded-md border border-transparent bg-bg-soft px-4 py-3 font-mono text-[14px] text-ink transition-colors placeholder:text-ink-3 focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft aria-[invalid=true]:border-danger"
+                    className="w-full rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 py-3 font-mono text-[14px] text-ink transition-colors placeholder:text-ink-3 focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20 aria-[invalid=true]:border-danger"
                     {...form.register('api_keys')}
                   />
                 </Field>
@@ -922,7 +922,7 @@ export function NewListingPage() {
                 ) : null}
 
                 {existingGroup ? (
-                  <div className="rounded-md border border-line bg-bg-soft px-4 py-3">
+                  <div className="glass-inset px-4 py-3">
                     <h3 className="text-[13px] font-semibold text-ink">
                       {page.group.existingTitle}
                     </h3>
@@ -967,7 +967,7 @@ export function NewListingPage() {
                       {keys.map((key, index) => (
                         <li
                           key={`${index}-${key.slice(-6)}`}
-                          className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-bg-soft px-4 py-2"
+                          className="flex flex-wrap items-center justify-between gap-3 glass-inset px-4 py-2"
                         >
                           <span className="font-mono text-[12px] text-ink-3">
                             {maskApiKey(key)}
@@ -1299,7 +1299,7 @@ export function NewListingPage() {
                           rows={3}
                           spellCheck={false}
                           placeholder={'X-Custom-Header: value'}
-                          className="w-full rounded-md border border-transparent bg-bg-soft px-4 py-3 font-mono text-[14px] text-ink transition-colors placeholder:text-ink-3 focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft aria-[invalid=true]:border-danger"
+                          className="w-full rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 py-3 font-mono text-[14px] text-ink transition-colors placeholder:text-ink-3 focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20 aria-[invalid=true]:border-danger"
                           {...form.register('headers')}
                         />
                       </Field>

@@ -47,15 +47,15 @@ export function RecordsSummaryBar({ items, loading = false, className }: Records
       aria-busy={loading || undefined}
       aria-label={summaryCopy.ariaLabel}
       className={cn(
-        'grid grid-cols-2 gap-4 rounded-md border border-line bg-bg p-5 sm:grid-cols-3 lg:grid-cols-6',
+        'grid grid-cols-2 gap-4 glass p-5 sm:grid-cols-3 lg:grid-cols-6',
         className,
       )}
     >
       {shown.map((item) =>
         loading ? (
           <div key={item.label} className="min-w-0">
-            <div className="h-3.5 w-16 animate-pulse rounded-sm bg-bg-soft motion-reduce:animate-none" />
-            <div className="mt-2 h-7 w-24 animate-pulse rounded-sm bg-bg-soft motion-reduce:animate-none" />
+            <div className="h-3.5 w-16 animate-pulse rounded-sm bg-white/60 motion-reduce:animate-none" />
+            <div className="mt-2 h-7 w-24 animate-pulse rounded-sm bg-white/60 motion-reduce:animate-none" />
           </div>
         ) : (
           <Stat

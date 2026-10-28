@@ -86,7 +86,7 @@ function ResetPasswordPage() {
             <p className="text-[13px] font-medium text-brand-ink">{page.successTitle}</p>
             <p className="mt-1 text-[13px] leading-6 text-brand-ink">{page.successBody}</p>
             <p className="mt-3 text-[12px] text-ink-3">{page.generatedLabel}</p>
-            <code className="mt-1 block break-all rounded-sm bg-bg px-3 py-2 font-mono text-[14px] text-ink">
+            <code className="mt-1 block break-all glass-inset rounded-sm px-3 py-2 font-mono text-[14px] text-ink">
               {password}
             </code>
           </div>
@@ -102,7 +102,7 @@ function ResetPasswordPage() {
         </div>
       ) : (
         <div className="mt-7 space-y-4">
-          <dl className="rounded-md bg-bg-soft px-4 py-3 text-[13px]">
+          <dl className="glass-inset px-4 py-3 text-[13px]">
             <div className="flex items-baseline justify-between gap-4">
               <dt className="text-ink-3">{page.email}</dt>
               <dd className="break-all text-ink">{email}</dd>

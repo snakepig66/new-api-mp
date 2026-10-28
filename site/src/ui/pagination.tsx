@@ -166,7 +166,7 @@ export function Pagination({
               className={cn(
                 buttonClasses(item === current ? 'secondary' : 'ghost', size, 'px-0 tabular-nums'),
                 compact ? 'w-7' : 'w-8',
-                item === current && 'bg-bg-soft font-medium',
+                item === current && 'bg-white/85 font-medium text-brand-ink',
               )}
             >
               {item}

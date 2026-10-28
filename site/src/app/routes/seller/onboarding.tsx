@@ -77,7 +77,7 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
   const done = completedStepCount(seller.progress)
 
   return (
-    <section aria-label={page.progress} className="mt-6 rounded-md border border-line bg-bg p-6">
+    <section aria-label={page.progress} className="mt-6 glass p-6">
       <div className="flex items-baseline justify-between">
         <h2 className="text-[16px] font-semibold tracking-tight text-ink">{page.progress}</h2>
         <span className="tabular-nums text-[13px] text-ink-3">{done}/3</span>
@@ -93,7 +93,7 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
               aria-current={active ? 'step' : undefined}
               className={cn(
                 'relative rounded-md border p-4',
-                active ? 'border-brand bg-brand-soft/50' : 'border-line bg-bg',
+                active ? 'border-brand bg-brand-soft/50' : 'border-white/70 bg-white/45 backdrop-blur-md',
               )}
             >
               <div className="flex items-center gap-2">
@@ -104,7 +104,7 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
                       ? 'border-transparent bg-brand-soft text-brand-ink'
                       : active
                         ? 'border-transparent bg-brand text-white'
-                        : 'border-line bg-bg-soft text-ink-3',
+                        : 'glass-inset text-ink-3',
                   )}
                   aria-hidden="true"
                 >
@@ -158,7 +158,7 @@ function RealNameCard({ onSubmit, pending, errorText }: OptionalCardProps) {
   })
 
   return (
-    <section className="mt-6 rounded-md border border-line bg-bg p-6">
+    <section className="mt-6 glass p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-[16px] font-semibold tracking-tight text-ink">
           {page.realName.title}
@@ -231,7 +231,7 @@ function AlipayCard({ onSubmit, pending, errorText }: OptionalCardProps) {
   })
 
   return (
-    <section className="mt-6 rounded-md border border-line bg-bg p-6">
+    <section className="mt-6 glass p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-[16px] font-semibold tracking-tight text-ink">{page.alipay.title}</h2>
         <Tag>{page.state.optional}</Tag>
@@ -356,7 +356,7 @@ function SellerOnboardingPage() {
 
           {active ? (
             <>
-              <section className="mt-6 rounded-md border border-line bg-bg p-6">
+              <section className="mt-6 glass p-6">
                 <h2 className="text-[16px] font-semibold tracking-tight text-ink">
                   {page.done.title}
                 </h2>
@@ -390,7 +390,7 @@ function SellerOnboardingPage() {
               )}
             </>
           ) : (
-            <section className="mt-6 rounded-md border border-line bg-bg p-6">
+            <section className="mt-6 glass p-6">
               <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-4">
                 <h2 className="text-[16px] font-semibold tracking-tight text-ink">
                   {page.agreement.title}

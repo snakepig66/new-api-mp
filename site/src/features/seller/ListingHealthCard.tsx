@@ -104,7 +104,7 @@ export function ListingHealthCard({ listing, health, actions }: ListingHealthCar
   return (
     <article
       aria-label={`${healthCopy.ariaLabel} ${vendorName(listing.vendor)} #${listing.id}`}
-      className="rounded-md border border-line bg-bg p-5"
+      className="glass p-5"
     >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">

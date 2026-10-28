@@ -103,8 +103,8 @@ function DetailSkeleton() {
     <div className="space-y-6" aria-busy="true">
       <div className="h-8 w-64 animate-pulse rounded-sm bg-line" />
       <div className="h-4 w-full max-w-xl animate-pulse rounded-sm bg-line" />
-      <div className="h-64 animate-pulse rounded-lg bg-bg-soft" />
-      <div className="h-40 animate-pulse rounded-lg bg-bg-soft" />
+      <div className="h-64 animate-pulse rounded-lg bg-white/60" />
+      <div className="h-40 animate-pulse rounded-lg bg-white/60" />
     </div>
   )
 }
@@ -236,7 +236,7 @@ export function ModelDetailPage() {
 
       <div className="mt-10 grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
         <div className="min-w-0 space-y-8">
-          <section className="rounded-lg border border-line p-6 sm:p-8">
+          <section className="glass glass-lift rounded-lg p-6 sm:p-8">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0">
                 <div className="text-[13px] text-ink-3">
@@ -302,7 +302,7 @@ export function ModelDetailPage() {
             </details>
           </section>
 
-          <details className="rounded-lg border border-line p-6 sm:p-8">
+          <details className="glass glass-lift rounded-lg p-6 sm:p-8">
             <summary className="flex cursor-pointer list-none flex-wrap items-baseline justify-between gap-2">
               <span className="text-[24px] font-semibold tracking-tight text-ink">
                 {page.sections.channels}
@@ -380,7 +380,7 @@ export function ModelDetailPage() {
         </div>
 
         <aside className="lg:sticky lg:top-24">
-          <div className="rounded-lg border border-line p-6">
+          <div className="glass glass-lift rounded-lg p-6">
             <h2 className="text-[16px] font-semibold tracking-tight text-ink">
               {page.access.title}
             </h2>

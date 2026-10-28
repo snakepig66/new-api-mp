@@ -223,7 +223,7 @@ function BuyerRecordCard({
     <button
       type="button"
       onClick={() => onOpen(record.request_id)}
-      className="w-full rounded-lg border border-line p-3 text-left transition-colors hover:bg-bg-soft"
+      className="w-full glass-inset rounded-lg p-3 text-left transition-colors hover:bg-brand/[0.06]"
     >
       <div className="flex items-center justify-between gap-2">
         <ModelCell record={record} />

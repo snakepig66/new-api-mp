@@ -114,7 +114,7 @@ export function HomePage() {
         {/* Decorative wash only: it must not affect flow or hit-testing. */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 top-0 h-[640px] bg-[linear-gradient(180deg,#eef1ff_0%,#ffffff_100%)]"
+          className="pointer-events-none absolute inset-x-0 top-0 h-[640px] bg-[radial-gradient(70%_60%_at_50%_0%,rgb(77_107_254/0.12)_0%,rgb(255_255_255/0)_70%)]"
         />
 
         <div className="relative mx-auto w-full max-w-[1200px] px-5 pb-16 pt-16 sm:px-6 sm:pb-20 sm:pt-24 lg:pt-28">
@@ -134,10 +134,10 @@ export function HomePage() {
           </div>
 
           {statItems.length > 0 ? (
-            <div className="mx-auto mt-16 flex max-w-[760px] flex-wrap items-start justify-center gap-x-16 gap-y-10">
+            <div className="glass mx-auto mt-16 flex max-w-[760px] flex-wrap items-start justify-center gap-x-16 gap-y-10 rounded-lg px-8 py-7">
               {statItems.map((item) => (
                 <div key={item.label} className="min-w-[120px] text-center">
-                  <div className="text-[32px] font-semibold leading-tight tracking-tight tabular-nums text-ink">
+                  <div className="text-[32px] font-semibold leading-tight tracking-tight tabular-nums text-brand-ink">
                     {item.value}
                   </div>
                   <div className="mt-1 text-[13px] text-ink-3">{item.label}</div>
@@ -171,7 +171,7 @@ export function HomePage() {
             </div>
           ) : null}
 
-          <div className="mx-auto mt-14 max-w-[860px] rounded-lg border border-line bg-bg p-3 sm:p-4">
+          <div className="mx-auto mt-14 max-w-[860px] glass rounded-lg p-3 sm:p-4">
             <div className="flex items-center justify-between gap-3 rounded-sm px-2 py-1.5">
               <span className="shrink-0 text-[13px] text-ink-3">{home.baseUrlLabel}</span>
               <div className="flex min-w-0 items-center gap-1">
@@ -281,9 +281,9 @@ export function HomePage() {
             ].map(({ card, href, primary }) => (
               <div
                 key={card.label}
-                className="flex flex-col rounded-lg border border-line bg-bg p-6 sm:p-8"
+                className="glass glass-lift flex flex-col rounded-lg p-6 sm:p-8"
               >
-                <span className="w-fit rounded-full bg-bg-soft px-3 py-1 text-[12px] font-medium text-ink-2">
+                <span className="w-fit rounded-full bg-white/60 px-3 py-1 text-[12px] font-medium text-ink-2">
                   {card.label}
                 </span>
                 <h3 className="mt-4 text-[20px] font-semibold tracking-tight text-ink">
@@ -408,7 +408,7 @@ export function HomePage() {
 
       <section className="pb-16 sm:pb-20 lg:pb-[120px]">
         <div className={CONTAINER}>
-          <div className="flex flex-col gap-6 rounded-lg bg-bg-soft px-6 py-8 sm:flex-row sm:items-center sm:justify-between sm:px-10 sm:py-10">
+          <div className="glass flex flex-col gap-6 rounded-lg px-6 py-8 sm:flex-row sm:items-center sm:justify-between sm:px-10 sm:py-10">
             <div className="min-w-0">
               <h2 className="text-[20px] font-semibold tracking-tight text-ink">{home.seller.title}</h2>
               <p className="mt-2 max-w-[560px] text-[15px] leading-6 text-ink-2">{home.seller.body}</p>

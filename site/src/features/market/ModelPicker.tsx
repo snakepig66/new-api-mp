@@ -194,7 +194,7 @@ export function ModelPicker({
         />
       </div>
 
-      <div className="mt-2 max-h-[320px] overflow-y-auto rounded-md border border-line">
+      <div className="mt-2 max-h-[320px] overflow-y-auto glass-inset">
         {isPending ? (
           <div className="space-y-2 p-3" aria-label={pickerCopy.loading}>
             <div className="h-5 animate-pulse rounded-sm bg-line" />
@@ -228,7 +228,7 @@ export function ModelPicker({
               const allSelected = groupSelected === group.models.length
               return (
                 <section key={group.vendor}>
-                  <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-bg/95 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-bg/90">
+                  <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-white/70 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-white/80">
                     <TriStateCheckbox
                       checked={allSelected}
                       indeterminate={groupSelected > 0 && !allSelected}
@@ -259,7 +259,7 @@ export function ModelPicker({
                           key={model.model}
                           className={cn(
                             'flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 transition-colors',
-                            checked ? 'bg-brand-soft/40' : 'bg-bg hover:bg-bg-soft/60',
+                            checked ? 'bg-brand-soft/40' : 'bg-white/60 hover:bg-brand/[0.06]',
                           )}
                         >
                           <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
@@ -293,7 +293,7 @@ export function ModelPicker({
                               placeholder={pickerCopy.capPlaceholder}
                               value={selection[model.model] ?? ''}
                               onChange={(event) => setCap(model.model, event.target.value)}
-                              className="h-8 w-20 rounded-sm border border-transparent bg-bg-soft px-2 tabular-nums text-[13px] text-ink disabled:bg-bg-soft disabled:text-ink-3"
+                              className="h-8 w-20 rounded-sm border border-white/70 bg-white/55 backdrop-blur-md px-2 tabular-nums text-[13px] text-ink disabled:bg-white/35 disabled:text-ink-3"
                             />
                             {lowestMilli > 0 && prices ? (
                               <span className="tabular-nums">

@@ -22,9 +22,9 @@ export interface SelectProps
 
 /* Same bed, focus ring and disabled treatment as Input. */
 const selectBase = cn(
-  'h-12 w-full cursor-pointer appearance-none rounded-md border border-transparent bg-bg-soft px-4 pr-10 text-[15px] text-ink transition-colors',
-  'focus:border-brand focus:bg-bg focus:outline-none focus:ring-[3px] focus:ring-brand-soft',
-  'disabled:cursor-not-allowed disabled:bg-bg-soft disabled:text-ink-3',
+  'h-12 w-full cursor-pointer appearance-none rounded-md border border-white/70 bg-white/55 px-4 pr-10 text-[15px] text-ink shadow-[inset_0_1px_2px_rgba(77,107,254,0.06)] backdrop-blur-md transition-[color,background-color,border-color,box-shadow]',
+  'focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20',
+  'disabled:cursor-not-allowed disabled:bg-white/35 disabled:text-ink-3',
   'aria-[invalid=true]:border-danger aria-[invalid=true]:focus:ring-danger/10',
 )
 

@@ -30,7 +30,7 @@ function NavItem({ to, label, exact = false }: { to: NavTo; label: string; exact
       to={to}
       className={cn(
         'relative inline-flex h-16 items-center px-3 text-[14px] font-medium transition-colors',
-        active ? 'text-ink' : 'text-ink-2 hover:text-ink',
+        active ? 'text-brand-ink' : 'text-ink-2 hover:text-ink',
       )}
     >
       {label}
@@ -50,7 +50,7 @@ function UtilityLink({ to, label, exact = false }: { to: NavTo; label: string; e
       to={to}
       className={cn(
         'hidden h-9 items-center rounded-full px-3 text-[14px] transition-colors md:inline-flex',
-        active ? 'bg-bg-soft text-ink' : 'text-ink-2 hover:text-ink',
+        active ? 'bg-brand-soft/70 text-brand-ink' : 'text-ink-2 hover:text-ink',
       )}
     >
       {label}
@@ -78,7 +78,7 @@ function MobileNavItem({
       onClick={onNavigate}
       className={cn(
         'flex h-11 items-center rounded-full px-4 text-[14px] transition-colors',
-        active ? 'bg-bg-soft font-medium text-ink' : 'text-ink-2 hover:bg-bg-soft hover:text-ink',
+        active ? 'bg-brand-soft/70 font-medium text-brand-ink' : 'text-ink-2 hover:bg-white/60 hover:text-ink',
       )}
     >
       {label}
@@ -128,7 +128,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="sticky top-0 z-30 border-b border-line bg-bg/95 backdrop-blur supports-[backdrop-filter]:bg-bg/85">
+      <header className="glass-bar sticky top-0 z-30 border-b border-white/60 supports-[backdrop-filter]:bg-white/60">
         <div className="mx-auto flex h-16 max-w-[1200px] items-center gap-6 px-5 sm:px-6">
           <Link to="/" aria-label={copy.brand.name} className="shrink-0">
             <Logo />
@@ -180,7 +180,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               aria-expanded={menuOpen}
               aria-controls="mobile-nav"
               onClick={() => setMenuOpen((open) => !open)}
-              className="grid h-10 w-10 place-items-center rounded-full text-ink-2 transition-colors hover:bg-bg-soft hover:text-ink md:hidden"
+              className="grid h-10 w-10 place-items-center rounded-full text-ink-2 transition-colors hover:bg-white/60 hover:text-ink md:hidden"
             >
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
                 {menuOpen ? (
@@ -194,7 +194,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
 
         {menuOpen ? (
-          <div id="mobile-nav" className="border-t border-line bg-bg md:hidden">
+          <div id="mobile-nav" className="glass-bar border-t border-white/60 md:hidden">
             <nav className="mx-auto flex max-w-[1200px] flex-col gap-1 px-4 py-3" aria-label={copy.nav.ariaMobile}>
               {navItems.map((item) => (
                 <MobileNavItem key={item.to} {...item} onNavigate={() => setMenuOpen(false)} />
@@ -223,7 +223,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     <Link
                       to="/login"
                       onClick={() => setMenuOpen(false)}
-                      className="inline-flex h-9 flex-1 items-center justify-center rounded-full px-3 text-[14px] text-ink-2 transition-colors hover:bg-bg-soft hover:text-ink"
+                      className="inline-flex h-9 flex-1 items-center justify-center rounded-full px-3 text-[14px] text-ink-2 transition-colors hover:bg-white/60 hover:text-ink"
                     >
                       {copy.nav.login}
                     </Link>
@@ -245,7 +245,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <main className="flex-1 overflow-x-clip">{children}</main>
 
       {isAppArea ? null : (
-        <footer className="border-t border-line">
+        <footer className="border-t border-white/60">
           <div className="mx-auto flex max-w-[1200px] flex-col gap-3 px-5 py-8 text-[13px] text-ink-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
               <span>{copy.footer.copyright}</span>

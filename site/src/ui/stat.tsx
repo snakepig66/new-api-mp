@@ -24,7 +24,7 @@ export interface StatProps {
   className?: string
 }
 
-/** A label + sans tabular number. Group several with hairline separators. */
+/** A label + sans tabular number. Group several in glass cards. */
 export function Stat({ label, value, hint, tone = 'default', className }: StatProps) {
   return (
     <div className={cn('min-w-0', className)}>

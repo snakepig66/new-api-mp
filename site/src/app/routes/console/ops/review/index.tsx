@@ -103,12 +103,12 @@ function PendingHostGroups({
         const key = group.host || PLATFORM_HOST_KEY
         const open = !collapsed.has(key)
         return (
-          <section key={key} className="rounded-md border border-line bg-bg">
+          <section key={key} className="glass">
             <button
               type="button"
               aria-expanded={open}
               onClick={() => onToggle(key)}
-              className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition-colors hover:bg-bg-soft"
+              className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition-colors hover:bg-brand/[0.06]"
             >
               <span className="min-w-0 truncate text-[15px] font-medium text-ink">
                 {group.host || page.pending.platformHost}
@@ -352,7 +352,7 @@ export function ListingsContent() {
             next={page.emptyNext}
           />
         ) : (
-          <div className="rounded-md border border-line bg-bg p-6">
+          <div className="glass p-6">
           <Table minWidth={1000}>
             <TableHead>
               <TableRow>

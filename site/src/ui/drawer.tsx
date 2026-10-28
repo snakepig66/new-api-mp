@@ -53,10 +53,10 @@ export function Drawer({
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       {trigger ? <DialogPrimitive.Trigger asChild>{trigger}</DialogPrimitive.Trigger> : null}
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="dialog-overlay fixed inset-0 z-40 bg-black/40" />
+        <DialogPrimitive.Overlay className="dialog-overlay fixed inset-0 z-40 bg-[rgba(30,45,110,0.28)] backdrop-blur-[3px]" />
         <DialogPrimitive.Content
           className={cn(
-            'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-line bg-bg outline-none',
+            'glass-strong fixed inset-y-0 right-0 z-50 flex w-full flex-col rounded-none border-y-0 border-r-0 outline-none',
             widthClass[width],
             className,
           )}
@@ -76,7 +76,7 @@ export function Drawer({
               </DialogPrimitive.Description>
             </div>
             <DialogPrimitive.Close
-              className="-mr-2 grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink-3 transition-colors hover:bg-bg-soft hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+              className="-mr-2 grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink-3 transition-colors hover:bg-white/70 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
               aria-label={copy.actions.close}
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">

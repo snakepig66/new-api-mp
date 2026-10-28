@@ -17,7 +17,7 @@ export interface PriceProps {
 const sizeClass: Record<PriceSize, string> = {
   sm: 'text-[13px]',
   md: 'text-[15px]',
-  lg: 'text-[22px] font-semibold',
+  lg: 'text-[22px] font-semibold text-brand-ink',
 }
 
 /** Price per million tokens. Figures are sans + tabular, never mono. */
