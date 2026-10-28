@@ -285,6 +285,11 @@ func TestApiRecordSharesAnonymity(t *testing.T) {
 	assert.Equal(t, wantY, itemsY[0].(map[string]any)["buyer_code"])
 	assert.NotEqual(t, wantX, wantY, "§3.1: 每个分享者看到的代号不同")
 
+	// The seller's 渠道 filter narrows to one listing.
+	wFiltered := f.get(t, "/api/marketplace/records/shares?listing_id=902", sellerX)
+	require.Equal(t, http.StatusOK, wFiltered.Code)
+	assert.Equal(t, int64(0), apiNum(t, apiData(t, decodeAPIBody(t, wFiltered)), "total"))
+
 	// The full response must not leak the buyer's real id or token id, nor
 	// any key material field name (§3.1/§2.3). key_fingerprint4 (the last 4
 	// chars) is the deliberate display tail, so the absence check targets the

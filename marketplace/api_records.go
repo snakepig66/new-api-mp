@@ -400,6 +400,8 @@ type recordFilters struct {
 	End     time.Time
 	Model   string
 	TokenID int64
+	// ListingID is the seller's channel (mp_listings.id) filter.
+	ListingID int64
 	// Group is the buyer's token-group snapshot (token_group column).
 	Group string
 	// GroupID is the seller's channel-group id (mp_listings.group_id); a
@@ -409,7 +411,7 @@ type recordFilters struct {
 	Status  string
 }
 
-// parseRecordFilters reads ?start=&end=&model=&token_id=&group=&stream=&status=
+// parseRecordFilters reads ?start=&end=&model=&token_id=&listing_id=&group=&stream=&status=
 // from c. start/end are unix seconds; a group value that parses as a positive
 // integer is treated as a seller channel-group id, otherwise as a token-group
 // name.
@@ -429,6 +431,11 @@ func parseRecordFilters(c *gin.Context, ownerField string, ownerID int64) record
 	if s := c.Query("token_id"); s != "" {
 		if id, err := strconv.ParseInt(s, 10, 64); err == nil && id > 0 {
 			f.TokenID = id
+		}
+	}
+	if s := c.Query("listing_id"); s != "" {
+		if id, err := strconv.ParseInt(s, 10, 64); err == nil && id > 0 {
+			f.ListingID = id
 		}
 	}
 	if s := c.Query("group"); s != "" {
@@ -464,6 +471,9 @@ func (f recordFilters) apply(query *gorm.DB) *gorm.DB {
 	}
 	if f.TokenID > 0 {
 		query = query.Where("buyer_token_id = ?", f.TokenID)
+	}
+	if f.ListingID > 0 {
+		query = query.Where("listing_id = ?", f.ListingID)
 	}
 	if f.GroupID > 0 {
 		// Seller view: the channel group lives on the listing, not the request.
