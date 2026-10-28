@@ -127,6 +127,11 @@ export interface UsageRecord {
   /** 买方协议 (openai-chat / anthropic-messages / …). */
   endpoint: string
   converted: boolean
+  /**
+   * 上游模型 id: the raw model the upstream reported before the marketplace
+   * rewrote it. Empty or absent when the response carried no model.
+   */
+  upstream_model?: string
   usage_estimated: boolean
   status: string
   created_at: string

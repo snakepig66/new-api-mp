@@ -69,7 +69,7 @@ type usageRecord struct {
 	SellerID         int64  `json:"seller_id"`    // 分享者编号 (§3.1)
 	ChannelType      string `json:"channel_type"` // official / plan / third_party
 	Tier             string `json:"tier"`
-	TierLabel        string `json:"tier_label"` // 高峰 / 空闲 / 标准
+	TierLabel        string `json:"tier_label"`  // 高峰 / 空闲 / 标准
 	TokenGroup       string `json:"token_group"` // 令牌分组快照
 	TokenName        string `json:"token_name"`  // 令牌名；令牌已删除时为空（前端显示"已删除"）
 	InputTokens      int64  `json:"input_tokens"`
@@ -86,14 +86,15 @@ type usageRecord struct {
 	SellerCreditMicro int64 `json:"seller_credit_micro"` // 分享者到手
 	OfficialCostMicro int64 `json:"official_cost_micro"`
 	TotalDebitMicro   int64 `json:"total_debit_micro"`
-	SavedMicro        int64 `json:"saved_micro"`     // 省了多少 = 官方价 − 实付
-	SavedPermille     int64 `json:"saved_permille"`  // 省了千分之几 = saved / official × 1000; 0 when official = 0
+	SavedMicro        int64 `json:"saved_micro"`    // 省了多少 = 官方价 − 实付
+	SavedPermille     int64 `json:"saved_permille"` // 省了千分之几 = saved / official × 1000; 0 when official = 0
 
-	FirstTokenMs int64  `json:"first_token_ms"` // 首字耗时 ms; 0 = 未记录
-	LatencyMs    int64  `json:"latency_ms"`     // 总耗时 ms
-	IsStream     bool   `json:"is_stream"`      // 流式请求
-	Endpoint     string `json:"endpoint"`       // 买方协议 (openai-chat / anthropic-messages / …)
-	Converted    bool   `json:"converted"`      // 协议转换
+	FirstTokenMs  int64  `json:"first_token_ms"` // 首字耗时 ms; 0 = 未记录
+	LatencyMs     int64  `json:"latency_ms"`     // 总耗时 ms
+	IsStream      bool   `json:"is_stream"`      // 流式请求
+	Endpoint      string `json:"endpoint"`       // 买方协议 (openai-chat / anthropic-messages / …)
+	Converted     bool   `json:"converted"`      // 协议转换
+	UpstreamModel string `json:"upstream_model"` // 上游返回的原始模型 id
 
 	UsageEstimated bool      `json:"usage_estimated"`
 	Status         string    `json:"status"`
@@ -109,30 +110,31 @@ type usageRecordDetail struct {
 
 // shareRecord is one row of the seller's 分享记录 (§3.8). Amounts are 微元.
 type shareRecord struct {
-	RequestID         string    `json:"request_id"`
-	Model             string    `json:"model"`
-	BuyerCode         string    `json:"buyer_code"` // 匿名代号 (§3.1), 8 hex digits
-	Tier              string    `json:"tier"`
-	TierLabel         string    `json:"tier_label"`
-	ChannelGroup      string    `json:"channel_group"`    // 渠道分组 (mp_listing_groups 的 vendor slug)
-	ListingID         int64     `json:"listing_id"`       // 渠道 id
-	KeyFingerprint4   string    `json:"key_fingerprint4"` // key 指纹后 4 位
-	InputTokens       int64     `json:"input_tokens"`
-	OutputTokens      int64     `json:"output_tokens"`
-	CacheReadTokens   int64     `json:"cache_read_tokens"`
-	CacheWriteTokens  int64     `json:"cache_write_tokens"`
-	SearchCount       int64     `json:"search_count"`
-	FetchCount        int64     `json:"fetch_count"`
-	ToolDebitMicro    int64     `json:"tool_debit_micro"`
-	SellerCreditMicro int64     `json:"seller_credit_micro"` // 卖家收入
-	BuyerPaidMicro    int64     `json:"buyer_paid_micro"`    // 买家实付
-	PlatformFeeMicro  int64     `json:"platform_fee_micro"`  // 平台费
+	RequestID         string `json:"request_id"`
+	Model             string `json:"model"`
+	BuyerCode         string `json:"buyer_code"` // 匿名代号 (§3.1), 8 hex digits
+	Tier              string `json:"tier"`
+	TierLabel         string `json:"tier_label"`
+	ChannelGroup      string `json:"channel_group"`    // 渠道分组 (mp_listing_groups 的 vendor slug)
+	ListingID         int64  `json:"listing_id"`       // 渠道 id
+	KeyFingerprint4   string `json:"key_fingerprint4"` // key 指纹后 4 位
+	InputTokens       int64  `json:"input_tokens"`
+	OutputTokens      int64  `json:"output_tokens"`
+	CacheReadTokens   int64  `json:"cache_read_tokens"`
+	CacheWriteTokens  int64  `json:"cache_write_tokens"`
+	SearchCount       int64  `json:"search_count"`
+	FetchCount        int64  `json:"fetch_count"`
+	ToolDebitMicro    int64  `json:"tool_debit_micro"`
+	SellerCreditMicro int64  `json:"seller_credit_micro"` // 卖家收入
+	BuyerPaidMicro    int64  `json:"buyer_paid_micro"`    // 买家实付
+	PlatformFeeMicro  int64  `json:"platform_fee_micro"`  // 平台费
 
-	FirstTokenMs int64  `json:"first_token_ms"`
-	LatencyMs    int64  `json:"latency_ms"`
-	IsStream     bool   `json:"is_stream"`
-	Endpoint     string `json:"endpoint"`
-	Converted    bool   `json:"converted"`
+	FirstTokenMs  int64  `json:"first_token_ms"`
+	LatencyMs     int64  `json:"latency_ms"`
+	IsStream      bool   `json:"is_stream"`
+	Endpoint      string `json:"endpoint"`
+	Converted     bool   `json:"converted"`
+	UpstreamModel string `json:"upstream_model"`
 
 	UsageEstimated bool      `json:"usage_estimated"`
 	Status         string    `json:"status"`
@@ -186,9 +188,9 @@ type shareSummaryResponse struct {
 // batched reads (channel kind, token name, listing group, key fingerprint
 // tail). Each view reads the fields it shows; the others stay empty.
 type recordRowContext struct {
-	channelType    string
-	tokenName      string
-	channelGroup   string
+	channelType     string
+	tokenName       string
+	channelGroup    string
 	keyFingerprint4 string
 }
 
@@ -245,6 +247,7 @@ func newUsageRecord(r *Request, ctx recordRowContext) usageRecord {
 		IsStream:          r.IsStream,
 		Endpoint:          r.Endpoint,
 		Converted:         r.Converted,
+		UpstreamModel:     r.UpstreamModel,
 		UsageEstimated:    r.UsageEstimated,
 		Status:            r.Status,
 		CreatedAt:         r.CreatedAt,
@@ -276,6 +279,7 @@ func newShareRecord(r *Request, buyerCode string, ctx recordRowContext) shareRec
 		IsStream:          r.IsStream,
 		Endpoint:          r.Endpoint,
 		Converted:         r.Converted,
+		UpstreamModel:     r.UpstreamModel,
 		UsageEstimated:    r.UsageEstimated,
 		Status:            r.Status,
 		CreatedAt:         r.CreatedAt,
@@ -788,18 +792,18 @@ func usageSummary(c *gin.Context) {
 	filters := parseRecordFilters(c, "buyer_user_id", userID)
 
 	var a struct {
-		RequestCount     int64
-		SuccessCount     int64
-		InputTokens      int64
-		OutputTokens     int64
-		CacheReadTokens  int64
-		CacheWriteTokens int64
-		TotalDebitMicro  int64
+		RequestCount      int64
+		SuccessCount      int64
+		InputTokens       int64
+		OutputTokens      int64
+		CacheReadTokens   int64
+		CacheWriteTokens  int64
+		TotalDebitMicro   int64
 		OfficialCostMicro int64
-		SumFirstTokenMs  int64
-		HasFirstToken    int64
-		SumLatencyMs     int64
-		HasLatency       int64
+		SumFirstTokenMs   int64
+		HasFirstToken     int64
+		SumLatencyMs      int64
+		HasLatency        int64
 	}
 	err := filters.apply(db.Model(&Request{}).Select(`
 		COUNT(*) AS request_count,

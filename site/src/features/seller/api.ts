@@ -517,6 +517,8 @@ export interface ShareRecord {
   endpoint: string
   /** 协议转换. */
   converted: boolean
+  /** 上游模型 id; empty or absent when the response carried no model. */
+  upstream_model?: string
   usage_estimated: boolean
   status: string
   created_at: string
