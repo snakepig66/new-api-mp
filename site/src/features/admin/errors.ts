@@ -22,6 +22,7 @@ export function adminErrorMessage(error: unknown): string {
   if (raw && CJK.test(raw)) return raw
 
   if (match(raw, ['root privileges', 'root auth'])) return errors.forbidden
+  if (match(raw, ['model is referenced by a channel model'])) return errors.modelInUse
   if (match(raw, ['effective_at must not be earlier'])) return errors.effectivePast
   if (match(raw, ['price version already exists', 'per-call price version already exists'])) {
     return errors.versionExists

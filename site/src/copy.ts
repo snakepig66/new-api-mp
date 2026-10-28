@@ -2816,6 +2816,7 @@ console.log(response.choices[0].message.content)
         notFound: '没有找到对应的记录。',
         generic: '操作没有完成，请稍后重试。',
         invalidBody: '请求参数有误，请核对后重试。',
+        modelInUse: '该模型仍被渠道模型引用，不能删除；请先移除渠道映射，或改为停用。',
         effectivePast: '生效时间不得早于当前时间。',
         versionExists: '该版本已经存在；价目只增不改，请换一个版本号。',
         tierInvalid: '价格类型只能是 flat。',
