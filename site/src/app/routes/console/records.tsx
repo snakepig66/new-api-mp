@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 
@@ -9,49 +10,87 @@ import {
   Dialog,
   Empty,
   PageHeader,
+  Pagination,
   PeakBadge,
+  Select,
   SellerId,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
   Tag,
   buttonClasses,
 } from '@/ui'
 
 import {
+  consoleKeysQuery,
   usageRecordCostQuery,
-  usageRecordsCostQuery,
+  usageRecordsQuery,
+  usageSummaryQuery,
+  type UsageCostRecordDetail,
 } from '@/features/console/api'
-import { meQuery } from '@/features/seller/api'
-import { ShareRecordsTable } from '@/features/seller/ShareRecordsTable'
-import { isSellerActive } from '@/features/seller/status'
-import {
-  ErrorBlock,
-  PageSkeleton,
-  Section,
-  Skeleton,
-} from '@/features/console/components/DataState'
+import { ErrorBlock, Skeleton } from '@/features/console/components/DataState'
 import { formatCount, prettyJson } from '@/features/console/format'
-import { toUsageRow, type UsageRow } from '@/features/console/records'
-import type { UsageCostRecordDetail } from '@/features/console/api'
+import { toUsageRow } from '@/features/console/records'
 import type { UsageTier } from '@/features/console/types'
+import {
+  BuyerRecordCards,
+  BuyerRecordsTable,
+} from '../../../features/records/BuyerRecordsTable'
+import { RecordsFilterBar } from '../../../features/records/RecordsFilterBar'
+import {
+  RecordsSummaryBar,
+  type RecordsSummaryItem,
+} from '../../../features/records/RecordsSummaryBar'
+import {
+  presetToRange,
+  type RecordDatePreset,
+  type RecordFilters,
+  type RecordsFilterState,
+} from '../../../features/records/filters'
 
-const PAGE_SIZE = 20
+const PAGE_SIZES = [20, 50, 100]
+const PAGE_SIZE_OPTIONS = PAGE_SIZES.map((size) => ({ value: String(size), label: String(size) }))
+const DATE_PRESETS: RecordDatePreset[] = ['today', '7d', '30d', 'custom']
+
+interface RecordsSearch {
+  preset: RecordDatePreset
+  start?: number
+  end?: number
+  model?: string
+  token_id?: number
+  group?: string
+  stream?: boolean
+  status?: string
+  page: number
+  page_size: number
+}
+
+function toPositiveInt(value: unknown): number | undefined {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
+}
+
+function toFilterText(value: unknown): string | undefined {
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+function toOptionalBool(value: unknown): boolean | undefined {
+  if (value === true || value === 'true' || value === '1') return true
+  if (value === false || value === 'false' || value === '0') return false
+  return undefined
+}
 
 export const Route = createFileRoute('/console/records')({
-  validateSearch: (
-    search: Record<string, unknown>,
-  ): { page: number; request?: string; view?: 'calls' | 'sales' } => {
-    const parsed = Number(search.page)
-    const view = search.view === 'sales' ? 'sales' : search.view === 'calls' ? 'calls' : undefined
+  validateSearch: (search: Record<string, unknown>): RecordsSearch => {
+    const pageSize = Number(search.page_size)
     return {
-      page: Number.isInteger(parsed) && parsed > 0 ? parsed : 1,
-      request:
-        typeof search.request === 'string' && search.request ? search.request : undefined,
-      view,
+      preset: DATE_PRESETS.find((item) => item === String(search.preset ?? '')) ?? '7d',
+      start: toPositiveInt(search.start),
+      end: toPositiveInt(search.end),
+      model: toFilterText(search.model),
+      token_id: toPositiveInt(search.token_id),
+      group: toFilterText(search.group),
+      stream: toOptionalBool(search.stream),
+      status: toFilterText(search.status),
+      page: toPositiveInt(search.page) ?? 1,
+      page_size: PAGE_SIZES.includes(pageSize) ? pageSize : 20,
     }
   },
   component: RecordsPage,
@@ -60,23 +99,113 @@ export const Route = createFileRoute('/console/records')({
 const page = copy.pages.consoleRecords
 
 function RecordsPage() {
-  const { page: currentPage, request, view } = Route.useSearch()
+  const search = Route.useSearch()
   const navigate = useNavigate()
-  const me = useQuery(meQuery())
-  const sellerActive = me.data ? isSellerActive(me.data.seller) : false
-  const activeView = sellerActive ? (view ?? 'calls') : 'calls'
-  const records = useQuery({
-    ...usageRecordsCostQuery(currentPage, PAGE_SIZE),
-    enabled: activeView === 'calls',
-  })
+  const [openRequestId, setOpenRequestId] = useState<string | null>(null)
+  // Bumped by 刷新 so a rolling preset re-anchors its end to now.
+  const [refreshNonce, setRefreshNonce] = useState(0)
+  const keys = useQuery(consoleKeysQuery())
+  const tokenOptions = useMemo(
+    () =>
+      (keys.data ?? []).map(({ token }) => ({
+        value: String(token.id),
+        label: token.name || `#${token.id}`,
+      })),
+    [keys.data],
+  )
+
+  // A named preset always wins over the start/end left in the URL; only
+  // 「自定义」uses the dates the user picked. Memoized so the now-based range
+  // does not change the query key on every render.
+  const filters = useMemo((): RecordFilters => {
+    void refreshNonce
+    const [start, end] =
+      search.preset === 'custom' ? [search.start, search.end] : presetToRange(search.preset)
+    return {
+      start,
+      end,
+      model: search.model,
+      token_id: search.token_id,
+      group: search.group,
+      stream: search.stream,
+      status: search.status,
+    }
+  }, [
+    refreshNonce,
+    search.preset,
+    search.start,
+    search.end,
+    search.model,
+    search.token_id,
+    search.group,
+    search.stream,
+    search.status,
+  ])
+
+  const records = useQuery(usageRecordsQuery(search.page, search.page_size, filters))
+  const summary = useQuery(usageSummaryQuery(filters))
 
   const total = records.data?.total ?? 0
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const summaryData = summary.data
+  const summaryItems: RecordsSummaryItem[] = summaryData
+    ? [
+        { label: '请求数', value: formatCount(summaryData.request_count) },
+        {
+          label: '成功率',
+          value:
+            summaryData.success_rate_milli < 0
+              ? '—'
+              : `${(summaryData.success_rate_milli / 10).toFixed(1)}%`,
+          hint: `${formatCount(summaryData.success_count)} / ${formatCount(summaryData.request_count)}`,
+        },
+        {
+          label: 'Tokens',
+          value: `${formatCount(summaryData.input_tokens)} / ${formatCount(summaryData.output_tokens)}`,
+          hint: '输入 / 输出',
+        },
+        { label: '实付', value: formatYuan(summaryData.total_debit_micro) },
+        { label: '节省', value: formatYuan(summaryData.saved_micro) },
+        {
+          label: '平均耗时',
+          value: `${summaryData.avg_first_token_ms > 0 ? `${Math.round(summaryData.avg_first_token_ms)} ms` : '—'} / ${
+            summaryData.avg_latency_ms > 0 ? `${Math.round(summaryData.avg_latency_ms)} ms` : '—'
+          }`,
+          hint: '首字 / 总耗时',
+        },
+      ]
+    : []
 
-  function goTo(next: number) {
+  function applyFilters(next: RecordsFilterState) {
     void navigate({
       to: '/console/records',
-      search: { page: Math.min(Math.max(1, next), totalPages) },
+      search: {
+        preset: next.preset,
+        start: next.start,
+        end: next.end,
+        model: next.model,
+        token_id: next.token_id,
+        group: next.group,
+        stream: next.stream,
+        status: next.status,
+        page: 1,
+        page_size: search.page_size,
+      },
+    })
+  }
+
+  function goToPage(next: number) {
+    void navigate({
+      to: '/console/records',
+      search: { ...search, page: next },
+    })
+  }
+
+  function changePageSize(value: string) {
+    const size = Number(value)
+    if (!PAGE_SIZES.includes(size)) return
+    void navigate({
+      to: '/console/records',
+      search: { ...search, page: 1, page_size: size },
     })
   }
 
@@ -84,207 +213,80 @@ function RecordsPage() {
     <>
       <PageHeader title={page.title} lead={page.lead} />
 
-      {sellerActive ? (
-        <nav className="mt-5 flex items-center gap-1.5 overflow-x-auto" aria-label={page.title}>
-          {([
-            { key: 'calls' as const, label: page.tabs.calls },
-            { key: 'sales' as const, label: page.tabs.sales },
-          ]).map((tab) => {
-            const active = activeView === tab.key
-            return (
-              <Link
-                key={tab.key}
-                to="/console/records"
-                search={{ page: 1, view: tab.key }}
-                aria-current={active ? 'page' : undefined}
-                className={
-                  active
-                    ? 'inline-flex h-9 shrink-0 items-center rounded-full bg-brand-soft px-3.5 text-[14px] font-medium text-brand-ink'
-                    : 'inline-flex h-9 shrink-0 items-center rounded-full px-3.5 text-[14px] text-ink-2 transition-colors hover:bg-bg-soft hover:text-ink'
-                }
-              >
-                {tab.label}
-              </Link>
-            )
-          })}
-        </nav>
-      ) : null}
-
-      {activeView === 'sales' ? (
-        <div className="mt-6">
-          <ShareRecordsTable />
-        </div>
-      ) : records.isPending ? (
-        <div className="mt-6">
-          <PageSkeleton />
-        </div>
-      ) : records.isError ? (
-        <ErrorBlock
-          className="mt-6"
-          error={records.error}
-          onRetry={() => void records.refetch()}
-        />
-      ) : records.data.items.length === 0 ? (
-        <Empty
-          className="mt-6"
-          title={page.empty.title}
-          reason={page.empty.reason}
-          next={page.empty.next}
-          action={
-            <Link to="/console/keys" className={buttonClasses('secondary', 'sm')}>
-              {copy.pages.consoleKeys.create}
-            </Link>
+      <RecordsFilterBar
+        className="mt-6"
+        value={{ preset: search.preset, ...filters }}
+        onChange={applyFilters}
+        subjectOptions={tokenOptions}
+        refreshing={records.isFetching || summary.isFetching}
+        onRefresh={() => {
+          if (search.preset === 'custom') {
+            void records.refetch()
+            void summary.refetch()
+          } else {
+            setRefreshNonce((n) => n + 1)
           }
-        />
-      ) : (
-        <Section className="mt-6" title={page.title}>
-          <Table minWidth={1180}>
-            <TableHead>
-              <TableRow interactive={false}>
-                <TableHeaderCell>{page.columns.time}</TableHeaderCell>
-                <TableHeaderCell>{page.columns.model}</TableHeaderCell>
-                <TableHeaderCell>{page.columns.seller}</TableHeaderCell>
-                <TableHeaderCell>{page.columns.tier}</TableHeaderCell>
-                <TableHeaderCell numeric>{page.columns.tokens}</TableHeaderCell>
-                <TableHeaderCell numeric>{page.columns.tools}</TableHeaderCell>
-                <TableHeaderCell numeric>{page.columns.official}</TableHeaderCell>
-                <TableHeaderCell numeric>{page.columns.paid}</TableHeaderCell>
-                <TableHeaderCell numeric>{page.columns.saved}</TableHeaderCell>
-                <TableHeaderCell>{page.columns.status}</TableHeaderCell>
-                <TableHeaderCell>{page.columns.actions}</TableHeaderCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {records.data.items.map((record) => {
-                const row = toUsageRow(record)
-                return <RecordRow key={row.requestId} row={row} />
-              })}
-            </TableBody>
-          </Table>
+        }}
+      />
 
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
-            <span className="tabular-nums text-[13px] text-ink-3">
-              {page.pagination.summary(currentPage, totalPages)}
-            </span>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={currentPage <= 1}
-                onClick={() => goTo(currentPage - 1)}
-              >
-                {page.pagination.previous}
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={currentPage >= totalPages}
-                onClick={() => goTo(currentPage + 1)}
-              >
-                {page.pagination.next}
-              </Button>
-            </div>
+      <RecordsSummaryBar
+        className="mt-4"
+        items={summaryItems}
+        loading={summary.isPending}
+      />
+
+      <div className="mt-6">
+        {records.isPending ? (
+          <div className="space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
           </div>
-        </Section>
-      )}
+        ) : records.isError ? (
+          <ErrorBlock error={records.error} onRetry={() => void records.refetch()} />
+        ) : records.data.items.length === 0 ? (
+          <Empty
+            title={page.empty.title}
+            reason={page.empty.reason}
+            next={page.empty.next}
+            action={
+              <Link to="/console/keys" className={buttonClasses('secondary', 'sm')}>
+                {copy.pages.consoleKeys.create}
+              </Link>
+            }
+          />
+        ) : (
+          <>
+            <BuyerRecordsTable records={records.data.items} onOpen={setOpenRequestId} />
+            <BuyerRecordCards records={records.data.items} onOpen={setOpenRequestId} />
 
-      {activeView === 'calls' && request ? (
-        <RecordDialog
-          requestId={request}
-          onClose={() =>
-            void navigate({
-              to: '/console/records',
-              search: { page: currentPage },
-              replace: true,
-            })
-          }
-        />
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
+              <Pagination
+                page={search.page}
+                pageSize={search.page_size}
+                total={total}
+                onPageChange={goToPage}
+                showSummary
+              />
+              <div className="flex items-center gap-2">
+                <span className="text-[13px] text-ink-3">每页</span>
+                <Select
+                  value={String(search.page_size)}
+                  onChange={(event) => changePageSize(event.target.value)}
+                  options={PAGE_SIZE_OPTIONS}
+                  className="h-9 w-20"
+                />
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {openRequestId ? (
+        <RecordDialog requestId={openRequestId} onClose={() => setOpenRequestId(null)} />
       ) : null}
     </>
-  )
-}
-
-function RecordRow({ row }: { row: UsageRow }) {
-  const navigate = useNavigate()
-  const { page: currentPage } = Route.useSearch()
-
-  function open() {
-    void navigate({
-      to: '/console/records',
-      search: { page: currentPage, request: row.requestId },
-    })
-  }
-
-  return (
-    <tr
-      tabIndex={0}
-      aria-label={`${page.detail.title} ${row.requestId}`}
-      className="cursor-pointer border-b border-line/70 transition-colors last:border-b-0 hover:bg-bg-soft/70 focus-visible:bg-bg-soft/70"
-      onClick={open}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          open()
-        }
-      }}
-    >
-      <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
-        {formatDateTime(row.createdAt)}
-      </TableCell>
-      <TableCell>
-        <div className="max-w-[220px] truncate font-medium text-ink" title={row.model}>
-          {row.model}
-        </div>
-        <div className="tabular-nums text-[13px] text-ink-3">{row.requestId}</div>
-      </TableCell>
-      <TableCell>
-        <SellerId id={row.sellerId} />
-      </TableCell>
-      <TableCell>
-        <TierBadge tier={row.tier} />
-      </TableCell>
-      <TableCell numeric>
-        <div className="text-[13px] tabular-nums">
-          {page.tokens.pair(formatCount(row.inputTokens), formatCount(row.outputTokens))}
-        </div>
-        {(row.cacheReadTokens > 0 || row.cacheWriteTokens > 0) && (
-          <div className="flex items-center gap-1 text-[13px] tabular-nums text-ink-3">
-            {row.cacheReadTokens > 0 && (
-              <span>{page.tokens.cache(formatCount(row.cacheReadTokens))}</span>
-            )}
-            {row.cacheWriteTokens > 0 && (
-              <span>{page.tokens.cacheWrite(formatCount(row.cacheWriteTokens))}</span>
-            )}
-          </div>
-        )}
-      </TableCell>
-      <TableCell numeric className="text-[13px]">
-        {row.searchCount} / {row.fetchCount}
-      </TableCell>
-      <TableCell numeric className="text-ink-3">
-        {formatYuan(row.officialCostMicro)}
-      </TableCell>
-      <TableCell numeric>{formatYuan(row.totalDebitMicro)}</TableCell>
-      <TableCell numeric className="text-brand-ink">
-        {formatYuan(row.savedMicro)}
-      </TableCell>
-      <TableCell>
-        <StatusTag status={row.status} />
-      </TableCell>
-      <TableCell>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={(event) => {
-            event.stopPropagation()
-            open()
-          }}
-          onKeyDown={(event) => event.stopPropagation()}
-        >
-          {page.detail.costAction}
-        </Button>
-      </TableCell>
-    </tr>
   )
 }
 
@@ -299,8 +301,6 @@ function StatusTag({ status }: { status: string }) {
   return <Tag tone="neutral">{page.status.unknown}</Tag>
 }
 
-// The detail dialog is opened by the `request` search parameter so a record
-// can be linked to directly and the back button closes it.
 function RecordDialog({ requestId, onClose }: { requestId: string; onClose: () => void }) {
   const detail = useQuery(usageRecordCostQuery(requestId))
   return (

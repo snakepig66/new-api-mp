@@ -201,7 +201,7 @@ function ConsoleOverviewPage() {
         action={
           <Link
             to="/console/records"
-            search={{ page: 1 }}
+            search={{ preset: '7d', page: 1, page_size: 20 }}
             className="text-[13px] text-brand-ink hover:underline"
           >
             {page.recent.viewAll}
