@@ -15,13 +15,11 @@ import { Stat, type StatTone } from '@/ui'
 
 const summaryCopy = copy.pages.records.summary
 
-/** Skeleton fallback while loading: four blank tiles keep the layout stable. */
-const EMPTY_SUMMARY_ITEMS: RecordsSummaryItem[] = [
-  { label: '', value: '' },
-  { label: '', value: '' },
-  { label: '', value: '' },
-  { label: '', value: '' },
-]
+/** Skeleton fallback while loading: six blank tiles fill the lg grid. */
+const EMPTY_SUMMARY_ITEMS: RecordsSummaryItem[] = Array.from({ length: 6 }, () => ({
+  label: '',
+  value: '',
+}))
 
 export interface RecordsSummaryItem {
   label: string
@@ -51,9 +49,9 @@ export function RecordsSummaryBar({ items, loading = false, className }: Records
         className,
       )}
     >
-      {shown.map((item) =>
+      {shown.map((item, index) =>
         loading ? (
-          <div key={item.label} className="min-w-0">
+          <div key={`summary-skeleton-${index}`} className="min-w-0">
             <div className="h-3.5 w-16 animate-pulse rounded-sm bg-white/60 motion-reduce:animate-none" />
             <div className="mt-2 h-7 w-24 animate-pulse rounded-sm bg-white/60 motion-reduce:animate-none" />
           </div>
