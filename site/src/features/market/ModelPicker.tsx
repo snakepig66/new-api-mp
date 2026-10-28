@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { copy } from '@/copy'
 import { formatYuan } from '@/lib/money'
 import { cn } from '@/lib/cn'
-import { Button, Empty, Input } from '@/ui'
+import { Button, Empty, Input, ModelName } from '@/ui'
 
 import { parseMultiplierToMilli } from '@/features/console/format'
 import { squareModelsQuery, type SquareModel, type SquareTierPrices } from './api'
@@ -202,7 +202,7 @@ export function ModelPicker({
             <div className="h-5 animate-pulse rounded-sm bg-line" />
           </div>
         ) : loadError ? (
-          <div className="p-4 text-[13px] text-ink-2">
+          <div className="p-4 text-meta text-ink-2">
             <p>{pickerCopy.error}</p>
             <Button variant="secondary" size="sm" className="mt-3" onClick={retry}>
               {pickerCopy.retry}
@@ -235,10 +235,10 @@ export function ModelPicker({
                       onChange={() => onChange(toggleGroupSelection(selection, group))}
                       label={`${group.label} ${pickerCopy.groupCount(groupSelected, group.models.length)}`}
                     />
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
+                    <span className="min-w-0 flex-1 truncate text-meta font-medium text-ink">
                       {group.label}
                     </span>
-                    <span className="shrink-0 tabular-nums text-[13px] text-ink-3">
+                    <span className="shrink-0 tabular-nums text-meta text-ink-3">
                       {pickerCopy.groupCount(groupSelected, group.models.length)}
                     </span>
                   </div>
@@ -271,18 +271,18 @@ export function ModelPicker({
                               onChange={() => toggle(model)}
                             />
                             <span className="min-w-0">
-                              <span className="block truncate text-[13px] text-ink">
-                                {model.model}
+                              <span className="block truncate text-meta text-ink">
+                                <ModelName model={model.model} size="sm" />
                               </span>
                               {prices ? (
-                                <span className="block text-[12px] tabular-nums text-ink-3">
+                                <span className="block text-caption tabular-nums text-ink-3">
                                   {pickerCopy.priceLabel} {formatYuan(prices.input_micro_per_mtok)}
                                   /M
                                 </span>
                               ) : null}
                             </span>
                           </label>
-                          <label className="flex shrink-0 items-center gap-1.5 text-[12px] text-ink-3">
+                          <label className="flex shrink-0 items-center gap-1.5 text-caption text-ink-3">
                             <span>{pickerCopy.capLabel}</span>
                             <input
                               id={`${idPrefix}-cap-${model.model}`}
@@ -293,7 +293,7 @@ export function ModelPicker({
                               placeholder={pickerCopy.capPlaceholder}
                               value={selection[model.model] ?? ''}
                               onChange={(event) => setCap(model.model, event.target.value)}
-                              className="h-8 w-20 rounded-sm border border-white/70 bg-white/55 backdrop-blur-md px-2 tabular-nums text-[13px] text-ink disabled:bg-white/35 disabled:text-ink-3"
+                              className="h-8 w-20 rounded-sm border border-white/70 bg-white/55 backdrop-blur-md px-2 tabular-nums text-meta text-ink disabled:bg-white/35 disabled:text-ink-3"
                             />
                             {lowestMilli > 0 && prices ? (
                               <span className="tabular-nums">
@@ -317,12 +317,12 @@ export function ModelPicker({
         )}
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[13px] text-ink-3">
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-meta text-ink-3">
         <span className="tabular-nums">{pickerCopy.selectedCount(selectedCount)}</span>
         <div className="flex items-center gap-3">
           <button
             type="button"
-            className="text-[13px] text-ink-2 underline-offset-2 hover:text-ink hover:underline disabled:text-ink-3"
+            className="text-meta text-ink-2 underline-offset-2 hover:text-ink hover:underline disabled:text-ink-3"
             disabled={filtered.length === 0 || disabled}
             onClick={selectAllFiltered}
           >
@@ -330,7 +330,7 @@ export function ModelPicker({
           </button>
           <button
             type="button"
-            className="text-[13px] text-ink-2 underline-offset-2 hover:text-ink hover:underline disabled:text-ink-3"
+            className="text-meta text-ink-2 underline-offset-2 hover:text-ink hover:underline disabled:text-ink-3"
             disabled={selectedCount === 0 || disabled}
             onClick={() => onChange({})}
           >

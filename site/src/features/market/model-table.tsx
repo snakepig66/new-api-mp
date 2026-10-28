@@ -23,6 +23,7 @@ import type {
   SquareTierPrices,
 } from './api'
 import { AddToKeyMenu } from './AddToKeyMenu'
+import { modelLogo } from './model-logo'
 import { vendorLabel, vendorLogo, type VendorLookup } from './vendors'
 
 export interface ModelTableProps {
@@ -145,9 +146,9 @@ function ExpandedRow({
       <TableCell colSpan={columns} className="px-4 py-5">
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
           <div>
-            <h3 className="text-[13px] font-medium text-ink-3">{t.priceTable}</h3>
+            <h3 className="text-meta font-medium text-ink-3">{t.priceTable}</h3>
             <div className="mt-2 overflow-hidden glass-inset rounded-sm">
-              <table className="w-full text-[13px]">
+              <table className="w-full text-meta">
                 <thead>
                   <tr className="text-ink-3">
                     <th className="px-3 py-2 text-left font-normal">{t.metric}</th>
@@ -172,7 +173,7 @@ function ExpandedRow({
                           {saving === null ? (
                             <span className="text-ink-3">{copy.common.none}</span>
                           ) : (
-                            <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[12px] text-brand-ink">
+                            <span className="rounded-full bg-brand-soft px-2 py-0.5 text-caption text-brand-ink">
                               {copy.pages.models.savingShort(saving)}
                             </span>
                           )}
@@ -184,7 +185,7 @@ function ExpandedRow({
               </table>
             </div>
 
-            <h3 className="mt-5 text-[13px] font-medium text-ink-3">{t.channelsTitle}</h3>
+            <h3 className="mt-5 text-meta font-medium text-ink-3">{t.channelsTitle}</h3>
             {detailLoading ? (
               <div className="mt-2 space-y-2">
                 <SkeletonLine />
@@ -192,7 +193,7 @@ function ExpandedRow({
               </div>
             ) : detail && detail.channels.length > 0 ? (
               <div className="mt-2 overflow-hidden glass-inset rounded-sm">
-                <table className="w-full text-[13px]">
+                <table className="w-full text-meta">
                   <thead>
                     <tr className="text-ink-3">
                       <th className="px-3 py-2 text-left font-normal">{t.channel}</th>
@@ -239,14 +240,14 @@ function ExpandedRow({
                 </table>
               </div>
             ) : (
-              <p className="mt-2 text-[13px] text-ink-3">{t.noChannels}</p>
+              <p className="mt-2 text-meta text-ink-3">{t.noChannels}</p>
             )}
           </div>
 
           <div>
-            <h3 className="text-[13px] font-medium text-ink-3">{t.reliability}</h3>
+            <h3 className="text-meta font-medium text-ink-3">{t.reliability}</h3>
             {metrics ? (
-              <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 glass-inset rounded-sm px-4 py-3 text-[13px]">
+              <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 glass-inset rounded-sm px-4 py-3 text-meta">
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-ink-3">{t.realtime}</dt>
                   <dd className="tabular-nums text-ink">{rate(metrics.success_rate_1h_milli)}</dd>
@@ -281,10 +282,10 @@ function ExpandedRow({
                 </div>
               </dl>
             ) : (
-              <p className="mt-2 text-[13px] text-ink-3">{t.noSample}</p>
+              <p className="mt-2 text-meta text-ink-3">{t.noSample}</p>
             )}
 
-            <dl className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-[13px]">
+            <dl className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-meta">
               {model.context_length ? (
                 <div className="flex items-center gap-2">
                   <dt className="text-ink-3">{t.context}</dt>
@@ -377,7 +378,7 @@ export function ModelTable({
       {anyMetrics ? <TableHeaderCell numeric>{columns.success}</TableHeaderCell> : null}
       {anyMetrics ? <TableHeaderCell numeric>{columns.latency}</TableHeaderCell> : null}
       <TableHeaderCell numeric>{columns.channels}</TableHeaderCell>
-      {showAddToKey ? <TableHeaderCell>{columns.actions}</TableHeaderCell> : null}
+      {showAddToKey ? <TableHeaderCell numeric>{columns.actions}</TableHeaderCell> : null}
     </>
   )
 
@@ -427,7 +428,7 @@ export function ModelTable({
               const saving = savingOf(official?.input_micro_per_mtok, row?.input_micro_per_mtok)
               const metrics = model.metrics
               const isOpen = expanded === model.model
-              const logo = vendorLogo(origin, vendorMeta)
+              const logo = modelLogo(model.model) || vendorLogo(origin, vendorMeta)
 
               return (
                 <Fragment key={model.model}>
@@ -448,7 +449,7 @@ export function ModelTable({
                         ) : (
                           <span
                             aria-hidden="true"
-                            className="grid h-6 w-6 shrink-0 place-items-center rounded-sm bg-brand-soft text-[12px] font-semibold text-brand-ink"
+                            className="grid h-6 w-6 shrink-0 place-items-center rounded-sm bg-brand-soft text-caption font-semibold text-brand-ink"
                           >
                             {model.model.slice(0, 1).toUpperCase()}
                           </span>
@@ -458,12 +459,12 @@ export function ModelTable({
                             to="/models/$id"
                             params={{ id: model.model }}
                             onClick={(event) => event.stopPropagation()}
-                            className="block truncate text-[15px] font-medium text-ink transition-colors hover:text-brand-ink"
+                            className="block truncate text-body font-medium text-ink transition-colors hover:text-brand-ink"
                           >
                             {model.model}
                           </Link>
                           <span className="flex min-w-0 items-center gap-1.5">
-                            <span className="truncate text-[13px] text-ink-3">
+                            <span className="truncate text-meta text-ink-3">
                               {vendorLabel(origin, vendorMeta)}
                             </span>
                             <CapabilityTags capabilities={model.capabilities} />
@@ -475,7 +476,7 @@ export function ModelTable({
                       {row ? (
                         <div className="leading-tight tabular-nums">
                           <div className="text-ink">{formatYuan(row.input_micro_per_mtok)}</div>
-                          <div className="mt-0.5 text-[13px] text-ink-3">
+                          <div className="mt-0.5 text-meta text-ink-3">
                             {copy.pages.models.outputPrefix} {formatYuan(row.output_micro_per_mtok)}
                           </div>
                           {model.buyer_price_source === 'official' || model.listing_count === 0 ? (
@@ -493,7 +494,7 @@ export function ModelTable({
                         {saving === null ? (
                           <Missing />
                         ) : (
-                          <span className="inline-flex rounded-full bg-brand-soft px-2 py-0.5 text-[12px] tabular-nums text-brand-ink">
+                          <span className="inline-flex rounded-full bg-brand-soft px-2 py-0.5 text-caption tabular-nums text-brand-ink">
                             {copy.pages.models.savingShort(saving)}
                           </span>
                         )}
@@ -520,7 +521,7 @@ export function ModelTable({
                       </span>
                     </TableCell>
                     {showAddToKey ? (
-                      <TableCell className="relative z-10 w-px whitespace-nowrap">
+                      <TableCell numeric className="relative z-10 w-px whitespace-nowrap text-right">
                         <span onClick={(event) => event.stopPropagation()}>
                           <AddToKeyMenu model={model.model} hasSupply={model.listing_count > 0} />
                         </span>

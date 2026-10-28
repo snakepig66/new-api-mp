@@ -76,11 +76,11 @@ export function ToastProvider({ children, duration = 4000 }: ToastProviderProps)
             )}
           >
             <div className="min-w-0 flex-1">
-              <ToastPrimitive.Title className="text-[14px] font-medium leading-5 text-ink">
+              <ToastPrimitive.Title className="text-body font-medium leading-5 text-ink">
                 {item.title}
               </ToastPrimitive.Title>
               {item.description ? (
-                <ToastPrimitive.Description className="mt-1 text-[13px] leading-5 text-ink-3">
+                <ToastPrimitive.Description className="mt-1 text-meta leading-5 text-ink-3">
                   {item.description}
                 </ToastPrimitive.Description>
               ) : null}

@@ -126,7 +126,7 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
             <label
               htmlFor={controlId}
               className={cn(
-                'block text-[14px] font-medium leading-5 text-ink',
+                'block text-body font-medium leading-5 text-ink',
                 disabled || loading ? 'cursor-not-allowed' : 'cursor-pointer',
               )}
             >
@@ -134,7 +134,7 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
             </label>
           ) : null}
           {description ? (
-            <span id={descriptionId} className="mt-0.5 block text-[13px] leading-5 text-ink-3">
+            <span id={descriptionId} className="mt-0.5 block text-meta leading-5 text-ink-3">
               {description}
             </span>
           ) : null}

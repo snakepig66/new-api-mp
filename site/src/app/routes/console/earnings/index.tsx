@@ -89,10 +89,10 @@ function PayoutGate({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+          <h2 className="text-title font-semibold tracking-tight text-ink">
             {page.payoutGate.title}
           </h2>
-          <p className="mt-1 text-[13px] leading-5 text-ink-3">{page.payoutGate.lead}</p>
+          <p className="mt-1 text-meta leading-5 text-ink-3">{page.payoutGate.lead}</p>
         </div>
         <Tag tone={state.ready ? 'brand' : 'neutral'} dot>
           {page.payoutGate.progress(state.doneCount, state.total)}
@@ -100,7 +100,7 @@ function PayoutGate({
       </div>
 
       {state.ready ? (
-        <p className="mt-3 text-[13px] leading-5 text-brand-ink">{page.payoutGate.ready}</p>
+        <p className="mt-3 text-meta leading-5 text-brand-ink">{page.payoutGate.ready}</p>
       ) : null}
 
       <ul className="mt-4 grid gap-2 sm:grid-cols-2">
@@ -110,8 +110,8 @@ function PayoutGate({
             className="flex items-start justify-between gap-3 glass-inset px-4 py-3"
           >
             <div className="min-w-0">
-              <div className="text-[13px] font-medium text-ink">{stepLabel(step.id)}</div>
-              <p className="mt-0.5 text-[13px] leading-5 text-ink-3">
+              <div className="text-meta font-medium text-ink">{stepLabel(step.id)}</div>
+              <p className="mt-0.5 text-meta leading-5 text-ink-3">
                 {stepHint(step.id, step.done)}
               </p>
             </div>
@@ -237,7 +237,7 @@ export function SellerOverviewPage() {
         </StatCard>
       </div>
 
-      <p className="mt-3 text-[13px] text-ink-3">
+      <p className="mt-3 text-meta text-ink-3">
         {page.stats.monthIncome} {data ? formatYuan(data.month_income_micro) : copy.common.none}
         {' · '}
         {page.stats.platformFee} {data ? formatYuan(data.platform_fee_total_micro) : copy.common.none}

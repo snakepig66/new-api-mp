@@ -67,23 +67,23 @@ function ForgotPasswordPage() {
 
   return (
     <AuthSplit headline={loginCopy.brandHeading} body={loginCopy.brandBody} points={loginCopy.points}>
-      <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-ink">
+      <h1 className="text-h1 font-semibold leading-tight tracking-tight text-ink">
         {page.title}
       </h1>
-      <p className="mt-2 text-[15px] leading-6 text-ink-2">{page.lead}</p>
+      <p className="mt-2 text-body leading-6 text-ink-2">{page.lead}</p>
 
       {sentTo ? (
         <>
           <div
             role="status"
-            className="mt-7 rounded-md border border-brand/25 bg-brand-soft px-4 py-3 text-[13px] leading-6 text-brand-ink"
+            className="mt-7 rounded-md border border-brand/25 bg-brand-soft px-4 py-3 text-meta leading-6 text-brand-ink"
           >
             <p className="font-medium">{page.sentTitle}</p>
             <p className="mt-1">{page.sentBody(sentTo)}</p>
           </div>
           <Link
             to="/login"
-            className="mt-6 inline-block text-[14px] text-brand hover:underline"
+            className="mt-6 inline-block text-body text-brand hover:underline"
           >
             {page.backToLogin}
           </Link>
@@ -93,7 +93,7 @@ function ForgotPasswordPage() {
           <div>
             <label
               htmlFor="forgot-email"
-              className="mb-2 block text-[13px] font-medium text-ink"
+              className="mb-2 block text-meta font-medium text-ink"
             >
               {page.email}
             </label>
@@ -106,7 +106,7 @@ function ForgotPasswordPage() {
               {...register('email')}
             />
             {errors.email ? (
-              <p className="mt-1.5 text-[13px] text-danger">{errors.email.message}</p>
+              <p className="mt-1.5 text-meta text-danger">{errors.email.message}</p>
             ) : null}
           </div>
 
@@ -115,7 +115,7 @@ function ForgotPasswordPage() {
           {errors.root?.message ? (
             <p
               role="alert"
-              className="rounded-md bg-danger/10 px-3 py-2 text-[13px] leading-5 text-danger"
+              className="rounded-md bg-danger/10 px-3 py-2 text-meta leading-5 text-danger"
             >
               {errors.root.message}
             </p>
@@ -127,14 +127,14 @@ function ForgotPasswordPage() {
 
           <Link
             to="/login"
-            className="inline-block text-[13px] text-ink-3 hover:text-ink hover:underline"
+            className="inline-block text-meta text-ink-3 hover:text-ink hover:underline"
           >
             {page.backToLogin}
           </Link>
         </form>
       )}
 
-      <p className="mt-8 border-t border-line pt-4 text-[13px] leading-6 text-ink-3">
+      <p className="mt-8 border-t border-line pt-4 text-meta leading-6 text-ink-3">
         {page.note}
       </p>
     </AuthSplit>

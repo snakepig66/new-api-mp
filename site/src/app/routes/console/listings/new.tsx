@@ -10,6 +10,7 @@ import { cn } from '@/lib/cn'
 import {
   Button,
   Input,
+  ModelName,
   PageHeader,
   Table,
   TableBody,
@@ -256,7 +257,7 @@ function StepRail({ step, onJump }: { step: number; onJump: (next: WizardStep) =
               <span
                 aria-hidden="true"
                 className={cn(
-                  'grid h-6 w-6 shrink-0 place-items-center rounded-full border text-[13px] font-medium',
+                  'grid h-6 w-6 shrink-0 place-items-center rounded-full border text-meta font-medium',
                   completed
                     ? 'border-transparent bg-brand-soft text-brand-ink'
                     : active
@@ -280,7 +281,7 @@ function StepRail({ step, onJump }: { step: number; onJump: (next: WizardStep) =
               </span>
               <span
                 className={cn(
-                  'text-[14px] font-medium',
+                  'text-body font-medium',
                   completed || active ? 'text-ink' : 'text-ink-3',
                 )}
               >
@@ -315,10 +316,10 @@ function TrustBadge({
     )
   }
   if (error) {
-    return <span className="text-[13px] leading-5 text-danger">{error}</span>
+    return <span className="text-meta leading-5 text-danger">{error}</span>
   }
   if (!trust) {
-    return <span className="text-[13px] text-ink-3">{page.trust.idle}</span>
+    return <span className="text-meta text-ink-3">{page.trust.idle}</span>
   }
   const tone = trust.trust === 'blocked' ? 'danger' : trust.trust === 'trusted' ? 'brand' : 'neutral'
   return (
@@ -352,8 +353,8 @@ function CommonAddressList({
 }) {
   return (
     <div>
-      <h4 className="text-[13px] font-medium text-ink-3">{page.url.commonTitle}</h4>
-      <p className="mt-1 text-[13px] text-ink-3">{page.url.commonHint}</p>
+      <h4 className="text-meta font-medium text-ink-3">{page.url.commonTitle}</h4>
+      <p className="mt-1 text-meta text-ink-3">{page.url.commonHint}</p>
       {pending ? (
         <div className="mt-2 flex flex-wrap gap-2" aria-busy="true">
           {Array.from({ length: 4 }, (_, index) => (
@@ -362,13 +363,13 @@ function CommonAddressList({
         </div>
       ) : error ? (
         <div className="mt-2 flex flex-wrap items-center gap-3">
-          <span className="text-[13px] text-danger">{page.url.commonError}</span>
+          <span className="text-meta text-danger">{page.url.commonError}</span>
           <Button variant="secondary" size="sm" onClick={onRetry}>
             {page.actions.retry}
           </Button>
         </div>
       ) : addresses.length === 0 ? (
-        <p className="mt-2 text-[13px] text-ink-3">{page.url.commonEmpty}</p>
+        <p className="mt-2 text-meta text-ink-3">{page.url.commonEmpty}</p>
       ) : (
         <div className="mt-2 flex flex-wrap gap-2">
           {addresses.map((address) => (
@@ -376,10 +377,10 @@ function CommonAddressList({
               key={address.host}
               type="button"
               onClick={() => onPick(address)}
-              className="flex items-center gap-2 glass px-3 py-2 text-left text-[13px] transition-colors hover:border-brand/40"
+              className="flex items-center gap-2 glass px-3 py-2 text-left text-meta transition-colors hover:border-brand/40"
             >
               <span className="font-medium text-ink">{address.vendor_name || address.host}</span>
-              <span className="font-mono text-[12px] text-ink-3">{address.host}</span>
+              <span className="font-mono text-caption text-ink-3">{address.host}</span>
             </button>
           ))}
         </div>
@@ -401,7 +402,7 @@ function AvailabilityGroup({
 }) {
   return (
     <div className="glass-inset p-4">
-      <label className="flex items-center gap-2 text-[13px] font-medium text-ink">
+      <label className="flex items-center gap-2 text-meta font-medium text-ink">
         <input
           type="checkbox"
           className="h-4 w-4 accent-brand"
@@ -419,7 +420,7 @@ function AvailabilityGroup({
           const slotLabel = slot === 'first' ? page.limits.first : page.limits.second
           return (
             <div key={slot}>
-              <span className="block text-[13px] text-ink-3">{slotLabel}</span>
+              <span className="block text-meta text-ink-3">{slotLabel}</span>
               <div className="mt-1 flex items-center gap-2">
                 <Input
                   type="time"
@@ -440,7 +441,7 @@ function AvailabilityGroup({
         })}
       </div>
       {error ? (
-        <p className="mt-2 text-[13px] text-danger" role="alert">
+        <p className="mt-2 text-meta text-danger" role="alert">
           {error}
         </p>
       ) : null}
@@ -857,12 +858,12 @@ export function NewListingPage() {
       >
         <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-4">
           <div>
-            <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+            <h2 className="text-title font-semibold tracking-tight text-ink">
               {page.steps[step]}
             </h2>
-            <p className="mt-1 text-[13px] leading-5 text-ink-3">{page.stepLead[step]}</p>
+            <p className="mt-1 text-meta leading-5 text-ink-3">{page.stepLead[step]}</p>
           </div>
-          <span className="tabular-nums text-[13px] text-ink-3">0{step + 1} / 05</span>
+          <span className="tabular-nums text-meta text-ink-3">0{step + 1} / 05</span>
         </header>
 
         <div className="pt-5">
@@ -897,12 +898,12 @@ export function NewListingPage() {
                     spellCheck={false}
                     placeholder={page.key.placeholder}
                     aria-invalid={Boolean(form.formState.errors.api_keys) || undefined}
-                    className="w-full rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 py-3 font-mono text-[14px] text-ink transition-colors placeholder:text-ink-3 focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20 aria-[invalid=true]:border-danger"
+                    className="w-full rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 py-3 font-mono text-body text-ink transition-colors placeholder:text-ink-3 focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20 aria-[invalid=true]:border-danger"
                     {...form.register('api_keys')}
                   />
                 </Field>
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-[13px] text-ink-3">
+                  <span className="text-meta text-ink-3">
                     {keys.length > 0 ? page.key.count(keys.length) : page.key.empty}
                   </span>
                   <TrustBadge
@@ -912,32 +913,32 @@ export function NewListingPage() {
                   />
                 </div>
                 {trust?.trust === 'blocked' ? (
-                  <p className="text-[13px] leading-5 text-danger" role="alert">
+                  <p className="text-meta leading-5 text-danger" role="alert">
                     {page.trust.blocked}
                   </p>
                 ) : trust?.trust === 'watch' || trust?.trust === 'unlisted' ? (
-                  <p className="text-[13px] leading-5 text-warn" role="status">
+                  <p className="text-meta leading-5 text-warn" role="status">
                     {trust.trust === 'watch' ? page.trust.watch : page.trust.unlisted}
                   </p>
                 ) : null}
 
                 {existingGroup ? (
                   <div className="glass-inset px-4 py-3">
-                    <h3 className="text-[13px] font-semibold text-ink">
+                    <h3 className="text-meta font-semibold text-ink">
                       {page.group.existingTitle}
                     </h3>
-                    <p className="mt-1 text-[13px] leading-5 text-ink-3">
+                    <p className="mt-1 text-meta leading-5 text-ink-3">
                       {page.group.existingHint(
                         existingGroup.key_count,
                         existingGroup.key_strategy,
                       )}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-4">
-                      <label className="flex items-center gap-2 text-[13px] text-ink">
+                      <label className="flex items-center gap-2 text-meta text-ink">
                         <input type="radio" checked readOnly className="h-4 w-4 accent-brand" />
                         {page.group.join}
                       </label>
-                      <label className="flex items-center gap-2 text-[13px] text-ink-3">
+                      <label className="flex items-center gap-2 text-meta text-ink-3">
                         <input
                           type="radio"
                           disabled
@@ -947,7 +948,7 @@ export function NewListingPage() {
                         {page.group.createNew}
                       </label>
                     </div>
-                    <p className="mt-1 text-[12px] leading-5 text-ink-3">
+                    <p className="mt-1 text-caption leading-5 text-ink-3">
                       {page.group.createNewHint}
                     </p>
                   </div>
@@ -955,10 +956,10 @@ export function NewListingPage() {
 
                 {keys.length > 1 ? (
                   <div>
-                    <h3 className="text-[13px] font-semibold text-ink">
+                    <h3 className="text-meta font-semibold text-ink">
                       {page.group.keyOrderTitle}
                     </h3>
-                    <p className="mt-1 text-[13px] leading-5 text-ink-3">
+                    <p className="mt-1 text-meta leading-5 text-ink-3">
                       {values.key_strategy === 'primary_backup'
                         ? page.group.orderHint
                         : page.group.weightHint}
@@ -969,13 +970,13 @@ export function NewListingPage() {
                           key={`${index}-${key.slice(-6)}`}
                           className="flex flex-wrap items-center justify-between gap-3 glass-inset px-4 py-2"
                         >
-                          <span className="font-mono text-[12px] text-ink-3">
+                          <span className="font-mono text-caption text-ink-3">
                             {maskApiKey(key)}
                           </span>
                           {values.key_strategy === 'primary_backup' ? (
                             <Tag>{page.group.order(index + 1)}</Tag>
                           ) : (
-                            <label className="flex items-center gap-2 text-[13px] text-ink-3">
+                            <label className="flex items-center gap-2 text-meta text-ink-3">
                               {page.group.weight}
                               <Input
                                 className="w-24"
@@ -1015,11 +1016,11 @@ export function NewListingPage() {
             <div className="space-y-5">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
-                  <h3 className="text-[14px] font-semibold text-ink">{page.models.title}</h3>
-                  <p className="mt-1 text-[13px] text-ink-3">{page.models.lead}</p>
+                  <h3 className="text-body font-semibold text-ink">{page.models.title}</h3>
+                  <p className="mt-1 text-meta text-ink-3">{page.models.lead}</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <label className="flex items-center gap-2 text-[13px] text-ink-3">
+                  <label className="flex items-center gap-2 text-meta text-ink-3">
                     {page.models.batchLabel}
                     <Input
                       className="w-24"
@@ -1035,21 +1036,21 @@ export function NewListingPage() {
                     {page.models.applyAll}
                   </Button>
                   {batchApplied ? (
-                    <span className="text-[13px] text-brand-ink" role="status">
+                    <span className="text-meta text-brand-ink" role="status">
                       {page.models.applied}
                     </span>
                   ) : null}
                 </div>
               </div>
-              <p className="text-[13px] text-ink-3">{page.models.batchHint}</p>
+              <p className="text-meta text-ink-3">{page.models.batchHint}</p>
 
               {probingKeys ? (
                 <div className="flex items-center gap-2" aria-busy="true" aria-live="polite">
                   <Skeleton className="h-4 w-4 rounded-full" />
-                  <span className="text-[13px] text-ink-3">{page.models.loading}</span>
+                  <span className="text-meta text-ink-3">{page.models.loading}</span>
                 </div>
               ) : !probed || (upstreamOptions.length === 0 && poolOptions.length === 0) ? (
-                <p className="text-[13px] leading-5 text-warn" role="status">
+                <p className="text-meta leading-5 text-warn" role="status">
                   {page.models.noModels}
                 </p>
               ) : (
@@ -1086,12 +1087,12 @@ export function NewListingPage() {
                 />
               )}
               {Object.keys(keyProbes).length < keys.length && !probingKeys ? (
-                <p className="text-[13px] text-ink-3" role="status">
+                <p className="text-meta text-ink-3" role="status">
                   {page.models.partial}
                 </p>
               ) : null}
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[13px] text-ink-3">
+                <span className="text-meta text-ink-3">
                   {page.models.selected(values.models.length)}
                 </span>
                 <Button
@@ -1104,12 +1105,12 @@ export function NewListingPage() {
                 </Button>
               </div>
               {new Set(values.models.map((model) => multipliers[model])).size > 1 ? (
-                <p className="text-[13px] leading-5 text-warn" role="status">
+                <p className="text-meta leading-5 text-warn" role="status">
                   {page.models.mixedMultiplier}
                 </p>
               ) : null}
               {form.formState.errors.models?.message ? (
-                <p className="text-[13px] text-danger" role="alert">
+                <p className="text-meta text-danger" role="alert">
                   {form.formState.errors.models.message}
                 </p>
               ) : null}
@@ -1119,8 +1120,8 @@ export function NewListingPage() {
           {step === 2 ? (
             <div className="max-w-3xl space-y-6">
               <div>
-                <h3 className="text-[14px] font-semibold text-ink">{page.limits.title}</h3>
-                <p className="mt-1 text-[13px] text-ink-3">{page.limits.lead}</p>
+                <h3 className="text-body font-semibold text-ink">{page.limits.title}</h3>
+                <p className="mt-1 text-meta text-ink-3">{page.limits.lead}</p>
               </div>
               <div className="grid gap-4 sm:grid-cols-3">
                 <Field
@@ -1166,8 +1167,8 @@ export function NewListingPage() {
               </div>
 
               <div className="border-t border-line pt-4">
-                <h3 className="text-[14px] font-semibold text-ink">{page.limits.hoursTitle}</h3>
-                <p className="mt-1 text-[13px] text-ink-3">{page.limits.hoursLead}</p>
+                <h3 className="text-body font-semibold text-ink">{page.limits.hoursTitle}</h3>
+                <p className="mt-1 text-meta text-ink-3">{page.limits.hoursLead}</p>
                 <div className="mt-3 grid gap-3">
                   {DAY_KEYS.map((day) => (
                     <AvailabilityGroup
@@ -1183,28 +1184,28 @@ export function NewListingPage() {
                   ))}
                 </div>
                 {!flatHours.any ? (
-                  <p className="mt-2 text-[13px] text-ink-3">{page.limits.noHours}</p>
+                  <p className="mt-2 text-meta text-ink-3">{page.limits.noHours}</p>
                 ) : null}
               </div>
 
               {requiresPlanTerms ? (
                 <div className="rounded-md border border-brand/25 bg-brand-soft/40 px-4 py-3">
-                  <h3 className="text-[13px] font-medium text-ink">{page.plan.title}</h3>
-                  <p className="mt-1 text-[13px] leading-5 text-ink-2">{page.plan.windows}</p>
+                  <h3 className="text-meta font-medium text-ink">{page.plan.title}</h3>
+                  <p className="mt-1 text-meta leading-5 text-ink-2">{page.plan.windows}</p>
                   {quotaWindowText ? (
-                    <p className="mt-1 text-[13px] leading-5 text-ink-2">{quotaWindowText}</p>
+                    <p className="mt-1 text-meta leading-5 text-ink-2">{quotaWindowText}</p>
                   ) : null}
                   {matchedVendor?.terms_url ? (
                     <a
                       href={matchedVendor.terms_url}
                       target="_blank"
                       rel="noreferrer"
-                      className="mt-1 inline-block text-[13px] text-brand-ink underline"
+                      className="mt-1 inline-block text-meta text-brand-ink underline"
                     >
                       {page.plan.termsLink}
                     </a>
                   ) : null}
-                  <label className="mt-3 flex items-start gap-2 text-[13px] text-ink">
+                  <label className="mt-3 flex items-start gap-2 text-meta text-ink">
                     <input
                       type="checkbox"
                       className="mt-0.5 h-4 w-4 shrink-0 accent-brand"
@@ -1212,11 +1213,11 @@ export function NewListingPage() {
                     />
                     <span>{page.plan.terms}</span>
                   </label>
-                  <p className="mt-1 pl-6 text-[13px] leading-5 text-ink-3">
+                  <p className="mt-1 pl-6 text-meta leading-5 text-ink-3">
                     {page.plan.termsHint}
                   </p>
                   {!values.plan_terms_accepted ? (
-                    <p className="mt-1 pl-6 text-[13px] text-warn" role="status">
+                    <p className="mt-1 pl-6 text-meta text-warn" role="status">
                       {page.plan.required}
                     </p>
                   ) : null}
@@ -1229,8 +1230,8 @@ export function NewListingPage() {
             <div className="max-w-2xl space-y-5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h3 className="text-[14px] font-semibold text-ink">{page.advanced.title}</h3>
-                  <p className="mt-1 text-[13px] text-ink-3">{page.advanced.lead}</p>
+                  <h3 className="text-body font-semibold text-ink">{page.advanced.title}</h3>
+                  <p className="mt-1 text-meta text-ink-3">{page.advanced.lead}</p>
                 </div>
                 <Button
                   variant="secondary"
@@ -1245,12 +1246,12 @@ export function NewListingPage() {
               {advancedOpen ? (
                 <div className="space-y-6">
                   <fieldset>
-                    <legend className="text-[13px] font-medium text-ink">
+                    <legend className="text-meta font-medium text-ink">
                       {page.advanced.keyPolicy}
                     </legend>
-                    <p className="mt-1 text-[13px] text-ink-3">{page.advanced.keyPolicyHint}</p>
+                    <p className="mt-1 text-meta text-ink-3">{page.advanced.keyPolicyHint}</p>
                     <div className="mt-2 flex flex-wrap gap-4">
-                      <label className="flex items-center gap-2 text-[13px] text-ink">
+                      <label className="flex items-center gap-2 text-meta text-ink">
                         <input
                           type="radio"
                           value="weighted"
@@ -1259,7 +1260,7 @@ export function NewListingPage() {
                         />
                         {page.advanced.weighted}
                       </label>
-                      <label className="flex items-center gap-2 text-[13px] text-ink">
+                      <label className="flex items-center gap-2 text-meta text-ink">
                         <input
                           type="radio"
                           value="primary_backup"
@@ -1272,7 +1273,7 @@ export function NewListingPage() {
                   </fieldset>
 
                   <div>
-                    <label className="flex items-center gap-2 text-[13px] font-medium text-ink">
+                    <label className="flex items-center gap-2 text-meta font-medium text-ink">
                       <input
                         type="checkbox"
                         className="h-4 w-4 accent-brand"
@@ -1280,13 +1281,13 @@ export function NewListingPage() {
                       />
                       {page.advanced.affinity}
                     </label>
-                    <p className="mt-1 pl-6 text-[13px] text-ink-3">
+                    <p className="mt-1 pl-6 text-meta text-ink-3">
                       {page.advanced.affinityHint}
                     </p>
                   </div>
 
                   <div className="border-t border-line pt-4">
-                    <h4 className="text-[13px] font-medium text-ink">{page.advanced.headers}</h4>
+                    <h4 className="text-meta font-medium text-ink">{page.advanced.headers}</h4>
                     {trust?.trust === 'unlisted' ? (
                       <Field
                         label={page.advanced.headers}
@@ -1299,20 +1300,20 @@ export function NewListingPage() {
                           rows={3}
                           spellCheck={false}
                           placeholder={'X-Custom-Header: value'}
-                          className="w-full rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 py-3 font-mono text-[14px] text-ink transition-colors placeholder:text-ink-3 focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20 aria-[invalid=true]:border-danger"
+                          className="w-full rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 py-3 font-mono text-body text-ink transition-colors placeholder:text-ink-3 focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20 aria-[invalid=true]:border-danger"
                           {...form.register('headers')}
                         />
                       </Field>
                     ) : (
-                      <p className="mt-2 text-[13px] text-ink-3">{page.advanced.headersLocked}</p>
+                      <p className="mt-2 text-meta text-ink-3">{page.advanced.headersLocked}</p>
                     )}
                   </div>
 
                   <div className="border-t border-line pt-4">
-                    <h4 className="text-[13px] font-medium text-ink">
+                    <h4 className="text-meta font-medium text-ink">
                       {page.advanced.endpoints}
                     </h4>
-                    <p className="mt-1 text-[13px] text-ink-3">
+                    <p className="mt-1 text-meta text-ink-3">
                       {page.advanced.endpointsHint}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-4">
@@ -1320,7 +1321,7 @@ export function NewListingPage() {
                         (endpoint) => (
                           <label
                             key={endpoint}
-                            className="flex items-center gap-2 text-[13px] text-ink"
+                            className="flex items-center gap-2 text-meta text-ink"
                           >
                             <input
                               type="checkbox"
@@ -1349,11 +1350,11 @@ export function NewListingPage() {
             <div className="space-y-5">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
-                  <h3 className="text-[14px] font-semibold text-ink">{page.verify.title}</h3>
-                  <p className="mt-1 text-[13px] text-ink-3">{page.verify.lead}</p>
+                  <h3 className="text-body font-semibold text-ink">{page.verify.title}</h3>
+                  <p className="mt-1 text-meta text-ink-3">{page.verify.lead}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[13px] tabular-nums text-ink-3">
+                  <span className="text-meta tabular-nums text-ink-3">
                     {page.verify.passed(passedCount, verification.length)}
                   </span>
                   <Button
@@ -1368,7 +1369,7 @@ export function NewListingPage() {
               </div>
 
               {keys.length === 0 || values.models.length === 0 ? (
-                <p className="text-[13px] text-ink-3">{page.verify.noSelection}</p>
+                <p className="text-meta text-ink-3">{page.verify.noSelection}</p>
               ) : (
                 <Table minWidth={760} size="compact">
                   <TableHead>
@@ -1383,17 +1384,17 @@ export function NewListingPage() {
                   <TableBody>
                     {verification.map((cell: VerificationCell) => (
                       <TableRow key={`${cell.key}|${cell.model}|${cell.endpoint}`}>
-                        <TableCell className="font-mono text-[13px]">
+                        <TableCell className="font-mono text-meta">
                           {maskApiKey(cell.key)}
                         </TableCell>
-                        <TableCell className="font-mono text-[13px]">{cell.model}</TableCell>
+                        <TableCell className="font-mono text-meta"><ModelName model={cell.model} size="sm" /></TableCell>
                         <TableCell>{endpointLabel(cell.endpoint)}</TableCell>
                         <TableCell>
                           <Tag tone={cell.ok ? 'brand' : 'danger'} dot>
                             {cell.ok ? page.verify.pass : page.verify.fail}
                           </Tag>
                         </TableCell>
-                        <TableCell className="text-[13px] text-ink-3">
+                        <TableCell className="text-meta text-ink-3">
                           {cell.ok
                             ? '—'
                             : probeErrors[cell.key] ||
@@ -1405,7 +1406,7 @@ export function NewListingPage() {
                   </TableBody>
                 </Table>
               )}
-              <p className="text-[13px] leading-5 text-ink-3">{page.verify.endpointNote}</p>
+              <p className="text-meta leading-5 text-ink-3">{page.verify.endpointNote}</p>
 
               <div className="flex flex-wrap items-center gap-3 border-t border-line pt-4">
                 <Button
@@ -1424,8 +1425,8 @@ export function NewListingPage() {
                   {page.verify.keepDraft}
                 </Button>
               </div>
-              <p className="text-[13px] leading-5 text-ink-3">{page.verify.publishHint}</p>
-              <p className="text-[13px] leading-5 text-ink-3">{page.verify.draftHint}</p>
+              <p className="text-meta leading-5 text-ink-3">{page.verify.publishHint}</p>
+              <p className="text-meta leading-5 text-ink-3">{page.verify.draftHint}</p>
             </div>
           ) : null}
 
@@ -1435,7 +1436,7 @@ export function NewListingPage() {
                 className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-warn/30 bg-warn/10 px-4 py-3"
                 role="alert"
               >
-                <p className="text-[13px] leading-5 text-warn">
+                <p className="text-meta leading-5 text-warn">
                   {duplicate.listingId
                     ? page.duplicate.own(duplicate.listingId)
                     : copy.pages.sellerCommon.errors.duplicateKeyOwn}
@@ -1444,33 +1445,33 @@ export function NewListingPage() {
                   <Link
                     to="/console/listings/$id"
                     params={{ id: String(duplicate.listingId) }}
-                    className="text-[13px] font-medium text-brand-ink underline"
+                    className="text-meta font-medium text-brand-ink underline"
                   >
                     {page.duplicate.ownLink}
                   </Link>
                 ) : (
                   <Link
                     to="/console/listings"
-                    className="text-[13px] font-medium text-brand-ink underline"
+                    className="text-meta font-medium text-brand-ink underline"
                   >
                     {page.duplicate.ownLink}
                   </Link>
                 )}
               </div>
             ) : (
-              <p className="mt-4 text-[13px] text-danger" role="alert">
+              <p className="mt-4 text-meta text-danger" role="alert">
                 {page.duplicate.other}
               </p>
             )
           ) : submitError ? (
-            <p className="mt-4 text-[13px] text-danger" role="alert">
+            <p className="mt-4 text-meta text-danger" role="alert">
               {submitError}
             </p>
           ) : null}
         </div>
 
         <footer className="mt-6 flex items-center justify-between gap-2 border-t border-line pt-4">
-          <div className="text-[13px] text-ink-3">
+          <div className="text-meta text-ink-3">
             {values.models.length > 0 ? page.models.selected(values.models.length) : null}
           </div>
           <div className="flex items-center gap-2">

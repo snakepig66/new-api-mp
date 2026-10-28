@@ -15,9 +15,9 @@ export interface PriceProps {
 }
 
 const sizeClass: Record<PriceSize, string> = {
-  sm: 'text-[13px]',
-  md: 'text-[15px]',
-  lg: 'text-[22px] font-semibold text-brand-ink',
+  sm: 'text-meta',
+  md: 'text-body',
+  lg: 'text-h2 font-semibold text-brand-ink',
 }
 
 /** Price per million tokens. Figures are sans + tabular, never mono. */
@@ -45,7 +45,7 @@ export function Price({
         <span className={cn('tabular-nums text-ink', sizeClass[size])}>
           {formatYuan(value)}
         </span>
-        {unit ? <span className="text-[13px] text-ink-3">/ {unit}</span> : null}
+        {unit ? <span className="text-meta text-ink-3">/ {unit}</span> : null}
       </div>
     </div>
   )

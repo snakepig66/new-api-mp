@@ -3,6 +3,7 @@ import { formatCount } from '../console/format'
 import { formatYuan } from '../../lib/money'
 import { formatDateTime } from '../../lib/time'
 import { SellerId } from '../../ui/identity'
+import { ModelName } from '../../ui/model-name'
 import { Tag } from '../../ui/tag'
 import {
   Table,
@@ -85,7 +86,7 @@ function isSuccess(record: UsageRecord): boolean {
 function ModelCell({ record }: { record: UsageRecord }) {
   return (
     <span className="inline-flex items-center gap-1">
-      <Tag tone="neutral">{record.model}</Tag>
+      <Tag tone="neutral"><ModelName model={record.model} size="sm" /></Tag>
       {record.converted && <Tag tone="warning">{copy.converted}</Tag>}
     </span>
   )
@@ -100,7 +101,7 @@ function TokensCell({ record }: { record: UsageRecord }) {
         {formatCount(record.input_tokens)} → {formatCount(record.output_tokens)}
       </div>
       {hasCache && (
-        <div className="text-xs text-ink-3 tabular-nums">
+        <div className="text-caption text-ink-3 tabular-nums">
           {copy.cacheRead} {formatCount(record.cache_read_tokens)} · {copy.cacheWrite}{' '}
           {formatCount(record.cache_write_tokens)}
         </div>
@@ -132,7 +133,7 @@ function CostCell({ record }: { record: UsageRecord }) {
         {formatYuan(record.total_debit_micro)}
       </div>
       {showOfficial && (
-        <div className="text-xs text-ink-3 tabular-nums">
+        <div className="text-caption text-ink-3 tabular-nums">
           <span className="line-through">{formatYuan(record.official_cost_micro)}</span>
           {showSaved && (
             <span className="ml-1 text-ok">{formatSaved(record.saved_permille)}</span>
@@ -229,8 +230,8 @@ function BuyerRecordCard({
         <ModelCell record={record} />
         <StatusCell record={record} />
       </div>
-      <div className="mt-1 text-xs text-ink-3">{formatDateTime(record.created_at)}</div>
-      <div className="mt-2 flex items-center justify-between gap-2 text-xs text-ink-3">
+      <div className="mt-1 text-caption text-ink-3">{formatDateTime(record.created_at)}</div>
+      <div className="mt-2 flex items-center justify-between gap-2 text-caption text-ink-3">
         <SellerId id={record.seller_id} />
         <span className="tabular-nums">
           {record.is_stream ? copy.stream : copy.nonStream} ·{' '}
@@ -240,7 +241,7 @@ function BuyerRecordCard({
           / {formatLatency(record.latency_ms)}
         </span>
       </div>
-      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-ink-2">
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-caption text-ink-2">
         <span>
           {copy.colGroup}: {record.token_group || copy.dash}
         </span>
@@ -250,7 +251,7 @@ function BuyerRecordCard({
         </span>
       </div>
       <div className="mt-2 flex items-end justify-between gap-2">
-        <div className="text-xs tabular-nums">
+        <div className="text-caption tabular-nums">
           <div>
             {formatCount(record.input_tokens)} → {formatCount(record.output_tokens)}
             {(record.cache_read_tokens > 0 || record.cache_write_tokens > 0) && (

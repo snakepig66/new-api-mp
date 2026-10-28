@@ -46,7 +46,7 @@ export function CopyButton({
       type="button"
       onClick={() => void handleCopy()}
       className={cn(
-        'inline-flex h-7 shrink-0 items-center rounded-full px-2.5 text-[13px] text-ink-2 transition-colors',
+        'inline-flex h-7 shrink-0 items-center rounded-full px-2.5 text-meta text-ink-2 transition-colors',
         'hover:bg-brand/[0.06] hover:text-ink',
         state === 'failed' && 'text-danger',
         state === 'copied' && 'text-brand-ink',

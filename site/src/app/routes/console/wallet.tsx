@@ -226,11 +226,11 @@ export function WalletPage() {
       ) : (
         <div className="mt-6 grid gap-6 glass p-6 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)] sm:divide-x sm:divide-line">
           <div className="min-w-0 sm:pr-6">
-            <div className="text-[13px] text-ink-3">{page.balance}</div>
-            <div className="mt-1 break-all text-[32px] font-semibold leading-tight tracking-tight tabular-nums text-brand-ink">
+            <div className="text-meta text-ink-3">{page.balance}</div>
+            <div className="mt-1 break-all text-h1 font-semibold leading-tight tracking-tight tabular-nums text-brand-ink">
               {formatYuan(wallet.data.balance_micro)}
             </div>
-            <div className="mt-1.5 text-[13px] leading-5 text-ink-3">{page.balanceHint}</div>
+            <div className="mt-1.5 text-meta leading-5 text-ink-3">{page.balanceHint}</div>
           </div>
           <Stat
             label={page.monthSpend}
@@ -267,8 +267,8 @@ export function WalletPage() {
                 onClick={() => selectKind(tab)}
                 className={
                   kind === tab
-                    ? 'rounded px-3 py-1.5 text-[13px] font-medium text-brand-ink'
-                    : 'rounded px-3 py-1.5 text-[13px] text-ink-2 transition-colors hover:text-ink'
+                    ? 'rounded px-3 py-1.5 text-meta font-medium text-brand-ink'
+                    : 'rounded px-3 py-1.5 text-meta text-ink-2 transition-colors hover:text-ink'
                 }
               >
                 {tx.tabs[tab]}
@@ -327,12 +327,12 @@ export function WalletPage() {
                   const description = flowDescription(entry)
                   return (
                     <TableRow key={entry.id}>
-                      <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
+                      <TableCell className="whitespace-nowrap tabular-nums text-meta text-ink-3">
                         {formatDateTime(entry.created_at)}
                       </TableCell>
                       <TableCell>{flowKindLabel(entry.kind)}</TableCell>
                       <TableCell
-                        className="max-w-[240px] truncate text-[13px] text-ink-3"
+                        className="max-w-[240px] truncate text-meta text-ink-3"
                         title={description}
                       >
                         {description}
@@ -353,7 +353,7 @@ export function WalletPage() {
                         <Tag tone={status.tone}>{status.label}</Tag>
                       </TableCell>
                       <TableCell
-                        className="max-w-[220px] truncate font-mono text-[12px] text-ink-2"
+                        className="max-w-[220px] truncate font-mono text-caption text-ink-2"
                         title={entry.reference}
                       >
                         {entry.reference || copy.pages.consoleShared.none}
@@ -365,7 +365,7 @@ export function WalletPage() {
             </Table>
 
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
-              <span className="tabular-nums text-[13px] text-ink-3">
+              <span className="tabular-nums text-meta text-ink-3">
                 {copy.pages.consoleRecords.pagination.summary(currentPage, totalPages)}
               </span>
               <div className="flex items-center gap-2">
@@ -506,7 +506,7 @@ function RechargePanel() {
   return (
     <section className="glass p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+        <h2 className="text-title font-semibold tracking-tight text-ink">
           {page.recharge.title}
         </h2>
         {info.data?.enable_online_topup && methods.length > 0 ? (
@@ -528,7 +528,7 @@ function RechargePanel() {
         <ErrorBlock className="mt-4" error={info.error} onRetry={() => void info.refetch()} />
       ) : !info.data.enable_online_topup || methods.length === 0 ? (
         <>
-          <p className="mt-2 text-[13px] leading-6 text-ink-3">
+          <p className="mt-2 text-meta leading-6 text-ink-3">
             {page.recharge.unavailableBody}
           </p>
           {info.data.topup_link ? (
@@ -544,12 +544,12 @@ function RechargePanel() {
         </>
       ) : (
         <>
-          <p className="mt-2 text-[13px] leading-6 text-ink-3">{page.recharge.body}</p>
+          <p className="mt-2 text-meta leading-6 text-ink-3">{page.recharge.body}</p>
 
           <div className="mt-4">
             <label
               htmlFor="recharge-amount"
-              className="mb-2 block text-[14px] font-medium text-ink"
+              className="mb-2 block text-body font-medium text-ink"
             >
               {page.recharge.amount}
             </label>
@@ -565,8 +565,8 @@ function RechargePanel() {
                       onClick={() => setAmount(String(option))}
                       className={
                         active
-                          ? 'rounded-full border border-brand bg-brand-soft px-3.5 py-1.5 text-[13px] font-medium text-brand-ink'
-                          : 'rounded-full border border-white/70 bg-white/70 px-3.5 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-line-strong hover:text-ink'
+                          ? 'rounded-full border border-brand bg-brand-soft px-3.5 py-1.5 text-meta font-medium text-brand-ink'
+                          : 'rounded-full border border-white/70 bg-white/70 px-3.5 py-1.5 text-meta text-ink-2 transition-colors hover:border-line-strong hover:text-ink'
                       }
                     >
                       {option} 元
@@ -584,9 +584,9 @@ function RechargePanel() {
                 invalid={Boolean(error)}
                 onChange={(event) => setAmount(event.target.value)}
               />
-              <span className="shrink-0 text-[13px] text-ink-3">元</span>
+              <span className="shrink-0 text-meta text-ink-3">元</span>
             </div>
-            <p className="mt-1.5 text-[13px] leading-5 text-ink-3">
+            <p className="mt-1.5 text-meta leading-5 text-ink-3">
               {page.recharge.min(String(info.data.min_topup))}
               {discount ? ` · ${page.recharge.discount(formatDiscount(discount))}` : ''}
             </p>
@@ -594,7 +594,7 @@ function RechargePanel() {
               data-testid="topup-payable"
               className="mt-3 glass-inset px-3.5 py-2.5"
             >
-              <div className="text-[15px] font-semibold tabular-nums text-ink">
+              <div className="text-body font-semibold tabular-nums text-ink">
                 {amountValid && amountValue >= minAmount
                   ? payable !== null
                     ? page.recharge.actualPay(payable.toFixed(2))
@@ -604,7 +604,7 @@ function RechargePanel() {
                   : page.recharge.actualPayHint}
               </div>
               {amountValid && amountValue >= minAmount && payable !== null ? (
-                <div className="mt-1 text-[12px] leading-5 text-ink-3">
+                <div className="mt-1 text-caption leading-5 text-ink-3">
                   {page.recharge.actualPayHint}
                 </div>
               ) : null}
@@ -613,7 +613,7 @@ function RechargePanel() {
 
           {methods.length > 1 ? (
             <div className="mt-4">
-              <div className="mb-2 text-[14px] font-medium text-ink">
+              <div className="mb-2 text-body font-medium text-ink">
                 {page.recharge.method}
               </div>
               <div className="flex flex-wrap gap-2">
@@ -625,8 +625,8 @@ function RechargePanel() {
                     onClick={() => setMethod(item.type)}
                     className={
                       method === item.type
-                        ? 'rounded-full border border-brand bg-brand-soft px-3.5 py-1.5 text-[13px] font-medium text-brand-ink'
-                        : 'rounded-full border border-white/70 bg-white/70 px-3.5 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-line-strong hover:text-ink'
+                        ? 'rounded-full border border-brand bg-brand-soft px-3.5 py-1.5 text-meta font-medium text-brand-ink'
+                        : 'rounded-full border border-white/70 bg-white/70 px-3.5 py-1.5 text-meta text-ink-2 transition-colors hover:border-line-strong hover:text-ink'
                     }
                   >
                     {item.name}
@@ -637,7 +637,7 @@ function RechargePanel() {
           ) : null}
 
           {error ? (
-            <p role="alert" className="mt-3 text-[13px] leading-5 text-danger">
+            <p role="alert" className="mt-3 text-meta leading-5 text-danger">
               {error}
             </p>
           ) : null}
@@ -650,7 +650,7 @@ function RechargePanel() {
           >
             {submitting ? page.recharge.paying : page.recharge.action}
           </Button>
-          <p className="mt-3 text-[13px] leading-5 text-ink-3">{page.recharge.hint}</p>
+          <p className="mt-3 text-meta leading-5 text-ink-3">{page.recharge.hint}</p>
         </>
       )}
     </section>
@@ -816,8 +816,8 @@ function RedeemPanel() {
 
   return (
     <section className="glass p-6">
-      <h2 className="text-[16px] font-semibold tracking-tight text-ink">{page.redeem.title}</h2>
-      <p className="mt-2 text-[13px] leading-6 text-ink-3">{page.redeem.hint}</p>
+      <h2 className="text-title font-semibold tracking-tight text-ink">{page.redeem.title}</h2>
+      <p className="mt-2 text-meta leading-6 text-ink-3">{page.redeem.hint}</p>
       <form
         className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-start"
         onSubmit={(event) => {
@@ -827,7 +827,7 @@ function RedeemPanel() {
         noValidate
       >
         <div className="min-w-0 flex-1">
-          <label htmlFor="redeem-code" className="mb-2 block text-[14px] font-medium text-ink">
+          <label htmlFor="redeem-code" className="mb-2 block text-body font-medium text-ink">
             {page.redeem.label}
           </label>
           <Input
@@ -844,7 +844,7 @@ function RedeemPanel() {
         </Button>
       </form>
       {error ? (
-        <p role="alert" className="mt-2 text-[13px] text-danger">
+        <p role="alert" className="mt-2 text-meta text-danger">
           {error}
         </p>
       ) : null}

@@ -446,7 +446,7 @@ export function TrustPoolPage() {
           title={page.listTitle}
           hint={page.count(fallbackTotal)}
           action={
-            <span className="text-[13px] text-ink-3">{page.pageOf(pageIndex, totalPages)}</span>
+            <span className="text-meta text-ink-3">{page.pageOf(pageIndex, totalPages)}</span>
           }
         >
           <div className="mb-5 grid gap-3 sm:grid-cols-3">
@@ -513,7 +513,7 @@ export function TrustPoolPage() {
                   <TableHeaderCell>{page.columns.source}</TableHeaderCell>
                   <TableHeaderCell>{page.columns.createdAt}</TableHeaderCell>
                   <TableHeaderCell>{page.columns.notes}</TableHeaderCell>
-                  <TableHeaderCell className="text-right">{page.columns.actions}</TableHeaderCell>
+                  <TableHeaderCell numeric>{page.columns.actions}</TableHeaderCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -521,12 +521,12 @@ export function TrustPoolPage() {
                   const expired = row.trust === 'trusted' && isExpired(row.expires_at)
                   return (
                     <TableRow key={row.id}>
-                      <TableCell className="font-mono text-[13px]">
+                      <TableCell className="font-mono text-meta">
                         <div className="max-w-[260px] truncate" title={targetLabel(row)}>
                           {targetLabel(row)}
                         </div>
                         {row.host_pattern ? (
-                          <div className="mt-1 text-[12px] text-ink-3">
+                          <div className="mt-1 text-caption text-ink-3">
                             {page.form.hostPattern}
                           </div>
                         ) : null}
@@ -552,10 +552,10 @@ export function TrustPoolPage() {
                       <TableCell>
                         <SourceTag source={row.source} />
                       </TableCell>
-                      <TableCell className="text-[13px] text-ink-3">
+                      <TableCell className="text-meta text-ink-3">
                         {formatDateTime(row.created_at)}
                       </TableCell>
-                      <TableCell className="max-w-[220px] truncate text-[13px] text-ink-3">
+                      <TableCell className="max-w-[220px] truncate text-meta text-ink-3">
                         {row.notes || common.none}
                       </TableCell>
                       <TableCell className="text-right">
@@ -633,7 +633,7 @@ export function TrustPoolPage() {
                     <TableHeaderCell>{page.approvals.columns.submitter}</TableHeaderCell>
                     <TableHeaderCell>{page.approvals.columns.createdAt}</TableHeaderCell>
                     <TableHeaderCell>{page.approvals.columns.notes}</TableHeaderCell>
-                    <TableHeaderCell className="text-right">
+                    <TableHeaderCell numeric>
                       {page.approvals.columns.actions}
                     </TableHeaderCell>
                   </TableRow>
@@ -646,7 +646,7 @@ export function TrustPoolPage() {
                     const busy = approving || rejecting
                     return (
                       <TableRow key={row.id}>
-                        <TableCell className="font-mono text-[13px]">
+                        <TableCell className="font-mono text-meta">
                           <div className="max-w-[260px] truncate" title={approvalTarget(row)}>
                             {approvalTarget(row)}
                           </div>
@@ -654,13 +654,13 @@ export function TrustPoolPage() {
                         <TableCell>
                           <Tag>{approvalActionLabel(row.action)}</Tag>
                         </TableCell>
-                        <TableCell className="text-[13px] text-ink-2">
+                        <TableCell className="text-meta text-ink-2">
                           {page.approvals.submitter(row.submitter_id)}
                         </TableCell>
-                        <TableCell className="text-[13px] text-ink-3">
+                        <TableCell className="text-meta text-ink-3">
                           {formatDateTime(row.created_at)}
                         </TableCell>
-                        <TableCell className="max-w-[220px] truncate text-[13px] text-ink-3">
+                        <TableCell className="max-w-[220px] truncate text-meta text-ink-3">
                           {row.notes || common.none}
                         </TableCell>
                         <TableCell className="text-right">
@@ -847,7 +847,7 @@ export function TrustPoolPage() {
             <Field label={page.form.endpoints}>
               <div className="flex flex-wrap gap-4">
                 {TRUST_POOL_ENDPOINTS.map((endpoint) => (
-                  <label key={endpoint} className="flex items-center gap-2 text-[13px] text-ink">
+                  <label key={endpoint} className="flex items-center gap-2 text-meta text-ink">
                     <input
                       type="checkbox"
                       className="h-4 w-4 accent-brand"
@@ -908,7 +908,7 @@ export function TrustPoolPage() {
           </div>
 
           {editing ? (
-            <p className="mt-3 text-[13px] text-ink-3">
+            <p className="mt-3 text-meta text-ink-3">
               {page.form.source}: {sourceLabel(editing.source)}
             </p>
           ) : null}
@@ -934,7 +934,7 @@ export function TrustPoolPage() {
           {submitError ? (
             <p
               role="alert"
-              className="mt-4 border border-danger/25 bg-danger/10 px-3 py-2 text-[13px] text-danger"
+              className="mt-4 border border-danger/25 bg-danger/10 px-3 py-2 text-meta text-danger"
             >
               {submitError}
             </p>
@@ -962,8 +962,8 @@ export function TrustPoolPage() {
 function DetailItem({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[12px] uppercase tracking-[0.08em] text-ink-3">{label}</dt>
-      <dd className="mt-1 break-words text-[14px] text-ink">{children}</dd>
+      <dt className="text-caption uppercase tracking-[0.08em] text-ink-3">{label}</dt>
+      <dd className="mt-1 break-words text-body text-ink">{children}</dd>
     </div>
   )
 }
@@ -986,7 +986,7 @@ function TrustPoolDetail({ id, onClose }: { id: number | null; onClose: () => vo
       }
     >
       {detail.isPending ? (
-        <p className="text-[13px] text-ink-3">{common.loading}</p>
+        <p className="text-meta text-ink-3">{common.loading}</p>
       ) : detail.isError ? (
         <ErrorBlock error={detail.error} onRetry={() => void detail.refetch()} />
       ) : row ? (

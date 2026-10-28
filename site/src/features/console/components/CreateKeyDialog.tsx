@@ -299,7 +299,7 @@ export function CreateKeyDialog({
           {error ? (
             <p
               role="alert"
-              className="border border-danger/25 bg-danger/10 px-3 py-2 text-[13px] leading-5 text-danger"
+              className="border border-danger/25 bg-danger/10 px-3 py-2 text-meta leading-5 text-danger"
             >
               {error}
             </p>
@@ -317,7 +317,7 @@ export function CreateKeyDialog({
           </Field>
 
           <div>
-            <div className="text-[14px] font-medium text-ink">{scopeCopy.label}</div>
+            <div className="text-body font-medium text-ink">{scopeCopy.label}</div>
             <div className="mt-2 inline-flex glass-inset p-0.5">
               <ScopeButton
                 active={scope === 'all'}
@@ -330,7 +330,7 @@ export function CreateKeyDialog({
                 label={scopeCopy.selected}
               />
             </div>
-            <p className="mt-1.5 text-[13px] leading-5 text-ink-3">{scopeCopy.hint}</p>
+            <p className="mt-1.5 text-meta leading-5 text-ink-3">{scopeCopy.hint}</p>
           </div>
 
           {scope === 'selected' ? (
@@ -350,19 +350,19 @@ export function CreateKeyDialog({
                 value={spendCap}
                 onChange={(event) => setSpendCap(event.target.value)}
               />
-              <span className="shrink-0 text-[13px] text-ink-3">元</span>
+              <span className="shrink-0 text-meta text-ink-3">元</span>
             </div>
           </Field>
 
           <details className="glass-inset">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-[14px] font-medium text-ink">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-body font-medium text-ink">
               <span>
                 <span aria-hidden="true" className="mr-1.5 text-ink-3">
                   ▸
                 </span>
                 {dialogCopy.advanced}
               </span>
-              <span className="hidden text-[13px] font-normal text-ink-3 sm:inline">
+              <span className="hidden text-meta font-normal text-ink-3 sm:inline">
                 {dialogCopy.advancedHint}
               </span>
             </summary>
@@ -374,7 +374,7 @@ export function CreateKeyDialog({
               >
                 <select
                   id="create-key-copy-from"
-                  className="h-11 w-full rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-3 text-[14px] text-ink"
+                  className="h-11 w-full rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-3 text-body text-ink"
                   value={copyFrom}
                   onChange={(event) => applyCopySettings(event.target.value)}
                 >
@@ -400,7 +400,7 @@ export function CreateKeyDialog({
                     value={expiresAt}
                     onChange={(event) => setExpiresAt(event.target.value)}
                   />
-                  <label className="mt-2 inline-flex items-center gap-2 text-[13px] text-ink">
+                  <label className="mt-2 inline-flex items-center gap-2 text-meta text-ink">
                     <input
                       type="checkbox"
                       className="h-3.5 w-3.5 accent-brand"
@@ -420,7 +420,7 @@ export function CreateKeyDialog({
                   hint={dialogCopy.allowIps.hint}
                 >
                   {currentIp.data?.ip ? (
-                    <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[12px] text-ink-3">
+                    <div className="mb-1.5 flex flex-wrap items-center gap-2 text-caption text-ink-3">
                       <span className="font-mono">
                         {page.currentIp.label(currentIp.data.ip)}
                       </span>
@@ -444,7 +444,7 @@ export function CreateKeyDialog({
                     id="create-key-allow-ips"
                     rows={3}
                     spellCheck={false}
-                    className="w-full resize-y rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-3 py-2 font-mono text-[13px] text-ink transition-colors placeholder:text-ink-3 focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20"
+                    className="w-full resize-y rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-3 py-2 font-mono text-meta text-ink transition-colors placeholder:text-ink-3 focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20"
                     placeholder={dialogCopy.allowIps.placeholder}
                     value={allowIps}
                     onChange={(event) => setAllowIps(event.target.value)}
@@ -457,7 +457,7 @@ export function CreateKeyDialog({
               </div>
 
               {scope === 'selected' && selectedCount > 0 ? (
-                <p className="text-[13px] text-ink-3">
+                <p className="text-meta text-ink-3">
                   {dialogCopy.models.selected(selectedCount)}
                 </p>
               ) : null}
@@ -484,7 +484,7 @@ function ScopeButton({
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        'rounded-sm px-3 py-1.5 text-[13px] transition-colors',
+        'rounded-sm px-3 py-1.5 text-meta transition-colors',
         active ? 'bg-white/90 font-medium text-brand-ink shadow-sm' : 'text-ink-3 hover:text-ink',
       )}
     >
@@ -546,19 +546,19 @@ function CreatedKey({
       <div className="rounded-md border border-brand/30 bg-brand-soft px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="text-[13px] text-ink-3">{dialogCopy.successTitle}</div>
-            <div className="mt-0.5 text-[15px] font-medium text-ink">{result.name}</div>
+            <div className="text-meta text-ink-3">{dialogCopy.successTitle}</div>
+            <div className="mt-0.5 text-body font-medium text-ink">{result.name}</div>
           </div>
           <Button size="sm" onClick={onCopy}>
             {copied ? shared.copied : dialogCopy.copyKey}
           </Button>
         </div>
-        <code className="mt-3 block break-all glass-inset rounded-sm px-3 py-2 font-mono text-[13px] text-ink">
+        <code className="mt-3 block break-all glass-inset rounded-sm px-3 py-2 font-mono text-meta text-ink">
           {result.key}
         </code>
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-ink-3">
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-meta text-ink-3">
           <span>{dialogCopy.baseUrlLabel}</span>
-          <code className="glass-inset rounded-sm px-2 py-0.5 font-mono text-[13px] text-ink">
+          <code className="glass-inset rounded-sm px-2 py-0.5 font-mono text-meta text-ink">
             {baseUrl}
           </code>
           <span>{dialogCopy.baseUrlHint}</span>
@@ -568,7 +568,7 @@ function CreatedKey({
       {walletZero ? (
         <div
           role="status"
-          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warn/25 bg-warn/10 px-4 py-3 text-[13px] text-warn"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warn/25 bg-warn/10 px-4 py-3 text-meta text-warn"
         >
           <div>
             <div className="font-medium">{dialogCopy.balanceWarning.title}</div>
@@ -583,7 +583,7 @@ function CreatedKey({
         </div>
       ) : null}
 
-      <div className="grid gap-2 text-[13px] text-ink-3 sm:grid-cols-2">
+      <div className="grid gap-2 text-meta text-ink-3 sm:grid-cols-2">
         <span>
           {copy.pages.consoleKeys.columns.models}：
           {result.model_scope === 'all'
@@ -597,13 +597,13 @@ function CreatedKey({
       </div>
 
       <div>
-        <div className="text-[14px] font-medium text-ink">{dialogCopy.configsTitle}</div>
-        <p className="mt-0.5 text-[13px] text-ink-3">{dialogCopy.configsHint}</p>
+        <div className="text-body font-medium text-ink">{dialogCopy.configsTitle}</div>
+        <p className="mt-0.5 text-meta text-ink-3">{dialogCopy.configsHint}</p>
         <div className="mt-2 space-y-2">
           {configs.map((config) => (
             <div key={config.key} className="glass-inset">
               <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
-                <span className="text-[13px] font-medium text-ink">{config.label}</span>
+                <span className="text-meta font-medium text-ink">{config.label}</span>
                 <Button
                   size="sm"
                   variant="secondary"
@@ -612,7 +612,7 @@ function CreatedKey({
                   {copiedConfig === config.key ? shared.copied : dialogCopy.copyConfig}
                 </Button>
               </div>
-              <pre className="overflow-x-auto px-3 py-2 font-mono text-[12px] leading-5 text-ink">
+              <pre className="overflow-x-auto px-3 py-2 font-mono text-caption leading-5 text-ink">
                 {config.text}
               </pre>
             </div>

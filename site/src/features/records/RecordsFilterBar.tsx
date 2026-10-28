@@ -124,7 +124,7 @@ export function RecordsFilterBar({
     <div className={className} aria-label={filtersCopy.ariaLabel}>
       <div className="flex flex-wrap items-end gap-x-5 gap-y-4">
         <div>
-          <span className="mb-2 block text-[14px] font-medium text-ink">{filtersCopy.range}</span>
+          <span className="mb-2 block text-body font-medium text-ink">{filtersCopy.range}</span>
           <Segmented
             ariaLabel={filtersCopy.range}
             value={value.preset}
@@ -141,7 +141,7 @@ export function RecordsFilterBar({
         {value.preset === 'custom' ? (
           <div className="flex items-end gap-3">
             <label className="block">
-              <span className="mb-2 block text-[14px] font-medium text-ink">
+              <span className="mb-2 block text-body font-medium text-ink">
                 {filtersCopy.customStart}
               </span>
               <Input
@@ -152,7 +152,7 @@ export function RecordsFilterBar({
               />
             </label>
             <label className="block">
-              <span className="mb-2 block text-[14px] font-medium text-ink">
+              <span className="mb-2 block text-body font-medium text-ink">
                 {filtersCopy.customEnd}
               </span>
               <Input
@@ -180,7 +180,7 @@ export function RecordsFilterBar({
         />
 
         <label className="block">
-          <span className="mb-2 block text-[14px] font-medium text-ink">{filtersCopy.model}</span>
+          <span className="mb-2 block text-body font-medium text-ink">{filtersCopy.model}</span>
           <Input
             className="w-[200px]"
             placeholder={filtersCopy.modelPlaceholder}

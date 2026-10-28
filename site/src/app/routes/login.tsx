@@ -82,13 +82,13 @@ function LoginPage() {
 
   return (
     <AuthSplit headline={page.brandHeading} body={page.brandBody} points={page.points}>
-      <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-ink">{page.title}</h1>
-      <p className="mt-2 text-[15px] leading-6 text-ink-2">{page.lead}</p>
+      <h1 className="text-h1 font-semibold leading-tight tracking-tight text-ink">{page.title}</h1>
+      <p className="mt-2 text-body leading-6 text-ink-2">{page.lead}</p>
 
       {registered ? (
         <p
           role="status"
-          className="mt-5 rounded-md bg-brand-soft px-3 py-2 text-[13px] leading-5 text-brand-ink"
+          className="mt-5 rounded-md bg-brand-soft px-3 py-2 text-meta leading-5 text-brand-ink"
         >
           {page.registered}
         </p>
@@ -96,7 +96,7 @@ function LoginPage() {
 
       <form className="mt-7 space-y-4" onSubmit={onSubmit} noValidate>
         <div>
-          <label htmlFor="login-identifier" className="mb-2 block text-[13px] font-medium text-ink">
+          <label htmlFor="login-identifier" className="mb-2 block text-meta font-medium text-ink">
             {page.identifier}
           </label>
           <Input
@@ -107,19 +107,19 @@ function LoginPage() {
             {...register('identifier')}
           />
           {errors.identifier ? (
-            <p className="mt-1.5 text-[13px] text-danger">{errors.identifier.message}</p>
+            <p className="mt-1.5 text-meta text-danger">{errors.identifier.message}</p>
           ) : null}
         </div>
 
         <div>
           <div className="mb-2 flex items-baseline justify-between gap-3">
-            <label htmlFor="login-password" className="block text-[13px] font-medium text-ink">
+            <label htmlFor="login-password" className="block text-meta font-medium text-ink">
               {page.password}
             </label>
             {status.data?.smtp_configured ? (
               <Link
                 to="/forgot-password"
-                className="text-[13px] text-ink-3 transition-colors hover:text-brand hover:underline"
+                className="text-meta text-ink-3 transition-colors hover:text-brand hover:underline"
               >
                 {page.forgot}
               </Link>
@@ -133,7 +133,7 @@ function LoginPage() {
             {...register('password')}
           />
           {errors.password ? (
-            <p className="mt-1.5 text-[13px] text-danger">{errors.password.message}</p>
+            <p className="mt-1.5 text-meta text-danger">{errors.password.message}</p>
           ) : null}
         </div>
 
@@ -142,7 +142,7 @@ function LoginPage() {
         {errors.root?.message ? (
           <p
             role="alert"
-            className="rounded-md bg-danger/10 px-3 py-2 text-[13px] leading-5 text-danger"
+            className="rounded-md bg-danger/10 px-3 py-2 text-meta leading-5 text-danger"
           >
             {errors.root.message}
           </p>
@@ -153,7 +153,7 @@ function LoginPage() {
         </Button>
       </form>
 
-      <div className="my-6 flex items-center gap-3 text-[13px] text-ink-3">
+      <div className="my-6 flex items-center gap-3 text-meta text-ink-3">
         <span className="h-px flex-1 bg-line" aria-hidden="true" />
         {page.or}
         <span className="h-px flex-1 bg-line" aria-hidden="true" />
@@ -164,14 +164,14 @@ function LoginPage() {
         onError={(message) => setError('root', { message })}
       />
 
-      <p className="mt-6 text-[14px] text-ink-2">
+      <p className="mt-6 text-body text-ink-2">
         {page.noAccount}{' '}
         <Link to="/register" className="text-brand hover:underline">
           {page.toRegister}
         </Link>
       </p>
 
-      <p className="mt-8 border-t border-line pt-4 text-[13px] leading-6 text-ink-3">{page.note}</p>
+      <p className="mt-8 border-t border-line pt-4 text-meta leading-6 text-ink-3">{page.note}</p>
     </AuthSplit>
   )
 }

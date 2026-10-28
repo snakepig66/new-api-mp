@@ -205,7 +205,7 @@ export function OverviewCharts({ series }: { series: readonly SellerOverviewMode
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <div className="min-w-0">
-        <h3 className="text-[14px] font-medium text-ink">{page.charts.tokensTitle}</h3>
+        <h3 className="text-body font-medium text-ink">{page.charts.tokensTitle}</h3>
         <div className="mt-3">
           <StackedByModelChart
             series={series}
@@ -215,7 +215,7 @@ export function OverviewCharts({ series }: { series: readonly SellerOverviewMode
         </div>
       </div>
       <div className="min-w-0">
-        <h3 className="text-[14px] font-medium text-ink">{page.charts.incomeTitle}</h3>
+        <h3 className="text-body font-medium text-ink">{page.charts.incomeTitle}</h3>
         <div className="mt-3">
           <StackedByModelChart
             series={series}

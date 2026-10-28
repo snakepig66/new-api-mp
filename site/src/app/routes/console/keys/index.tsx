@@ -3,59 +3,28 @@ import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 
 import { copy } from '@/copy'
-import { ApiError } from '@/lib/api'
-import { formatYuan } from '@/lib/money'
+import { writeClipboard } from '@/lib/clipboard'
 import { formatDateTime } from '@/lib/time'
 import {
   Button,
-  Dialog,
   Empty,
-  Input,
   PageHeader,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-  Tag,
-  buttonClasses,
   useToast,
 } from '@/ui'
 
-import { consoleKeysQuery, saveKeyTokenLimits } from '@/features/console/api'
+import { consoleKeysQuery } from '@/features/console/api'
 import { CreateKeyDialog } from '@/features/console/components/CreateKeyDialog'
-import { ErrorBlock, PageSkeleton, Section } from '@/features/console/components/DataState'
+import { ErrorBlock, PageSkeleton } from '@/features/console/components/DataState'
+import { KeyCard } from '@/features/console/components/KeyCard'
 import { Notice } from '@/features/console/components/form'
-import {
-  dateTimeInputToUnix,
-  unixToDateTimeInput,
-} from '@/features/console/format'
 import { soonestExpiringKey } from '@/features/console/key-expiry'
-import { isTokenExpired, tokenStatusMeta } from '@/features/console/labels'
-import {
-  TOKEN_STATUS_EXPIRED,
-  type ConsoleKey,
-  type Strategy,
-} from '@/features/console/types'
+import { currentBaseUrl } from '@/features/market/url'
 
 export const Route = createFileRoute('/console/keys/')({
   component: KeysPage,
 })
 
 const page = copy.pages.consoleKeys
-
-const strategyLabelMap: Record<Strategy, string> = {
-  cheapest: page.strategy.cheapest,
-  balanced: page.strategy.balanced,
-  stable: page.strategy.stable,
-}
-
-const strategyHintMap: Record<Strategy, string> = {
-  cheapest: page.strategyHint.cheapest,
-  balanced: page.strategyHint.balanced,
-  stable: page.strategyHint.stable,
-}
 
 export function KeysPage() {
   const keys = useQuery(consoleKeysQuery())
@@ -84,6 +53,8 @@ export function KeysPage() {
           </Button>
         }
       />
+
+      <ApiAddressCard />
 
       {keys.isPending ? (
         <div className="mt-6">
@@ -124,26 +95,11 @@ export function KeysPage() {
               </div>
             </Notice>
           ) : null}
-          <div className="mt-6">
-            <Section title={copy.pages.console.nav.keys} hint={page.lead}>
-            <Table minWidth={880}>
-              <TableHead>
-                <TableRow interactive={false}>
-                  <TableHeaderCell>{page.columns.name}</TableHeaderCell>
-                  <TableHeaderCell numeric>{page.columns.models}</TableHeaderCell>
-                  <TableHeaderCell>{page.columns.strategy}</TableHeaderCell>
-                  <TableHeaderCell numeric>{page.columns.spend}</TableHeaderCell>
-                  <TableHeaderCell>{page.columns.status}</TableHeaderCell>
-                  <TableHeaderCell>{page.columns.actions}</TableHeaderCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {keys.data.map((item) => (
-                  <KeyRow key={item.token.id} item={item} />
-                ))}
-              </TableBody>
-            </Table>
-          </Section>
+
+          <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {keys.data.map((item) => (
+              <KeyCard key={item.token.id} item={item} />
+            ))}
           </div>
         </>
       )}
@@ -158,166 +114,57 @@ export function KeysPage() {
   )
 }
 
-function KeyRow({ item }: { item: ConsoleKey }) {
-  const { token, pref } = item
+function ApiAddressCard() {
   const toast = useToast()
-  const queryClient = useQueryClient()
-  const expired = isTokenExpired(token)
-  const status = tokenStatusMeta(expired ? TOKEN_STATUS_EXPIRED : token.status)
-  const strategy = pref?.strategy ?? null
-  const [extendOpen, setExtendOpen] = useState(false)
-  const [never, setNever] = useState(false)
-  const [expiresAt, setExpiresAt] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [extendError, setExtendError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const baseUrl = `${currentBaseUrl()}/v1`
 
-  function openExtend() {
-    setNever(false)
-    setExpiresAt(unixToDateTimeInput(token.expired_time))
-    setExtendError(null)
-    setExtendOpen(true)
-  }
-
-  async function extend() {
-    let expiredTime = -1
-    if (!never) {
-      const parsed = dateTimeInputToUnix(expiresAt)
-      if (parsed === null || parsed <= Math.floor(Date.now() / 1000)) {
-        setExtendError(page.extend.invalid)
-        return
-      }
-      expiredTime = parsed
-    }
-    setSaving(true)
-    setExtendError(null)
-    try {
-      await saveKeyTokenLimits({
-        token_id: token.id,
-        expired_time: expiredTime,
-        allow_ips: token.allow_ips ?? '',
-      })
-      toast.show({ title: page.extend.extended, tone: 'success' })
-      await queryClient.invalidateQueries({ queryKey: ['console', 'keys'] })
-      await queryClient.invalidateQueries({ queryKey: ['console', 'key', token.id] })
-      setExtendOpen(false)
-    } catch (error) {
-      setExtendError(
-        error instanceof ApiError ? error.message : copy.pages.consoleShared.errorHint,
-      )
-    } finally {
-      setSaving(false)
+  async function handleCopy() {
+    const ok = await writeClipboard(baseUrl)
+    if (ok) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+      toast.show({ title: '已复制 API 地址', tone: 'success' })
+    } else {
+      toast.show({ title: '复制失败', tone: 'error' })
     }
   }
 
   return (
-    <>
-      <TableRow interactive className={expired ? 'opacity-60' : undefined}>
-      <TableCell>
-        <Link
-          to="/console/keys/$id"
-          params={{ id: String(token.id) }}
-          className="font-medium text-ink hover:text-brand-ink"
+    <div className="mt-6 rounded-xl border border-line bg-surface p-4 sm:p-5 shadow-xs">
+      <div className="flex items-center gap-2 font-semibold text-title text-ink">
+        <svg
+          className="h-4 w-4 text-brand"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
         >
-          {token.name || copy.pages.consoleShared.none}
-        </Link>
-        <div className="tabular-nums text-[13px] text-ink-3">{token.key}</div>
-      </TableCell>
-      <TableCell numeric>
-        <span className="text-[13px]">
-          {pref?.model_scope === 'all'
-            ? copy.pages.consoleKeys.createDialog.scope.all
-            : copy.pages.consoleKeys.modelsUnit(pref?.models.length ?? 0)}
-        </span>
-      </TableCell>
-      <TableCell>
-        {strategy ? (
-          <>
-            <Tag tone="brand">{strategyLabelMap[strategy]}</Tag>
-            <div className="mt-1 text-[13px] text-ink-3">{strategyHintMap[strategy]}</div>
-          </>
-        ) : (
-          <span className="text-[13px] text-ink-3">{copy.pages.consoleShared.none}</span>
-        )}
-      </TableCell>
-      <TableCell numeric>
-        <div className="text-[13px]">{page.spend.used(formatYuan(token.used_quota))}</div>
-        <div className="text-[13px] text-ink-3">
-          {token.unlimited_quota
-            ? page.spend.unlimited
-            : page.spend.remaining(formatYuan(token.remain_quota))}
-        </div>
-      </TableCell>
-      <TableCell>
-        <Tag tone={status.tone} dot>
-          {status.label}
-        </Tag>
-      </TableCell>
-      <TableCell>
-        <div className="flex items-center gap-2">
-          <Link
-            to="/console/keys/$id"
-            params={{ id: String(token.id) }}
-            className={buttonClasses('secondary', 'sm')}
-          >
-            {copy.pages.consoleShared.detail}
-          </Link>
-          {expired ? (
-            <Button variant="secondary" size="sm" onClick={openExtend}>
-              {page.extend.action}
-            </Button>
-          ) : null}
-        </div>
-      </TableCell>
-    </TableRow>
-      <Dialog
-        open={extendOpen}
-        onOpenChange={(open) => {
-          if (!saving) setExtendOpen(open)
-        }}
-        title={page.extend.title}
-        description={page.extend.hint}
-        footer={
-          <>
-            <Button
-              variant="secondary"
-              onClick={() => setExtendOpen(false)}
-              disabled={saving}
-            >
-              {copy.pages.consoleShared.cancel}
-            </Button>
-            <Button loading={saving} onClick={() => void extend()}>
-              {saving ? page.extend.saving : page.extend.confirm}
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-3">
-          <Input
-            aria-label={page.extend.newExpiry}
-            type="datetime-local"
-            disabled={never}
-            value={expiresAt}
-            onChange={(event) => setExpiresAt(event.target.value)}
-          />
-          <label className="inline-flex items-center gap-2 text-[13px] text-ink">
-            <input
-              type="checkbox"
-              className="h-3.5 w-3.5 accent-brand"
-              checked={never}
-              onChange={(event) => {
-                setNever(event.target.checked)
-                if (event.target.checked) setExpiresAt('')
-              }}
-            />
-            {page.extend.never}
-          </label>
-          {extendError ? (
-            <p role="alert" className="text-[13px] text-danger">
-              {extendError}
-            </p>
-          ) : null}
-        </div>
-      </Dialog>
-    </>
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+        </svg>
+        <span>API 地址</span>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2.5">
+        <span className="text-meta font-medium text-ink-2">主地址</span>
+        <code className="rounded-md border border-line bg-bg px-2.5 py-1 font-mono text-meta text-ink tabular-nums selection:bg-brand/20">
+          {baseUrl}
+        </code>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleCopy}
+          className="h-7 px-2.5 text-caption"
+        >
+          {copied ? '已复制' : '复制'}
+        </Button>
+      </div>
+      <p className="mt-2 text-caption text-ink-3">
+        每把密钥可以单独设额度、到期时间和可用模型。
+      </p>
+    </div>
   )
 }

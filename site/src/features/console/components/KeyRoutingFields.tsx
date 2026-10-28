@@ -151,7 +151,7 @@ export function KeyRoutingFields({
       </Field>
 
       <div className="space-y-3 sm:col-span-2">
-        <label className="inline-flex items-start gap-2 text-[13px] text-ink">
+        <label className="inline-flex items-start gap-2 text-meta text-ink">
           <input
             type="checkbox"
             className="mt-0.5 h-3.5 w-3.5 accent-brand"
@@ -159,12 +159,12 @@ export function KeyRoutingFields({
           />
           <span>
             {page.config.allowFallback}
-            <span className="mt-0.5 block text-[13px] leading-5 text-ink-3">
+            <span className="mt-0.5 block text-meta leading-5 text-ink-3">
               {page.config.allowFallbackHint}
             </span>
           </span>
         </label>
-        <label className="flex items-start gap-2 text-[13px] text-ink">
+        <label className="flex items-start gap-2 text-meta text-ink">
           <input
             type="checkbox"
             className="mt-0.5 h-3.5 w-3.5 accent-brand"
@@ -172,7 +172,7 @@ export function KeyRoutingFields({
           />
           <span>
             {page.config.officialOnly}
-            <span className="mt-0.5 block text-[13px] leading-5 text-ink-3">
+            <span className="mt-0.5 block text-meta leading-5 text-ink-3">
               {page.config.officialOnlyHint}
             </span>
           </span>
@@ -191,7 +191,7 @@ function SellerChips({ ids, onRemove }: { ids: number[]; onRemove: (id: number) 
           key={id}
           type="button"
           onClick={() => onRemove(id)}
-          className="glass-inset rounded-sm px-2 py-0.5 text-[13px] text-ink-2 hover:border-line-strong"
+          className="glass-inset rounded-sm px-2 py-0.5 text-meta text-ink-2 hover:border-line-strong"
         >
           #{id} ×
         </button>

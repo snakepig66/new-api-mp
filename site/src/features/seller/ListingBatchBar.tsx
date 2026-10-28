@@ -129,7 +129,7 @@ export function ListingBatchBar({ listings, kindById, onClear }: ListingBatchBar
             {page.batch.selected(listings.length)}
           </span>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <label htmlFor="batch-multiplier" className="text-[13px] text-ink-3">
+            <label htmlFor="batch-multiplier" className="text-meta text-ink-3">
               {page.batch.multiplierLabel}
             </label>
             <Input
@@ -143,7 +143,7 @@ export function ListingBatchBar({ listings, kindById, onClear }: ListingBatchBar
                 setRejected([])
               }}
             />
-            <span className="text-[12px] text-ink-3">
+            <span className="text-caption text-ink-3">
               {page.batch.multiplierHint(
                 formatMultiplier(range.min),
                 formatMultiplier(range.max),
@@ -160,7 +160,7 @@ export function ListingBatchBar({ listings, kindById, onClear }: ListingBatchBar
             {page.batch.enableAll}
           </Button>
           {rejected.length > 0 ? (
-            <div className="w-full text-[13px] leading-5 text-danger" role="alert">
+            <div className="w-full text-meta leading-5 text-danger" role="alert">
               <p>{page.batch.rejectedTitle}</p>
               <ul className="mt-1 list-disc pl-5">
                 {rejected.map((row) => (

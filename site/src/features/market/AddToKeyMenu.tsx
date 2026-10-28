@@ -261,8 +261,8 @@ export function AddToKeyMenu({
               className="flex min-h-0 flex-col overflow-hidden glass rounded-lg shadow-xl"
             >
               <div className="shrink-0 border-b border-line px-4 py-3">
-                <p className="text-[14px] font-semibold text-ink">{page.title}</p>
-                <p className="mt-0.5 text-[12px] leading-5 text-ink-3">{page.hint}</p>
+                <p className="text-body font-semibold text-ink">{page.title}</p>
+                <p className="mt-0.5 text-caption leading-5 text-ink-3">{page.hint}</p>
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto">
@@ -274,7 +274,7 @@ export function AddToKeyMenu({
                   </div>
                 ) : keysQuery.isError ? (
                   <div className="p-3">
-                    <p className="text-[13px] text-ink-2">{page.loadError}</p>
+                    <p className="text-meta text-ink-2">{page.loadError}</p>
                     <Button
                       variant="secondary"
                       size="sm"
@@ -294,7 +294,7 @@ export function AddToKeyMenu({
                 ) : (
                   <>
                     {!hasSupply ? (
-                      <p className="border-b border-line bg-warn/10 px-4 py-2 text-[12px] leading-5 text-warn">
+                      <p className="border-b border-line bg-warn/10 px-4 py-2 text-caption leading-5 text-warn">
                         {page.noSupply}
                       </p>
                     ) : null}
@@ -321,10 +321,10 @@ export function AddToKeyMenu({
                                 onChange={() => toggle(token.id)}
                               />
                               <span className="min-w-0 flex-1">
-                                <span className="block truncate text-[13px] text-ink">
+                                <span className="block truncate text-meta text-ink">
                                   {keyName(token)}
                                 </span>
-                                <span className="block text-[12px] tabular-nums text-ink-3">
+                                <span className="block text-caption tabular-nums text-ink-3">
                                   #{token.id}
                                 </span>
                               </span>

@@ -50,8 +50,8 @@ interface ErrorPageProps {
 function ErrorPage({ title, detail, actionLabel }: ErrorPageProps) {
   return (
     <div className="mx-auto flex min-h-[60vh] max-w-2xl flex-col justify-center px-5 py-16">
-      <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-ink">{title}</h1>
-      <p className="mt-3 max-w-xl break-words text-[13px] leading-6 text-ink-3">{detail}</p>
+      <h1 className="text-h1 font-semibold leading-tight tracking-tight text-ink">{title}</h1>
+      <p className="mt-3 max-w-xl break-words text-meta leading-6 text-ink-3">{detail}</p>
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <Button onClick={() => window.location.reload()}>{actionLabel}</Button>
         <Link to="/" className={buttonClasses('secondary', 'md')}>

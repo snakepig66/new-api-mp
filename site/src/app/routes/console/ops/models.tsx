@@ -6,6 +6,7 @@ import { copy } from '@/copy'
 import {
   Button,
   Empty,
+  ModelName,
   PageHeader,
   Table,
   TableBody,
@@ -302,7 +303,7 @@ function ModelsTab() {
           {submitError ? (
             <p
               role="alert"
-              className="mt-4 border border-danger/25 bg-danger/10 px-3 py-2 text-[13px] text-danger"
+              className="mt-4 border border-danger/25 bg-danger/10 px-3 py-2 text-meta text-danger"
             >
               {submitError}
             </p>
@@ -331,15 +332,13 @@ function ModelsTab() {
                 <TableHeaderCell>{copyModels.columns.capabilities}</TableHeaderCell>
                 <TableHeaderCell>{copyModels.columns.aliases}</TableHeaderCell>
                 <TableHeaderCell>{copyModels.columns.status}</TableHeaderCell>
-                <TableHeaderCell className="text-right">
-                  {copyModels.columns.actions}
-                </TableHeaderCell>
+                <TableHeaderCell numeric>{copyModels.columns.actions}</TableHeaderCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {rows.map((row) => (
                 <TableRow key={row.id}>
-                  <TableCell className="font-mono text-[13px]">{row.name}</TableCell>
+                  <TableCell className="font-mono text-meta"><ModelName model={row.name} size="sm" /></TableCell>
                   <TableCell className="text-ink-2">{row.origin_vendor || '—'}</TableCell>
                   <TableCell numeric>{row.context_length || '—'}</TableCell>
                   <TableCell>
@@ -351,7 +350,7 @@ function ModelsTab() {
                           ))}
                     </div>
                   </TableCell>
-                  <TableCell className="text-[13px] text-ink-3">
+                  <TableCell className="text-meta text-ink-3">
                     {row.aliases.join(', ') || '—'}
                   </TableCell>
                   <TableCell>

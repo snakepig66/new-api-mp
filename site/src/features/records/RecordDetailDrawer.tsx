@@ -5,7 +5,7 @@ import { copy } from '@/copy'
 import { cn } from '@/lib/cn'
 import { formatYuan } from '@/lib/money'
 import { formatDateTime } from '@/lib/time'
-import { Drawer, Tag } from '@/ui'
+import { Drawer, ModelName, Tag } from '@/ui'
 
 import { ErrorBlock, Skeleton } from '@/features/console/components/DataState'
 import { formatCount } from '@/features/console/format'
@@ -97,14 +97,14 @@ export function RecordDetailContent({ detail, view }: RecordDetailContentProps) 
   return (
     <div className="space-y-7">
       <section>
-        <h3 className="border-b border-line pb-1.5 text-[13px] font-medium text-ink">
+        <h3 className="border-b border-line pb-1.5 text-meta font-medium text-ink">
           {text.basic}
         </h3>
-        <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-3 text-[13px] sm:grid-cols-2">
+        <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-3 text-meta sm:grid-cols-2">
           <div className="sm:col-span-2">
             <dt className="text-ink-3">{text.requestId}</dt>
             <dd className="mt-0.5 flex items-center gap-1">
-              <span className="truncate font-mono text-[13px] text-ink">{record.request_id}</span>
+              <span className="truncate font-mono text-meta text-ink">{record.request_id}</span>
               <CopyButton text={record.request_id} />
             </dd>
           </div>
@@ -113,10 +113,10 @@ export function RecordDetailContent({ detail, view }: RecordDetailContentProps) 
           <div className="min-w-0">
             <dt className="text-ink-3">{text.model}</dt>
             <dd className="mt-0.5 flex flex-wrap items-center gap-1">
-              <Tag tone="neutral">{record.model}</Tag>
+              <Tag tone="neutral"><ModelName model={record.model} size="sm" /></Tag>
               {record.converted ? <Tag tone="warning">{text.converted}</Tag> : null}
               {record.upstream_model && record.upstream_model !== record.model ? (
-                <span className="text-[13px] text-ink-2">
+                <span className="text-meta text-ink-2">
                   → <span className="font-mono">{record.upstream_model}</span>
                 </span>
               ) : null}
@@ -124,7 +124,7 @@ export function RecordDetailContent({ detail, view }: RecordDetailContentProps) 
           </div>
           <div className="min-w-0">
             <dt className="text-ink-3">{buyer ? text.token : text.channel}</dt>
-            <dd className="mt-0.5 truncate text-[13px] text-ink">
+            <dd className="mt-0.5 truncate text-meta text-ink">
               {buyer ? (
                 buyerRecord.token_name || <span className="text-ink-3">{text.deletedToken}</span>
               ) : (
@@ -149,7 +149,7 @@ export function RecordDetailContent({ detail, view }: RecordDetailContentProps) 
           ) : null}
           <div className="min-w-0">
             <dt className="text-ink-3">{text.latency}</dt>
-            <dd className="mt-0.5 tabular-nums text-[13px] text-ink">
+            <dd className="mt-0.5 tabular-nums text-meta text-ink">
               <span className="text-ink-3">{text.firstToken} </span>
               <span className={firstTokenClass(record.first_token_ms)}>
                 {formatLatency(record.first_token_ms)}
@@ -162,10 +162,10 @@ export function RecordDetailContent({ detail, view }: RecordDetailContentProps) 
       </section>
 
       <section>
-        <h3 className="border-b border-line pb-1.5 text-[13px] font-medium text-ink">
+        <h3 className="border-b border-line pb-1.5 text-meta font-medium text-ink">
           {text.tokensAndCost}
         </h3>
-        <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 text-[13px] sm:grid-cols-4">
+        <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 text-meta sm:grid-cols-4">
           <Info label={text.input} value={formatCount(record.input_tokens)} mono />
           <Info label={text.output} value={formatCount(record.output_tokens)} mono />
           <Info label={text.cacheRead} value={formatCount(record.cache_read_tokens)} mono />
@@ -178,7 +178,7 @@ export function RecordDetailContent({ detail, view }: RecordDetailContentProps) 
           <Info label={text.fetch} value={text.times(formatCount(record.fetch_count))} mono />
         </dl>
 
-        <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-3 border-t border-line pt-3 text-[13px] sm:grid-cols-3">
+        <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-3 border-t border-line pt-3 text-meta sm:grid-cols-3">
           {buyer ? (
             <>
               <Info label={text.official} value={formatYuan(buyerRecord.official_cost_micro)} mono />
@@ -202,20 +202,20 @@ export function RecordDetailContent({ detail, view }: RecordDetailContentProps) 
           )}
         </dl>
         {record.usage_estimated ? (
-          <p className="mt-3 border border-warn/25 bg-warn/10 px-3 py-2 text-[13px] text-warn">
+          <p className="mt-3 border border-warn/25 bg-warn/10 px-3 py-2 text-meta text-warn">
             {copy.pages.consoleRecords.detail.estimated}
           </p>
         ) : null}
       </section>
 
       <section>
-        <h3 className="border-b border-line pb-1.5 text-[13px] font-medium text-ink">
+        <h3 className="border-b border-line pb-1.5 text-meta font-medium text-ink">
           {text.retry}
         </h3>
         {raw === '' || raw === '[]' ? (
-          <p className="mt-3 text-[13px] text-ink-3">{text.retryEmpty}</p>
+          <p className="mt-3 text-meta text-ink-3">{text.retryEmpty}</p>
         ) : hops.length === 0 ? (
-          <p className="mt-3 text-[13px] text-ink-3">{text.retryUnavailable}</p>
+          <p className="mt-3 text-meta text-ink-3">{text.retryUnavailable}</p>
         ) : (
           <ol className="mt-3" aria-label={text.retry}>
             {hops.map((hop, index) => (
@@ -234,12 +234,12 @@ export function RecordDetailContent({ detail, view }: RecordDetailContentProps) 
                 </div>
                 <div className={cn('min-w-0 flex-1', index < hops.length - 1 && 'pb-4')}>
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                    <span className="text-[13px] font-medium text-ink">{hop.eventLabel}</span>
-                    <span className="text-xs tabular-nums text-ink-3">
+                    <span className="text-meta font-medium text-ink">{hop.eventLabel}</span>
+                    <span className="text-caption tabular-nums text-ink-3">
                       {hop.latencyMs === undefined ? '' : formatLatency(hop.latencyMs)}
                     </span>
                   </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-3">
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-ink-3">
                     <span>{hop.channelLabel}</span>
                     {hop.status ? (
                       <Tag tone={hop.failed ? 'danger' : 'neutral'}>{text.statusCode(hop.status)}</Tag>
@@ -264,7 +264,7 @@ function Info({ label, value, mono = false }: { label: string; value: string; mo
       <dt className="text-ink-3">{label}</dt>
       <dd
         className={cn(
-          'mt-0.5 truncate text-[13px] text-ink',
+          'mt-0.5 truncate text-meta text-ink',
           mono && 'tabular-nums',
         )}
       >
@@ -287,8 +287,8 @@ function MoneyInfo({
     <div className="min-w-0">
       <dt className="text-ink-3">{label}</dt>
       <dd className="mt-0.5 flex flex-wrap items-baseline gap-x-2">
-        <span className="tabular-nums text-[15px] font-medium text-ink">{value}</span>
-        {hint ? <span className="text-xs text-ok">{hint}</span> : null}
+        <span className="tabular-nums text-body font-medium text-ink">{value}</span>
+        {hint ? <span className="text-caption text-ok">{hint}</span> : null}
       </dd>
     </div>
   )

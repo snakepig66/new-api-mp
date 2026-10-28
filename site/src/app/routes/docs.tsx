@@ -67,15 +67,15 @@ function BaseUrl({
 
   return (
     <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 glass-inset rounded-lg px-4 py-3">
-      <span className="text-[12px] font-medium tracking-wide text-ink-3">{label}</span>
-      <code className="min-w-0 break-all font-mono text-[21px] font-medium leading-7 tracking-tight text-ink sm:text-[24px]">
+      <span className="text-caption font-medium tracking-wide text-ink-3">{label}</span>
+      <code className="min-w-0 break-all font-mono text-h2 font-medium leading-7 tracking-tight text-ink sm:text-h2">
         {value}
       </code>
       <button
         type="button"
         onClick={() => void handleCopy()}
         className={cn(
-          'ml-auto shrink-0 rounded-full border border-white/70 bg-white/70 px-3 py-1 text-[13px] transition-colors',
+          'ml-auto shrink-0 rounded-full border border-white/70 bg-white/70 px-3 py-1 text-meta transition-colors',
           state === 'failed'
             ? 'text-danger'
             : 'text-ink-2 hover:border-brand/40 hover:text-brand-ink',
@@ -83,7 +83,7 @@ function BaseUrl({
       >
         {state === 'copied' ? copiedLabel : state === 'failed' ? failedLabel : copyLabel}
       </button>
-      <p className="w-full text-[13px] leading-5 text-ink-3">{hint}</p>
+      <p className="w-full text-meta leading-5 text-ink-3">{hint}</p>
     </div>
   )
 }
@@ -104,7 +104,7 @@ function Section({
       id={id}
       className="scroll-mt-24 border-t border-line pt-10 first:border-t-0 first:pt-0 [&+section]:mt-10"
     >
-      <h2 className="text-[24px] font-semibold tracking-tight text-ink">{title}</h2>
+      <h2 className="text-h2 font-semibold tracking-tight text-ink">{title}</h2>
       <BaseUrl
         value={docs.baseUrl}
         label={docs.baseUrlLabel}
@@ -113,7 +113,7 @@ function Section({
         copiedLabel={docs.baseUrlCopied}
         failedLabel={docs.baseUrlFailed}
       />
-      <div className="mt-5 max-w-[760px] space-y-4 text-[15px] leading-7 text-ink-2">
+      <div className="mt-5 max-w-[760px] space-y-4 text-body leading-7 text-ink-2">
         {children}
       </div>
     </section>
@@ -246,10 +246,10 @@ function DocsPage() {
   return (
     <div className="mx-auto w-full max-w-[1240px] px-5 py-12 sm:px-6 sm:py-16">
       <header>
-        <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-ink">
+        <h1 className="text-h1 font-semibold leading-tight tracking-tight text-ink">
           {docs.title}
         </h1>
-        <p className="mt-2 max-w-2xl text-[15px] leading-6 text-ink-2">{docs.lead}</p>
+        <p className="mt-2 max-w-2xl text-body leading-6 text-ink-2">{docs.lead}</p>
 
         <div className="relative mt-6 max-w-[420px]">
           <svg
@@ -270,9 +270,9 @@ function DocsPage() {
             onChange={(event) => setSearch(event.target.value)}
             placeholder={docs.searchPlaceholder}
             aria-label={docs.searchAria}
-            className="h-10 rounded-full pl-10 pr-14 text-[14px]"
+            className="h-10 rounded-full pl-10 pr-14 text-body"
           />
-          <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 glass-inset rounded-sm px-1.5 py-0.5 text-[12px] text-ink-3">
+          <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 glass-inset rounded-sm px-1.5 py-0.5 text-caption text-ink-3">
             ⌘K
           </kbd>
         </div>
@@ -281,9 +281,9 @@ function DocsPage() {
       <div className="mt-10 grid gap-10 lg:grid-cols-[240px_minmax(0,1fr)] xl:grid-cols-[240px_minmax(0,760px)_200px] xl:gap-12">
         <aside className="hidden lg:block">
           <nav className="sticky top-24" aria-label={docs.toc}>
-            <div className="mb-3 text-[13px] text-ink-3">{docs.toc}</div>
+            <div className="mb-3 text-meta text-ink-3">{docs.toc}</div>
             {visible.length === 0 ? (
-              <p className="text-[13px] text-ink-3">{docs.searchEmpty}</p>
+              <p className="text-meta text-ink-3">{docs.searchEmpty}</p>
             ) : (
               <ul className="space-y-1">
                 {visible.map((id) => (
@@ -292,7 +292,7 @@ function DocsPage() {
                       href={`#${id}`}
                       aria-current={active === id ? 'location' : undefined}
                       className={cn(
-                        'block rounded-full px-3 py-1.5 text-[14px] transition-colors',
+                        'block rounded-full px-3 py-1.5 text-body transition-colors',
                         active === id
                           ? 'bg-brand-soft font-medium text-brand-ink'
                           : 'text-ink-2 hover:bg-brand/[0.06] hover:text-ink',
@@ -314,7 +314,7 @@ function DocsPage() {
                 key={id}
                 href={`#${id}`}
                 className={cn(
-                  'rounded-full px-3 py-1.5 text-[14px]',
+                  'rounded-full px-3 py-1.5 text-body',
                   active === id
                     ? 'bg-brand-soft font-medium text-brand-ink'
                     : 'bg-white/55 text-ink-2',
@@ -326,7 +326,7 @@ function DocsPage() {
           </nav>
 
           {visible.length === 0 ? (
-            <p className="text-[15px] text-ink-3">{docs.searchEmpty}</p>
+            <p className="text-body text-ink-3">{docs.searchEmpty}</p>
           ) : null}
 
           <div className={visible.length === 0 ? 'hidden' : undefined}>
@@ -336,11 +336,11 @@ function DocsPage() {
               <ol className="grid gap-3 sm:grid-cols-3">
                 {docs.quickstart.steps.map((step, index) => (
                   <li key={step.title} className="glass rounded-lg p-3">
-                    <span className="grid h-6 w-6 place-items-center rounded-full bg-brand-soft text-[12px] font-medium tabular-nums text-brand-ink">
+                    <span className="grid h-6 w-6 place-items-center rounded-full bg-brand-soft text-caption font-medium tabular-nums text-brand-ink">
                       {index + 1}
                     </span>
-                    <div className="mt-2 text-[14px] font-medium text-ink">{step.title}</div>
-                    <p className="mt-1 text-[13px] leading-5 text-ink-2">{step.body}</p>
+                    <div className="mt-2 text-body font-medium text-ink">{step.title}</div>
+                    <p className="mt-1 text-meta leading-5 text-ink-2">{step.body}</p>
                   </li>
                 ))}
               </ol>
@@ -352,17 +352,17 @@ function DocsPage() {
                   node: docs.quickstart.code.node(baseUrl, model),
                 })}
               />
-              <p className="text-[13px] leading-6 text-ink-3">{docs.quickstart.note}</p>
+              <p className="text-meta leading-6 text-ink-3">{docs.quickstart.note}</p>
               {models.data && models.data.length > 0 ? (
                 <div className="mt-4">
-                  <p className="text-[13px] text-ink-3">{docs.quickstart.modelsLabel}</p>
+                  <p className="text-meta text-ink-3">{docs.quickstart.modelsLabel}</p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {models.data.map((m) => (
                       <Link
                         key={m.model}
                         to="/models/$id"
                         params={{ id: m.model }}
-                        className="glass-inset px-2.5 py-1 font-mono text-[13px] text-ink-2 transition-colors hover:border-brand-ink/40 hover:text-brand-ink"
+                        className="glass-inset px-2.5 py-1 font-mono text-meta text-ink-2 transition-colors hover:border-brand-ink/40 hover:text-brand-ink"
                       >
                         {m.model}
                       </Link>
@@ -381,9 +381,9 @@ function DocsPage() {
                   node: docs.text.code.node(baseUrl, model),
                 })}
               />
-              <p className="text-[13px] leading-6 text-ink-3">{docs.text.note}</p>
+              <p className="text-meta leading-6 text-ink-3">{docs.text.note}</p>
 
-              <h3 className="mt-6 text-[18px] font-semibold text-ink">{docs.text.streamTitle}</h3>
+              <h3 className="mt-6 text-h3 font-semibold text-ink">{docs.text.streamTitle}</h3>
               <p>{docs.text.streamBody}</p>
               <CodeBlock
                 tabs={requestTabs(docs.codeTabs, {
@@ -392,7 +392,7 @@ function DocsPage() {
                   node: docs.text.streamCode.node(baseUrl, model),
                 })}
               />
-              <p className="text-[13px] leading-6 text-ink-3">{docs.text.streamNote}</p>
+              <p className="text-meta leading-6 text-ink-3">{docs.text.streamNote}</p>
             </Section>
 
             <Section id="images" title={docs.sections.images}>
@@ -404,7 +404,7 @@ function DocsPage() {
                   node: docs.images.code.node(baseUrl),
                 })}
               />
-              <p className="text-[13px] leading-6 text-ink-3">{docs.images.note}</p>
+              <p className="text-meta leading-6 text-ink-3">{docs.images.note}</p>
             </Section>
 
             <Section id="embeddings" title={docs.sections.embeddings}>
@@ -416,7 +416,7 @@ function DocsPage() {
                   node: docs.embeddings.code.node(baseUrl),
                 })}
               />
-              <p className="text-[13px] leading-6 text-ink-3">{docs.embeddings.note}</p>
+              <p className="text-meta leading-6 text-ink-3">{docs.embeddings.note}</p>
             </Section>
 
             <Section id="errors" title={docs.sections.errors}>
@@ -441,7 +441,7 @@ function DocsPage() {
                   ))}
                 </TableBody>
               </Table>
-              <p className="pt-1 text-[13px] leading-6 text-ink-3">{docs.errors.testNote}</p>
+              <p className="pt-1 text-meta leading-6 text-ink-3">{docs.errors.testNote}</p>
               <CodeBlock
                 tabs={requestTabs(docs.codeTabs, {
                   curl: docs.errors.code.curl(baseUrl, model),
@@ -455,25 +455,25 @@ function DocsPage() {
               <p>{docs.billing.body}</p>
 
               <div className="rounded-lg border border-brand/25 bg-brand-soft px-4 py-3">
-                <div className="text-[13px] font-medium text-brand-ink">
+                <div className="text-meta font-medium text-brand-ink">
                   {docs.billing.formulaTitle}
                 </div>
-                <div className="mt-1 break-words font-mono text-[18px] font-semibold leading-7 text-brand-ink">
+                <div className="mt-1 break-words font-mono text-h3 font-semibold leading-7 text-brand-ink">
                   {docs.billing.formula}
                 </div>
-                <p className="mt-2 text-[13px] leading-6 text-ink-2">
+                <p className="mt-2 text-meta leading-6 text-ink-2">
                   {docs.billing.formulaNote}
                 </p>
               </div>
 
-              <h3 className="mt-6 text-[18px] font-semibold text-ink">{docs.billing.cacheTitle}</h3>
+              <h3 className="mt-6 text-h3 font-semibold text-ink">{docs.billing.cacheTitle}</h3>
               <p>{docs.billing.cacheBody}</p>
 
-              <h3 className="mt-6 text-[18px] font-semibold text-ink">{docs.billing.flatTitle}</h3>
+              <h3 className="mt-6 text-h3 font-semibold text-ink">{docs.billing.flatTitle}</h3>
               <p>{docs.billing.flatBody}</p>
 
               <div className="glass-inset rounded-lg px-4 py-3">
-                <div className="text-[14px] font-medium text-ink">
+                <div className="text-body font-medium text-ink">
                   {docs.billing.sellerFeeTitle}
                 </div>
                 <p className="mt-1">{docs.billing.sellerFee}</p>
@@ -491,58 +491,58 @@ function DocsPage() {
               <div className="space-y-4">
                 {docs.clients.items.map((item) => (
                   <div key={item.name} className="glass rounded-lg p-4">
-                    <h3 className="text-[16px] font-semibold text-ink">{item.name}</h3>
-                    <p className="mt-1 text-[14px] leading-6 text-ink-2">{item.body}</p>
+                    <h3 className="text-title font-semibold text-ink">{item.name}</h3>
+                    <p className="mt-1 text-body leading-6 text-ink-2">{item.body}</p>
                     <CodeBlock className="mt-3" code={item.code} label={item.name} />
                   </div>
                 ))}
               </div>
-              <p className="text-[13px] leading-6 text-ink-3">{docs.clients.note}</p>
+              <p className="text-meta leading-6 text-ink-3">{docs.clients.note}</p>
             </Section>
 
             <Section id="seller" title={docs.sections.seller}>
               <p>{docs.seller.body}</p>
 
-              <h3 className="mt-6 text-[18px] font-semibold text-ink">
+              <h3 className="mt-6 text-h3 font-semibold text-ink">
                 {docs.seller.openTitle}
               </h3>
               <ol className="space-y-3">
                 {docs.seller.steps.map((step, index) => (
                   <li key={step.title} className="flex gap-3">
-                    <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand-soft text-[12px] font-medium tabular-nums text-brand-ink">
+                    <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand-soft text-caption font-medium tabular-nums text-brand-ink">
                       {index + 1}
                     </span>
                     <div>
-                      <div className="text-[15px] font-medium text-ink">{step.title}</div>
-                      <p className="mt-0.5 text-[14px] leading-6 text-ink-2">{step.body}</p>
+                      <div className="text-body font-medium text-ink">{step.title}</div>
+                      <p className="mt-0.5 text-body leading-6 text-ink-2">{step.body}</p>
                     </div>
                   </li>
                 ))}
               </ol>
 
-              <h3 className="mt-6 text-[18px] font-semibold text-ink">
+              <h3 className="mt-6 text-h3 font-semibold text-ink">
                 {docs.seller.verifyTitle}
               </h3>
               <p>{docs.seller.verifyBody}</p>
 
-              <h3 className="mt-6 text-[18px] font-semibold text-ink">
+              <h3 className="mt-6 text-h3 font-semibold text-ink">
                 {docs.seller.patrolTitle}
               </h3>
               <p>{docs.seller.patrolBody}</p>
 
-              <h3 className="mt-6 text-[18px] font-semibold text-ink">
+              <h3 className="mt-6 text-h3 font-semibold text-ink">
                 {docs.seller.payoutTitle}
               </h3>
               <p>{docs.seller.payoutBody}</p>
 
-              <p className="text-[13px] leading-6 text-ink-3">{docs.seller.note}</p>
+              <p className="text-meta leading-6 text-ink-3">{docs.seller.note}</p>
             </Section>
           </div>
         </div>
 
         <aside className="hidden xl:block">
           <nav className="sticky top-24" aria-label={docs.onThisPage}>
-            <div className="mb-3 text-[13px] text-ink-3">{docs.onThisPage}</div>
+            <div className="mb-3 text-meta text-ink-3">{docs.onThisPage}</div>
             {visible.length === 0 ? null : (
               <ul>
                 {visible.map((id) => (
@@ -550,7 +550,7 @@ function DocsPage() {
                     <a
                       href={`#${id}`}
                       className={cn(
-                        'block border-l-2 py-1 pl-3 text-[13px] transition-colors',
+                        'block border-l-2 py-1 pl-3 text-meta transition-colors',
                         active === id
                           ? 'border-brand font-medium text-ink'
                           : 'border-line text-ink-3 hover:border-line-strong hover:text-ink-2',

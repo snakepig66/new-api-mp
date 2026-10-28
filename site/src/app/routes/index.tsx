@@ -45,16 +45,16 @@ function FaqItem({ question, answer }: { question: string; answer: string }) {
           aria-expanded={open}
           aria-controls={panelId}
           onClick={() => setOpen((value) => !value)}
-          className="flex w-full items-center justify-between gap-4 py-5 text-left text-[15px] font-medium text-ink transition-colors hover:text-brand"
+          className="flex w-full items-center justify-between gap-4 py-5 text-left text-body font-medium text-ink transition-colors hover:text-brand"
         >
           <span>{question}</span>
-          <span aria-hidden="true" className="text-[18px] leading-none text-ink-3">
+          <span aria-hidden="true" className="text-h3 leading-none text-ink-3">
             {open ? '−' : '+'}
           </span>
         </button>
       </h3>
       {open ? (
-        <p id={panelId} className="pb-5 pr-8 text-[14px] leading-6 text-ink-2">
+        <p id={panelId} className="pb-5 pr-8 text-body leading-6 text-ink-2">
           {answer}
         </p>
       ) : null}
@@ -119,10 +119,10 @@ export function HomePage() {
 
         <div className="relative mx-auto w-full max-w-[1200px] px-5 pb-16 pt-16 sm:px-6 sm:pb-20 sm:pt-24 lg:pt-28">
           <div className="mx-auto max-w-[820px] text-center">
-            <h1 className="text-[36px] font-semibold leading-[1.15] tracking-[-0.02em] text-ink sm:text-[56px]">
+            <h1 className="text-display font-semibold leading-[1.15] tracking-[-0.02em] text-ink sm:text-display">
               {home.headline}
             </h1>
-            <p className="mx-auto mt-5 max-w-[620px] text-[16px] leading-7 text-ink-2">{home.lead}</p>
+            <p className="mx-auto mt-5 max-w-[620px] text-title leading-7 text-ink-2">{home.lead}</p>
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
               <Link to="/register" className={buttonClasses('primary', 'lg')}>
                 {home.ctaStart}
@@ -137,10 +137,10 @@ export function HomePage() {
             <div className="glass mx-auto mt-16 flex max-w-[760px] flex-wrap items-start justify-center gap-x-16 gap-y-10 rounded-lg px-8 py-7">
               {statItems.map((item) => (
                 <div key={item.label} className="min-w-[120px] text-center">
-                  <div className="text-[32px] font-semibold leading-tight tracking-tight tabular-nums text-brand-ink">
+                  <div className="text-h1 font-semibold leading-tight tracking-tight tabular-nums text-brand-ink">
                     {item.value}
                   </div>
-                  <div className="mt-1 text-[13px] text-ink-3">{item.label}</div>
+                  <div className="mt-1 text-meta text-ink-3">{item.label}</div>
                 </div>
               ))}
             </div>
@@ -148,7 +148,7 @@ export function HomePage() {
 
           {logoVendors.length > 0 ? (
             <div data-testid="vendor-logo-wall" className="mx-auto mt-14 max-w-[880px] text-center">
-              <p className="text-[13px] text-ink-3">{home.logoWall.title}</p>
+              <p className="text-meta text-ink-3">{home.logoWall.title}</p>
               <ul
                 aria-label={home.logoWall.aria}
                 className="mt-5 flex flex-wrap items-center justify-center gap-x-8 gap-y-4"
@@ -162,7 +162,7 @@ export function HomePage() {
                       height={28}
                       className="h-7 w-7 rounded-md opacity-60 grayscale transition duration-200 group-hover:opacity-100 group-hover:grayscale-0"
                     />
-                    <span className="text-[13px] font-medium text-ink-3 transition-colors group-hover:text-ink">
+                    <span className="text-meta font-medium text-ink-3 transition-colors group-hover:text-ink">
                       {vendor.label}
                     </span>
                   </li>
@@ -173,14 +173,14 @@ export function HomePage() {
 
           <div className="mx-auto mt-14 max-w-[860px] glass rounded-lg p-3 sm:p-4">
             <div className="flex items-center justify-between gap-3 rounded-sm px-2 py-1.5">
-              <span className="shrink-0 text-[13px] text-ink-3">{home.baseUrlLabel}</span>
+              <span className="shrink-0 text-meta text-ink-3">{home.baseUrlLabel}</span>
               <div className="flex min-w-0 items-center gap-1">
-                <code className="truncate text-[13px] tabular-nums text-ink">{baseUrl}/v1</code>
+                <code className="truncate text-meta tabular-nums text-ink">{baseUrl}/v1</code>
                 <CopyButton text={`${baseUrl}/v1`} />
               </div>
             </div>
             <CodeBlock code={home.firstCurl(baseUrl, sampleModel)} label="curl" className="mt-2" />
-            <p className="mt-3 px-2 text-[13px] leading-6 text-ink-3">{home.stepsCurlNote}</p>
+            <p className="mt-3 px-2 text-meta leading-6 text-ink-3">{home.stepsCurlNote}</p>
           </div>
         </div>
       </section>
@@ -189,14 +189,14 @@ export function HomePage() {
         <div className={CONTAINER}>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h2 className="text-[24px] font-semibold leading-snug tracking-tight text-ink">
+              <h2 className="text-h2 font-semibold leading-snug tracking-tight text-ink">
                 {home.topTitle}
               </h2>
-              <p className="mt-2 text-[15px] leading-6 text-ink-2">{home.topLead}</p>
+              <p className="mt-2 text-body leading-6 text-ink-2">{home.topLead}</p>
             </div>
             <Link
               to="/models"
-              className="shrink-0 text-[14px] text-brand transition-colors hover:text-brand-hover hover:underline"
+              className="shrink-0 text-body text-brand transition-colors hover:text-brand-hover hover:underline"
             >
               {home.viewAll} →
             </Link>
@@ -228,17 +228,17 @@ export function HomePage() {
             )}
           </div>
 
-          <p className="mt-4 text-[13px] text-ink-3">{copy.pages.models.priceNote}</p>
+          <p className="mt-4 text-meta text-ink-3">{copy.pages.models.priceNote}</p>
         </div>
       </section>
 
       <section className={SECTION}>
         <div className={CONTAINER}>
           <div className="max-w-[640px]">
-            <h2 className="text-[24px] font-semibold leading-snug tracking-tight text-ink">
+            <h2 className="text-h2 font-semibold leading-snug tracking-tight text-ink">
               {home.flow.title}
             </h2>
-            <p className="mt-2 text-[15px] leading-6 text-ink-2">{home.flow.hint}</p>
+            <p className="mt-2 text-body leading-6 text-ink-2">{home.flow.hint}</p>
           </div>
 
           <ol className="mt-10 flex flex-col sm:flex-row">
@@ -255,8 +255,8 @@ export function HomePage() {
                     ) : null}
                   </div>
                   <div className="min-w-0 pb-8 sm:mt-3 sm:pb-0 sm:pr-8">
-                    <h3 className="text-[15px] font-semibold text-ink">{item.title}</h3>
-                    <p className="mt-1 text-[13px] leading-6 text-ink-2">{item.body}</p>
+                    <h3 className="text-body font-semibold text-ink">{item.title}</h3>
+                    <p className="mt-1 text-meta leading-6 text-ink-2">{item.body}</p>
                   </div>
                 </div>
               </li>
@@ -268,10 +268,10 @@ export function HomePage() {
       <section className={SECTION}>
         <div className={CONTAINER}>
           <div className="max-w-[640px]">
-            <h2 className="text-[24px] font-semibold leading-snug tracking-tight text-ink">
+            <h2 className="text-h2 font-semibold leading-snug tracking-tight text-ink">
               {home.audience.title}
             </h2>
-            <p className="mt-2 text-[15px] leading-6 text-ink-2">{home.audience.hint}</p>
+            <p className="mt-2 text-body leading-6 text-ink-2">{home.audience.hint}</p>
           </div>
 
           <div className="mt-10 grid gap-6 md:grid-cols-2">
@@ -283,15 +283,15 @@ export function HomePage() {
                 key={card.label}
                 className="glass glass-lift flex flex-col rounded-lg p-6 sm:p-8"
               >
-                <span className="w-fit rounded-full bg-white/60 px-3 py-1 text-[12px] font-medium text-ink-2">
+                <span className="w-fit rounded-full bg-white/60 px-3 py-1 text-caption font-medium text-ink-2">
                   {card.label}
                 </span>
-                <h3 className="mt-4 text-[20px] font-semibold tracking-tight text-ink">
+                <h3 className="mt-4 text-h3 font-semibold tracking-tight text-ink">
                   {card.title}
                 </h3>
                 <ul className="mt-5 space-y-3">
                   {card.points.map((point) => (
-                    <li key={point} className="flex gap-2.5 text-[14px] leading-6 text-ink-2">
+                    <li key={point} className="flex gap-2.5 text-body leading-6 text-ink-2">
                       <span
                         aria-hidden="true"
                         className="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-brand"
@@ -306,7 +306,7 @@ export function HomePage() {
                     className={
                       primary
                         ? buttonClasses('primary', 'md')
-                        : 'text-[14px] font-medium text-brand transition-colors hover:text-brand-hover hover:underline'
+                        : 'text-body font-medium text-brand transition-colors hover:text-brand-hover hover:underline'
                     }
                   >
                     {card.cta}
@@ -322,10 +322,10 @@ export function HomePage() {
       <section className={SECTION}>
         <div className={CONTAINER}>
           <div className="max-w-[640px]">
-            <h2 className="text-[24px] font-semibold leading-snug tracking-tight text-ink">
+            <h2 className="text-h2 font-semibold leading-snug tracking-tight text-ink">
               {home.examples.title}
             </h2>
-            <p className="mt-2 text-[15px] leading-6 text-ink-2">{home.examples.hint}</p>
+            <p className="mt-2 text-body leading-6 text-ink-2">{home.examples.hint}</p>
           </div>
 
           <div className="mt-10 grid min-w-0 gap-5 lg:grid-cols-3">
@@ -354,10 +354,10 @@ export function HomePage() {
       <section className={SECTION}>
         <div className={CONTAINER}>
           <div className="mx-auto max-w-[760px]">
-            <h2 className="text-[24px] font-semibold leading-snug tracking-tight text-ink">
+            <h2 className="text-h2 font-semibold leading-snug tracking-tight text-ink">
               {home.faq.title}
             </h2>
-            <p className="mt-2 text-[15px] leading-6 text-ink-2">{home.faq.hint}</p>
+            <p className="mt-2 text-body leading-6 text-ink-2">{home.faq.hint}</p>
             <div className="mt-8 border-t border-line">
               {home.faq.items.map((item) => (
                 <FaqItem key={item.q} question={item.q} answer={item.a} />
@@ -370,30 +370,30 @@ export function HomePage() {
       <section className={SECTION}>
         <div className={CONTAINER}>
           <div className="max-w-[640px]">
-            <h2 className="text-[24px] font-semibold leading-snug tracking-tight text-ink">
+            <h2 className="text-h2 font-semibold leading-snug tracking-tight text-ink">
               {home.steps.title}
             </h2>
-            <p className="mt-2 text-[15px] leading-6 text-ink-2">{home.steps.hint}</p>
+            <p className="mt-2 text-body leading-6 text-ink-2">{home.steps.hint}</p>
           </div>
 
           <ol className="mt-10 grid gap-10 sm:grid-cols-3 sm:gap-8">
             {home.steps.items.map((item, index) => (
               <li key={item.title}>
-                <span className="grid h-7 w-7 place-items-center rounded-full bg-brand-soft text-[13px] font-medium tabular-nums text-brand-ink">
+                <span className="grid h-7 w-7 place-items-center rounded-full bg-brand-soft text-meta font-medium tabular-nums text-brand-ink">
                   {index + 1}
                 </span>
-                <h3 className="mt-4 text-[16px] font-semibold text-ink">{item.title}</h3>
-                <p className="mt-1.5 text-[14px] leading-6 text-ink-2">{item.body}</p>
+                <h3 className="mt-4 text-title font-semibold text-ink">{item.title}</h3>
+                <p className="mt-1.5 text-body leading-6 text-ink-2">{item.body}</p>
                 {index === 0 ? (
                   <Link
                     to="/register"
-                    className="mt-2 inline-block text-[14px] text-brand hover:underline"
+                    className="mt-2 inline-block text-body text-brand hover:underline"
                   >
                     {copy.actions.register}
                   </Link>
                 ) : null}
                 {index === 1 ? (
-                  <p className="mt-2 text-[14px] text-ink-2">
+                  <p className="mt-2 text-body text-ink-2">
                     {home.stepsKeyHint}{' '}
                     <Link to="/console" className="text-brand hover:underline">
                       {home.stepsKeyAction}
@@ -410,8 +410,8 @@ export function HomePage() {
         <div className={CONTAINER}>
           <div className="glass flex flex-col gap-6 rounded-lg px-6 py-8 sm:flex-row sm:items-center sm:justify-between sm:px-10 sm:py-10">
             <div className="min-w-0">
-              <h2 className="text-[20px] font-semibold tracking-tight text-ink">{home.seller.title}</h2>
-              <p className="mt-2 max-w-[560px] text-[15px] leading-6 text-ink-2">{home.seller.body}</p>
+              <h2 className="text-h3 font-semibold tracking-tight text-ink">{home.seller.title}</h2>
+              <p className="mt-2 max-w-[560px] text-body leading-6 text-ink-2">{home.seller.body}</p>
             </div>
             <Link to="/share" className={buttonClasses('primary', 'md', 'shrink-0')}>
               {home.ctaShare}

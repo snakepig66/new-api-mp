@@ -127,7 +127,7 @@ export function Pagination({
       className={cn('flex flex-wrap items-center gap-2', className)}
     >
       {showSummary ? (
-        <span className="mr-auto text-[13px] leading-5 text-ink-3">
+        <span className="mr-auto text-meta leading-5 text-ink-3">
           {labels.summary(current, pageCount, total)}
         </span>
       ) : null}
@@ -149,7 +149,7 @@ export function Pagination({
               key={`ellipsis-${index}`}
               aria-hidden="true"
               className={cn(
-                'grid place-items-center text-[13px] text-ink-3',
+                'grid place-items-center text-meta text-ink-3',
                 compact ? 'w-7' : 'w-8',
               )}
             >

@@ -10,8 +10,8 @@ export interface SellerIdProps {
 export function SellerId({ id, className }: SellerIdProps) {
   return (
     <span className={cn('inline-flex items-baseline gap-1 whitespace-nowrap', className)}>
-      <span className="text-[13px] text-ink-3">{copy.identity.seller}</span>
-      <span className="text-[14px] tabular-nums text-ink">#{id}</span>
+      <span className="text-meta text-ink-3">{copy.identity.seller}</span>
+      <span className="text-body tabular-nums text-ink">#{id}</span>
     </span>
   )
 }
@@ -25,8 +25,8 @@ export interface BuyerCodeProps {
 export function CodeAssistant({ code, className }: BuyerCodeProps) {
   return (
     <span className={cn('inline-flex items-baseline gap-1 whitespace-nowrap', className)}>
-      <span className="text-[13px] text-ink-3">{copy.identity.buyer}</span>
-      <span className="text-[14px] uppercase tabular-nums tracking-[0.04em] text-ink">
+      <span className="text-meta text-ink-3">{copy.identity.buyer}</span>
+      <span className="text-body uppercase tabular-nums tracking-[0.04em] text-ink">
         {code}
       </span>
     </span>

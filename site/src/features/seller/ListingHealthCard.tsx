@@ -65,9 +65,9 @@ export function healthLevelView(level: ListingHealthLevel): { label: string; dot
 function Metric({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
   return (
     <div className="min-w-0">
-      <div className="text-[13px] text-ink-3">{label}</div>
-      <div className="mt-1 tabular-nums text-[15px] font-medium text-ink">{value}</div>
-      {hint ? <div className="mt-0.5 text-[12px] leading-4 text-ink-3">{hint}</div> : null}
+      <div className="text-meta text-ink-3">{label}</div>
+      <div className="mt-1 tabular-nums text-body font-medium text-ink">{value}</div>
+      {hint ? <div className="mt-0.5 text-caption leading-4 text-ink-3">{hint}</div> : null}
     </div>
   )
 }
@@ -114,13 +114,13 @@ export function ListingHealthCard({ listing, health, actions }: ListingHealthCar
               aria-label={levelView.label}
               className={cn('h-2.5 w-2.5 shrink-0 rounded-full', levelView.dot)}
             />
-            <span className={cn('text-[13px] font-medium', labelClass[level])}>
+            <span className={cn('text-meta font-medium', labelClass[level])}>
               {levelView.label}
             </span>
             <span className="font-medium text-ink">{vendorName(listing.vendor)}</span>
-            <span className="tabular-nums text-[13px] text-ink-3">#{listing.id}</span>
+            <span className="tabular-nums text-meta text-ink-3">#{listing.id}</span>
           </div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-ink-3">
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-ink-3">
             <Tag tone={status.tone} dot>
               {status.label}
             </Tag>
@@ -133,8 +133,8 @@ export function ListingHealthCard({ listing, health, actions }: ListingHealthCar
         </div>
 
         <div className="shrink-0 text-right">
-          <div className="text-[13px] text-ink-3">{healthCopy.todayIncome}</div>
-          <div className="tabular-nums text-[20px] font-semibold leading-tight text-ink">
+          <div className="text-meta text-ink-3">{healthCopy.todayIncome}</div>
+          <div className="tabular-nums text-h3 font-semibold leading-tight text-ink">
             {formatYuan(income)}
           </div>
         </div>
@@ -157,7 +157,7 @@ export function ListingHealthCard({ listing, health, actions }: ListingHealthCar
           value={latency !== null ? `${latency} ms` : '—'}
         />
         <div className="col-span-2 min-w-0">
-          <div className="text-[13px] text-ink-3">
+          <div className="text-meta text-ink-3">
             {healthCopy.lastProbe}
             {probeLabel ? ` · ${probeLabel}` : ''}
           </div>
@@ -167,24 +167,24 @@ export function ListingHealthCard({ listing, health, actions }: ListingHealthCar
                 <Tag tone={probe.ok ? 'brand' : 'danger'} dot>
                   {probe.ok ? healthCopy.probePassed : healthCopy.probeFailed}
                 </Tag>
-                <span className="tabular-nums text-[12px] text-ink-3">
+                <span className="tabular-nums text-caption text-ink-3">
                   {healthCopy.checkedAt(formatDateTime(probe.created_at))}
                 </span>
               </div>
               {!probe.ok && probe.fail_reason ? (
-                <p className="text-[13px] leading-5 text-danger">
+                <p className="text-meta leading-5 text-danger">
                   {healthCopy.failReason}：{probeFailReasonLabel(probe.fail_reason)}
                 </p>
               ) : null}
             </div>
           ) : (
-            <div className="mt-1 text-[13px] text-ink-3">{healthCopy.noProbe}</div>
+            <div className="mt-1 text-meta text-ink-3">{healthCopy.noProbe}</div>
           )}
         </div>
       </dl>
 
       {listing.status === 'paused' ? (
-        <p className="mt-3 text-[13px] text-warn">
+        <p className="mt-3 text-meta text-warn">
           {pauseReasonView(listing.pause_reason || 'manual')}
           {listing.resume_at ? ` · ${page.resumeAt(formatDateTime(listing.resume_at))}` : ''}
         </p>

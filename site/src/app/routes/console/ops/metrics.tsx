@@ -118,7 +118,7 @@ export function MetricsContent() {
           </Select>
         </Field>
         <div className="min-w-0">
-          <span className="mb-2 block text-[14px] font-medium text-ink">
+          <span className="mb-2 block text-body font-medium text-ink">
             {page.filters.range}
           </span>
           <FilterTabs
@@ -169,15 +169,15 @@ function MetricTable({ rows }: { rows: AdminOpsMetric[] }) {
               <span className="font-medium text-ink">
                 {metricLabel(row.metric_name)}
               </span>
-              <span className="ml-2 font-mono text-[12px] text-ink-3">
+              <span className="ml-2 font-mono text-caption text-ink-3">
                 {row.metric_name}
               </span>
             </TableCell>
             <TableCell numeric>{metricValue(row)}</TableCell>
-            <TableCell className="max-w-[320px] truncate font-mono text-[13px] text-ink-2">
+            <TableCell className="max-w-[320px] truncate font-mono text-meta text-ink-2">
               <span title={dimensionsText(row)}>{dimensionsText(row)}</span>
             </TableCell>
-            <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
+            <TableCell className="whitespace-nowrap tabular-nums text-meta text-ink-3">
               {formatDateTime(row.bucket_time)}
             </TableCell>
           </TableRow>

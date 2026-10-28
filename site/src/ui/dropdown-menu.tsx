@@ -180,7 +180,7 @@ export function DropdownMenu({
                 close()
               }}
               className={cn(
-                'flex w-full items-center gap-2 rounded-sm px-3 py-2 text-left text-[13px] leading-5 transition-colors focus:outline-none',
+                'flex w-full items-center gap-2 rounded-sm px-3 py-2 text-left text-meta leading-5 transition-colors focus:outline-none',
                 item.danger
                   ? 'text-danger hover:bg-danger/5 focus:bg-danger/5'
                   : 'text-ink hover:bg-brand/[0.07] focus:bg-brand/[0.07]',

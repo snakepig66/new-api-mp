@@ -110,12 +110,12 @@ function PendingHostGroups({
               onClick={() => onToggle(key)}
               className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition-colors hover:bg-brand/[0.06]"
             >
-              <span className="min-w-0 truncate text-[15px] font-medium text-ink">
+              <span className="min-w-0 truncate text-body font-medium text-ink">
                 {group.host || page.pending.platformHost}
               </span>
               <span className="flex shrink-0 items-center gap-3">
                 <Tag>{page.pending.groupCount(group.count)}</Tag>
-                <span aria-hidden="true" className="text-[18px] leading-none text-ink-3">
+                <span aria-hidden="true" className="text-h3 leading-none text-ink-3">
                   {open ? '−' : '+'}
                 </span>
               </span>
@@ -138,7 +138,7 @@ function PendingHostGroups({
                   <TableBody>
                     {group.listings.map((listing) => (
                       <TableRow key={listing.id}>
-                        <TableCell className="tabular-nums text-[13px] text-ink-3">
+                        <TableCell className="tabular-nums text-meta text-ink-3">
                           #{listing.id}
                         </TableCell>
                         <TableCell>
@@ -154,7 +154,7 @@ function PendingHostGroups({
                             ) : null}
                           </div>
                         </TableCell>
-                        <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
+                        <TableCell className="whitespace-nowrap tabular-nums text-meta text-ink-3">
                           {formatDateTime(listing.created_at)}
                         </TableCell>
                         <TableCell>
@@ -364,7 +364,7 @@ export function ListingsContent() {
                 <TableHeaderCell numeric>{page.columns.concurrency}</TableHeaderCell>
                 <TableHeaderCell>{page.columns.status}</TableHeaderCell>
                 <TableHeaderCell>{page.columns.fingerprint}</TableHeaderCell>
-                <TableHeaderCell>{page.columns.actions}</TableHeaderCell>
+                <TableHeaderCell numeric>{page.columns.actions}</TableHeaderCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -373,13 +373,13 @@ export function ListingsContent() {
                 const canBan = BANNABLE.has(listing.status)
                 return (
                   <TableRow key={listing.id}>
-                    <TableCell className="tabular-nums text-[13px] text-ink-3">
+                    <TableCell className="tabular-nums text-meta text-ink-3">
                       #{listing.id}
                     </TableCell>
                     <TableCell>
                       <SellerId id={listing.seller_id} />
                     </TableCell>
-                    <TableCell className=" text-[13px]">{listing.vendor}</TableCell>
+                    <TableCell className=" text-meta">{listing.vendor}</TableCell>
                     <TableCell>
                       <div className="flex max-w-[240px] flex-wrap gap-1">
                         {listing.models.slice(0, 2).map((model) => (
@@ -402,11 +402,11 @@ export function ListingsContent() {
                       </Tag>
                     </TableCell>
                     <TableCell>
-                      <span className="tabular-nums text-[13px] text-ink-3">
+                      <span className="tabular-nums text-meta text-ink-3">
                         {listing.key_fingerprint8 || copy.pages.adminCommon.none}
                       </span>
                     </TableCell>
-                    <TableCell>
+                    <TableCell numeric className="text-right">
                       {canBan ? (
                         <Button
                           variant="danger"
@@ -430,7 +430,7 @@ export function ListingsContent() {
                           {page.unban}
                         </Button>
                       ) : (
-                        <span className="text-[13px] text-ink-3">{copy.pages.adminCommon.none}</span>
+                        <span className="text-meta text-ink-3">{copy.pages.adminCommon.none}</span>
                       )}
                     </TableCell>
                   </TableRow>
@@ -457,7 +457,7 @@ export function ListingsContent() {
       >
         {pending ? (
           <div className="space-y-3">
-            <p className="tabular-nums text-[13px] text-ink">
+            <p className="tabular-nums text-meta text-ink">
               {page.target} #{pending.listing.id} · {pending.listing.vendor} ·{' '}
               <SellerId id={pending.listing.seller_id} />
             </p>
@@ -485,7 +485,7 @@ export function ListingsContent() {
       >
         {reviewTarget ? (
           <div className="space-y-3">
-            <p className="tabular-nums text-[13px] text-ink">
+            <p className="tabular-nums text-meta text-ink">
               {page.pending.target} #{reviewTarget.listing.id} · {reviewTarget.listing.vendor} ·{' '}
               <SellerId id={reviewTarget.listing.seller_id} />
             </p>

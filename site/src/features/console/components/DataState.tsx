@@ -77,12 +77,12 @@ export function ErrorBlock({ error, onRetry, className }: ErrorBlockProps) {
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <p className="text-[13px] font-medium text-danger">
+          <p className="text-meta font-medium text-danger">
             {copy.pages.consoleShared.errorTitle}
           </p>
-          <p className="mt-1 text-[13px] leading-5 text-danger/90">{message}</p>
+          <p className="mt-1 text-meta leading-5 text-danger/90">{message}</p>
           {code ? (
-            <p className="mt-1 tabular-nums text-[13px] text-danger/70">
+            <p className="mt-1 tabular-nums text-meta text-danger/70">
               {copy.pages.consoleShared.errorCode}
               {code}
             </p>
@@ -112,8 +112,8 @@ export function Section({ title, hint, action, children, className }: SectionPro
     <section className={cn('min-w-0 glass p-6', className)}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-line pb-4">
         <div className="flex min-w-0 flex-wrap items-baseline gap-2.5">
-          <h2 className="text-[16px] font-semibold tracking-tight text-ink">{title}</h2>
-          {hint ? <span className="text-[13px] text-ink-3">{hint}</span> : null}
+          <h2 className="text-title font-semibold tracking-tight text-ink">{title}</h2>
+          {hint ? <span className="text-meta text-ink-3">{hint}</span> : null}
         </div>
         {action ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}
       </div>

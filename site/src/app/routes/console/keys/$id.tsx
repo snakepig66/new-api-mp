@@ -130,7 +130,7 @@ function BackLink() {
   return (
     <Link
       to="/console/keys"
-      className="inline-flex items-center gap-1 text-[13px] text-ink-2 transition-colors hover:text-ink"
+      className="inline-flex items-center gap-1 text-meta text-ink-2 transition-colors hover:text-ink"
     >
       <span aria-hidden="true">←</span>
       {page.backToKeys}
@@ -237,21 +237,21 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
       <div className="mt-4 flex flex-col gap-5 border-b border-line pb-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="text-[24px] font-semibold leading-tight tracking-tight text-ink">
+            <h1 className="text-h2 font-semibold leading-tight tracking-tight text-ink">
               {token.name || shared.none}
             </h1>
             <Tag tone={status.tone} dot>
               {status.label}
             </Tag>
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-ink-3">
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-meta text-ink-3">
             <span>{page.maskedKey}</span>
-            <code className="glass-inset rounded-sm px-2 py-0.5 text-[13px] tabular-nums text-ink">
+            <code className="glass-inset rounded-sm px-2 py-0.5 text-meta tabular-nums text-ink">
               {token.key}
             </code>
             <span>{page.copyKeyHint}</span>
           </div>
-          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-ink-3">
+          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-meta text-ink-3">
             <span>
               {copy.pages.consoleKeys.columns.spend}：{copy.pages.consoleKeys.spend.used(formatYuan(token.used_quota))}
             </span>
@@ -291,7 +291,7 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
           {form.formState.errors.root?.message ? (
             <p
               role="alert"
-              className="border border-danger/25 bg-danger/10 px-3 py-2 text-[13px] text-danger sm:col-span-2"
+              className="border border-danger/25 bg-danger/10 px-3 py-2 text-meta text-danger sm:col-span-2"
             >
               {form.formState.errors.root.message}
             </p>
@@ -318,7 +318,7 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
 
       <Section className="mt-10" title={page.danger.title}>
         <div className="flex flex-col gap-3 rounded-md border border-danger/20 bg-danger/5 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-[13px] leading-5 text-ink-3">{page.danger.hint}</p>
+          <p className="text-meta leading-5 text-ink-3">{page.danger.hint}</p>
           <Button variant="danger" size="sm" onClick={() => setDeleteOpen(true)}>
             {page.danger.action}
           </Button>
@@ -343,9 +343,9 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
           </>
         }
       >
-        <p className="text-[13px] leading-6 text-ink-3">{page.danger.hint}</p>
+        <p className="text-meta leading-6 text-ink-3">{page.danger.hint}</p>
         {deleteError ? (
-          <p role="alert" className="mt-3 text-[13px] text-danger">
+          <p role="alert" className="mt-3 text-meta text-danger">
             {deleteError}
           </p>
         ) : null}
@@ -385,7 +385,7 @@ function OfficialOnlyModels({ pref }: { pref: KeyDetail['pref'] }) {
   return (
     <Notice className="mt-9" tone="warning" title={page.officialOnly.title}>
       <p>{page.officialOnly.body}</p>
-      <p className="mt-1 font-mono text-[13px]">{blocked.join('、')}</p>
+      <p className="mt-1 font-mono text-meta">{blocked.join('、')}</p>
       <Link
         to="/models"
         className="mt-2 inline-block font-medium underline underline-offset-2"
@@ -479,7 +479,7 @@ function KeyLimitsSection({ tokenId, token }: { tokenId: number; token: TokenRec
             value={expiresAt}
             onChange={(event) => setExpiresAt(event.target.value)}
           />
-          <label className="mt-2 inline-flex items-center gap-2 text-[13px] text-ink">
+          <label className="mt-2 inline-flex items-center gap-2 text-meta text-ink">
             <input
               type="checkbox"
               className="h-3.5 w-3.5 accent-brand"
@@ -499,7 +499,7 @@ function KeyLimitsSection({ tokenId, token }: { tokenId: number; token: TokenRec
           hint={page.limits.allowIpsHint}
         >
           {currentIp.data?.ip ? (
-            <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[12px] text-ink-3">
+            <div className="mb-1.5 flex flex-wrap items-center gap-2 text-caption text-ink-3">
               <span className="font-mono">
                 {copy.pages.consoleKeys.currentIp.label(currentIp.data.ip)}
               </span>
@@ -523,7 +523,7 @@ function KeyLimitsSection({ tokenId, token }: { tokenId: number; token: TokenRec
             id="key-limits-allow-ips"
             rows={3}
             spellCheck={false}
-            className="w-full resize-y rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-3 py-2 font-mono text-[13px] text-ink transition-colors placeholder:text-ink-3 focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20"
+            className="w-full resize-y rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-3 py-2 font-mono text-meta text-ink transition-colors placeholder:text-ink-3 focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20"
             placeholder={page.limits.allowIpsPlaceholder}
             value={allowIps}
             onChange={(event) => setAllowIps(event.target.value)}
@@ -619,7 +619,7 @@ function ModelsSection({
     <Section className="mt-9" title={page.models.title} hint={page.models.hint}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="text-[14px] font-medium text-ink">{page.models.scopeLabel}</div>
+          <div className="text-body font-medium text-ink">{page.models.scopeLabel}</div>
           <div className="mt-2 inline-flex glass-inset p-0.5">
             <ScopeButton active={scope === 'all'} onClick={() => setScope('all')} label={page.models.allScopeTitle} />
             <ScopeButton
@@ -629,7 +629,7 @@ function ModelsSection({
             />
           </div>
         </div>
-        <span className="tabular-nums text-[13px] text-ink-3">
+        <span className="tabular-nums text-meta text-ink-3">
           {scope === 'all'
             ? copy.pages.consoleKeys.createDialog.scope.all
             : copy.pages.consoleKeys.modelsUnit(models.length)}
@@ -676,8 +676,8 @@ function ScopeButton({
       onClick={onClick}
       className={
         active
-          ? 'rounded-sm bg-white/90 px-3 py-1.5 text-[13px] font-medium text-brand-ink shadow-sm'
-          : 'rounded-sm px-3 py-1.5 text-[13px] text-ink-3 hover:text-ink'
+          ? 'rounded-sm bg-white/90 px-3 py-1.5 text-meta font-medium text-brand-ink shadow-sm'
+          : 'rounded-sm px-3 py-1.5 text-meta text-ink-3 hover:text-ink'
       }
     >
       {label}

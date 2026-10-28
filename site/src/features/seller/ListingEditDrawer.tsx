@@ -22,6 +22,7 @@ import {
   Dialog,
   Drawer,
   Input,
+  ModelName,
   Multiplier,
   PasswordInput,
   SaveBar,
@@ -160,8 +161,8 @@ function headerSignature(rows: HeaderRow[]): string {
 function InfoField({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="glass-inset px-3.5 py-3">
-      <dt className="text-[12px] text-ink-3">{label}</dt>
-      <dd className="mt-1 text-[14px] leading-5 text-ink">{children}</dd>
+      <dt className="text-caption text-ink-3">{label}</dt>
+      <dd className="mt-1 text-body leading-5 text-ink">{children}</dd>
     </div>
   )
 }
@@ -188,8 +189,8 @@ function Section({
         failing && 'border-danger/40 ring-2 ring-danger/30',
       )}
     >
-      <h3 className="text-[15px] font-semibold tracking-tight text-ink">{title}</h3>
-      {lead ? <p className="mt-1 text-[13px] leading-5 text-ink-3">{lead}</p> : null}
+      <h3 className="text-body font-semibold tracking-tight text-ink">{title}</h3>
+      {lead ? <p className="mt-1 text-meta leading-5 text-ink-3">{lead}</p> : null}
       <div className="mt-4 space-y-4">{children}</div>
     </section>
   )
@@ -277,8 +278,8 @@ function ReplaceKeyDialog({
         </Field>
 
         <div className="glass-inset px-4 py-3">
-          <div className="text-[13px] text-ink-3">{common.keyPreviewHint}</div>
-          <div className="mt-1 tabular-nums text-[14px] text-ink">{preview}</div>
+          <div className="text-meta text-ink-3">{common.keyPreviewHint}</div>
+          <div className="mt-1 tabular-nums text-body text-ink">{preview}</div>
         </div>
       </div>
     </Dialog>
@@ -303,7 +304,7 @@ function ModelPriceTable({ row, feePercent }: { row: SellerModelRow; feePercent:
   const officialPrices = row.official_prices.flat
   const buyerPrices = row.buyer_prices.flat
   if (officialPrices === undefined && buyerPrices === undefined) {
-    return <p className="mt-3 text-[13px] text-ink-3">{page.models.noPrices}</p>
+    return <p className="mt-3 text-meta text-ink-3">{page.models.noPrices}</p>
   }
   return (
     <div className="mt-3">
@@ -325,14 +326,14 @@ function ModelPriceTable({ row, feePercent }: { row: SellerModelRow; feePercent:
               buyer !== undefined ? Math.round((buyer * (100 - feePercent)) / 100) : undefined
             return (
               <TableRow key={dimension.key} interactive={false}>
-                <TableCell className="text-[13px]">{dimension.label}</TableCell>
-                <TableCell numeric className="text-[13px] text-ink-3">
+                <TableCell className="text-meta">{dimension.label}</TableCell>
+                <TableCell numeric className="text-meta text-ink-3">
                   {official === undefined ? '—' : formatYuan(official)}
                 </TableCell>
-                <TableCell numeric className="text-[13px]">
+                <TableCell numeric className="text-meta">
                   {buyer === undefined ? '—' : formatYuan(buyer)}
                 </TableCell>
-                <TableCell numeric className="text-[13px] text-ink-2">
+                <TableCell numeric className="text-meta text-ink-2">
                   {net === undefined ? '—' : formatYuan(net)}
                 </TableCell>
               </TableRow>
@@ -931,7 +932,7 @@ export function ListingEditDrawer({
               aria-current={activeSection === key ? 'true' : undefined}
               onClick={() => scrollToSection(key)}
               className={cn(
-                'w-full rounded-md px-2.5 py-1.5 text-left text-[13px] leading-5 transition-colors',
+                'w-full rounded-md px-2.5 py-1.5 text-left text-meta leading-5 transition-colors',
                 activeSection === key
                   ? 'bg-brand-soft font-medium text-brand-ink'
                   : 'text-ink-3 hover:bg-brand/[0.06] hover:text-ink',
@@ -996,14 +997,14 @@ export function ListingEditDrawer({
                 </InfoField>
               </dl>
               <div>
-                <h4 className="text-[13px] font-medium text-ink">
+                <h4 className="text-meta font-medium text-ink">
                   {page.overview.verificationTitle}
                 </h4>
                 <div className="mt-2">
                   {listing.verification ? (
                     <VerificationSummary verification={listing.verification} compact />
                   ) : (
-                    <p className="text-[13px] text-ink-3">{page.overview.verificationEmpty}</p>
+                    <p className="text-meta text-ink-3">{page.overview.verificationEmpty}</p>
                   )}
                 </div>
               </div>
@@ -1058,14 +1059,14 @@ export function ListingEditDrawer({
               lead={page.models.lead}
               failing={failingSection === 'models'}
             >
-              <p className="text-[13px] leading-5 text-ink-3">{page.models.priceRule}</p>
+              <p className="text-meta leading-5 text-ink-3">{page.models.priceRule}</p>
               {models.data ? (
-                <p className="text-[13px] leading-5 text-ink-3">
+                <p className="text-meta leading-5 text-ink-3">
                   {page.models.feeNote(String(models.data.platform_fee_percent))}
                 </p>
               ) : null}
               {sectionErrors.models ? (
-                <p role="alert" className="text-[13px] text-danger">
+                <p role="alert" className="text-meta text-danger">
                   {sectionErrors.models}
                 </p>
               ) : null}
@@ -1084,14 +1085,14 @@ export function ListingEditDrawer({
                   retryLabel={copy.actions.retry}
                 />
               ) : modelRows.length === 0 ? (
-                <p className="text-[13px] text-ink-3">{page.models.empty}</p>
+                <p className="text-meta text-ink-3">{page.models.empty}</p>
               ) : (
                 <>
                   <div className="flex flex-wrap items-end gap-3 glass-inset px-3.5 py-3">
                     <div className="w-32">
                       <label
                         htmlFor="listing-edit-batch-multiplier"
-                        className="block text-[13px] font-medium text-ink"
+                        className="block text-meta font-medium text-ink"
                       >
                         {page.models.batch.multiplier}
                       </label>
@@ -1135,18 +1136,18 @@ export function ListingEditDrawer({
 
                   {restoreResult ? (
                     <div role="status" className="glass-inset px-3.5 py-3">
-                      <p className="text-[13px] text-ink">
+                      <p className="text-meta text-ink">
                         {page.models.batch.restoreResult(restoreResult.restored)}
                       </p>
                       {restoreResult.still_failing.length > 0 ? (
                         <div className="mt-1">
-                          <p className="text-[13px] text-danger">
+                          <p className="text-meta text-danger">
                             {page.models.batch.stillFailing(restoreResult.still_failing.length)}
                           </p>
                           <ul className="mt-1 space-y-1">
                             {restoreResult.still_failing.map((item) => (
-                              <li key={item.model} className="text-[13px] leading-5 text-ink-3">
-                                <span className="font-mono">{item.model}</span>
+                              <li key={item.model} className="text-meta leading-5 text-ink-3">
+                                <span className="font-mono"><ModelName model={item.model} size="sm" /></span>
                                 {item.message ? `：${item.message}` : ''}
                               </li>
                             ))}
@@ -1158,7 +1159,7 @@ export function ListingEditDrawer({
 
                   <div className="space-y-3 glass-inset p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-[14px] font-medium text-ink">添加模型</p>
+                      <p className="text-body font-medium text-ink">添加模型</p>
                       <Button
                         variant="secondary"
                         size="sm"
@@ -1171,7 +1172,7 @@ export function ListingEditDrawer({
                         {addOpen ? '收起' : '添加模型'}
                       </Button>
                     </div>
-                    <p className="text-[13px] leading-5 text-ink-3">{editorText.editNotice}</p>
+                    <p className="text-meta leading-5 text-ink-3">{editorText.editNotice}</p>
                     {addOpen ? (
                       <>
                         <ChannelModelsEditor
@@ -1185,7 +1186,7 @@ export function ListingEditDrawer({
                           fetching={fetchUpstream.isPending}
                         />
                         {addError ? (
-                          <p role="alert" className="text-[13px] text-danger">
+                          <p role="alert" className="text-meta text-danger">
                             {addError}
                           </p>
                         ) : null}
@@ -1221,8 +1222,8 @@ export function ListingEditDrawer({
                                 onCheckedChange={(next) => updateDraft(row, { enabled: next })}
                                 aria-label={page.models.enabledLabel(row.model)}
                               />
-                              <span className="min-w-0 truncate font-mono text-[13px] text-ink">
-                                {row.model}
+                              <span className="min-w-0 truncate font-mono text-meta text-ink">
+                                <ModelName model={row.model} size="sm" />
                               </span>
                               {row.auto_disabled ? (
                                 <Tag tone="danger" dot>
@@ -1239,7 +1240,7 @@ export function ListingEditDrawer({
                                 </Tag>
                               ) : null}
                               {row.upstream_model && row.upstream_model !== row.model ? (
-                                <span className="truncate font-mono text-[12px] text-ink-3">
+                                <span className="truncate font-mono text-caption text-ink-3">
                                   ← {row.upstream_model}
                                 </span>
                               ) : null}
@@ -1255,7 +1256,7 @@ export function ListingEditDrawer({
                                   updateDraft(row, { multiplierText: event.target.value })
                                 }
                               />
-                              <span className="text-[13px] text-ink-3">x</span>
+                              <span className="text-meta text-ink-3">x</span>
                               <Button
                                 variant="secondary"
                                 size="sm"
@@ -1295,11 +1296,11 @@ export function ListingEditDrawer({
                             </div>
                           </div>
                           {row.verify_state === 'failed' && row.disabled_detail ? (
-                            <p className="mt-2 text-[13px] text-danger">{row.disabled_detail}</p>
+                            <p className="mt-2 text-meta text-danger">{row.disabled_detail}</p>
                           ) : null}
 
                           {!multiplierValid ? (
-                            <p role="alert" className="mt-2 text-[13px] text-danger">
+                            <p role="alert" className="mt-2 text-meta text-danger">
                               {page.models.multiplierRange(
                                 (range.min / 1000).toFixed(3),
                                 (range.max / 1000).toFixed(3),
@@ -1308,7 +1309,7 @@ export function ListingEditDrawer({
                           ) : null}
 
                           {row.pending_multiplier_milli > 0 && row.pending_effective_at ? (
-                            <p className="mt-2 text-[13px] text-warn" role="status">
+                            <p className="mt-2 text-meta text-warn" role="status">
                               {page.models.pendingLine(
                                 formatTime(row.pending_effective_at),
                                 milliText(row.pending_multiplier_milli),
@@ -1318,7 +1319,7 @@ export function ListingEditDrawer({
 
                           {row.auto_disabled ? (
                             <div className="mt-3 rounded-md border border-danger/25 bg-danger/5 px-3.5 py-3">
-                              <h4 className="text-[13px] font-medium text-danger">
+                              <h4 className="text-meta font-medium text-danger">
                                 {page.models.disabledTitle}
                               </h4>
                               <dl className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -1341,7 +1342,7 @@ export function ListingEditDrawer({
                           ) : null}
 
                           {rowErrors[row.model] ? (
-                            <p role="alert" className="mt-2 text-[13px] text-danger">
+                            <p role="alert" className="mt-2 text-meta text-danger">
                               {rowErrors[row.model]}
                             </p>
                           ) : null}
@@ -1410,10 +1411,10 @@ export function ListingEditDrawer({
               </div>
               <InfoField label={page.limits.hours}>
                 <span>{hoursText(listing.hours)}</span>
-                <p className="mt-1 text-[12px] leading-4 text-ink-3">{page.limits.hoursHint}</p>
+                <p className="mt-1 text-caption leading-4 text-ink-3">{page.limits.hoursHint}</p>
               </InfoField>
               {sectionErrors.limits ? (
-                <p role="alert" className="text-[13px] text-danger">
+                <p role="alert" className="text-meta text-danger">
                   {sectionErrors.limits}
                 </p>
               ) : null}
@@ -1462,12 +1463,12 @@ export function ListingEditDrawer({
                   </InfoField>
                 </dl>
               ) : (
-                <p className="text-[13px] text-ink-3">{page.verify.notPaused}</p>
+                <p className="text-meta text-ink-3">{page.verify.notPaused}</p>
               )}
 
               <div>
                 {listing.probes.length === 0 ? (
-                  <p className="text-[13px] text-ink-3">{page.verify.empty}</p>
+                  <p className="text-meta text-ink-3">{page.verify.empty}</p>
                 ) : (
                   <Table minWidth={460} size="compact">
                     <TableHead>
@@ -1485,10 +1486,10 @@ export function ListingEditDrawer({
                         const reason = probeFailReasonOf(probe)
                         return (
                           <TableRow key={probe.id} interactive={false}>
-                            <TableCell className="whitespace-nowrap text-[13px] text-ink-3">
+                            <TableCell className="whitespace-nowrap text-meta text-ink-3">
                               {formatDateTime(probe.created_at)}
                             </TableCell>
-                            <TableCell className="text-[13px] text-ink-3">
+                            <TableCell className="text-meta text-ink-3">
                               {probeTypeLabel(probe.type)}
                             </TableCell>
                             <TableCell>
@@ -1496,10 +1497,10 @@ export function ListingEditDrawer({
                                 {probe.ok ? page.verify.passed : page.verify.failed}
                               </Tag>
                             </TableCell>
-                            <TableCell numeric className="text-[13px] text-ink-3">
+                            <TableCell numeric className="text-meta text-ink-3">
                               {latency !== null ? `${latency} ms` : '—'}
                             </TableCell>
-                            <TableCell className="text-[13px] text-ink-3">
+                            <TableCell className="text-meta text-ink-3">
                               {reason ?? '—'}
                             </TableCell>
                           </TableRow>
@@ -1519,7 +1520,7 @@ export function ListingEditDrawer({
               failing={failingSection === 'advanced'}
             >
               <div>
-                <h4 className="text-[13px] font-medium text-ink">{page.advanced.groupTitle}</h4>
+                <h4 className="text-meta font-medium text-ink">{page.advanced.groupTitle}</h4>
                 {listing.group ? (
                   <>
                     <dl className="mt-2 grid gap-3 sm:grid-cols-2">
@@ -1537,7 +1538,7 @@ export function ListingEditDrawer({
                       </InfoField>
                     </dl>
                     <div className="mt-3">
-                      <p className="mb-2 text-[13px] text-ink-3">
+                      <p className="mb-2 text-meta text-ink-3">
                         {page.advanced.groupSiblings}
                       </p>
                       <Table minWidth={400} size="compact">
@@ -1560,7 +1561,7 @@ export function ListingEditDrawer({
                         <TableBody>
                           {listing.group.listings.map((sibling) => (
                             <TableRow key={sibling.id} interactive={false}>
-                              <TableCell className="font-mono text-[13px] text-ink-3">
+                              <TableCell className="font-mono text-meta text-ink-3">
                                 {sibling.key_fingerprint8 || '—'}
                                 {sibling.id === listing.id ? (
                                   <Tag tone="brand" className="ml-2">
@@ -1573,7 +1574,7 @@ export function ListingEditDrawer({
                                   {listingStatusView(sibling.status).label}
                                 </Tag>
                               </TableCell>
-                              <TableCell numeric className="text-[13px] text-ink-3">
+                              <TableCell numeric className="text-meta text-ink-3">
                                 {sibling.weight > 0 ? sibling.weight : 100}
                               </TableCell>
                               <TableCell>
@@ -1586,21 +1587,21 @@ export function ListingEditDrawer({
                     </div>
                   </>
                 ) : (
-                  <p className="mt-1 text-[13px] text-ink-3">{page.advanced.groupEmpty}</p>
+                  <p className="mt-1 text-meta text-ink-3">{page.advanced.groupEmpty}</p>
                 )}
               </div>
 
               {headersView?.custom_channel ? (
                 <div className="border-t border-line pt-4">
-                  <h4 className="text-[13px] font-medium text-ink">
+                  <h4 className="text-meta font-medium text-ink">
                     {page.advanced.headersTitle}
                   </h4>
-                  <p className="mt-1 text-[13px] leading-5 text-ink-3">
+                  <p className="mt-1 text-meta leading-5 text-ink-3">
                     {page.advanced.headersLead}
                   </p>
 
                   {headersView.pending ? (
-                    <p className="rounded-md border border-warn/30 bg-warn/5 px-3.5 py-2 text-[13px] leading-5 text-ink-2">
+                    <p className="rounded-md border border-warn/30 bg-warn/5 px-3.5 py-2 text-meta leading-5 text-ink-2">
                       {page.advanced.pendingHeaders(
                         headersView.pending.version,
                         headersView.pending.submitted_at
@@ -1615,7 +1616,7 @@ export function ListingEditDrawer({
                       {headersView.headers.map((entry) => (
                         <li
                           key={entry.name}
-                          className="flex items-center justify-between gap-3 glass-inset px-3.5 py-2 text-[13px]"
+                          className="flex items-center justify-between gap-3 glass-inset px-3.5 py-2 text-meta"
                         >
                           <span className="min-w-0 truncate font-mono text-ink">{entry.name}</span>
                           <span className="font-mono text-ink-3">{entry.value_masked}</span>
@@ -1623,9 +1624,9 @@ export function ListingEditDrawer({
                       ))}
                     </ul>
                   ) : (
-                    <p className="text-[13px] text-ink-3">{page.advanced.headersEmpty}</p>
+                    <p className="text-meta text-ink-3">{page.advanced.headersEmpty}</p>
                   )}
-                  <p className="text-[12px] leading-4 text-ink-3">
+                  <p className="text-caption leading-4 text-ink-3">
                     {page.advanced.headersMaskedHint}
                   </p>
 
@@ -1677,18 +1678,18 @@ export function ListingEditDrawer({
                         {page.advanced.headersSubmit}
                       </Button>
                     </div>
-                    <p className="text-[12px] leading-4 text-ink-3">
+                    <p className="text-caption leading-4 text-ink-3">
                       {page.advanced.headerLimit}
                     </p>
                   </div>
 
                   {headersDirty && headerRowIssues() ? (
-                    <p role="alert" className="text-[13px] text-danger">
+                    <p role="alert" className="text-meta text-danger">
                       {headerRowIssues()}
                     </p>
                   ) : null}
                   {sectionErrors.advanced ? (
-                    <p role="alert" className="text-[13px] text-danger">
+                    <p role="alert" className="text-meta text-danger">
                       {sectionErrors.advanced}
                     </p>
                   ) : null}

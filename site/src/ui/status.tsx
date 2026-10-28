@@ -37,7 +37,7 @@ export function StatusDot({
   const tone = level === 'unknown' ? 'bg-line-strong shadow-[0_0_0_3px_rgb(100_125_200/0.1)]' : TONES[level]
   const text = label ?? (level === 'unknown' ? '' : LABELS[level])
   return (
-    <span className={cn('inline-flex items-center gap-1.5 text-[13px] text-ink-3', className)}>
+    <span className={cn('inline-flex items-center gap-1.5 text-meta text-ink-3', className)}>
       <span aria-hidden="true" className={cn('h-2 w-2 shrink-0 rounded-full', tone)} />
       {showLabel && text ? <span>{text}</span> : null}
       {!showLabel && text ? <span className="sr-only">{text}</span> : null}

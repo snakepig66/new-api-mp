@@ -63,12 +63,12 @@ export function Drawer({
         >
           <div className="flex shrink-0 items-start justify-between gap-4 border-b border-line px-6 py-5">
             <div className="min-w-0">
-              <DialogPrimitive.Title className="text-[18px] font-semibold leading-7 tracking-tight text-ink">
+              <DialogPrimitive.Title className="text-h3 font-semibold leading-7 tracking-tight text-ink">
                 {title}
               </DialogPrimitive.Title>
               <DialogPrimitive.Description
                 className={cn(
-                  'mt-1 text-[14px] leading-6',
+                  'mt-1 text-body leading-6',
                   description ? 'text-ink-3' : 'sr-only',
                 )}
               >

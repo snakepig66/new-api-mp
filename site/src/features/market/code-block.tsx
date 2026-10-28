@@ -77,7 +77,7 @@ export function CodeBlock({ code = '', label, tabs, className }: CodeBlockProps)
                 aria-selected={activeKey === tab.key}
                 onClick={() => setActiveKey(tab.key)}
                 className={cn(
-                  'rounded-sm px-2.5 py-1 text-[13px] transition-colors',
+                  'rounded-sm px-2.5 py-1 text-meta transition-colors',
                   activeKey === tab.key
                     ? 'bg-white/10 text-white'
                     : 'text-white/55 hover:text-white/85',
@@ -88,14 +88,14 @@ export function CodeBlock({ code = '', label, tabs, className }: CodeBlockProps)
             ))}
           </div>
         ) : (
-          <span className="px-1 text-[13px] text-white/55">{activeLabel}</span>
+          <span className="px-1 text-meta text-white/55">{activeLabel}</span>
         )}
 
         <button
           type="button"
           onClick={() => void handleCopy()}
           className={cn(
-            'shrink-0 rounded-sm px-2 py-1 text-[13px] transition-colors',
+            'shrink-0 rounded-sm px-2 py-1 text-meta transition-colors',
             state === 'failed'
               ? 'text-[#ff7b72]'
               : 'text-white/55 hover:bg-white/10 hover:text-white',
@@ -104,7 +104,7 @@ export function CodeBlock({ code = '', label, tabs, className }: CodeBlockProps)
           {buttonLabel}
         </button>
       </div>
-      <pre className="overflow-x-auto p-4 font-mono text-[13px] leading-6 text-[#e6edf3]">
+      <pre className="overflow-x-auto p-4 font-mono text-meta leading-6 text-[#e6edf3]">
         <code>{body}</code>
       </pre>
       <span className="sr-only" aria-live="polite">

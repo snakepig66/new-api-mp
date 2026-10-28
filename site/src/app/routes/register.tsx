@@ -65,7 +65,7 @@ type RegisterForm = z.infer<ReturnType<typeof buildSchema>>
 
 function FieldLabel({ htmlFor, children }: { htmlFor: string; children: string }) {
   return (
-    <label htmlFor={htmlFor} className="mb-2 block text-[13px] font-medium text-ink">
+    <label htmlFor={htmlFor} className="mb-2 block text-meta font-medium text-ink">
       {children}
     </label>
   )
@@ -157,8 +157,8 @@ function RegisterPage() {
 
   return (
     <AuthSplit headline={page.brandHeading} body={page.brandBody} points={page.points}>
-      <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-ink">{page.title}</h1>
-      <p className="mt-2 text-[15px] leading-6 text-ink-2">{page.lead}</p>
+      <h1 className="text-h1 font-semibold leading-tight tracking-tight text-ink">{page.title}</h1>
+      <p className="mt-2 text-body leading-6 text-ink-2">{page.lead}</p>
 
       <form className="mt-7 space-y-4" onSubmit={onSubmit} noValidate>
         <div>
@@ -171,7 +171,7 @@ function RegisterPage() {
             {...register('username')}
           />
           {errors.username ? (
-            <p className="mt-1.5 text-[13px] text-danger">{errors.username.message}</p>
+            <p className="mt-1.5 text-meta text-danger">{errors.username.message}</p>
           ) : null}
         </div>
 
@@ -186,9 +186,9 @@ function RegisterPage() {
             {...register('email')}
           />
           {errors.email ? (
-            <p className="mt-1.5 text-[13px] text-danger">{errors.email.message}</p>
+            <p className="mt-1.5 text-meta text-danger">{errors.email.message}</p>
           ) : (
-            <p className="mt-1.5 text-[13px] text-ink-3">{page.emailOptional}</p>
+            <p className="mt-1.5 text-meta text-ink-3">{page.emailOptional}</p>
           )}
         </div>
 
@@ -214,9 +214,9 @@ function RegisterPage() {
               </Button>
             </div>
             {errors.code ? (
-              <p className="mt-1.5 text-[13px] text-danger">{errors.code.message}</p>
+              <p className="mt-1.5 text-meta text-danger">{errors.code.message}</p>
             ) : (
-              <p className="mt-1.5 text-[13px] text-ink-3">{page.emailVerificationHint}</p>
+              <p className="mt-1.5 text-meta text-ink-3">{page.emailVerificationHint}</p>
             )}
           </div>
         ) : null}
@@ -231,9 +231,9 @@ function RegisterPage() {
             {...register('password')}
           />
           {errors.password ? (
-            <p className="mt-1.5 text-[13px] text-danger">{errors.password.message}</p>
+            <p className="mt-1.5 text-meta text-danger">{errors.password.message}</p>
           ) : (
-            <p className="mt-1.5 text-[13px] text-ink-3">{page.passwordHint}</p>
+            <p className="mt-1.5 text-meta text-ink-3">{page.passwordHint}</p>
           )}
         </div>
 
@@ -247,7 +247,7 @@ function RegisterPage() {
             {...register('confirm')}
           />
           {errors.confirm ? (
-            <p className="mt-1.5 text-[13px] text-danger">{errors.confirm.message}</p>
+            <p className="mt-1.5 text-meta text-danger">{errors.confirm.message}</p>
           ) : null}
         </div>
 
@@ -256,7 +256,7 @@ function RegisterPage() {
         {errors.root?.message ? (
           <p
             role="alert"
-            className="rounded-md bg-danger/10 px-3 py-2 text-[13px] leading-5 text-danger"
+            className="rounded-md bg-danger/10 px-3 py-2 text-meta leading-5 text-danger"
           >
             {errors.root.message}
           </p>
@@ -267,7 +267,7 @@ function RegisterPage() {
         </Button>
       </form>
 
-      <div className="my-6 flex items-center gap-3 text-[13px] text-ink-3">
+      <div className="my-6 flex items-center gap-3 text-meta text-ink-3">
         <span className="h-px flex-1 bg-line" aria-hidden="true" />
         {copy.pages.login.or}
         <span className="h-px flex-1 bg-line" aria-hidden="true" />
@@ -278,14 +278,14 @@ function RegisterPage() {
         onError={(message) => setError('root', { message })}
       />
 
-      <p className="mt-6 text-[14px] text-ink-2">
+      <p className="mt-6 text-body text-ink-2">
         {page.haveAccount}{' '}
         <Link to="/login" className="text-brand hover:underline">
           {page.toLogin}
         </Link>
       </p>
 
-      <p className="mt-6 border-t border-line pt-4 text-[13px] leading-6 text-ink-3">
+      <p className="mt-6 border-t border-line pt-4 text-meta leading-6 text-ink-3">
         {page.agreementPrefix}{' '}
         <Link to="/agreement" className="text-ink-2 hover:text-brand">
           {copy.footer.terms}

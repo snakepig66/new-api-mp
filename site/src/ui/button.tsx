@@ -18,9 +18,9 @@ const variants: Record<ButtonVariant, string> = {
 }
 
 const sizes: Record<ButtonSize, string> = {
-  sm: 'h-8 gap-1 px-3 text-[13px]',
-  md: 'h-10 gap-1.5 px-5 text-[14px]',
-  lg: 'h-12 gap-2 px-6 text-[15px]',
+  sm: 'h-8 gap-1 px-3 text-meta',
+  md: 'h-10 gap-1.5 px-5 text-body',
+  lg: 'h-12 gap-2 px-6 text-body',
 }
 
 /** Classes for links that must look like buttons (TanStack Link, anchors). */

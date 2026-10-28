@@ -84,7 +84,7 @@ function HolidaysContent() {
       ) : null}
 
       <div className="mt-5 flex flex-wrap items-center gap-3">
-        <label htmlFor="holiday-year" className="text-[14px] text-ink-2">
+        <label htmlFor="holiday-year" className="text-body text-ink-2">
           {page.year}
         </label>
         <Select
@@ -131,7 +131,7 @@ function HolidaysContent() {
                 const view = adminHolidayStatus(item.kind)
                 return (
                   <TableRow key={item.date}>
-                    <TableCell className="tabular-nums text-[13px]">{item.date}</TableCell>
+                    <TableCell className="tabular-nums text-meta">{item.date}</TableCell>
                     <TableCell>
                       <Tag tone={view.tone} dot>
                         {view.label}
@@ -247,7 +247,7 @@ function ImportDialog({
             setText(event.target.value)
             setError(null)
           }}
-          className="w-full resize-y rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 py-3 text-[15px] leading-6 text-ink transition-colors placeholder:text-ink-3 focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20"
+          className="w-full resize-y rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 py-3 text-body leading-6 text-ink transition-colors placeholder:text-ink-3 focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20"
         />
       </Field>
     </Dialog>

@@ -40,25 +40,25 @@ function SharePage() {
         actions={action}
         className="border-b-0 pb-0"
       />
-      <p className="mt-4 max-w-2xl text-[15px] leading-7 text-ink-2">{page.heroBody}</p>
+      <p className="mt-4 max-w-2xl text-body leading-7 text-ink-2">{page.heroBody}</p>
 
       <section className="mt-12">
-        <h2 className="text-[24px] font-semibold tracking-tight text-ink">{page.stepsTitle}</h2>
+        <h2 className="text-h2 font-semibold tracking-tight text-ink">{page.stepsTitle}</h2>
         <div className="mt-5 grid gap-4 md:grid-cols-3">
           {page.steps.map((step, index) => (
             <div key={step.title} className="glass glass-lift rounded-lg p-6">
               <Tag tone="brand">{String(index + 1)}</Tag>
-              <h3 className="mt-3 text-[16px] font-semibold text-ink">{step.title}</h3>
-              <p className="mt-1 text-[14px] leading-6 text-ink-2">{step.body}</p>
+              <h3 className="mt-3 text-title font-semibold text-ink">{step.title}</h3>
+              <p className="mt-1 text-body leading-6 text-ink-2">{step.body}</p>
             </div>
           ))}
         </div>
       </section>
 
       <section className="mt-10 glass-inset rounded-lg p-6">
-        <h2 className="text-[18px] font-semibold text-ink">{page.feeTitle}</h2>
-        <p className="mt-2 text-[14px] leading-6 text-ink-2">{page.feeBody}</p>
-        <p className="mt-2 text-[13px] leading-5 text-ink-3">{page.note}</p>
+        <h2 className="text-h3 font-semibold text-ink">{page.feeTitle}</h2>
+        <p className="mt-2 text-body leading-6 text-ink-2">{page.feeBody}</p>
+        <p className="mt-2 text-meta leading-5 text-ink-3">{page.note}</p>
       </section>
     </div>
   )

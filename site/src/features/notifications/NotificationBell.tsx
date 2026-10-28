@@ -94,7 +94,7 @@ export function NotificationBell() {
           <path d="M8 16.5a2 2 0 0 0 4 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
         {unread > 0 ? (
-          <span className="absolute right-1.5 top-1.5 grid h-4 min-w-4 place-items-center rounded-full bg-danger px-1 text-[11px] font-medium leading-none text-white">
+          <span className="absolute right-1.5 top-1.5 grid h-4 min-w-4 place-items-center rounded-full bg-danger px-1 text-caption font-medium leading-none text-white">
             {unread > 99 ? '99+' : unread}
           </span>
         ) : null}
@@ -103,40 +103,40 @@ export function NotificationBell() {
       {open ? (
         <div className="absolute right-0 top-full z-40 mt-2 w-[320px] overflow-hidden glass">
           <div className="flex items-center justify-between border-b border-line px-4 py-3">
-            <span className="text-[14px] font-medium text-ink">{t.title}</span>
+            <span className="text-body font-medium text-ink">{t.title}</span>
             <button
               type="button"
               onClick={() => markAll.mutate()}
               disabled={markAll.isPending || unread === 0}
-              className="text-[13px] text-brand transition-colors hover:underline disabled:cursor-default disabled:text-ink-3 disabled:no-underline"
+              className="text-meta text-brand transition-colors hover:underline disabled:cursor-default disabled:text-ink-3 disabled:no-underline"
             >
               {markAll.isPending ? t.marking : t.markAll}
             </button>
           </div>
 
           {notifications.isPending ? (
-            <p className="px-4 py-6 text-center text-[13px] text-ink-3">{t.loading}</p>
+            <p className="px-4 py-6 text-center text-meta text-ink-3">{t.loading}</p>
           ) : notifications.isError ? (
             <div className="px-4 py-6 text-center">
-              <p className="text-[13px] text-danger">{t.loadError}</p>
+              <p className="text-meta text-danger">{t.loadError}</p>
               <button
                 type="button"
                 onClick={() => void notifications.refetch()}
-                className="mt-2 text-[13px] text-brand hover:underline"
+                className="mt-2 text-meta text-brand hover:underline"
               >
                 {t.retry}
               </button>
             </div>
           ) : items.length === 0 ? (
-            <p className="px-4 py-6 text-center text-[13px] text-ink-3">{t.empty}</p>
+            <p className="px-4 py-6 text-center text-meta text-ink-3">{t.empty}</p>
           ) : (
             <ul className="max-h-[360px] overflow-y-auto">
               {items.map((item) => {
                 const body = (
                   <>
                     <span className="flex items-center gap-2">
-                      <span className="text-[13px] text-ink-3">{kindLabel(item.kind)}</span>
-                      <span className="text-[13px] text-ink-3">{relativeTime(item.created_at)}</span>
+                      <span className="text-meta text-ink-3">{kindLabel(item.kind)}</span>
+                      <span className="text-meta text-ink-3">{relativeTime(item.created_at)}</span>
                       {!item.read ? (
                         <span
                           aria-hidden="true"
@@ -146,14 +146,14 @@ export function NotificationBell() {
                     </span>
                     <span
                       className={cn(
-                        'mt-1 block text-[14px] leading-5',
+                        'mt-1 block text-body leading-5',
                         item.read ? 'text-ink-2' : 'font-medium text-ink',
                       )}
                     >
                       {item.title}
                     </span>
                     {item.body ? (
-                      <span className="mt-0.5 block text-[13px] leading-5 text-ink-3">
+                      <span className="mt-0.5 block text-meta leading-5 text-ink-3">
                         {item.body}
                       </span>
                     ) : null}

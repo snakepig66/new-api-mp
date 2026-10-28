@@ -22,7 +22,7 @@ export interface SelectProps
 
 /* Same bed, focus ring and disabled treatment as Input. */
 const selectBase = cn(
-  'h-12 w-full cursor-pointer appearance-none rounded-md border border-white/70 bg-white/55 px-4 pr-10 text-[15px] text-ink shadow-[inset_0_1px_2px_rgba(77,107,254,0.06)] backdrop-blur-md transition-[color,background-color,border-color,box-shadow]',
+  'h-12 w-full cursor-pointer appearance-none rounded-md border border-white/70 bg-white/55 px-4 pr-10 text-body text-ink shadow-[inset_0_1px_2px_rgba(77,107,254,0.06)] backdrop-blur-md transition-[color,background-color,border-color,box-shadow]',
   'focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20',
   'disabled:cursor-not-allowed disabled:bg-white/35 disabled:text-ink-3',
   'aria-[invalid=true]:border-danger aria-[invalid=true]:focus:ring-danger/10',
@@ -54,7 +54,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
       {label ? (
         <label
           htmlFor={selectId}
-          className="mb-2 block text-[14px] font-medium leading-5 text-ink"
+          className="mb-2 block text-body font-medium leading-5 text-ink"
         >
           {label}
         </label>
@@ -103,11 +103,11 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
       </div>
 
       {error ? (
-        <p id={errorId} role="alert" className="mt-1 text-[13px] leading-5 text-danger">
+        <p id={errorId} role="alert" className="mt-1 text-meta leading-5 text-danger">
           {error}
         </p>
       ) : hint ? (
-        <p id={hintId} className="mt-1 text-[13px] leading-5 text-ink-3">
+        <p id={hintId} className="mt-1 text-meta leading-5 text-ink-3">
           {hint}
         </p>
       ) : null}

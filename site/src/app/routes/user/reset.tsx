@@ -61,21 +61,21 @@ function ResetPasswordPage() {
 
   return (
     <AuthSplit headline={loginCopy.brandHeading} body={loginCopy.brandBody} points={loginCopy.points}>
-      <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-ink">
+      <h1 className="text-h1 font-semibold leading-tight tracking-tight text-ink">
         {valid ? page.title : page.invalidTitle}
       </h1>
-      <p className="mt-2 text-[15px] leading-6 text-ink-2">
+      <p className="mt-2 text-body leading-6 text-ink-2">
         {valid ? page.lead : page.invalidReason}
       </p>
 
       {!valid ? (
         <div className="mt-7 space-y-3">
-          <p className="text-[13px] leading-6 text-ink-3">{page.invalidNext}</p>
+          <p className="text-meta leading-6 text-ink-3">{page.invalidNext}</p>
           <div className="flex flex-wrap gap-3">
             <Link to="/forgot-password" className={buttonClasses('primary', 'md')}>
               {page.requestAgain}
             </Link>
-            <Link to="/login" className="inline-flex h-10 items-center px-1 text-[14px] text-brand hover:underline">
+            <Link to="/login" className="inline-flex h-10 items-center px-1 text-body text-brand hover:underline">
               {page.backToLogin}
             </Link>
           </div>
@@ -83,10 +83,10 @@ function ResetPasswordPage() {
       ) : password ? (
         <div className="mt-7 space-y-4">
           <div className="rounded-md border border-brand/25 bg-brand-soft px-4 py-3">
-            <p className="text-[13px] font-medium text-brand-ink">{page.successTitle}</p>
-            <p className="mt-1 text-[13px] leading-6 text-brand-ink">{page.successBody}</p>
-            <p className="mt-3 text-[12px] text-ink-3">{page.generatedLabel}</p>
-            <code className="mt-1 block break-all glass-inset rounded-sm px-3 py-2 font-mono text-[14px] text-ink">
+            <p className="text-meta font-medium text-brand-ink">{page.successTitle}</p>
+            <p className="mt-1 text-meta leading-6 text-brand-ink">{page.successBody}</p>
+            <p className="mt-3 text-caption text-ink-3">{page.generatedLabel}</p>
+            <code className="mt-1 block break-all glass-inset rounded-sm px-3 py-2 font-mono text-body text-ink">
               {password}
             </code>
           </div>
@@ -95,14 +95,14 @@ function ResetPasswordPage() {
           </Button>
           <Link
             to="/login"
-            className="inline-block text-[14px] text-brand hover:underline"
+            className="inline-block text-body text-brand hover:underline"
           >
             {page.toLogin}
           </Link>
         </div>
       ) : (
         <div className="mt-7 space-y-4">
-          <dl className="glass-inset px-4 py-3 text-[13px]">
+          <dl className="glass-inset px-4 py-3 text-meta">
             <div className="flex items-baseline justify-between gap-4">
               <dt className="text-ink-3">{page.email}</dt>
               <dd className="break-all text-ink">{email}</dd>
@@ -112,7 +112,7 @@ function ResetPasswordPage() {
           {error ? (
             <p
               role="alert"
-              className="rounded-md bg-danger/10 px-3 py-2 text-[13px] leading-5 text-danger"
+              className="rounded-md bg-danger/10 px-3 py-2 text-meta leading-5 text-danger"
             >
               {error}
             </p>
@@ -130,7 +130,7 @@ function ResetPasswordPage() {
 
           <Link
             to="/login"
-            className="inline-block text-[13px] text-ink-3 hover:text-ink hover:underline"
+            className="inline-block text-meta text-ink-3 hover:text-ink hover:underline"
           >
             {page.backToLogin}
           </Link>

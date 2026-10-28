@@ -33,7 +33,7 @@ export function Table({ children, className, minWidth = 720, size = 'default' }:
           inflate the document's scrollWidth on 390px screens. */}
       <div className="glass-inset relative w-full overflow-x-auto p-1">
         <table
-          className={cn('w-full border-collapse text-[14px]', className)}
+          className={cn('w-full border-collapse text-body', className)}
           style={{ minWidth }}
         >
           {children}
@@ -84,11 +84,14 @@ export interface TableHeadProps extends ThHTMLAttributes<HTMLTableCellElement> {
 }
 
 export function TableHeaderCell({ numeric = false, className, children, ...props }: TableHeadProps) {
+  const size = useContext(TableSizeContext)
+
   return (
     <th
       scope="col"
       className={cn(
-        'whitespace-nowrap bg-brand-soft/60 px-4 py-3 text-left text-[13px] font-medium text-ink-3 first:rounded-l-md last:rounded-r-md',
+        'whitespace-nowrap bg-brand-soft/60 px-4 text-left text-caption font-medium text-ink-3 first:rounded-l-md last:rounded-r-md',
+        size === 'compact' ? 'py-2.5' : 'py-3.5',
         numeric && 'text-right',
         className,
       )}
@@ -109,8 +112,8 @@ export function TableCell({ numeric = false, className, children, ...props }: Ta
   return (
     <td
       className={cn(
-        'px-4 align-middle text-[14px] leading-5 text-ink',
-        size === 'compact' ? 'py-2.5' : 'py-4',
+        'px-4 align-middle text-body leading-5 text-ink',
+        size === 'compact' ? 'py-2.5' : 'py-3.5',
         numeric && 'text-right tabular-nums',
         className,
       )}

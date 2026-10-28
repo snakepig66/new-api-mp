@@ -120,7 +120,7 @@ function PricesContent() {
                   <TableBody>
                     {group.rows.map((row) => (
                       <TableRow key={row.id}>
-                        <TableCell className=" text-[13px]">{row.vendor}</TableCell>
+                        <TableCell className=" text-meta">{row.vendor}</TableCell>
                         <TableCell numeric>{formatYuan(row.input_micro_per_mtok)}</TableCell>
                         <TableCell numeric>{formatYuan(row.output_micro_per_mtok)}</TableCell>
                         <TableCell numeric className="text-ink-3">
@@ -129,10 +129,10 @@ function PricesContent() {
                         <TableCell numeric className="text-ink-3">
                           {formatYuan(row.cache_write_micro_per_mtok)}
                         </TableCell>
-                        <TableCell className="tabular-nums text-[13px] text-ink-3">
+                        <TableCell className="tabular-nums text-meta text-ink-3">
                           v{row.version}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
+                        <TableCell className="whitespace-nowrap tabular-nums text-meta text-ink-3">
                           {formatDateTime(row.effective_at)}
                         </TableCell>
                       </TableRow>
@@ -334,7 +334,7 @@ function PriceDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
       {submitError ? (
         <p
           role="alert"
-          className="mt-4 border border-danger/25 bg-danger/10 px-3 py-2 text-[13px] text-danger"
+          className="mt-4 border border-danger/25 bg-danger/10 px-3 py-2 text-meta text-danger"
         >
           {submitError}
         </p>

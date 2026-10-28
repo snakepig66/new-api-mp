@@ -29,7 +29,7 @@ function NavItem({ to, label, exact = false }: { to: NavTo; label: string; exact
     <Link
       to={to}
       className={cn(
-        'relative inline-flex h-16 items-center px-3 text-[14px] font-medium transition-colors',
+        'relative inline-flex h-16 items-center px-3 text-body font-medium transition-colors',
         active ? 'text-brand-ink' : 'text-ink-2 hover:text-ink',
       )}
     >
@@ -49,7 +49,7 @@ function UtilityLink({ to, label, exact = false }: { to: NavTo; label: string; e
     <Link
       to={to}
       className={cn(
-        'hidden h-9 items-center rounded-full px-3 text-[14px] transition-colors md:inline-flex',
+        'hidden h-9 items-center rounded-full px-3 text-body transition-colors md:inline-flex',
         active ? 'bg-brand-soft/70 text-brand-ink' : 'text-ink-2 hover:text-ink',
       )}
     >
@@ -77,7 +77,7 @@ function MobileNavItem({
       to={to}
       onClick={onNavigate}
       className={cn(
-        'flex h-11 items-center rounded-full px-4 text-[14px] transition-colors',
+        'flex h-11 items-center rounded-full px-4 text-body transition-colors',
         active ? 'bg-brand-soft/70 font-medium text-brand-ink' : 'text-ink-2 hover:bg-white/60 hover:text-ink',
       )}
     >
@@ -147,7 +147,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <>
                 <NotificationBell />
                 <UtilityLink to="/console" label={copy.nav.console} />
-                <span className="hidden max-w-[120px] truncate text-[13px] text-ink-3 lg:inline">
+                <span className="hidden max-w-[120px] truncate text-meta text-ink-3 lg:inline">
                   {user?.display_name || user?.username}
                 </span>
                 <Button
@@ -164,7 +164,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <div className="hidden items-center gap-1 md:flex">
                 <Link
                   to="/login"
-                  className="inline-flex h-9 items-center rounded-full px-3 text-[14px] text-ink-2 transition-colors hover:text-ink"
+                  className="inline-flex h-9 items-center rounded-full px-3 text-body text-ink-2 transition-colors hover:text-ink"
                 >
                   {copy.nav.login}
                 </Link>
@@ -206,7 +206,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <div className="mt-2 flex items-center gap-2 border-t border-line px-1 pt-3">
                 {isLoggedIn ? (
                   <>
-                    <span className="min-w-0 flex-1 truncate text-[13px] text-ink-3">
+                    <span className="min-w-0 flex-1 truncate text-meta text-ink-3">
                       {user?.display_name || user?.username}
                     </span>
                     <Button
@@ -223,7 +223,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     <Link
                       to="/login"
                       onClick={() => setMenuOpen(false)}
-                      className="inline-flex h-9 flex-1 items-center justify-center rounded-full px-3 text-[14px] text-ink-2 transition-colors hover:bg-white/60 hover:text-ink"
+                      className="inline-flex h-9 flex-1 items-center justify-center rounded-full px-3 text-body text-ink-2 transition-colors hover:bg-white/60 hover:text-ink"
                     >
                       {copy.nav.login}
                     </Link>
@@ -246,7 +246,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {isAppArea ? null : (
         <footer className="border-t border-white/60">
-          <div className="mx-auto flex max-w-[1200px] flex-col gap-3 px-5 py-8 text-[13px] text-ink-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <div className="mx-auto flex max-w-[1200px] flex-col gap-3 px-5 py-8 text-meta text-ink-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
               <span>{copy.footer.copyright}</span>
               {company ? <span>{copy.footer.company}</span> : null}

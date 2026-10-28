@@ -25,10 +25,10 @@ export function AuthSplit({ headline, body, points, children }: AuthSplitProps) 
       <div className="relative overflow-hidden bg-[linear-gradient(160deg,#1c2b8f_0%,#4d6bfe_100%)] px-6 py-8 text-white sm:px-10 lg:flex lg:flex-col lg:justify-between lg:px-16 lg:py-16">
         <div>
           <Logo markSize={20} mono className="text-white" />
-          <h1 className="mt-3 max-w-[460px] text-[24px] font-semibold leading-[1.2] tracking-[-0.02em] sm:text-[28px] lg:mt-10 lg:text-[32px]">
+          <h1 className="mt-3 max-w-[460px] text-h2 font-semibold leading-[1.2] tracking-[-0.02em] sm:text-h1 lg:mt-10 lg:text-h1">
             {headline}
           </h1>
-          <p className="mt-3 hidden max-w-[420px] text-[15px] leading-7 text-white/70 lg:mt-5 lg:block">
+          <p className="mt-3 hidden max-w-[420px] text-body leading-7 text-white/70 lg:mt-5 lg:block">
             {body}
           </p>
 
@@ -37,15 +37,15 @@ export function AuthSplit({ headline, body, points, children }: AuthSplitProps) 
               <li key={point.title} className="flex items-start gap-3">
                 <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-white/80" aria-hidden="true" />
                 <div>
-                  <p className="text-[15px] font-medium text-white">{point.title}</p>
-                  <p className="mt-0.5 text-[14px] leading-6 text-white/70">{point.body}</p>
+                  <p className="text-body font-medium text-white">{point.title}</p>
+                  <p className="mt-0.5 text-body leading-6 text-white/70">{point.body}</p>
                 </div>
               </li>
             ))}
           </ul>
         </div>
 
-        <p className="hidden text-[13px] text-white/50 lg:block">按量结算，失败调用不收费。</p>
+        <p className="hidden text-meta text-white/50 lg:block">按量结算，失败调用不收费。</p>
       </div>
 
       <div className="flex items-center justify-center px-5 py-12 sm:px-8 lg:py-16">

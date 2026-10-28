@@ -61,7 +61,7 @@ export function SaveBar({
     >
       <div
         aria-live="polite"
-        className="flex min-w-0 flex-1 items-center gap-2 text-[13px] leading-5 text-ink-3"
+        className="flex min-w-0 flex-1 items-center gap-2 text-meta leading-5 text-ink-3"
       >
         {dirty && !saving ? (
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand" aria-hidden="true" />

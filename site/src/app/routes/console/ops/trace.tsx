@@ -145,8 +145,8 @@ export function TraceContent() {
 function DetailItem({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[12px] uppercase tracking-[0.08em] text-ink-3">{label}</dt>
-      <dd className="mt-1 break-words text-[14px] text-ink">{children}</dd>
+      <dt className="text-caption uppercase tracking-[0.08em] text-ink-3">{label}</dt>
+      <dd className="mt-1 break-words text-body text-ink">{children}</dd>
     </div>
   )
 }
@@ -161,7 +161,7 @@ function TraceResult({ trace }: { trace: AdminRequestTrace }) {
 
       <Section title={page.retryTitle} hint={trace.retry_chain.length || undefined}>
         {trace.retry_chain.length === 0 ? (
-          <p className="text-[13px] text-ink-3">{page.retryEmpty}</p>
+          <p className="text-meta text-ink-3">{page.retryEmpty}</p>
         ) : (
           <ol className="relative ml-1 space-y-4 border-l border-line pl-5">
             {trace.retry_chain.map((hop, index) => (
@@ -171,20 +171,20 @@ function TraceResult({ trace }: { trace: AdminRequestTrace }) {
                   className="absolute -left-[27px] top-1.5 h-2.5 w-2.5 rounded-full bg-brand"
                 />
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <span className="text-[13px] font-medium text-ink">
+                  <span className="text-meta font-medium text-ink">
                     #{hop.seq} · {hop.event}
                   </span>
                   {hop.listing_id > 0 ? (
-                    <span className="tabular-nums text-[13px] text-ink-2">
+                    <span className="tabular-nums text-meta text-ink-2">
                       {page.retryColumns.listing} #{hop.listing_id}
                     </span>
                   ) : null}
-                  <span className="tabular-nums text-[13px] text-ink-3">
+                  <span className="tabular-nums text-meta text-ink-3">
                     {formatDateTime(hop.at)}
                   </span>
                 </div>
                 {hop.detail ? (
-                  <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-5 text-ink-2">
+                  <p className="mt-1 whitespace-pre-wrap break-words text-meta leading-5 text-ink-2">
                     {hop.detail}
                   </p>
                 ) : null}
@@ -196,7 +196,7 @@ function TraceResult({ trace }: { trace: AdminRequestTrace }) {
 
       <Section title={page.ledgerTitle} hint={trace.ledger.length || undefined}>
         {trace.ledger.length === 0 ? (
-          <p className="text-[13px] text-ink-3">{page.ledgerEmpty}</p>
+          <p className="text-meta text-ink-3">{page.ledgerEmpty}</p>
         ) : (
           <LedgerTable rows={trace.ledger} />
         )}
@@ -204,7 +204,7 @@ function TraceResult({ trace }: { trace: AdminRequestTrace }) {
 
       <Section title={page.probesTitle} hint={trace.probes.length || undefined}>
         {trace.probes.length === 0 ? (
-          <p className="text-[13px] text-ink-3">{page.probesEmpty}</p>
+          <p className="text-meta text-ink-3">{page.probesEmpty}</p>
         ) : (
           <ProbeTable rows={trace.probes} />
         )}
@@ -221,7 +221,7 @@ function RequestDetails({ request }: { request: AdminTraceRequest }) {
     <>
       <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
         <DetailItem label={page.request.requestId}>
-          <span className="font-mono text-[13px]">{request.request_id}</span>
+          <span className="font-mono text-meta">{request.request_id}</span>
         </DetailItem>
         <DetailItem label={page.request.status}>{requestStatusTag(request.status)}</DetailItem>
         <DetailItem label={page.request.createdAt}>
@@ -302,11 +302,11 @@ function LedgerTable({ rows }: { rows: AdminTraceLedgerRow[] }) {
         {rows.map((row) => (
           <TableRow key={row.id}>
             <TableCell>{entryTypeLabel(row.entry_type)}</TableCell>
-            <TableCell className="font-mono text-[13px] text-ink-2">{row.account}</TableCell>
+            <TableCell className="font-mono text-meta text-ink-2">{row.account}</TableCell>
             <TableCell numeric>{formatYuan(row.amount_micro)}</TableCell>
             <TableCell>{ledgerStatusLabel(row.status)}</TableCell>
             <TableCell numeric>{row.price_version}</TableCell>
-            <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
+            <TableCell className="whitespace-nowrap tabular-nums text-meta text-ink-3">
               {formatDateTime(row.created_at)}
             </TableCell>
           </TableRow>
@@ -338,10 +338,10 @@ function ProbeTable({ rows }: { rows: AdminTraceProbeRow[] }) {
               </Tag>
             </TableCell>
             <TableCell numeric>{row.latency_ms} ms</TableCell>
-            <TableCell className="max-w-[360px] truncate text-[13px] text-ink-2" title={row.detail}>
+            <TableCell className="max-w-[360px] truncate text-meta text-ink-2" title={row.detail}>
               {row.detail || page.labels.none}
             </TableCell>
-            <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
+            <TableCell className="whitespace-nowrap tabular-nums text-meta text-ink-3">
               {formatDateTime(row.created_at)}
             </TableCell>
           </TableRow>

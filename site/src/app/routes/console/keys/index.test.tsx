@@ -152,9 +152,9 @@ describe('keys page expiry UX', () => {
     expect(bannerLink.getAttribute('href')).toBe('/console/keys/1')
     expect(screen.getByText(/later-key/)).toBeTruthy()
 
-    const deadRow = screen.getByText('dead-key').closest('tr')
+    const deadRow = screen.getByText('dead-key').closest('[data-testid="key-card"]')
     expect(deadRow?.className).toContain('opacity-60')
-    const liveRow = screen.getByText('soon-key').closest('tr')
+    const liveRow = screen.getByText('soon-key').closest('[data-testid="key-card"]')
     expect(liveRow?.className).not.toContain('opacity-60')
 
     // Only the expired row offers extending.

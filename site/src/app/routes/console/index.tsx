@@ -7,6 +7,7 @@ import { formatYuan } from '@/lib/money'
 import { formatDateTime } from '@/lib/time'
 import {
   Empty,
+  ModelName,
   PageHeader,
   SellerId,
   Stat,
@@ -75,10 +76,10 @@ function ConsoleOverviewPage() {
       {!sellerActive ? (
         <section className="mt-6 flex flex-wrap items-center justify-between gap-4 glass p-6">
           <div className="min-w-0">
-            <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+            <h2 className="text-title font-semibold tracking-tight text-ink">
               {page.shareCard.title}
             </h2>
-            <p className="mt-1 max-w-2xl text-[14px] leading-6 text-ink-2">
+            <p className="mt-1 max-w-2xl text-body leading-6 text-ink-2">
               {page.shareCard.body}
             </p>
           </div>
@@ -199,7 +200,7 @@ function ConsoleOverviewPage() {
           <Link
             to="/console/records"
             search={{ preset: '7d', page: 1, page_size: 20 }}
-            className="text-[13px] text-brand-ink hover:underline"
+            className="text-meta text-brand-ink hover:underline"
           >
             {page.recent.viewAll}
           </Link>
@@ -237,24 +238,24 @@ function ConsoleOverviewPage() {
                 const row = toUsageRow(record)
                 return (
                   <TableRow key={row.requestId} interactive>
-                    <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
+                    <TableCell className="whitespace-nowrap tabular-nums text-meta text-ink-3">
                       {formatDateTime(row.createdAt)}
                     </TableCell>
                     <TableCell>
-                      <span className="truncate font-medium text-ink">{row.model}</span>
+                      <span className="truncate font-medium text-ink"><ModelName model={row.model} size="sm" /></span>
                     </TableCell>
                     <TableCell>
                       <SellerId id={row.sellerId} />
                     </TableCell>
                     <TableCell numeric>
-                      <div className="text-[13px] tabular-nums">
+                      <div className="text-meta tabular-nums">
                         {copy.pages.consoleRecords.tokens.pair(
                           formatCount(row.inputTokens),
                           formatCount(row.outputTokens)
                         )}
                       </div>
                       {(row.cacheReadTokens > 0 || row.cacheWriteTokens > 0) && (
-                        <div className="flex items-center gap-1 text-[13px] tabular-nums text-ink-3">
+                        <div className="flex items-center gap-1 text-meta tabular-nums text-ink-3">
                           {row.cacheReadTokens > 0 && (
                             <span>
                               {copy.pages.consoleRecords.tokens.cache(

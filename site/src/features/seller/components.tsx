@@ -98,23 +98,23 @@ export function Field({
 }) {
   return (
     <div className={cn('min-w-0', className)}>
-      <label htmlFor={htmlFor} className="block text-[14px] font-medium text-ink">
+      <label htmlFor={htmlFor} className="block text-body font-medium text-ink">
         {label}
       </label>
       <div className="mt-2">{children}</div>
       {error ? (
-        <p className="mt-1 text-[13px] leading-5 text-danger" role="alert">
+        <p className="mt-1 text-meta leading-5 text-danger" role="alert">
           {error}
         </p>
       ) : hint ? (
-        <p className="mt-1 text-[13px] leading-5 text-ink-3">{hint}</p>
+        <p className="mt-1 text-meta leading-5 text-ink-3">{hint}</p>
       ) : null}
     </div>
   )
 }
 
 export const selectClass =
-  'h-12 w-full rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 text-[15px] text-ink transition-colors focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20 disabled:cursor-not-allowed disabled:bg-white/35 disabled:text-ink-3'
+  'h-12 w-full rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 text-body text-ink transition-colors focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20 disabled:cursor-not-allowed disabled:bg-white/35 disabled:text-ink-3'
 
 export function SectionHeading({
   title,
@@ -128,8 +128,8 @@ export function SectionHeading({
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0">
-        <h2 className="text-[16px] font-semibold tracking-tight text-ink">{title}</h2>
-        {lead ? <p className="mt-1 text-[13px] leading-5 text-ink-3">{lead}</p> : null}
+        <h2 className="text-title font-semibold tracking-tight text-ink">{title}</h2>
+        {lead ? <p className="mt-1 text-meta leading-5 text-ink-3">{lead}</p> : null}
       </div>
       {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
     </div>
@@ -161,8 +161,8 @@ export function notify(toast: unknown, options: ToastOptions): void {
 export function BuyerCode({ code }: { code: string }) {
   return (
     <span className="inline-flex items-baseline gap-1 whitespace-nowrap">
-      <span className="text-[13px] text-ink-3">{copy.identity.buyer}</span>
-      <span className="text-[13px] tabular-nums uppercase tracking-[0.04em] text-ink">
+      <span className="text-meta text-ink-3">{copy.identity.buyer}</span>
+      <span className="text-meta tabular-nums uppercase tracking-[0.04em] text-ink">
         {code}
       </span>
     </span>

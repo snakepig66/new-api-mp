@@ -9,7 +9,7 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 
 /* 48px field on a frosted bed; focus is a blue border + 3px blue halo. */
 const inputBase = cn(
-  'h-12 w-full rounded-md border border-white/70 bg-white/55 px-4 text-[15px] text-ink shadow-[inset_0_1px_2px_rgba(77,107,254,0.06)] backdrop-blur-md transition-[color,background-color,border-color,box-shadow]',
+  'h-12 w-full rounded-md border border-white/70 bg-white/55 px-4 text-body text-ink shadow-[inset_0_1px_2px_rgba(77,107,254,0.06)] backdrop-blur-md transition-[color,background-color,border-color,box-shadow]',
   'placeholder:text-ink-3',
   'focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20',
   'disabled:cursor-not-allowed disabled:bg-white/35 disabled:text-ink-3',
@@ -24,7 +24,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
     <input
       ref={ref}
       aria-invalid={invalid || undefined}
-      className={cn(inputBase, mono && 'font-mono text-[14px]', className)}
+      className={cn(inputBase, mono && 'font-mono text-body', className)}
       {...props}
     />
   )

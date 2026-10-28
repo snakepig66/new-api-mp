@@ -173,7 +173,7 @@ function PayoutsContent() {
                 <TableHeaderCell numeric>{page.columns.amount}</TableHeaderCell>
                 <TableHeaderCell>{page.columns.createdAt}</TableHeaderCell>
                 <TableHeaderCell>{page.columns.status}</TableHeaderCell>
-                <TableHeaderCell>{page.columns.actions}</TableHeaderCell>
+                <TableHeaderCell numeric>{page.columns.actions}</TableHeaderCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -184,7 +184,7 @@ function PayoutsContent() {
                   payout.status === 'pending' || payout.status === 'approved'
                 return (
                   <TableRow key={payout.id}>
-                    <TableCell className="tabular-nums text-[13px] text-ink-3">
+                    <TableCell className="tabular-nums text-meta text-ink-3">
                       #{payout.id}
                     </TableCell>
                     <TableCell>
@@ -193,7 +193,7 @@ function PayoutsContent() {
                     <TableCell numeric className="font-medium">
                       {formatYuan(payout.amount_micro)}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
+                    <TableCell className="whitespace-nowrap tabular-nums text-meta text-ink-3">
                       {formatDateTime(payout.created_at)}
                     </TableCell>
                     <TableCell>
@@ -201,9 +201,9 @@ function PayoutsContent() {
                         {view.label}
                       </Tag>
                     </TableCell>
-                    <TableCell>
+                    <TableCell numeric className="text-right">
                       {isSelf && actionable ? (
-                        <span className="text-[13px] text-ink-3" title={page.selfHint}>
+                        <span className="text-meta text-ink-3" title={page.selfHint}>
                           {page.selfHint}
                         </span>
                       ) : payout.status === 'pending' ? (
@@ -243,7 +243,7 @@ function PayoutsContent() {
                           {page.markPaid}
                         </Button>
                       ) : (
-                        <span className="text-[13px] text-ink-3">{copy.pages.adminCommon.none}</span>
+                        <span className="text-meta text-ink-3">{copy.pages.adminCommon.none}</span>
                       )}
                     </TableCell>
                   </TableRow>
@@ -270,7 +270,7 @@ function PayoutsContent() {
       >
         {confirming ? (
           <div className="space-y-3">
-            <p className="text-[13px] text-ink">
+            <p className="text-meta text-ink">
               <span className="tabular-nums">#{confirming.payout.id}</span> ·{' '}
               <SellerId id={confirming.payout.seller_id} /> ·{' '}
               <span className="tabular-nums">{formatYuan(confirming.payout.amount_micro)}</span>
@@ -304,7 +304,7 @@ function PayoutsContent() {
       >
         {rejecting ? (
           <div className="space-y-4">
-            <p className="text-[13px] text-ink">
+            <p className="text-meta text-ink">
               <span className="tabular-nums">#{rejecting.id}</span> ·{' '}
               <SellerId id={rejecting.seller_id} /> ·{' '}
               <span className="tabular-nums">{formatYuan(rejecting.amount_micro)}</span>
@@ -324,7 +324,7 @@ function PayoutsContent() {
                   setReasonError(null)
                   setActionError(null)
                 }}
-                className="w-full resize-y rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 py-3 text-[15px] leading-6 text-ink transition-colors placeholder:text-ink-3 focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20"
+                className="w-full resize-y rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 py-3 text-body leading-6 text-ink transition-colors placeholder:text-ink-3 focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20"
               />
             </Field>
             {actionError ? (

@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { Button } from '@/ui/button'
 import { Dialog } from '@/ui/dialog'
 import { Input } from '@/ui/input'
+import { ModelName } from '@/ui/model-name'
 import { Tag } from '@/ui/tag'
 import { formatYuan } from '@/lib/money'
 
@@ -217,14 +218,14 @@ export function ChannelModelsEditor({
       </div>
 
       {showEditNotice ? (
-        <p className="glass-inset px-3.5 py-2.5 text-[13px] leading-5 text-ink-2">
+        <p className="glass-inset px-3.5 py-2.5 text-meta leading-5 text-ink-2">
           {editorText.editNotice}
         </p>
       ) : null}
 
       {upstream.length > 0 ? (
         <div className="space-y-2">
-          <p className="text-[13px] font-medium text-ink">{editorText.upstreamTitle}</p>
+          <p className="text-meta font-medium text-ink">{editorText.upstreamTitle}</p>
           <ul className="max-h-72 divide-y divide-line overflow-auto glass-inset">
             {upstream.map((row) => {
               const model = overrides[row.upstream] ?? (row.priced ? row.suggested_model : null) ?? ''
@@ -241,10 +242,10 @@ export function ChannelModelsEditor({
                     checked={checked}
                     onChange={(event) => toggleUpstream(row.upstream, model, event.target.checked)}
                   />
-                  <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{row.upstream}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-meta">{row.upstream}</span>
                   <select
                     aria-label={`${row.upstream} ${editorText.standardModel}`}
-                    className="h-8 max-w-[14rem] glass-inset px-2 text-[13px]"
+                    className="h-8 max-w-[14rem] glass-inset px-2 text-meta"
                     value={model}
                     onChange={(event) => setOverride(row.upstream, event.target.value)}
                   >
@@ -258,7 +259,7 @@ export function ChannelModelsEditor({
                   {listed ? (
                     <Tag>{editorText.alreadyListed}</Tag>
                   ) : !row.priced && !overrides[row.upstream] ? (
-                    <span className="text-[12px] text-ink-3">{editorText.noPrice}</span>
+                    <span className="text-caption text-ink-3">{editorText.noPrice}</span>
                   ) : null}
                 </li>
               )
@@ -266,13 +267,13 @@ export function ChannelModelsEditor({
           </ul>
         </div>
       ) : onFetchUpstream && !fetching ? (
-        <p className="text-[13px] text-ink-3">{editorText.upstreamEmpty}</p>
+        <p className="text-meta text-ink-3">{editorText.upstreamEmpty}</p>
       ) : null}
 
       <div className="space-y-2">
-        <p className="text-[13px] font-medium text-ink">{editorText.selectedTitle(value.length)}</p>
+        <p className="text-meta font-medium text-ink">{editorText.selectedTitle(value.length)}</p>
         {value.length === 0 ? (
-          <p className="text-[13px] text-ink-3">{editorText.selectedEmpty}</p>
+          <p className="text-meta text-ink-3">{editorText.selectedEmpty}</p>
         ) : (
           <ul className="space-y-2">
             {value.map((config) => {
@@ -284,12 +285,12 @@ export function ChannelModelsEditor({
               return (
                 <li key={config.model} className="glass-inset p-3">
                   <div className="flex flex-wrap items-center gap-3">
-                    <span className="font-mono text-[13px] text-ink">{config.model}</span>
+                    <span className="font-mono text-meta text-ink"><ModelName model={config.model} size="sm" /></span>
                     {config.upstream_model && config.upstream_model !== config.model ? (
-                      <span className="font-mono text-[12px] text-ink-3">← {config.upstream_model}</span>
+                      <span className="font-mono text-caption text-ink-3">← {config.upstream_model}</span>
                     ) : null}
                     <div className="ml-auto flex items-center gap-2">
-                      <label className="text-[13px] text-ink-3" htmlFor={`mult-${config.model}`}>
+                      <label className="text-meta text-ink-3" htmlFor={`mult-${config.model}`}>
                         {editorText.multiplier}
                       </label>
                       <Input
@@ -301,17 +302,17 @@ export function ChannelModelsEditor({
                         value={text}
                         onChange={(event) => setMultiplier(config.model, event.target.value)}
                       />
-                      <span className="text-[13px] text-ink-3">×</span>
+                      <span className="text-meta text-ink-3">×</span>
                       <Button variant="secondary" size="sm" onClick={() => removeModel(config.model)}>
                         {editorText.remove}
                       </Button>
                     </div>
                   </div>
                   {invalid ? (
-                    <p className="mt-1 text-[12px] text-danger">{editorText.multiplierError}</p>
+                    <p className="mt-1 text-caption text-danger">{editorText.multiplierError}</p>
                   ) : null}
                   {poolRow ? (
-                    <div className="mt-2 space-y-0.5 text-[12px] leading-5 text-ink-3">
+                    <div className="mt-2 space-y-0.5 text-caption leading-5 text-ink-3">
                       <p>
                         {editorText.official}：{priceText(poolRow.price)}
                       </p>
@@ -407,7 +408,7 @@ function PoolPickerDialog({
       <div className="mt-3 max-h-80 space-y-3 overflow-auto">
         {groups.map(([vendor, models]) => (
           <div key={vendor}>
-            <p className="text-[12px] font-medium uppercase text-ink-3">{vendor}</p>
+            <p className="text-caption font-medium uppercase text-ink-3">{vendor}</p>
             <ul className="mt-1 space-y-1">
               {models.map((p) => {
                 const off = disabled.includes(p.model)
@@ -425,8 +426,8 @@ function PoolPickerDialog({
                         )
                       }
                     />
-                    <span className="font-mono text-[13px]">{p.model}</span>
-                    <span className="ml-auto text-[12px] text-ink-3">{priceText(p.price)}</span>
+                    <span className="font-mono text-meta"><ModelName model={p.model} size="sm" /></span>
+                    <span className="ml-auto text-caption text-ink-3">{priceText(p.price)}</span>
                   </li>
                 )
               })}

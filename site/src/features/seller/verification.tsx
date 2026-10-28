@@ -6,7 +6,7 @@
 
 import { copy } from '@/copy'
 import { formatDateTime } from '@/lib/time'
-import { Tag } from '@/ui'
+import { ModelName, Tag } from '@/ui'
 
 import type { SellerVerification, VerifyModelResult } from './api'
 import { modelVerifyReason, probeFailReasonLabel } from './errors'
@@ -41,12 +41,12 @@ export function ModelResultList({
   compact?: boolean
 }) {
   if (results.length === 0) {
-    return <span className="text-[13px] text-ink-3">{page.empty}</span>
+    return <span className="text-meta text-ink-3">{page.empty}</span>
   }
   return (
     <ul className={compact ? 'space-y-1' : 'space-y-2'}>
       {results.map((result) => (
-        <li key={`${result.model}-${result.upstream_model}`} className="text-[13px] leading-5">
+        <li key={`${result.model}-${result.upstream_model}`} className="text-meta leading-5">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span
               aria-hidden="true"
@@ -55,7 +55,7 @@ export function ModelResultList({
               {result.ok ? '✓' : '✕'}
             </span>
             <span className={result.ok ? 'text-ink' : 'font-medium text-danger'}>
-              {result.model}
+              <ModelName model={result.model} size="sm" />
             </span>
             <span className="text-ink-3">
               {result.ok ? page.modelPassed : page.modelFailed}
@@ -85,19 +85,19 @@ export function VerificationSummary({
   compact?: boolean
 }) {
   if (!verification) {
-    return <span className="text-[13px] text-ink-3">—</span>
+    return <span className="text-meta text-ink-3">—</span>
   }
   return (
     <div className="space-y-2">
       <VerificationTag verification={verification} />
       {!verification.ok && verification.fail_reason ? (
-        <p className="text-[13px] leading-5 text-danger">
+        <p className="text-meta leading-5 text-danger">
           {page.overallReason}：{probeFailReasonLabel(verification.fail_reason)}
         </p>
       ) : null}
       <ModelResultList results={verification.model_results} compact={compact} />
       {!compact && verification.checked_at ? (
-        <p className="text-[13px] text-ink-3">
+        <p className="text-meta text-ink-3">
           {page.checkedAt(formatDateTime(verification.checked_at))}
         </p>
       ) : null}

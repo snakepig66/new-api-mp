@@ -43,11 +43,11 @@ export function Dialog({
           )}
         >
           <div className="pr-8">
-            <DialogPrimitive.Title className="text-[18px] font-semibold leading-7 tracking-tight text-ink">
+            <DialogPrimitive.Title className="text-h3 font-semibold leading-7 tracking-tight text-ink">
               {title}
             </DialogPrimitive.Title>
             <DialogPrimitive.Description
-              className={cn('mt-1 text-[14px] leading-6', description ? 'text-ink-3' : 'sr-only')}
+              className={cn('mt-1 text-body leading-6', description ? 'text-ink-3' : 'sr-only')}
             >
               {description ?? title}
             </DialogPrimitive.Description>

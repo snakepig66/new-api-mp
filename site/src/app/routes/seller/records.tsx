@@ -254,7 +254,7 @@ function ShareRecordsPage() {
                 showSummary
               />
               <div className="flex items-center gap-2">
-                <span className="text-[13px] text-ink-3">每页</span>
+                <span className="text-meta text-ink-3">每页</span>
                 <Select
                   value={String(search.page_size)}
                   onChange={(event) => changePageSize(event.target.value)}

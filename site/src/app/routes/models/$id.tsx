@@ -20,6 +20,7 @@ import { ApiError } from '@/lib/api'
 import { formatYuan } from '@/lib/money'
 import {
   Empty,
+  ModelName,
   Price,
   Table,
   TableBody,
@@ -119,10 +120,10 @@ function InfoRow({
   copyValue?: string
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-line py-2.5 last:border-b-0">
-      <span className="shrink-0 text-[13px] text-ink-3">{label}</span>
-      <div className="flex min-w-0 items-center gap-1">
-        <code className="truncate text-[13px] tabular-nums text-ink">{value}</code>
+    <div className="grid grid-cols-[auto_1fr] items-center justify-between gap-3 border-b border-line py-2.5 last:border-b-0">
+      <span className="shrink-0 text-meta text-ink-3">{label}</span>
+      <div className="flex min-w-0 items-center justify-end gap-1">
+        <code className="truncate text-meta tabular-nums text-ink">{value}</code>
         <CopyButton text={copyValue ?? value} />
       </div>
     </div>
@@ -140,7 +141,7 @@ export function ModelDetailPage() {
   if (detail.isPending) {
     return (
       <div className="mx-auto w-full max-w-[1200px] px-5 py-12 sm:px-6 sm:py-16">
-        <p className="text-[13px] text-ink-3">{page.loading}</p>
+        <p className="text-meta text-ink-3">{page.loading}</p>
         <div className="mt-8">
           <DetailSkeleton />
         </div>
@@ -152,7 +153,7 @@ export function ModelDetailPage() {
     const notFound = detail.error instanceof ApiError && detail.error.status === 404
     return (
       <div className="mx-auto w-full max-w-[1200px] px-5 py-12 sm:px-6 sm:py-16">
-        <h1 className="text-[32px] font-semibold tracking-tight text-ink">{id}</h1>
+        <h1 className="text-h1 font-semibold tracking-tight text-ink">{id}</h1>
         <div className="mt-8">
           {notFound ? (
             <Empty
@@ -215,8 +216,8 @@ export function ModelDetailPage() {
     <div className="mx-auto w-full max-w-[1200px] px-5 py-12 sm:px-6 sm:py-16">
       <header>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-ink">
-            {data.model}
+          <h1 className="text-h1 font-semibold leading-tight tracking-tight text-ink">
+            <ModelName model={data.model} />
           </h1>
           <Tag>{vendorLabel(originVendor, vendorMeta)}</Tag>
           {isOfficialVendor(originVendor, vendorMeta) ? (
@@ -239,17 +240,17 @@ export function ModelDetailPage() {
           <section className="glass glass-lift rounded-lg p-6 sm:p-8">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0">
-                <div className="text-[13px] text-ink-3">
+                <div className="text-meta text-ink-3">
                   {officialOnly ? page.officialPrice : page.buyerPrice}
                 </div>
                 {price ? (
                   <div className="mt-2">
                     <Price value={price.input_micro_per_mtok} size="lg" />
                     {!officialOnly && officialInput ? (
-                      <p className="mt-2 text-[14px] text-ink-2">
+                      <p className="mt-2 text-body text-ink-2">
                         官方 <span className="tabular-nums">{formatYuan(officialInput)}</span>
                         {savedPercent !== null ? (
-                          <span className="ml-2 inline-flex h-[22px] items-center rounded-full bg-brand-soft px-2 text-[12px] leading-none text-brand-ink">
+                          <span className="ml-2 inline-flex h-[22px] items-center rounded-full bg-brand-soft px-2 text-caption leading-none text-brand-ink">
                             {copy.multiplier.savings(String(savedPercent))}
                           </span>
                         ) : null}
@@ -257,17 +258,17 @@ export function ModelDetailPage() {
                     ) : null}
                   </div>
                 ) : (
-                  <p className="mt-2 text-[15px] text-ink-3">{copy.common.none}</p>
+                  <p className="mt-2 text-body text-ink-3">{copy.common.none}</p>
                 )}
               </div>
               <Tag>{page.flatPrice}</Tag>
             </div>
 
             <details className="mt-8 border-t border-line pt-6">
-              <summary className="cursor-pointer list-none text-[16px] font-semibold tracking-tight text-ink">
+              <summary className="cursor-pointer list-none text-title font-semibold tracking-tight text-ink">
                 {page.sections.official}
               </summary>
-              <p className="mt-1 text-[13px] text-ink-3">{page.tierNote}</p>
+              <p className="mt-1 text-meta text-ink-3">{page.tierNote}</p>
 
               {!officialCurrent ? (
                 <div className="mt-3">
@@ -304,10 +305,10 @@ export function ModelDetailPage() {
 
           <details className="glass glass-lift rounded-lg p-6 sm:p-8">
             <summary className="flex cursor-pointer list-none flex-wrap items-baseline justify-between gap-2">
-              <span className="text-[24px] font-semibold tracking-tight text-ink">
+              <span className="text-h2 font-semibold tracking-tight text-ink">
                 {page.sections.channels}
               </span>
-              <span className="text-[13px] text-ink-3">
+              <span className="text-meta text-ink-3">
                 {page.channels.count(channels.length, data.listing_count)}
               </span>
             </summary>
@@ -336,7 +337,7 @@ export function ModelDetailPage() {
                         <TableRow key={channel.channel_slug}>
                           <TableCell>
                             <div className="font-medium text-ink">{channel.name}</div>
-                            <div className="tabular-nums text-[13px] text-ink-3">
+                            <div className="tabular-nums text-meta text-ink-3">
                               {channel.channel_slug}
                             </div>
                           </TableCell>
@@ -349,7 +350,7 @@ export function ModelDetailPage() {
                                 {page.channels.verified}
                               </Tag>
                             ) : (
-                              <span className="text-[13px] text-ink-3">
+                              <span className="text-meta text-ink-3">
                                 {page.channels.unverified}
                               </span>
                             )}
@@ -357,7 +358,7 @@ export function ModelDetailPage() {
                           <TableCell numeric>{channel.listing_count}</TableCell>
                           <TableCell>
                             {notes.length === 0 ? (
-                              <span className="text-[13px] text-ink-3">
+                              <span className="text-meta text-ink-3">
                                 {page.channels.differences.none}
                               </span>
                             ) : (
@@ -375,13 +376,13 @@ export function ModelDetailPage() {
                 </Table>
               )}
             </div>
-            <p className="mt-3 text-[13px] leading-6 text-ink-3">{page.channels.note}</p>
+            <p className="mt-3 text-meta leading-6 text-ink-3">{page.channels.note}</p>
           </details>
         </div>
 
         <aside className="lg:sticky lg:top-24">
           <div className="glass glass-lift rounded-lg p-6">
-            <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+            <h2 className="text-title font-semibold tracking-tight text-ink">
               {page.access.title}
             </h2>
             <div className="mt-3">
@@ -393,7 +394,7 @@ export function ModelDetailPage() {
               <CodeBlock tabs={codeTabs} />
             </div>
 
-            <p className="mt-3 text-[13px] leading-6 text-ink-3">{page.code.note}</p>
+            <p className="mt-3 text-meta leading-6 text-ink-3">{page.code.note}</p>
 
             <AddToKeyMenu
               model={data.model}

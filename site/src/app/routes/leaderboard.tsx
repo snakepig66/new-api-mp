@@ -17,7 +17,7 @@ import { formatCount } from '@/features/market/format'
 import { QueryError } from '@/features/market/query-error'
 import { cn } from '@/lib/cn'
 import { formatYuan } from '@/lib/money'
-import { Empty, PageHeader } from '@/ui'
+import { Empty, ModelName, PageHeader } from '@/ui'
 
 interface LeaderboardSearch {
   range?: LeaderboardRange
@@ -76,8 +76,8 @@ function Board({
   return (
     <section className="min-w-0 glass p-4 sm:p-6">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-line pb-3">
-        <h2 className="text-[16px] font-semibold tracking-tight text-ink">{title}</h2>
-        <span className="text-[12px] text-ink-3">{hint}</span>
+        <h2 className="text-title font-semibold tracking-tight text-ink">{title}</h2>
+        <span className="text-caption text-ink-3">{hint}</span>
       </div>
       {children}
     </section>
@@ -85,7 +85,7 @@ function Board({
 }
 
 function Loading() {
-  return <p className="py-10 text-center text-[13px] text-ink-3">{page.loading}</p>
+  return <p className="py-10 text-center text-meta text-ink-3">{page.loading}</p>
 }
 
 function ModelBoard({
@@ -116,7 +116,7 @@ function ModelBoard({
         <Empty title={page.models.emptyTitle} reason={page.models.emptyReason} />
       ) : (
         <>
-          <div className="mt-2 flex items-baseline gap-x-3 border-b border-line pb-1.5 text-[11px] text-ink-3">
+          <div className="mt-2 flex items-baseline gap-x-3 border-b border-line pb-1.5 text-caption text-ink-3">
             <span className="w-6 shrink-0 text-center">{page.models.rank}</span>
             <span className="min-w-0 flex-1">{page.models.model}</span>
             <span className="shrink-0">{page.models.tokens}</span>
@@ -130,26 +130,26 @@ function ModelBoard({
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                   <span
                     className={cn(
-                      'w-6 shrink-0 text-center text-[14px] tabular-nums',
+                      'w-6 shrink-0 text-center text-body tabular-nums',
                       rankTone(item.rank),
                     )}
                   >
                     {item.rank}
                   </span>
                   <span
-                    className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink"
+                    className="min-w-0 flex-1 truncate text-body font-medium text-ink"
                     title={item.model}
                   >
-                    {item.model}
+                    <ModelName model={item.model} size="sm" />
                   </span>
-                  <span className="shrink-0 whitespace-nowrap text-[12px] text-ink-3">
+                  <span className="shrink-0 whitespace-nowrap text-caption text-ink-3">
                     {page.models.tokens}{' '}
-                    <span className="text-[13px] tabular-nums text-ink-2">
+                    <span className="text-meta tabular-nums text-ink-2">
                       {formatCount(item.tokens)}
                     </span>
                   </span>
                 </div>
-                <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 pl-9 text-[12px] text-ink-3">
+                <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 pl-9 text-caption text-ink-3">
                   <div className="flex items-baseline gap-1">
                     <dt>{page.models.requests}</dt>
                     <dd className="tabular-nums text-ink-2">{formatCount(item.requests)}</dd>
@@ -209,7 +209,7 @@ function SellerBoard({
         <Empty title={page.sellers.emptyTitle} reason={page.sellers.emptyReason} />
       ) : (
         <>
-          <div className="mt-2 flex items-baseline gap-x-3 border-b border-line pb-1.5 text-[11px] text-ink-3">
+          <div className="mt-2 flex items-baseline gap-x-3 border-b border-line pb-1.5 text-caption text-ink-3">
             <span className="w-6 shrink-0 text-center">{page.sellers.rank}</span>
             <span className="min-w-0 flex-1">{page.sellers.alias}</span>
             <span className="shrink-0">{page.sellers.income}</span>
@@ -223,26 +223,26 @@ function SellerBoard({
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                   <span
                     className={cn(
-                      'w-6 shrink-0 text-center text-[14px] tabular-nums',
+                      'w-6 shrink-0 text-center text-body tabular-nums',
                       rankTone(item.rank),
                     )}
                   >
                     {item.rank}
                   </span>
                   <span
-                    className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink"
+                    className="min-w-0 flex-1 truncate text-body font-medium text-ink"
                     title={item.alias}
                   >
                     {item.alias}
                   </span>
-                  <span className="shrink-0 whitespace-nowrap text-[12px] text-ink-3">
+                  <span className="shrink-0 whitespace-nowrap text-caption text-ink-3">
                     {page.sellers.income}{' '}
-                    <span className="text-[13px] tabular-nums text-ink">
+                    <span className="text-meta tabular-nums text-ink">
                       {formatYuan(item.income_micro)}
                     </span>
                   </span>
                 </div>
-                <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 pl-9 text-[12px] text-ink-3">
+                <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 pl-9 text-caption text-ink-3">
                   <div className="flex items-baseline gap-1">
                     <dt>{page.sellers.requests}</dt>
                     <dd className="tabular-nums text-ink-2">{formatCount(item.requests)}</dd>
@@ -298,7 +298,7 @@ function TrendChart({ trend }: { trend: LeaderboardTrend }) {
           )
         })}
       </div>
-      <p className="mt-3 text-[12px] tabular-nums text-ink-3">
+      <p className="mt-3 text-caption tabular-nums text-ink-3">
         {page.trend.range(start, end)}
       </p>
     </>
@@ -380,8 +380,8 @@ export function LeaderboardPage() {
                 onClick={() => selectRange(value)}
                 className={
                   range === value
-                    ? 'rounded px-3 py-1.5 text-[13px] font-medium text-brand-ink'
-                    : 'rounded px-3 py-1.5 text-[13px] text-ink-2 transition-colors hover:text-ink'
+                    ? 'rounded px-3 py-1.5 text-meta font-medium text-brand-ink'
+                    : 'rounded px-3 py-1.5 text-meta text-ink-2 transition-colors hover:text-ink'
                 }
               >
                 {value === '24h' ? page.range24h : page.range7d}

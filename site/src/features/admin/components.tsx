@@ -74,10 +74,10 @@ export function ErrorBlock({
     <div role="alert" className={cn('rounded-md border border-danger/25 bg-danger/10 px-4 py-3.5', className)}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <p className="text-[13px] font-medium text-danger">{copy.pages.adminCommon.loadError}</p>
-          <p className="mt-1 text-[13px] leading-5 text-danger/90">{message}</p>
+          <p className="text-meta font-medium text-danger">{copy.pages.adminCommon.loadError}</p>
+          <p className="mt-1 text-meta leading-5 text-danger/90">{message}</p>
           {code ? (
-            <p className="mt-1 tabular-nums text-[13px] text-danger/70">
+            <p className="mt-1 tabular-nums text-meta text-danger/70">
               {copy.pages.adminCommon.errorCode}
               {code}
             </p>
@@ -110,8 +110,8 @@ export function Section({
     <section className={cn('min-w-0 glass p-6', className)}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-line pb-4">
         <div className="flex min-w-0 flex-wrap items-baseline gap-2.5">
-          <h2 className="text-[16px] font-semibold tracking-tight text-ink">{title}</h2>
-          {hint ? <span className="text-[13px] text-ink-3">{hint}</span> : null}
+          <h2 className="text-title font-semibold tracking-tight text-ink">{title}</h2>
+          {hint ? <span className="text-meta text-ink-3">{hint}</span> : null}
         </div>
         {action ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}
       </div>
@@ -137,16 +137,16 @@ export function Field({
 }) {
   return (
     <div className={cn('min-w-0', className)}>
-      <label htmlFor={htmlFor} className="mb-2 block text-[14px] font-medium text-ink">
+      <label htmlFor={htmlFor} className="mb-2 block text-body font-medium text-ink">
         {label}
       </label>
       {children}
       {error ? (
-        <p className="mt-1 text-[13px] leading-5 text-danger" role="alert">
+        <p className="mt-1 text-meta leading-5 text-danger" role="alert">
           {error}
         </p>
       ) : hint ? (
-        <p className="mt-1 text-[13px] leading-5 text-ink-3">{hint}</p>
+        <p className="mt-1 text-meta leading-5 text-ink-3">{hint}</p>
       ) : null}
     </div>
   )
@@ -156,7 +156,7 @@ export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectE
   return (
     <select
       className={cn(
-        'h-12 w-full rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 text-[15px] text-ink transition-colors',
+        'h-12 w-full rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 text-body text-ink transition-colors',
         'focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20',
         'disabled:cursor-not-allowed disabled:bg-white/35 disabled:text-ink-3',
         className,
@@ -176,7 +176,7 @@ export function TextInput({
     <Input
       invalid={invalid}
       mono={mono}
-      className={cn('h-12 text-[15px]', className)}
+      className={cn('h-12 text-body', className)}
       {...props}
     />
   )
@@ -192,7 +192,7 @@ export function TextArea({
     <textarea
       aria-invalid={invalid || undefined}
       className={cn(
-        'w-full resize-y rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 py-3 text-[15px] leading-6 text-ink transition-colors',
+        'w-full resize-y rounded-md border border-white/70 bg-white/55 backdrop-blur-md px-4 py-3 text-body leading-6 text-ink transition-colors',
         'placeholder:text-ink-3',
         'focus:border-brand/60 focus:bg-white/85 focus:outline-none focus:ring-[3px] focus:ring-brand/20',
         'disabled:cursor-not-allowed disabled:bg-white/35 disabled:text-ink-3',
@@ -222,8 +222,8 @@ export function Notice({
   }
   return (
     <div className={cn('rounded-md border px-4 py-3', tones[tone], className)} role={tone === 'warning' ? 'status' : undefined}>
-      {title ? <p className="text-[13px] font-medium">{title}</p> : null}
-      {children ? <div className={cn('text-[13px] leading-6', title && 'mt-1')}>{children}</div> : null}
+      {title ? <p className="text-meta font-medium">{title}</p> : null}
+      {children ? <div className={cn('text-meta leading-6', title && 'mt-1')}>{children}</div> : null}
     </div>
   )
 }
@@ -275,7 +275,7 @@ export function FilterTabs<T extends string>({
             aria-selected={active}
             onClick={() => onChange(option.value)}
             className={cn(
-              'inline-flex h-9 shrink-0 items-center rounded-full px-3.5 text-[14px] transition-colors',
+              'inline-flex h-9 shrink-0 items-center rounded-full px-3.5 text-body transition-colors',
               active
                 ? 'bg-brand-soft font-medium text-brand-ink'
                 : 'text-ink-2 hover:bg-brand/[0.06] hover:text-ink',
@@ -322,7 +322,7 @@ export function OpsTabNav({
             to={tab.to}
             aria-current={active ? 'page' : undefined}
             className={cn(
-              'inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-full px-3.5 text-[14px] transition-colors',
+              'inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-full px-3.5 text-body transition-colors',
               active
                 ? 'bg-brand-soft font-medium text-brand-ink'
                 : 'text-ink-2 hover:bg-brand/[0.06] hover:text-ink',

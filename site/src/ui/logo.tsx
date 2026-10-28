@@ -84,7 +84,7 @@ export function Logo({ className, markSize = 24, subtitle, mono = false }: LogoP
         LLM<span className={mono ? 'text-current/80' : 'text-brand'}>Jar</span>
       </span>
       {subtitle ? (
-        <span className={cn('text-[13px] leading-5', mono ? 'text-white/60' : 'text-ink-3')}>
+        <span className={cn('text-meta leading-5', mono ? 'text-white/60' : 'text-ink-3')}>
           {subtitle}
         </span>
       ) : null}

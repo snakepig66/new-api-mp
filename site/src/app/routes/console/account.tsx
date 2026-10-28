@@ -66,10 +66,10 @@ function AccountPage() {
       </Section>
 
       <section className="mt-6 glass p-6">
-        <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+        <h2 className="text-title font-semibold tracking-tight text-ink">
           {passwordCopy.title}
         </h2>
-        <p className="mt-1.5 text-[13px] leading-6 text-ink-3">{passwordCopy.hint}</p>
+        <p className="mt-1.5 text-meta leading-6 text-ink-3">{passwordCopy.hint}</p>
 
         {profile.isPending ? (
           <div className="mt-5 space-y-3">
@@ -95,16 +95,16 @@ function IdentityRows({ profile }: { profile: SelfProfile }) {
   const displayName = profile.display_name || session?.user?.display_name || '—'
 
   return (
-    <dl className="grid gap-4 text-[14px] sm:grid-cols-2">
+    <dl className="grid gap-4 text-body sm:grid-cols-2">
       <div>
-        <dt className="text-[13px] text-ink-3">{page.identity.username}</dt>
+        <dt className="text-meta text-ink-3">{page.identity.username}</dt>
         <dd className="mt-0.5 break-all text-ink">{username}</dd>
       </div>
       <div>
-        <dt className="text-[13px] text-ink-3">{page.identity.displayName}</dt>
+        <dt className="text-meta text-ink-3">{page.identity.displayName}</dt>
         <dd className="mt-0.5 break-all text-ink">{displayName}</dd>
       </div>
-      <p className="text-[13px] leading-6 text-ink-3 sm:col-span-2">
+      <p className="text-meta leading-6 text-ink-3 sm:col-span-2">
         {page.identity.note}
       </p>
     </dl>
@@ -144,7 +144,7 @@ function PasswordForm() {
       <div>
         <label
           htmlFor="account-current-password"
-          className="mb-2 block text-[14px] font-medium text-ink"
+          className="mb-2 block text-body font-medium text-ink"
         >
           {passwordCopy.current}
         </label>
@@ -156,7 +156,7 @@ function PasswordForm() {
           {...register('current')}
         />
         {errors.current ? (
-          <p className="mt-1.5 text-[13px] text-danger">{errors.current.message}</p>
+          <p className="mt-1.5 text-meta text-danger">{errors.current.message}</p>
         ) : null}
       </div>
 
@@ -164,7 +164,7 @@ function PasswordForm() {
         <div>
           <label
             htmlFor="account-next-password"
-            className="mb-2 block text-[14px] font-medium text-ink"
+            className="mb-2 block text-body font-medium text-ink"
           >
             {passwordCopy.next}
           </label>
@@ -176,15 +176,15 @@ function PasswordForm() {
             {...register('next')}
           />
           {errors.next ? (
-            <p className="mt-1.5 text-[13px] text-danger">{errors.next.message}</p>
+            <p className="mt-1.5 text-meta text-danger">{errors.next.message}</p>
           ) : (
-            <p className="mt-1.5 text-[13px] text-ink-3">{passwordCopy.policyHint}</p>
+            <p className="mt-1.5 text-meta text-ink-3">{passwordCopy.policyHint}</p>
           )}
         </div>
         <div>
           <label
             htmlFor="account-confirm-password"
-            className="mb-2 block text-[14px] font-medium text-ink"
+            className="mb-2 block text-body font-medium text-ink"
           >
             {passwordCopy.confirm}
           </label>
@@ -196,7 +196,7 @@ function PasswordForm() {
             {...register('confirm')}
           />
           {errors.confirm ? (
-            <p className="mt-1.5 text-[13px] text-danger">{errors.confirm.message}</p>
+            <p className="mt-1.5 text-meta text-danger">{errors.confirm.message}</p>
           ) : null}
         </div>
       </div>
@@ -204,7 +204,7 @@ function PasswordForm() {
       {errors.root?.message ? (
         <p
           role="alert"
-          className="rounded-md border border-danger/25 bg-danger/10 px-3 py-2 text-[13px] leading-5 text-danger"
+          className="rounded-md border border-danger/25 bg-danger/10 px-3 py-2 text-meta leading-5 text-danger"
         >
           {errors.root.message}
         </p>

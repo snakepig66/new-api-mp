@@ -338,7 +338,7 @@ export function RiskContent() {
 
 function RelatedTable({ rows }: { rows: AdminRelatedUser[] }) {
   if (rows.length === 0) {
-    return <p className="text-[13px] text-ink-3">{page.related.noRelations}</p>
+    return <p className="text-meta text-ink-3">{page.related.noRelations}</p>
   }
   return (
     <Table minWidth={520} size="compact">
@@ -358,7 +358,7 @@ function RelatedTable({ rows }: { rows: AdminRelatedUser[] }) {
             <TableCell>
               <RelationTag relation={row} />
             </TableCell>
-            <TableCell className="font-mono text-[13px] text-ink-2">{row.value}</TableCell>
+            <TableCell className="font-mono text-meta text-ink-2">{row.value}</TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -382,12 +382,12 @@ function SessionsTable({ rows }: { rows: AdminActiveSession[] }) {
         {rows.map((row) => (
           <TableRow key={row.request_id}>
             <TableCell>
-              <span className="font-mono text-[13px]">{row.request_id}</span>
+              <span className="font-mono text-meta">{row.request_id}</span>
             </TableCell>
             <TableCell numeric>#{row.listing_id}</TableCell>
             <TableCell numeric>#{row.buyer_id}</TableCell>
             <TableCell numeric>{formatYuan(row.frozen_micro)}</TableCell>
-            <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
+            <TableCell className="whitespace-nowrap tabular-nums text-meta text-ink-3">
               {formatDateTime(row.created_at)}
             </TableCell>
           </TableRow>

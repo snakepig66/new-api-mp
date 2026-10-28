@@ -79,8 +79,8 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
   return (
     <section aria-label={page.progress} className="mt-6 glass p-6">
       <div className="flex items-baseline justify-between">
-        <h2 className="text-[16px] font-semibold tracking-tight text-ink">{page.progress}</h2>
-        <span className="tabular-nums text-[13px] text-ink-3">{done}/3</span>
+        <h2 className="text-title font-semibold tracking-tight text-ink">{page.progress}</h2>
+        <span className="tabular-nums text-meta text-ink-3">{done}/3</span>
       </div>
       <ol className="mt-5 grid gap-3 sm:grid-cols-3">
         {page.stepTitles.map((title, index) => {
@@ -99,7 +99,7 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
               <div className="flex items-center gap-2">
                 <span
                   className={cn(
-                    'grid h-6 w-6 shrink-0 place-items-center rounded-full border text-[13px] font-medium',
+                    'grid h-6 w-6 shrink-0 place-items-center rounded-full border text-meta font-medium',
                     completed
                       ? 'border-transparent bg-brand-soft text-brand-ink'
                       : active
@@ -124,7 +124,7 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
                 </span>
                 <span
                   className={cn(
-                    'text-[14px] font-medium',
+                    'text-body font-medium',
                     completed || active ? 'text-ink' : 'text-ink-3',
                   )}
                 >
@@ -132,8 +132,8 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
                 </span>
                 {optional ? <Tag>{page.state.optional}</Tag> : null}
               </div>
-              <p className="mt-2 text-[13px] leading-5 text-ink-3">{page.stepHints[index]}</p>
-              <p className="mt-1 text-[13px] text-ink-3">
+              <p className="mt-2 text-meta leading-5 text-ink-3">{page.stepHints[index]}</p>
+              <p className="mt-1 text-meta text-ink-3">
                 {completed ? page.state.done : active ? page.state.current : page.state.todo}
               </p>
             </li>
@@ -160,7 +160,7 @@ function RealNameCard({ onSubmit, pending, errorText }: OptionalCardProps) {
   return (
     <section className="mt-6 glass p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+        <h2 className="text-title font-semibold tracking-tight text-ink">
           {page.realName.title}
         </h2>
         <Tag>{page.state.optional}</Tag>
@@ -174,7 +174,7 @@ function RealNameCard({ onSubmit, pending, errorText }: OptionalCardProps) {
           }),
         )}
       >
-        <p className="text-[13px] leading-6 text-ink-3">{page.realName.lead}</p>
+        <p className="text-meta leading-6 text-ink-3">{page.realName.lead}</p>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field
             label={page.realName.nameLabel}
@@ -208,7 +208,7 @@ function RealNameCard({ onSubmit, pending, errorText }: OptionalCardProps) {
         </div>
 
         {errorText ? (
-          <p className="text-[13px] text-danger" role="alert">
+          <p className="text-meta text-danger" role="alert">
             {errorText}
           </p>
         ) : null}
@@ -233,7 +233,7 @@ function AlipayCard({ onSubmit, pending, errorText }: OptionalCardProps) {
   return (
     <section className="mt-6 glass p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-[16px] font-semibold tracking-tight text-ink">{page.alipay.title}</h2>
+        <h2 className="text-title font-semibold tracking-tight text-ink">{page.alipay.title}</h2>
         <Tag>{page.state.optional}</Tag>
       </div>
       <form
@@ -242,7 +242,7 @@ function AlipayCard({ onSubmit, pending, errorText }: OptionalCardProps) {
           onSubmit({ alipay_account: values.alipay_account }),
         )}
       >
-        <p className="text-[13px] leading-6 text-ink-3">{page.alipay.lead}</p>
+        <p className="text-meta leading-6 text-ink-3">{page.alipay.lead}</p>
         <Field
           label={page.alipay.accountLabel}
           htmlFor="alipay-account"
@@ -259,7 +259,7 @@ function AlipayCard({ onSubmit, pending, errorText }: OptionalCardProps) {
         </Field>
 
         {errorText ? (
-          <p className="text-[13px] text-danger" role="alert">
+          <p className="text-meta text-danger" role="alert">
             {errorText}
           </p>
         ) : null}
@@ -276,7 +276,7 @@ function AlipayCard({ onSubmit, pending, errorText }: OptionalCardProps) {
 
 function OptionalDone({ label }: { label: string }) {
   return (
-    <div className="mt-3 flex items-center gap-2 text-[13px] text-ink-3">
+    <div className="mt-3 flex items-center gap-2 text-meta text-ink-3">
       <span
         className="grid h-4 w-4 place-items-center rounded-full bg-brand-soft text-brand-ink"
         aria-hidden="true"
@@ -357,10 +357,10 @@ function SellerOnboardingPage() {
           {active ? (
             <>
               <section className="mt-6 glass p-6">
-                <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+                <h2 className="text-title font-semibold tracking-tight text-ink">
                   {page.done.title}
                 </h2>
-                <p className="mt-2 text-[14px] leading-6 text-ink-2">{page.done.reason}</p>
+                <p className="mt-2 text-body leading-6 text-ink-2">{page.done.reason}</p>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Link to="/console/listings/new" className={buttonClasses('primary', 'md')}>
                     {page.done.newListing}
@@ -371,7 +371,7 @@ function SellerOnboardingPage() {
                 </div>
               </section>
 
-              <p className="mt-4 text-[13px] text-ink-3">{page.optionalHint}</p>
+              <p className="mt-4 text-meta text-ink-3">{page.optionalHint}</p>
 
               {seller.progress.real_name_verified ? (
                 <OptionalDone label={page.realName.done} />
@@ -392,26 +392,26 @@ function SellerOnboardingPage() {
           ) : (
             <section className="mt-6 glass p-6">
               <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-4">
-                <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+                <h2 className="text-title font-semibold tracking-tight text-ink">
                   {page.agreement.title}
                 </h2>
                 <Tag>{page.agreement.version}</Tag>
               </header>
 
               <div className="space-y-5 pt-5">
-                <p className="text-[13px] text-ink-3">{page.agreement.hint}</p>
+                <p className="text-meta text-ink-3">{page.agreement.hint}</p>
 
                 <ol className="divide-y divide-line/70 border-y border-line">
                   {page.agreement.clauses.map((clause) => (
                     <li key={clause.title} className="py-3.5">
-                      <h3 className="text-[13px] font-medium text-ink">{clause.title}</h3>
-                      <p className="mt-1 text-[13px] leading-6 text-ink-3">{clause.body}</p>
+                      <h3 className="text-meta font-medium text-ink">{clause.title}</h3>
+                      <p className="mt-1 text-meta leading-6 text-ink-3">{clause.body}</p>
                     </li>
                   ))}
                 </ol>
 
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <label className="flex cursor-pointer items-start gap-2 text-[13px] text-ink">
+                  <label className="flex cursor-pointer items-start gap-2 text-meta text-ink">
                     <input
                       type="checkbox"
                       checked={accepted}
@@ -423,13 +423,13 @@ function SellerOnboardingPage() {
                   <span className="flex items-center gap-4">
                     <Link
                       to="/agreement"
-                      className="text-[13px] text-brand underline-offset-4 hover:underline"
+                      className="text-meta text-brand underline-offset-4 hover:underline"
                     >
                       {copy.footer.terms}
                     </Link>
                     <Link
                       to="/privacy"
-                      className="text-[13px] text-brand underline-offset-4 hover:underline"
+                      className="text-meta text-brand underline-offset-4 hover:underline"
                     >
                       {copy.footer.privacy}
                     </Link>
@@ -437,7 +437,7 @@ function SellerOnboardingPage() {
                 </div>
 
                 {errorText ? (
-                  <p className="text-[13px] text-danger" role="alert">
+                  <p className="text-meta text-danger" role="alert">
                     {errorText}
                   </p>
                 ) : null}

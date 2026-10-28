@@ -49,7 +49,7 @@ export function GithubButton({ redirectTo, onError, className }: GithubButtonPro
         onClick={() => void handleClick()}
         disabled={disabled}
         className={cn(
-          'inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border border-white/70 bg-white/70 px-5 text-[15px] font-medium text-ink transition-colors',
+          'inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border border-white/70 bg-white/70 px-5 text-body font-medium text-ink transition-colors',
           'hover:bg-brand/[0.06] disabled:cursor-not-allowed disabled:opacity-50',
         )}
       >
@@ -57,7 +57,7 @@ export function GithubButton({ redirectTo, onError, className }: GithubButtonPro
         {starting ? copy.pages.login.githubStarting : copy.pages.login.github}
       </button>
       {!status.isLoading && !enabled ? (
-        <p className="mt-2 text-[13px] text-ink-3">{copy.pages.login.githubUnavailable}</p>
+        <p className="mt-2 text-meta text-ink-3">{copy.pages.login.githubUnavailable}</p>
       ) : null}
     </div>
   )

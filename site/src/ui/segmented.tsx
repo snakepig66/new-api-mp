@@ -120,7 +120,7 @@ export const Segmented = forwardRef<HTMLDivElement, SegmentedProps>(function Seg
             }}
             className={cn(
               'rounded-full border font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand',
-              size === 'sm' ? 'h-7 px-2.5 text-[12px]' : 'h-8 px-3 text-[13px]',
+              size === 'sm' ? 'h-7 px-2.5 text-caption' : 'h-8 px-3 text-meta',
               selected
                 ? 'border-white/80 bg-white/90 text-brand-ink shadow-[0_2px_8px_rgba(77,107,254,0.14)]'
                 : 'border-transparent text-ink-3 hover:text-ink',

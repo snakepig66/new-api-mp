@@ -86,7 +86,7 @@ function savingsOf(
 
 function FlatPriceNote() {
   return (
-    <div className="mb-6 glass-inset px-4 py-3 text-[13px] text-ink-2">
+    <div className="mb-6 glass-inset px-4 py-3 text-meta text-ink-2">
       {copy.pages.models.flatPriceNote}
     </div>
   )
@@ -108,8 +108,8 @@ function FilterPill({
       onClick={onClick}
       className={
         active
-          ? 'rounded-full bg-brand-soft px-3 py-1.5 text-[13px] font-medium text-brand-ink'
-          : 'rounded-full border border-line px-3 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-line-strong hover:text-ink'
+          ? 'rounded-full bg-brand-soft px-3 py-1.5 text-meta font-medium text-brand-ink'
+          : 'rounded-full border border-line px-3 py-1.5 text-meta text-ink-2 transition-colors hover:border-line-strong hover:text-ink'
       }
     >
       {children}
@@ -271,7 +271,7 @@ export function ModelsPage() {
             ariaLabel={modelsCopy.vendorAria}
           />
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="text-[13px] text-ink-3">{modelsCopy.filters.sort}</span>
+            <span className="text-meta text-ink-3">{modelsCopy.filters.sort}</span>
             {(
               [
                 ['saving', modelsCopy.filters.sortSaving],
@@ -315,7 +315,7 @@ export function ModelsPage() {
             onChange={(event) => updateSearch(event.target.value)}
             placeholder={modelsCopy.searchPlaceholder}
             aria-label={modelsCopy.searchAria}
-            className="h-10 rounded-full pl-10 text-[14px]"
+            className="h-10 rounded-full pl-10 text-body"
           />
         </div>
       </div>
@@ -360,7 +360,7 @@ export function ModelsPage() {
         ) : (
           <>
             {hasFilters || hasSort ? (
-              <p className="mb-3 text-[13px] text-ink-3">
+              <p className="mb-3 text-meta text-ink-3">
                 {modelsCopy.filteredCount(sorted.length, rows.length)}
               </p>
             ) : null}
@@ -376,7 +376,7 @@ export function ModelsPage() {
         )}
       </div>
 
-      <p className="mt-4 text-[13px] text-ink-3">{modelsCopy.priceNote}</p>
+      <p className="mt-4 text-meta text-ink-3">{modelsCopy.priceNote}</p>
     </div>
   )
 }

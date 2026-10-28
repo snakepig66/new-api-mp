@@ -15,7 +15,7 @@ export function Multiplier({ milli, showSaving = true, className }: MultiplierPr
     <span className={cn('inline-flex items-center gap-1.5', className)}>
       <span className="tabular-nums text-ink">{formatMultiplier(milli)}x</span>
       {showSaving ? (
-        <span className="inline-flex h-[22px] items-center rounded-full bg-brand-soft px-2 text-[12px] leading-none text-brand-ink">
+        <span className="inline-flex h-[22px] items-center rounded-full bg-brand-soft px-2 text-caption leading-none text-brand-ink">
           {copy.multiplier.savings(savingPercent(milli))}
         </span>
       ) : null}

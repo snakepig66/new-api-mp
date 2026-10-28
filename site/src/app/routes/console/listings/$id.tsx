@@ -9,6 +9,7 @@ import {
   Button,
   Empty,
   Input,
+  ModelName,
   Multiplier,
   PageHeader,
   Table,
@@ -96,8 +97,8 @@ function hoursText(hours: string): string {  if (!hours.trim()) return page.fiel
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="glass-inset px-4 py-3">
-      <dt className="text-[13px] text-ink-3">{label}</dt>
-      <dd className="mt-1 text-[14px] text-ink">{children}</dd>
+      <dt className="text-meta text-ink-3">{label}</dt>
+      <dd className="mt-1 text-body text-ink">{children}</dd>
     </div>
   )
 }
@@ -185,7 +186,7 @@ function SellerListingDetailPage() {
           <>
             <Link
               to="/console/listings"
-              className="inline-flex h-9 items-center glass px-3.5 text-[13px] font-medium text-ink transition-colors hover:bg-brand/[0.06]"
+              className="inline-flex h-9 items-center glass px-3.5 text-meta font-medium text-ink transition-colors hover:bg-brand/[0.06]"
             >
               {page.back}
             </Link>
@@ -213,10 +214,10 @@ function SellerListingDetailPage() {
       <section className="mt-6 glass p-6">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
           <div>
-            <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+            <h2 className="text-title font-semibold tracking-tight text-ink">
               {vendorName(listing.vendor)} · #{listing.id}
             </h2>
-            <p className="mt-1 text-[13px] text-ink-3">
+            <p className="mt-1 text-meta text-ink-3">
               {common.keyFingerprint} {listing.key_fingerprint8 || '—'}
             </p>
           </div>
@@ -238,16 +239,16 @@ function SellerListingDetailPage() {
 
         <div className="mt-4 flex flex-wrap gap-1.5">
           {listing.models.map((model) => (
-            <Tag key={model}>{model}</Tag>
+            <Tag key={model}><ModelName model={model} size="sm" /></Tag>
           ))}
         </div>
       </section>
 
       <section className="mt-6 glass p-6">
-        <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+        <h2 className="text-title font-semibold tracking-tight text-ink">
           {page.groupTitle}
         </h2>
-        <p className="mt-1 text-[13px] leading-5 text-ink-3">{page.groupLead}</p>
+        <p className="mt-1 text-meta leading-5 text-ink-3">{page.groupLead}</p>
         {listing.group ? (
           <>
             <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -275,7 +276,7 @@ function SellerListingDetailPage() {
                 <TableBody>
                   {listing.group.listings.map((sibling) => (
                     <TableRow key={sibling.id}>
-                      <TableCell className="font-mono text-[13px] text-ink-3">
+                      <TableCell className="font-mono text-meta text-ink-3">
                         {sibling.key_fingerprint8 || '—'}
                         {sibling.id === listing.id ? (
                           <Tag tone="brand" className="ml-2">
@@ -301,15 +302,15 @@ function SellerListingDetailPage() {
             </div>
           </>
         ) : (
-          <p className="mt-3 text-[13px] text-ink-3">{page.groupEmpty}</p>
+          <p className="mt-3 text-meta text-ink-3">{page.groupEmpty}</p>
         )}
       </section>
 
       <section className="mt-6 glass p-6">
-        <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+        <h2 className="text-title font-semibold tracking-tight text-ink">
           {page.modelMultiplierTitle}
         </h2>
-        <p className="mt-1 text-[13px] leading-5 text-ink-3">{page.modelMultiplierLead}</p>
+        <p className="mt-1 text-meta leading-5 text-ink-3">{page.modelMultiplierLead}</p>
         <div className="mt-4">
           <Table minWidth={640}>
             <TableHead>
@@ -332,11 +333,11 @@ function SellerListingDetailPage() {
                   draft === '' || (Number.isFinite(parsed) && parsed >= 0.1 && parsed <= 1)
                 return (
                   <TableRow key={model}>
-                    <TableCell className="font-mono text-[13px]">{model}</TableCell>
+                    <TableCell className="font-mono text-meta"><ModelName model={model} size="sm" /></TableCell>
                     <TableCell>
                       <Multiplier milli={currentMilli} />
                       {override ? (
-                        <span className="ml-2 text-[12px] text-ink-3">{override.model}</span>
+                        <span className="ml-2 text-caption text-ink-3">{override.model}</span>
                       ) : null}
                     </TableCell>
                     <TableCell>
@@ -379,40 +380,40 @@ function SellerListingDetailPage() {
           </Table>
         </div>
         {!validDraftForAny(modelInputs) ? (
-          <p className="mt-3 text-[13px] text-danger" role="alert">
+          <p className="mt-3 text-meta text-danger" role="alert">
             {page.invalidMultiplier}
           </p>
         ) : null}
         {modelError ? (
-          <p className="mt-3 text-[13px] text-danger" role="alert">
+          <p className="mt-3 text-meta text-danger" role="alert">
             {modelError}
           </p>
         ) : null}
       </section>
 
       <section className="mt-6 glass p-6">
-        <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+        <h2 className="text-title font-semibold tracking-tight text-ink">
           {verificationCopy.title}
         </h2>
-        <p className="mt-1 text-[13px] leading-5 text-ink-3">{page.verificationHint}</p>
+        <p className="mt-1 text-meta leading-5 text-ink-3">{page.verificationHint}</p>
         <div className="mt-4">
           {verifying ? (
-            <p className="text-[13px] text-ink-3">{verificationCopy.pending}</p>
+            <p className="text-meta text-ink-3">{verificationCopy.pending}</p>
           ) : listing.verification ? (
             <VerificationSummary verification={listing.verification} />
           ) : (
-            <p className="text-[13px] text-ink-3">{page.verificationEmpty}</p>
+            <p className="text-meta text-ink-3">{page.verificationEmpty}</p>
           )}
         </div>
         {recheckError ? (
-          <p className="mt-3 text-[13px] text-danger" role="alert">
+          <p className="mt-3 text-meta text-danger" role="alert">
             {recheckError}
           </p>
         ) : null}
       </section>
 
       <section className="mt-6 glass p-6">
-        <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+        <h2 className="text-title font-semibold tracking-tight text-ink">
           {page.pauseTitle}
         </h2>
         {listing.status === 'paused' ? (
@@ -427,12 +428,12 @@ function SellerListingDetailPage() {
             </Field>
           </dl>
         ) : (
-          <p className="mt-3 text-[13px] text-ink-3">{page.notPaused}</p>
+          <p className="mt-3 text-meta text-ink-3">{page.notPaused}</p>
         )}
       </section>
 
       <section className="mt-6 glass p-6">
-        <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+        <h2 className="text-title font-semibold tracking-tight text-ink">
           {page.historyTitle}
         </h2>
         <div className="mt-4">
@@ -453,10 +454,10 @@ function SellerListingDetailPage() {
                   const latency = historyProbeLatencyMs(probe)
                   return (
                     <TableRow key={probe.id}>
-                      <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
+                      <TableCell className="whitespace-nowrap tabular-nums text-meta text-ink-3">
                         {formatDateTime(probe.created_at)}
                       </TableCell>
-                      <TableCell className="text-[13px] text-ink-3">
+                      <TableCell className="text-meta text-ink-3">
                         {probeTypeLabel(probe.type)}
                       </TableCell>
                       <TableCell>

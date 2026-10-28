@@ -69,7 +69,7 @@ function ConsoleLayout() {
           <Button variant="secondary" size="sm" onClick={() => setMenuOpen(true)}>
             {shell.menu}
           </Button>
-          <span className="text-[14px] font-medium text-ink">{mobileLabel}</span>
+          <span className="text-body font-medium text-ink">{mobileLabel}</span>
         </div>
 
         <DialogPrimitive.Root open={menuOpen} onOpenChange={setMenuOpen}>

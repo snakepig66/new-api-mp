@@ -28,7 +28,7 @@ export function Tag({ children, tone = 'neutral', dot = false, className }: TagP
   return (
     <span
       className={cn(
-        'inline-flex h-[22px] items-center gap-1.5 rounded-full px-2.5 text-[12px] leading-none',
+        'inline-flex h-[22px] items-center gap-1.5 rounded-full px-2.5 text-caption leading-none',
         tones[tone],
         className,
       )}

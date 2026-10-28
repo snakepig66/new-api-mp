@@ -10,7 +10,7 @@
 import { copy } from '@/copy'
 import { formatYuan } from '@/lib/money'
 import { formatDateTime } from '@/lib/time'
-import { Tag } from '@/ui'
+import { ModelName, Tag } from '@/ui'
 import {
   Table,
   TableBody,
@@ -61,7 +61,7 @@ function isSuccess(record: ShareRecord): boolean {
 function ModelCell({ record }: { record: ShareRecord }) {
   return (
     <span className="inline-flex items-center gap-1">
-      <Tag tone="neutral">{record.model}</Tag>
+      <Tag tone="neutral"><ModelName model={record.model} size="sm" /></Tag>
       {record.converted && <Tag tone="warning">{page.converted}</Tag>}
     </span>
   )
@@ -71,9 +71,9 @@ function ModelCell({ record }: { record: ShareRecord }) {
 function ChannelCell({ record }: { record: ShareRecord }) {
   return (
     <div className="tabular-nums">
-      <div className="text-[13px] text-ink">#{record.listing_id}</div>
+      <div className="text-meta text-ink">#{record.listing_id}</div>
       {record.key_fingerprint4 ? (
-        <div className="text-xs text-ink-3">{page.keySuffix(record.key_fingerprint4)}</div>
+        <div className="text-caption text-ink-3">{page.keySuffix(record.key_fingerprint4)}</div>
       ) : null}
     </div>
   )
@@ -88,7 +88,7 @@ function TokensCell({ record }: { record: ShareRecord }) {
         {tokens.pair(formatCount(record.input_tokens), formatCount(record.output_tokens))}
       </div>
       {hasCache && (
-        <div className="text-xs text-ink-3 tabular-nums">
+        <div className="text-caption text-ink-3 tabular-nums">
           {tokens.cacheRead} {formatCount(record.cache_read_tokens)} · {tokens.cacheWrite}{' '}
           {formatCount(record.cache_write_tokens)}
         </div>
@@ -115,7 +115,7 @@ function IncomeCell({ record }: { record: ShareRecord }) {
   return (
     <div>
       <div className="font-medium tabular-nums">{formatYuan(record.seller_credit_micro)}</div>
-      <div className="text-xs tabular-nums text-ink-3">
+      <div className="text-caption tabular-nums text-ink-3">
         {page.income.buyerPaid} {formatYuan(record.buyer_paid_micro)} ·{' '}
         {page.income.platformFee} {formatYuan(record.platform_fee_micro)}
       </div>
@@ -208,8 +208,8 @@ function ShareRecordCard({
         <ModelCell record={record} />
         <StatusCell record={record} />
       </div>
-      <div className="mt-1 text-xs text-ink-3">{formatDateTime(record.created_at)}</div>
-      <div className="mt-2 flex items-center justify-between gap-2 text-xs text-ink-3">
+      <div className="mt-1 text-caption text-ink-3">{formatDateTime(record.created_at)}</div>
+      <div className="mt-2 flex items-center justify-between gap-2 text-caption text-ink-3">
         <BuyerCode code={record.buyer_code} />
         <span className="tabular-nums">
           {record.is_stream ? page.stream : page.nonStream} ·{' '}
@@ -219,7 +219,7 @@ function ShareRecordCard({
           / {formatLatency(record.latency_ms)}
         </span>
       </div>
-      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-ink-2">
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-caption text-ink-2">
         <span>
           {columns.channelGroup}: {record.channel_group || page.dash}
         </span>
@@ -229,7 +229,7 @@ function ShareRecordCard({
         </span>
       </div>
       <div className="mt-2 flex items-end justify-between gap-2">
-        <div className="text-xs tabular-nums text-ink-2">
+        <div className="text-caption tabular-nums text-ink-2">
           <div>
             {tokens.pair(formatCount(record.input_tokens), formatCount(record.output_tokens))}
           </div>

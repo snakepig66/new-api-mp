@@ -215,7 +215,7 @@ function MultiplierDialog({
     >
       <div className="space-y-4">
         <div className="flex items-baseline justify-between gap-3 border-b border-line pb-3">
-          <span className="text-[13px] text-ink-3">{vendorName(listing.vendor)}</span>
+          <span className="text-meta text-ink-3">{vendorName(listing.vendor)}</span>
           <Multiplier milli={listing.multiplier_milli} />
         </div>
 
@@ -257,13 +257,13 @@ function MultiplierDialog({
         </Field>
 
         {locked ? (
-          <p className="text-[13px] text-warn" role="status">
+          <p className="text-meta text-warn" role="status">
             {page.multiplierDialog.cooldown(formatCountdown(cooldown.remaining))}
           </p>
         ) : null}
 
         {error ? (
-          <p className="text-[13px] text-danger" role="alert">
+          <p className="text-meta text-danger" role="alert">
             {error}
           </p>
         ) : null}
@@ -351,8 +351,8 @@ function KeyDialog({
         </Field>
 
         <div className="glass-inset px-4 py-3">
-          <div className="text-[13px] text-ink-3">{common.keyPreviewHint}</div>
-          <div className="mt-1 tabular-nums text-[14px] text-ink">{preview}</div>
+          <div className="text-meta text-ink-3">{common.keyPreviewHint}</div>
+          <div className="mt-1 tabular-nums text-body text-ink">{preview}</div>
         </div>
       </div>
     </Dialog>
@@ -378,8 +378,8 @@ function FilterChip({
       onClick={onClick}
       className={
         active
-          ? 'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-brand-soft px-3.5 text-[13px] font-medium text-brand-ink'
-          : 'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13px] text-ink-2 transition-colors hover:bg-brand/[0.06] hover:text-ink'
+          ? 'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-brand-soft px-3.5 text-meta font-medium text-brand-ink'
+          : 'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-meta text-ink-2 transition-colors hover:bg-brand/[0.06] hover:text-ink'
       }
     >
       <span>{label}</span>
@@ -407,7 +407,7 @@ function SuccessRateCell({ health }: { health: SellerListingHealth | null | unde
     <div className="flex items-center gap-5">
       {windows.map((rate) => (
         <span key={rate.label} className="block min-w-[2.75rem]">
-          <span className="block text-[12px] leading-4 text-ink-3">{rate.label}</span>
+          <span className="block text-caption leading-4 text-ink-3">{rate.label}</span>
           <span className="block tabular-nums leading-5 text-ink">{rate.value}</span>
         </span>
       ))}
@@ -670,7 +670,7 @@ export function SellerListingsPage() {
         <Link
           to="/console/listings/$id"
           params={{ id: String(listing.id) }}
-          className="inline-flex h-8 items-center rounded-md px-3 text-[13px] font-medium text-brand-ink transition-colors hover:bg-brand-soft"
+          className="inline-flex h-8 items-center rounded-md px-3 text-meta font-medium text-brand-ink transition-colors hover:bg-brand-soft"
         >
           {page.health.detailLink}
         </Link>
@@ -742,13 +742,13 @@ export function SellerListingsPage() {
             />
           </div>
 
-          <p className="mt-4 text-[13px] text-ink-3">{page.health.successRateHint}</p>
+          <p className="mt-4 text-meta text-ink-3">{page.health.successRateHint}</p>
           {health.isError ? (
-            <p className="mt-2 text-[13px] text-ink-3">{sellerErrorMessage(health.error)}</p>
+            <p className="mt-2 text-meta text-ink-3">{sellerErrorMessage(health.error)}</p>
           ) : null}
 
           {filtered.length === 0 ? (
-            <p className="mt-6 text-[13px] text-ink-3" role="status">
+            <p className="mt-6 text-meta text-ink-3" role="status">
               {page.filterEmpty}
             </p>
           ) : view === 'table' ? (
@@ -771,9 +771,7 @@ export function SellerListingsPage() {
                     <TableHeaderCell>{page.columns.multiplier}</TableHeaderCell>
                     <TableHeaderCell numeric>{page.columns.todayIncome}</TableHeaderCell>
                     <TableHeaderCell>{page.columns.status}</TableHeaderCell>
-                    <TableHeaderCell className="text-right">
-                      {page.columns.actions}
-                    </TableHeaderCell>
+                    <TableHeaderCell numeric>{page.columns.actions}</TableHeaderCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -809,7 +807,7 @@ export function SellerListingsPage() {
                             >
                               {channelName(listing)}
                             </Link>
-                            <span className="tabular-nums text-[13px] text-ink-3">
+                            <span className="tabular-nums text-meta text-ink-3">
                               #{listing.id}
                             </span>
                             <KindTag kind={kindOf(listing)} />
@@ -929,7 +927,7 @@ export function SellerListingsPage() {
               ))}
             </div>
           )}
-          <p className="mt-3 text-[13px] text-ink-3">{page.pausedNote}</p>
+          <p className="mt-3 text-meta text-ink-3">{page.pausedNote}</p>
         </>
       )}
 

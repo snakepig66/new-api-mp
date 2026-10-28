@@ -151,7 +151,7 @@ function PayoutDialog({
             }}
           />
         </Field>
-        <p className="text-[13px] text-ink-3">
+        <p className="text-meta text-ink-3">
           {page.min} · {page.weeklyHint}
         </p>
       </div>
@@ -209,7 +209,7 @@ function SellerPayoutsPage() {
 
       {needsPayoutAccount ? (
         <div className="mt-6 flex flex-wrap items-center justify-between gap-3 glass px-5 py-4">
-          <p className="text-[13px] leading-6 text-ink-2">
+          <p className="text-meta leading-6 text-ink-2">
             {copy.pages.sellerOnboarding.payoutNotice}
           </p>
           <Link to="/seller/onboarding" className={buttonClasses('secondary', 'sm')}>
@@ -220,11 +220,11 @@ function SellerPayoutsPage() {
 
       <section className="mt-6 grid gap-6 glass p-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <div>
-          <div className="text-[13px] text-ink-3">{page.available}</div>
-          <div className="mt-1 break-words text-[32px] font-semibold leading-tight tracking-tight tabular-nums text-brand-ink">
+          <div className="text-meta text-ink-3">{page.available}</div>
+          <div className="mt-1 break-words text-h1 font-semibold leading-tight tracking-tight tabular-nums text-brand-ink">
             {formatYuan(availableMicro)}
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-ink-3">
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-ink-3">
             <span>{page.min}</span>
             <span className="h-3 w-px bg-line-strong" aria-hidden="true" />
             {recent ? (
@@ -237,28 +237,28 @@ function SellerPayoutsPage() {
               </Tag>
             )}
           </div>
-          <p className="mt-2 text-[13px] leading-5 text-ink-3">{page.weeklyHint}</p>
+          <p className="mt-2 text-meta leading-5 text-ink-3">{page.weeklyHint}</p>
         </div>
         <div className="flex flex-col justify-end gap-3 border-t border-line pt-4 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
           <div>
-            <div className="text-[13px] text-ink-3">{page.pending}</div>
-            <div className="mt-1 text-[24px] font-semibold tabular-nums text-ink">
+            <div className="text-meta text-ink-3">{page.pending}</div>
+            <div className="mt-1 text-h2 font-semibold tabular-nums text-ink">
               {formatYuan(data?.pending_micro ?? 0)}
             </div>
           </div>
-          <p className="text-[13px] leading-5 text-ink-3">{page.reserveHint}</p>
+          <p className="text-meta leading-5 text-ink-3">{page.reserveHint}</p>
         </div>
       </section>
 
       <section className="mt-6 glass p-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+            <h2 className="text-title font-semibold tracking-tight text-ink">
               {page.history.title}
             </h2>
-            <p className="mt-1 text-[13px] text-ink-3">{page.history.lead}</p>
+            <p className="mt-1 text-meta text-ink-3">{page.history.lead}</p>
           </div>
-          <span className="tabular-nums text-[13px] text-ink-3">
+          <span className="tabular-nums text-meta text-ink-3">
             {copy.pages.sellerCommon.totalCount(total)}
           </span>
         </div>
@@ -299,7 +299,7 @@ function SellerPayoutsPage() {
                     const status = payoutStatusView(payout.status)
                     return (
                       <TableRow key={payout.id}>
-                        <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
+                        <TableCell className="whitespace-nowrap tabular-nums text-meta text-ink-3">
                           {formatDateTime(payout.created_at)}
                         </TableCell>
                         <TableCell numeric className="whitespace-nowrap font-medium">
@@ -310,7 +310,7 @@ function SellerPayoutsPage() {
                             {status.label}
                           </Tag>
                         </TableCell>
-                        <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
+                        <TableCell className="whitespace-nowrap tabular-nums text-meta text-ink-3">
                           {payout.reviewed_at ? formatDateTime(payout.reviewed_at) : '—'}
                         </TableCell>
                       </TableRow>
@@ -320,7 +320,7 @@ function SellerPayoutsPage() {
               </Table>
 
               <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
-                <span className="text-[13px] text-ink-3">
+                <span className="text-meta text-ink-3">
                   {page.pagination.summary(pageNumber, pages, total)}
                 </span>
                 <div className="flex items-center gap-2">

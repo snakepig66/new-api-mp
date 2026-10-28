@@ -117,11 +117,11 @@ function ReverseForm() {
 
       {result ? (
         <div className="border-t border-line pt-4">
-          <h3 className="text-[13px] font-medium text-ink">
+          <h3 className="text-meta font-medium text-ink">
             {page.reverse.balancesTitle}
           </h3>
           {balances.length === 0 ? (
-            <p className="mt-2 text-[13px] text-ink-3">{page.reverse.balancesEmpty}</p>
+            <p className="mt-2 text-meta text-ink-3">{page.reverse.balancesEmpty}</p>
           ) : (
             <dl className="mt-2 divide-y divide-line border-y border-line">
               {balances.map(([account, value]) => (
@@ -129,10 +129,10 @@ function ReverseForm() {
                   key={account}
                   className="flex items-baseline justify-between gap-4 py-2"
                 >
-                  <dt className="min-w-0 truncate text-[13px] text-ink-3">
+                  <dt className="min-w-0 truncate text-meta text-ink-3">
                     {accountLabel(account)}
                   </dt>
-                  <dd className="shrink-0 tabular-nums text-[13px] tabular-nums text-ink">
+                  <dd className="shrink-0 tabular-nums text-meta tabular-nums text-ink">
                     {formatYuan(value)}
                   </dd>
                 </div>
@@ -236,12 +236,12 @@ function DeanonForm() {
       {result ? (
         <div className="border-t border-line pt-4">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <span className="text-[13px] text-ink-3">{page.deanon.result}</span>
-            <span className="tabular-nums text-[18px] font-medium tabular-nums text-ink">
+            <span className="text-meta text-ink-3">{page.deanon.result}</span>
+            <span className="tabular-nums text-h3 font-medium tabular-nums text-ink">
               #{result.buyer_user_id}
             </span>
           </div>
-          <p className="mt-1 text-[13px] text-ink-3">
+          <p className="mt-1 text-meta text-ink-3">
             {page.account.seller(String(result.seller_id))} ·{' '}
             <span className="tabular-nums uppercase">{result.code}</span>
           </p>

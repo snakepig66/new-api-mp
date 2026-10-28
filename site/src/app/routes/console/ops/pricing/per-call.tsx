@@ -118,16 +118,16 @@ function PerCallPricesContent() {
                     {group.rows.map((row) => (
                       <TableRow key={row.id}>
                         <TableCell>
-                          <span className="tabular-nums text-[13px]">{itemLabel(row.item)}</span>
+                          <span className="tabular-nums text-meta">{itemLabel(row.item)}</span>
                         </TableCell>
                         <TableCell numeric>
                           {formatYuan(row.unit_price_micro)}
-                          <span className="ml-1 text-[13px] text-ink-3">/ 次</span>
+                          <span className="ml-1 text-meta text-ink-3">/ 次</span>
                         </TableCell>
-                        <TableCell className="tabular-nums text-[13px] text-ink-3">
+                        <TableCell className="tabular-nums text-meta text-ink-3">
                           v{row.version}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap tabular-nums text-[13px] text-ink-3">
+                        <TableCell className="whitespace-nowrap tabular-nums text-meta text-ink-3">
                           {formatDateTime(row.effective_at)}
                         </TableCell>
                       </TableRow>
@@ -291,7 +291,7 @@ function PerCallDialog({ open, onClose }: { open: boolean; onClose: () => void }
       {submitError ? (
         <p
           role="alert"
-          className="mt-4 border border-danger/25 bg-danger/10 px-3 py-2 text-[13px] text-danger"
+          className="mt-4 border border-danger/25 bg-danger/10 px-3 py-2 text-meta text-danger"
         >
           {submitError}
         </p>
