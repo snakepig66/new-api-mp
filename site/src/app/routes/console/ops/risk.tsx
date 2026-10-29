@@ -9,7 +9,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useState } from 'react'
 
 import { copy } from '@/copy'
@@ -49,6 +49,9 @@ import {
 import { adminErrorMessage } from '@/features/admin/errors'
 
 export const Route = createFileRoute('/console/ops/risk')({
+  beforeLoad: () => {
+    throw redirect({ to: '/console/ops/tools/risk', replace: true })
+  },
   component: RiskPage,
 })
 

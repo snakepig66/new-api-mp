@@ -50,14 +50,10 @@ export function consoleGroups({
           {
             label: shell.groups.ops,
             items: [
-              { to: '/console/ops/pricing', label: shell.ops.pricing },
               { to: '/console/ops/models', label: shell.ops.models },
-              { to: '/console/ops/trust-pool', label: shell.ops.trustPool },
               { to: '/console/ops/review', label: shell.ops.review },
-              { to: '/console/ops/tools', label: shell.ops.tools },
-              { to: '/console/ops/trace', label: shell.ops.trace },
               { to: '/console/ops/metrics', label: shell.ops.metrics },
-              { to: '/console/ops/risk', label: shell.ops.risk },
+              { to: '/console/ops/tools', label: shell.ops.tools },
             ],
           },
         ]

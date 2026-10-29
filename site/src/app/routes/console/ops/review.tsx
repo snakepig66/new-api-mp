@@ -12,6 +12,7 @@ const nav = copy.pages.adminCommon.nav
 const tabs: readonly OpsTabLink[] = [
   { to: '/console/ops/review', label: nav.listings },
   { to: '/console/ops/review/payouts', label: nav.payouts },
+  { to: '/console/ops/review/trust-pool', label: nav.trustPool },
 ]
 
 function ReviewLayout() {

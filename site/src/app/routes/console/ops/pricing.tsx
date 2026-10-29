@@ -10,7 +10,7 @@ export const Route = createFileRoute('/console/ops/pricing')({
 const nav = copy.pages.adminCommon.nav
 
 const tabs: readonly OpsTabLink[] = [
-  { to: '/console/ops/pricing', label: nav.prices },
+  { to: '/console/ops/models', label: '模型与定价' },
   { to: '/console/ops/pricing/per-call', label: nav.perCallPrices },
 ]
 

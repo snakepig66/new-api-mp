@@ -67,8 +67,10 @@ import { Route as ConsoleOpsPricingIndexRouteImport } from './routes/console/ops
 import { Route as ConsoleOpsPricingPerCallRouteImport } from './routes/console/ops/pricing/per-call'
 import { Route as ConsoleOpsReviewIndexRouteImport } from './routes/console/ops/review/index'
 import { Route as ConsoleOpsReviewPayoutsRouteImport } from './routes/console/ops/review/payouts'
+import { Route as ConsoleOpsReviewTrustPoolRouteImport } from './routes/console/ops/review/trust-pool'
 import { Route as ConsoleOpsToolsIndexRouteImport } from './routes/console/ops/tools/index'
 import { Route as ConsoleOpsToolsReversalRouteImport } from './routes/console/ops/tools/reversal'
+import { Route as ConsoleOpsToolsRiskRouteImport } from './routes/console/ops/tools/risk'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -361,6 +363,12 @@ const ConsoleOpsReviewPayoutsRoute = ConsoleOpsReviewPayoutsRouteImport.update({
   path: '/payouts',
   getParentRoute: () => ConsoleOpsReviewRoute,
 } as any)
+const ConsoleOpsReviewTrustPoolRoute =
+  ConsoleOpsReviewTrustPoolRouteImport.update({
+    id: '/trust-pool',
+    path: '/trust-pool',
+    getParentRoute: () => ConsoleOpsReviewRoute,
+  } as any)
 const ConsoleOpsToolsIndexRoute = ConsoleOpsToolsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -369,6 +377,11 @@ const ConsoleOpsToolsIndexRoute = ConsoleOpsToolsIndexRouteImport.update({
 const ConsoleOpsToolsReversalRoute = ConsoleOpsToolsReversalRouteImport.update({
   id: '/reversal',
   path: '/reversal',
+  getParentRoute: () => ConsoleOpsToolsRoute,
+} as any)
+const ConsoleOpsToolsRiskRoute = ConsoleOpsToolsRiskRouteImport.update({
+  id: '/risk',
+  path: '/risk',
   getParentRoute: () => ConsoleOpsToolsRoute,
 } as any)
 
@@ -429,7 +442,9 @@ export interface FileRoutesByFullPath {
   '/console/ops/': typeof ConsoleOpsIndexRoute
   '/console/ops/pricing/per-call': typeof ConsoleOpsPricingPerCallRoute
   '/console/ops/review/payouts': typeof ConsoleOpsReviewPayoutsRoute
+  '/console/ops/review/trust-pool': typeof ConsoleOpsReviewTrustPoolRoute
   '/console/ops/tools/reversal': typeof ConsoleOpsToolsReversalRoute
+  '/console/ops/tools/risk': typeof ConsoleOpsToolsRiskRoute
   '/console/ops/pricing/': typeof ConsoleOpsPricingIndexRoute
   '/console/ops/review/': typeof ConsoleOpsReviewIndexRoute
   '/console/ops/tools/': typeof ConsoleOpsToolsIndexRoute
@@ -482,7 +497,9 @@ export interface FileRoutesByTo {
   '/console/ops': typeof ConsoleOpsIndexRoute
   '/console/ops/pricing/per-call': typeof ConsoleOpsPricingPerCallRoute
   '/console/ops/review/payouts': typeof ConsoleOpsReviewPayoutsRoute
+  '/console/ops/review/trust-pool': typeof ConsoleOpsReviewTrustPoolRoute
   '/console/ops/tools/reversal': typeof ConsoleOpsToolsReversalRoute
+  '/console/ops/tools/risk': typeof ConsoleOpsToolsRiskRoute
   '/console/ops/pricing': typeof ConsoleOpsPricingIndexRoute
   '/console/ops/review': typeof ConsoleOpsReviewIndexRoute
   '/console/ops/tools': typeof ConsoleOpsToolsIndexRoute
@@ -545,7 +562,9 @@ export interface FileRoutesById {
   '/console/ops/': typeof ConsoleOpsIndexRoute
   '/console/ops/pricing/per-call': typeof ConsoleOpsPricingPerCallRoute
   '/console/ops/review/payouts': typeof ConsoleOpsReviewPayoutsRoute
+  '/console/ops/review/trust-pool': typeof ConsoleOpsReviewTrustPoolRoute
   '/console/ops/tools/reversal': typeof ConsoleOpsToolsReversalRoute
+  '/console/ops/tools/risk': typeof ConsoleOpsToolsRiskRoute
   '/console/ops/pricing/': typeof ConsoleOpsPricingIndexRoute
   '/console/ops/review/': typeof ConsoleOpsReviewIndexRoute
   '/console/ops/tools/': typeof ConsoleOpsToolsIndexRoute
@@ -609,7 +628,9 @@ export interface FileRouteTypes {
     | '/console/ops/'
     | '/console/ops/pricing/per-call'
     | '/console/ops/review/payouts'
+    | '/console/ops/review/trust-pool'
     | '/console/ops/tools/reversal'
+    | '/console/ops/tools/risk'
     | '/console/ops/pricing/'
     | '/console/ops/review/'
     | '/console/ops/tools/'
@@ -662,7 +683,9 @@ export interface FileRouteTypes {
     | '/console/ops'
     | '/console/ops/pricing/per-call'
     | '/console/ops/review/payouts'
+    | '/console/ops/review/trust-pool'
     | '/console/ops/tools/reversal'
+    | '/console/ops/tools/risk'
     | '/console/ops/pricing'
     | '/console/ops/review'
     | '/console/ops/tools'
@@ -724,7 +747,9 @@ export interface FileRouteTypes {
     | '/console/ops/'
     | '/console/ops/pricing/per-call'
     | '/console/ops/review/payouts'
+    | '/console/ops/review/trust-pool'
     | '/console/ops/tools/reversal'
+    | '/console/ops/tools/risk'
     | '/console/ops/pricing/'
     | '/console/ops/review/'
     | '/console/ops/tools/'
@@ -1158,6 +1183,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleOpsReviewPayoutsRouteImport
       parentRoute: typeof ConsoleOpsReviewRoute
     }
+    '/console/ops/review/trust-pool': {
+      id: '/console/ops/review/trust-pool'
+      path: '/trust-pool'
+      fullPath: '/console/ops/review/trust-pool'
+      preLoaderRoute: typeof ConsoleOpsReviewTrustPoolRouteImport
+      parentRoute: typeof ConsoleOpsReviewRoute
+    }
     '/console/ops/tools/': {
       id: '/console/ops/tools/'
       path: '/'
@@ -1170,6 +1202,13 @@ declare module '@tanstack/react-router' {
       path: '/reversal'
       fullPath: '/console/ops/tools/reversal'
       preLoaderRoute: typeof ConsoleOpsToolsReversalRouteImport
+      parentRoute: typeof ConsoleOpsToolsRoute
+    }
+    '/console/ops/tools/risk': {
+      id: '/console/ops/tools/risk'
+      path: '/risk'
+      fullPath: '/console/ops/tools/risk'
+      preLoaderRoute: typeof ConsoleOpsToolsRiskRouteImport
       parentRoute: typeof ConsoleOpsToolsRoute
     }
   }
@@ -1246,11 +1285,13 @@ const ConsoleOpsPricingRouteWithChildren =
 
 interface ConsoleOpsReviewRouteChildren {
   ConsoleOpsReviewPayoutsRoute: typeof ConsoleOpsReviewPayoutsRoute
+  ConsoleOpsReviewTrustPoolRoute: typeof ConsoleOpsReviewTrustPoolRoute
   ConsoleOpsReviewIndexRoute: typeof ConsoleOpsReviewIndexRoute
 }
 
 const ConsoleOpsReviewRouteChildren: ConsoleOpsReviewRouteChildren = {
   ConsoleOpsReviewPayoutsRoute: ConsoleOpsReviewPayoutsRoute,
+  ConsoleOpsReviewTrustPoolRoute: ConsoleOpsReviewTrustPoolRoute,
   ConsoleOpsReviewIndexRoute: ConsoleOpsReviewIndexRoute,
 }
 
@@ -1259,11 +1300,13 @@ const ConsoleOpsReviewRouteWithChildren =
 
 interface ConsoleOpsToolsRouteChildren {
   ConsoleOpsToolsReversalRoute: typeof ConsoleOpsToolsReversalRoute
+  ConsoleOpsToolsRiskRoute: typeof ConsoleOpsToolsRiskRoute
   ConsoleOpsToolsIndexRoute: typeof ConsoleOpsToolsIndexRoute
 }
 
 const ConsoleOpsToolsRouteChildren: ConsoleOpsToolsRouteChildren = {
   ConsoleOpsToolsReversalRoute: ConsoleOpsToolsReversalRoute,
+  ConsoleOpsToolsRiskRoute: ConsoleOpsToolsRiskRoute,
   ConsoleOpsToolsIndexRoute: ConsoleOpsToolsIndexRoute,
 }
 

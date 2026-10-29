@@ -12,6 +12,7 @@ const nav = copy.pages.adminCommon.nav
 const tabs: readonly OpsTabLink[] = [
   { to: '/console/ops/tools', label: nav.holidays },
   { to: '/console/ops/tools/reversal', label: nav.tools },
+  { to: '/console/ops/tools/risk', label: nav.risk },
 ]
 
 function ToolsLayout() {

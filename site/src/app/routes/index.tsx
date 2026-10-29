@@ -224,7 +224,14 @@ export function HomePage() {
                 }
               />
             ) : (
-              <ModelTable models={top} details={details} detailsLoading={detailsLoading} />
+              <>
+                <ModelTable models={top} details={details} detailsLoading={detailsLoading} />
+                <div className="mt-8 flex justify-center">
+                  <Link to="/models" className={buttonClasses('secondary', 'lg')}>
+                    {copy.actions.browseModels}（按厂商与价格筛选全量在售模型）→
+                  </Link>
+                </div>
+              </>
             )}
           </div>
 

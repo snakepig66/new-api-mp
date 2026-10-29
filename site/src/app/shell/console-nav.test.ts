@@ -37,11 +37,13 @@ describe('console navigation', () => {
     expect(groups.map((group) => group.label)).toContain(copy.consoleShell.groups.ops)
     expect(labels(groups)).toEqual(
       expect.arrayContaining([
-        copy.consoleShell.ops.pricing,
         copy.consoleShell.ops.models,
         copy.consoleShell.ops.review,
+        copy.consoleShell.ops.metrics,
         copy.consoleShell.ops.tools,
       ]),
     )
+    expect(labels(groups)).not.toContain(copy.consoleShell.ops.pricing)
+    expect(labels(groups)).not.toContain(copy.consoleShell.ops.trustPool)
   })
 })

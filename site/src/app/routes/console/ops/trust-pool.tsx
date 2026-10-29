@@ -7,7 +7,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useMemo, useState, type ReactNode } from 'react'
 
 import { copy } from '@/copy'
@@ -68,6 +68,9 @@ import {
 } from '@/features/admin/schemas'
 
 export const Route = createFileRoute('/console/ops/trust-pool')({
+  beforeLoad: () => {
+    throw redirect({ to: '/console/ops/review/trust-pool', replace: true })
+  },
   component: TrustPoolPage,
 })
 

@@ -290,12 +290,17 @@ export function FilterTabs<T extends string>({
 }
 
 export type OpsTabPath =
+  | '/console/ops/models'
   | '/console/ops/pricing'
   | '/console/ops/pricing/per-call'
   | '/console/ops/review'
   | '/console/ops/review/payouts'
+  | '/console/ops/review/trust-pool'
+  | '/console/ops/metrics'
+  | '/console/ops/trace'
   | '/console/ops/tools'
   | '/console/ops/tools/reversal'
+  | '/console/ops/tools/risk'
 
 export interface OpsTabLink {
   to: OpsTabPath
@@ -310,26 +315,46 @@ export function OpsTabNav({
   tabs: readonly OpsTabLink[]
   ariaLabel: string
 }) {
-  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  let pathname = ''
+  let hasRouter = false
+  try {
+    pathname = useRouterState({ select: (state) => state?.location?.pathname ?? '' })
+    hasRouter = true
+  } catch {
+    pathname = typeof window !== 'undefined' ? window.location?.pathname ?? '' : ''
+  }
   const current = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname
   return (
     <nav aria-label={ariaLabel} className="mb-5 flex flex-wrap items-center gap-1.5">
       {tabs.map((tab) => {
         const active = current === tab.to
+        const linkClass = cn(
+          'inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-full px-3.5 text-body transition-colors',
+          active
+            ? 'bg-brand-soft font-medium text-brand-ink'
+            : 'text-ink-2 hover:bg-brand/[0.06] hover:text-ink',
+        )
+        if (hasRouter) {
+          return (
+            <Link
+              key={tab.to}
+              to={tab.to}
+              aria-current={active ? 'page' : undefined}
+              className={linkClass}
+            >
+              {tab.label}
+            </Link>
+          )
+        }
         return (
-          <Link
+          <a
             key={tab.to}
-            to={tab.to}
+            href={tab.to}
             aria-current={active ? 'page' : undefined}
-            className={cn(
-              'inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-full px-3.5 text-body transition-colors',
-              active
-                ? 'bg-brand-soft font-medium text-brand-ink'
-                : 'text-ink-2 hover:bg-brand/[0.06] hover:text-ink',
-            )}
+            className={linkClass}
           >
             {tab.label}
-          </Link>
+          </a>
         )
       })}
     </nav>

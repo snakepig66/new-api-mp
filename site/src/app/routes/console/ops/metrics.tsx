@@ -37,10 +37,12 @@ import {
   ErrorBlock,
   Field,
   FilterTabs,
+  OpsTabNav,
   PageSkeleton,
   RootOnly,
   Section,
   Select,
+  type OpsTabLink,
 } from '@/features/admin/components'
 
 export const Route = createFileRoute('/console/ops/metrics')({
@@ -80,6 +82,11 @@ function MetricsPage() {
   )
 }
 
+const tabs: readonly OpsTabLink[] = [
+  { to: '/console/ops/metrics', label: '指标看板' },
+  { to: '/console/ops/trace', label: '全链路排查' },
+]
+
 export function MetricsContent() {
   const [metricName, setMetricName] = useState<OpsMetricName | ''>('')
   const [range, setRange] = useState<OpsMetricRange>('24h')
@@ -94,6 +101,7 @@ export function MetricsContent() {
 
   return (
     <>
+      <OpsTabNav tabs={tabs} ariaLabel="监控排查导航" />
       <PageHeader title={page.title} lead={page.lead} />
 
       <div className="mt-6 flex flex-wrap items-start gap-x-6 gap-y-4">

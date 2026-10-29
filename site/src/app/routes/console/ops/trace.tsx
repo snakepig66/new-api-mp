@@ -36,10 +36,12 @@ import {
 import {
   ErrorBlock,
   Field,
+  OpsTabNav,
   PageSkeleton,
   RootOnly,
   Section,
   TextInput,
+  type OpsTabLink,
 } from '@/features/admin/components'
 
 export const Route = createFileRoute('/console/ops/trace')({
@@ -74,6 +76,11 @@ function TracePage() {
   )
 }
 
+const tabs: readonly OpsTabLink[] = [
+  { to: '/console/ops/metrics', label: '指标看板' },
+  { to: '/console/ops/trace', label: '全链路排查' },
+]
+
 export function TraceContent() {
   const [input, setInput] = useState('')
   const [requestId, setRequestId] = useState('')
@@ -92,6 +99,7 @@ export function TraceContent() {
 
   return (
     <>
+      <OpsTabNav tabs={tabs} ariaLabel="监控排查导航" />
       <PageHeader title={page.title} lead={page.lead} />
 
       <form
