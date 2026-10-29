@@ -58,7 +58,7 @@ export function VendorPill({ label, logoUrl, count, active, onClick }: VendorPil
             alt=""
             width={24}
             height={24}
-            className="h-6 w-6 object-cover"
+            className="h-4 w-4 object-contain"
             onError={() => setLogoFailed(true)}
           />
         ) : (

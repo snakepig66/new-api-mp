@@ -39,7 +39,7 @@ export function ModelName({ model, size = 'md', className, ...props }: ModelName
         aria-hidden="true"
         width={iconSize}
         height={iconSize}
-        className={cn(iconClass, 'shrink-0 rounded-xs object-contain')}
+        className={cn(iconClass, 'shrink-0 object-contain')}
       />
       <span>{model}</span>
     </span>
