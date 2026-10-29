@@ -1,16 +1,10 @@
 /**
  * 卖方「我卖出的」记录 — desktop table (≥ md) and mobile cards (< md).
  *
- * Presentational only: fetching, filters (URL search params via
- * validateSearch), pagination and the detail drawer live in records.tsx.
- * Clicking a row/card calls onOpen(request_id); how the detail opens is the
- * page's decision.
+ * Modern capsule/card layout inspired by modern usage logs.
+ * Presentational only: fetching, filters, pagination and drawer live in records.tsx.
  */
 
-import { copy } from '@/copy'
-import { formatYuan } from '@/lib/money'
-import { formatDateTime } from '@/lib/time'
-import { ModelName, Tag } from '@/ui'
 import {
   Table,
   TableBody,
@@ -20,14 +14,30 @@ import {
   TableRow,
 } from '@/ui'
 
-import { formatCount } from '@/features/console/format'
-
 import type { ShareRecord } from './api'
-import { BuyerCode } from './components'
+import {
+  ChannelPillBadge,
+  CostPillBadge,
+  IncomePillBadge,
+  ModelPillBadge,
+  TableSortHeader,
+  TimeAndStatusCell,
+  TimingMetricCell,
+  TokensMetricCell,
+} from '../records/record-cells'
 
-const page = copy.pages.sellerRecords
-const columns = page.columns
-const tokens = page.tokens
+export const copy = {
+  colModel: '模型',
+  colChannel: '渠道',
+  colBuyer: '买家',
+  colTokens: 'TOKENS',
+  colLatency: '耗时',
+  colCost: '费用',
+  colIncome: '收益',
+  colDetail: '详情',
+  colTime: '时间',
+  dash: '—',
+} as const
 
 export interface ShareRecordsTableProps {
   records: ShareRecord[]
@@ -35,212 +45,214 @@ export interface ShareRecordsTableProps {
   onOpen: (requestId: string) => void
 }
 
-/** Mobile cards take the same props as the table. */
 export type ShareRecordCardsProps = ShareRecordsTableProps
-
-/** ms → "0.42s" / "3.4s"; 0 = 未记录 → "—". */
-function formatLatency(ms: number): string {
-  if (ms <= 0) return page.dash
-  const seconds = ms / 1000
-  return seconds < 1 ? `${seconds.toFixed(2)}s` : `${seconds.toFixed(1)}s`
-}
-
-/** 首字耗时: green < 1s, yellow 1–3s, red > 3s; unrecorded stays muted. */
-function firstTokenClass(ms: number): string {
-  if (ms <= 0) return 'text-ink-3'
-  if (ms < 1000) return 'text-ok'
-  if (ms <= 3000) return 'text-warn'
-  return 'text-danger'
-}
-
-function isSuccess(record: ShareRecord): boolean {
-  return record.status === 'success'
-}
-
-/** Model badge + optional 「转换」 marker. */
-function ModelCell({ record }: { record: ShareRecord }) {
-  return (
-    <span className="inline-flex items-center gap-1">
-      <Tag tone="neutral"><ModelName model={record.model} size="sm" /></Tag>
-      {record.converted && <Tag tone="warning">{page.converted}</Tag>}
-    </span>
-  )
-}
-
-/** #listing_id plus the key fingerprint tail when the backend has one. */
-function ChannelCell({ record }: { record: ShareRecord }) {
-  return (
-    <div className="tabular-nums">
-      <div className="text-meta text-ink">#{record.listing_id}</div>
-      {record.key_fingerprint4 ? (
-        <div className="text-caption text-ink-3">{page.keySuffix(record.key_fingerprint4)}</div>
-      ) : null}
-    </div>
-  )
-}
-
-/** 输入 → 输出, cache read/write as a subline. */
-function TokensCell({ record }: { record: ShareRecord }) {
-  const hasCache = record.cache_read_tokens > 0 || record.cache_write_tokens > 0
-  return (
-    <div>
-      <div className="tabular-nums">
-        {tokens.pair(formatCount(record.input_tokens), formatCount(record.output_tokens))}
-      </div>
-      {hasCache && (
-        <div className="text-caption text-ink-3 tabular-nums">
-          {tokens.cacheRead} {formatCount(record.cache_read_tokens)} · {tokens.cacheWrite}{' '}
-          {formatCount(record.cache_write_tokens)}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** 首字 / 总耗时; 首字 colors by threshold. */
-function LatencyCell({ record }: { record: ShareRecord }) {
-  return (
-    <div className="tabular-nums">
-      <span className={firstTokenClass(record.first_token_ms)}>
-        {formatLatency(record.first_token_ms)}
-      </span>
-      {' / '}
-      {formatLatency(record.latency_ms)}
-    </div>
-  )
-}
-
-/** 收益 big, 买家实付 + 平台费 as a subline. */
-function IncomeCell({ record }: { record: ShareRecord }) {
-  return (
-    <div>
-      <div className="font-medium tabular-nums">{formatYuan(record.seller_credit_micro)}</div>
-      <div className="text-caption tabular-nums text-ink-3">
-        {page.income.buyerPaid} {formatYuan(record.buyer_paid_micro)} ·{' '}
-        {page.income.platformFee} {formatYuan(record.platform_fee_micro)}
-      </div>
-    </div>
-  )
-}
-
-function StatusCell({ record }: { record: ShareRecord }) {
-  return isSuccess(record) ? (
-    <Tag tone="success">{page.status.success}</Tag>
-  ) : (
-    <Tag tone="danger">{page.status.failed}</Tag>
-  )
-}
 
 export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
   return (
     <div className="hidden md:block">
-      <Table minWidth={1120}>
+      <Table minWidth={1180}>
         <TableHead>
           <TableRow>
-            <TableHeaderCell>{columns.time}</TableHeaderCell>
-            <TableHeaderCell>{columns.model}</TableHeaderCell>
-            <TableHeaderCell>{columns.buyer}</TableHeaderCell>
-            <TableHeaderCell>{columns.channelGroup}</TableHeaderCell>
-            <TableHeaderCell>{columns.channel}</TableHeaderCell>
-            <TableHeaderCell numeric>{columns.tokens}</TableHeaderCell>
-            <TableHeaderCell numeric>{columns.latency}</TableHeaderCell>
-            <TableHeaderCell>{columns.type}</TableHeaderCell>
-            <TableHeaderCell numeric>{columns.income}</TableHeaderCell>
-            <TableHeaderCell>{columns.status}</TableHeaderCell>
+            <TableHeaderCell>
+              <TableSortHeader title={copy.colModel} />
+            </TableHeaderCell>
+            <TableHeaderCell>
+              <TableSortHeader title={copy.colChannel} />
+            </TableHeaderCell>
+            <TableHeaderCell>
+              <TableSortHeader title={copy.colBuyer} />
+            </TableHeaderCell>
+            <TableHeaderCell>
+              <TableSortHeader title={copy.colTokens} />
+            </TableHeaderCell>
+            <TableHeaderCell>
+              <TableSortHeader title={copy.colLatency} />
+            </TableHeaderCell>
+            <TableHeaderCell>
+              <TableSortHeader title={copy.colCost} />
+            </TableHeaderCell>
+            <TableHeaderCell>
+              <TableSortHeader title={copy.colIncome} />
+            </TableHeaderCell>
+            <TableHeaderCell className="text-center">
+              <TableSortHeader title={copy.colDetail} />
+            </TableHeaderCell>
+            <TableHeaderCell>
+              <TableSortHeader title={copy.colTime} />
+            </TableHeaderCell>
           </TableRow>
         </TableHead>
         <TableBody>
-          {records.map((record) => (
-            <TableRow
-              key={record.request_id}
-              interactive
-              onClick={() => onOpen(record.request_id)}
-            >
-              <TableCell className="whitespace-nowrap text-ink-3">
-                {formatDateTime(record.created_at)}
-              </TableCell>
-              <TableCell>
-                <ModelCell record={record} />
-              </TableCell>
-              <TableCell>
-                <BuyerCode code={record.buyer_code} />
-              </TableCell>
-              <TableCell>{record.channel_group || page.dash}</TableCell>
-              <TableCell>
-                <ChannelCell record={record} />
-              </TableCell>
-              <TableCell numeric>
-                <TokensCell record={record} />
-              </TableCell>
-              <TableCell numeric>
-                <LatencyCell record={record} />
-              </TableCell>
-              <TableCell>{record.is_stream ? page.stream : page.nonStream}</TableCell>
-              <TableCell numeric>
-                <IncomeCell record={record} />
-              </TableCell>
-              <TableCell>
-                <StatusCell record={record} />
-              </TableCell>
-            </TableRow>
-          ))}
+          {records.map((record, index) => {
+            const channelSub = [
+              record.channel_group,
+              record.key_fingerprint4 ? `···${record.key_fingerprint4}` : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')
+
+            return (
+              <TableRow
+                key={record.request_id}
+                interactive
+                onClick={() => onOpen(record.request_id)}
+              >
+                {/* 1. 模型 */}
+                <TableCell>
+                  <ModelPillBadge model={record.model} converted={record.converted} />
+                </TableCell>
+
+                {/* 2. 渠道 */}
+                <TableCell>
+                  <ChannelPillBadge
+                    id={record.listing_id}
+                    subtext={channelSub || copy.dash}
+                    variant={index % 2 === 0 ? 'amber' : 'blue'}
+                  />
+                </TableCell>
+
+                {/* 3. 买家 */}
+                <TableCell>
+                  <span className="font-mono text-meta text-ink-2">
+                    #{record.buyer_code}
+                  </span>
+                </TableCell>
+
+                {/* 4. TOKENS */}
+                <TableCell>
+                  <TokensMetricCell
+                    input={record.input_tokens}
+                    output={record.output_tokens}
+                    cacheRead={record.cache_read_tokens}
+                    cacheWrite={record.cache_write_tokens}
+                  />
+                </TableCell>
+
+                {/* 5. 耗时 */}
+                <TableCell>
+                  <TimingMetricCell
+                    firstTokenMs={record.first_token_ms}
+                    latencyMs={record.latency_ms}
+                    isStream={record.is_stream}
+                  />
+                </TableCell>
+
+                {/* 6. 费用 (买家实付) */}
+                <TableCell>
+                  <CostPillBadge amountMicro={record.buyer_paid_micro} />
+                </TableCell>
+
+                {/* 7. 收益 (卖家所得) */}
+                <TableCell>
+                  <IncomePillBadge
+                    sellerCreditMicro={record.seller_credit_micro}
+                    buyerPaidMicro={record.buyer_paid_micro}
+                    platformFeeMicro={record.platform_fee_micro}
+                  />
+                </TableCell>
+
+                {/* 8. 详情 */}
+                <TableCell className="text-center text-ink-3">
+                  {copy.dash}
+                </TableCell>
+
+                {/* 9. 时间 + 状态 */}
+                <TableCell>
+                  <TimeAndStatusCell
+                    createdAt={record.created_at}
+                    status={record.status}
+                  />
+                </TableCell>
+              </TableRow>
+            )
+          })}
         </TableBody>
       </Table>
     </div>
   )
 }
 
-/** One compact card; mirrors the table columns in a stacked layout. */
+/** One compact card; mirrors table cells in mobile layout. */
 function ShareRecordCard({
   record,
   onOpen,
+  index = 0,
 }: {
   record: ShareRecord
   onOpen: (requestId: string) => void
+  index?: number
 }) {
+  const isSuccess = record.status === 'success'
+  const channelSub = [
+    record.channel_group,
+    record.key_fingerprint4 ? `···${record.key_fingerprint4}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+
   return (
     <button
       type="button"
       onClick={() => onOpen(record.request_id)}
-      className="w-full glass-inset rounded-lg p-3 text-left transition-colors hover:bg-brand/[0.06]"
+      className="w-full glass-inset rounded-xl p-3.5 text-left transition-all hover:bg-brand/[0.06] active:scale-[0.99] border border-line"
     >
+      {/* Top row: Model + Status */}
       <div className="flex items-center justify-between gap-2">
-        <ModelCell record={record} />
-        <StatusCell record={record} />
+        <ModelPillBadge model={record.model} converted={record.converted} />
+        {isSuccess ? (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300">
+            消耗
+            <span className="sr-only">成功</span>
+          </span>
+        ) : (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300">
+            失败
+          </span>
+        )}
       </div>
-      <div className="mt-1 text-caption text-ink-3">{formatDateTime(record.created_at)}</div>
-      <div className="mt-2 flex items-center justify-between gap-2 text-caption text-ink-3">
-        <BuyerCode code={record.buyer_code} />
-        <span className="tabular-nums">
-          {record.is_stream ? page.stream : page.nonStream} ·{' '}
-          <span className={firstTokenClass(record.first_token_ms)}>
-            {formatLatency(record.first_token_ms)}
-          </span>{' '}
-          / {formatLatency(record.latency_ms)}
-        </span>
-      </div>
-      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-caption text-ink-2">
-        <span>
-          {columns.channelGroup}: {record.channel_group || page.dash}
-        </span>
-        <span className="tabular-nums">
-          {columns.channel}: #{record.listing_id}
-          {record.key_fingerprint4 ? ` · ${page.keySuffix(record.key_fingerprint4)}` : ''}
-        </span>
-      </div>
-      <div className="mt-2 flex items-end justify-between gap-2">
-        <div className="text-caption tabular-nums text-ink-2">
-          <div>
-            {tokens.pair(formatCount(record.input_tokens), formatCount(record.output_tokens))}
-          </div>
-          {(record.cache_read_tokens > 0 || record.cache_write_tokens > 0) && (
-            <div className="text-ink-3">
-              {tokens.cacheRead} {formatCount(record.cache_read_tokens)} · {tokens.cacheWrite}{' '}
-              {formatCount(record.cache_write_tokens)}
-            </div>
-          )}
+
+      {/* Row 2: Channel + Buyer */}
+      <div className="mt-3 flex items-center justify-between gap-2 border-t border-line/60 pt-2.5">
+        <ChannelPillBadge
+          id={record.listing_id}
+          subtext={channelSub || copy.dash}
+          variant={index % 2 === 0 ? 'amber' : 'blue'}
+        />
+        <div className="text-right">
+          <span className="text-caption text-ink-3 block">买家</span>
+          <span className="font-mono text-meta text-ink-2">
+            #{record.buyer_code}
+          </span>
         </div>
-        <IncomeCell record={record} />
+      </div>
+
+      {/* Row 3: Timing + Tokens */}
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <TimingMetricCell
+          firstTokenMs={record.first_token_ms}
+          latencyMs={record.latency_ms}
+          isStream={record.is_stream}
+        />
+        <div className="text-right">
+          <TokensMetricCell
+            input={record.input_tokens}
+            output={record.output_tokens}
+            cacheRead={record.cache_read_tokens}
+            cacheWrite={record.cache_write_tokens}
+          />
+        </div>
+      </div>
+
+      {/* Row 4: Income + Paid */}
+      <div className="mt-3 flex items-center justify-between gap-2 border-t border-line/60 pt-2.5">
+        <IncomePillBadge
+          sellerCreditMicro={record.seller_credit_micro}
+          buyerPaidMicro={record.buyer_paid_micro}
+          platformFeeMicro={record.platform_fee_micro}
+        />
+        <span className="font-mono text-caption text-ink-3 tabular-nums">
+          {record.created_at.replace('T', ' ').substring(0, 19)}
+        </span>
       </div>
     </button>
   )
@@ -248,9 +260,14 @@ function ShareRecordCard({
 
 export function ShareRecordCards({ records, onOpen }: ShareRecordCardsProps) {
   return (
-    <div className="flex flex-col gap-2 md:hidden">
-      {records.map((record) => (
-        <ShareRecordCard key={record.request_id} record={record} onOpen={onOpen} />
+    <div className="flex flex-col gap-2.5 md:hidden">
+      {records.map((record, index) => (
+        <ShareRecordCard
+          key={record.request_id}
+          record={record}
+          onOpen={onOpen}
+          index={index}
+        />
       ))}
     </div>
   )

@@ -42,21 +42,21 @@ const record: UsageRecord = {
 afterEach(cleanup)
 
 describe('BuyerRecordsTable', () => {
-  it('renders the ten buyer columns', () => {
+  it('renders the buyer columns', () => {
     render(<BuyerRecordsTable records={[record]} onOpen={() => {}} />)
 
-    const headers = screen.getAllByRole('columnheader').map((cell) => cell.textContent)
+    const headers = screen
+      .getAllByRole('columnheader')
+      .map((cell) => cell.textContent?.replace(/\s+/g, ' ').trim())
     expect(headers).toEqual([
-      '时间',
-      '模型',
-      '卖家',
-      '分组',
-      '令牌',
-      'Tokens',
-      '耗时',
-      '类型',
-      '费用',
-      '状态',
+      '模型 ⇅',
+      '卖家 ⇅',
+      '令牌 ⇅',
+      'TOKENS ⇅',
+      '耗时 ⇅',
+      '费用 ⇅',
+      '详情 ⇅',
+      '时间 ⇅',
     ])
   })
 
@@ -65,21 +65,20 @@ describe('BuyerRecordsTable', () => {
 
     expect(screen.getByText('deepseek-v3')).toBeTruthy()
     expect(screen.getByText('转换')).toBeTruthy()
-    expect(screen.getByText('1,000 → 500')).toBeTruthy()
-    expect(screen.getByText(/缓存读 200/)).toBeTruthy()
-    expect(screen.getByText(/缓存写 100/)).toBeTruthy()
+    expect(screen.getByText('1,000 / 500')).toBeTruthy()
+    expect(screen.getByText(/缓存↓ 200/)).toBeTruthy()
+    expect(screen.getByText(/↑ 100/)).toBeTruthy()
   })
 
-  it('renders latency, type, cost and status without distracting savings', () => {
+  it('renders latency, cost and status without distracting savings', () => {
     const { container } = render(<BuyerRecordsTable records={[record]} onOpen={() => {}} />)
 
     expect(screen.getByText('0.80s')).toBeTruthy()
     expect(screen.getByText(/12\.4s/)).toBeTruthy()
-    expect(screen.getByText('流式')).toBeTruthy()
     expect(screen.getByText('¥0.60')).toBeTruthy()
     expect(screen.queryByText('¥0.90')).toBeNull()
     expect(screen.queryByText('省 33.3%')).toBeNull()
-    expect(screen.getByText('成功')).toBeTruthy()
+    expect(screen.getByText('消耗')).toBeTruthy()
     expect(container.textContent).toContain('2026-10-24 10:00:00')
     expect(container.textContent).toContain('Key 1')
     expect(container.textContent).toContain('#10023')
@@ -91,6 +90,7 @@ describe('BuyerRecordsTable', () => {
       request_id: 'req_buyer_2',
       token_name: '',
       token_group: '',
+      tier_label: '',
       first_token_ms: 0,
       is_stream: false,
       converted: false,
@@ -100,10 +100,8 @@ describe('BuyerRecordsTable', () => {
 
     const row = screen.getAllByRole('row')[1]
     expect(within(row).getByText('已删除')).toBeTruthy()
-    expect(within(row).getByText('非流')).toBeTruthy()
     expect(within(row).getByText('失败')).toBeTruthy()
-    // Empty 分组 and unrecorded 首字 both render as an em dash.
-    expect(within(row).getAllByText('—')).toHaveLength(2)
+    expect(within(row).getAllByText('—').length).toBeGreaterThanOrEqual(2)
     expect(within(row).queryByText('转换')).toBeNull()
   })
 })

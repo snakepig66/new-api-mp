@@ -1,10 +1,4 @@
 import type { UsageRecord } from '../console/types'
-import { formatCount } from '../console/format'
-import { formatYuan } from '../../lib/money'
-import { formatDateTime } from '../../lib/time'
-import { SellerId } from '../../ui/identity'
-import { ModelName } from '../../ui/model-name'
-import { Tag } from '../../ui/tag'
 import {
   Table,
   TableBody,
@@ -13,38 +7,33 @@ import {
   TableHeaderCell,
   TableRow,
 } from '../../ui/table'
+import {
+  ChannelPillBadge,
+  CostPillBadge,
+  ModelPillBadge,
+  TableSortHeader,
+  TimeAndStatusCell,
+  TimingMetricCell,
+  TokensMetricCell,
+} from './record-cells'
 
 /**
  * 买方用量记录 — desktop table (≥ md) and mobile cards (< md).
  *
- * Presentational only: fetching, filters (URL search params via
- * validateSearch), pagination and the detail drawer live in records.tsx.
- * Clicking a row/card calls onOpen(request_id); how the detail opens is the
- * page's decision.
+ * Modern capsule/card layout inspired by modern usage logs.
+ * Presentational only: fetching, filters, pagination and drawer live in records.tsx.
  */
 
-// TODO: move into features/records/copy.ts with the rest of the records copy.
-const copy = {
-  colTime: '时间',
+export const copy = {
   colModel: '模型',
   colSeller: '卖家',
-  colGroup: '分组',
   colToken: '令牌',
-  colTokens: 'Tokens',
+  colTokens: 'TOKENS',
   colLatency: '耗时',
-  colType: '类型',
   colCost: '费用',
-  colStatus: '状态',
-  converted: '转换',
+  colDetail: '详情',
+  colTime: '时间',
   deletedToken: '已删除',
-  cacheRead: '缓存读',
-  cacheWrite: '缓存写',
-  stream: '流式',
-  nonStream: '非流',
-  save: '省',
-  success: '成功',
-  failed: '失败',
-  /** Empty-value placeholder: empty 分组, unrecorded latency. */
   dash: '—',
 } as const
 
@@ -54,196 +43,195 @@ export interface BuyerRecordsTableProps {
   onOpen: (requestId: string) => void
 }
 
-/** Mobile cards take the same props as the table. */
 export type BuyerRecordCardsProps = BuyerRecordsTableProps
-
-/** ms → "0.42s" / "3.4s"; 0 = 未记录 → "—". */
-function formatLatency(ms: number): string {
-  if (ms <= 0) return copy.dash
-  const seconds = ms / 1000
-  return seconds < 1 ? `${seconds.toFixed(2)}s` : `${seconds.toFixed(1)}s`
-}
-
-/** 首字耗时: green < 1s, yellow 1–3s, red > 3s; unrecorded stays muted. */
-function firstTokenClass(ms: number): string {
-  if (ms <= 0) return 'text-ink-3'
-  if (ms < 1000) return 'text-ok'
-  if (ms <= 3000) return 'text-warn'
-  return 'text-danger'
-}
-
-function isSuccess(record: UsageRecord): boolean {
-  return record.status === 'success'
-}
-
-/** Model badge + optional 「转换」 marker. */
-function ModelCell({ record }: { record: UsageRecord }) {
-  return (
-    <span className="inline-flex items-center gap-1">
-      <Tag tone="neutral"><ModelName model={record.model} size="sm" /></Tag>
-      {record.converted && <Tag tone="warning">{copy.converted}</Tag>}
-    </span>
-  )
-}
-
-/** 输入 → 输出, cache read/write as a subline. */
-function TokensCell({ record }: { record: UsageRecord }) {
-  const hasCache = record.cache_read_tokens > 0 || record.cache_write_tokens > 0
-  return (
-    <div>
-      <div className="tabular-nums">
-        {formatCount(record.input_tokens)} → {formatCount(record.output_tokens)}
-      </div>
-      {hasCache && (
-        <div className="text-caption text-ink-3 tabular-nums">
-          {copy.cacheRead} {formatCount(record.cache_read_tokens)} · {copy.cacheWrite}{' '}
-          {formatCount(record.cache_write_tokens)}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** 首字 / 总耗时; 首字 colors by threshold. */
-function LatencyCell({ record }: { record: UsageRecord }) {
-  return (
-    <div className="tabular-nums">
-      <span className={firstTokenClass(record.first_token_ms)}>
-        {formatLatency(record.first_token_ms)}
-      </span>
-      {' / '}
-      {formatLatency(record.latency_ms)}
-    </div>
-  )
-}
-
-function CostCell({ record }: { record: UsageRecord }) {
-  return (
-    <div className="font-medium tabular-nums">
-      {formatYuan(record.total_debit_micro)}
-    </div>
-  )
-}
-
-function StatusCell({ record }: { record: UsageRecord }) {
-  // No retry info in list items (no retry field); retries show in the detail only.
-  return isSuccess(record) ? (
-    <Tag tone="success">{copy.success}</Tag>
-  ) : (
-    <Tag tone="danger">{copy.failed}</Tag>
-  )
-}
 
 export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
   return (
     <div className="hidden md:block">
-      <Table minWidth={960}>
+      <Table minWidth={1040}>
         <TableHead>
           <TableRow>
-            <TableHeaderCell>{copy.colTime}</TableHeaderCell>
-            <TableHeaderCell>{copy.colModel}</TableHeaderCell>
-            <TableHeaderCell>{copy.colSeller}</TableHeaderCell>
-            <TableHeaderCell>{copy.colGroup}</TableHeaderCell>
-            <TableHeaderCell>{copy.colToken}</TableHeaderCell>
-            <TableHeaderCell numeric>{copy.colTokens}</TableHeaderCell>
-            <TableHeaderCell numeric>{copy.colLatency}</TableHeaderCell>
-            <TableHeaderCell>{copy.colType}</TableHeaderCell>
-            <TableHeaderCell numeric>{copy.colCost}</TableHeaderCell>
-            <TableHeaderCell>{copy.colStatus}</TableHeaderCell>
+            <TableHeaderCell>
+              <TableSortHeader title={copy.colModel} />
+            </TableHeaderCell>
+            <TableHeaderCell>
+              <TableSortHeader title={copy.colSeller} />
+            </TableHeaderCell>
+            <TableHeaderCell>
+              <TableSortHeader title={copy.colToken} />
+            </TableHeaderCell>
+            <TableHeaderCell>
+              <TableSortHeader title={copy.colTokens} />
+            </TableHeaderCell>
+            <TableHeaderCell>
+              <TableSortHeader title={copy.colLatency} />
+            </TableHeaderCell>
+            <TableHeaderCell>
+              <TableSortHeader title={copy.colCost} />
+            </TableHeaderCell>
+            <TableHeaderCell className="text-center">
+              <TableSortHeader title={copy.colDetail} />
+            </TableHeaderCell>
+            <TableHeaderCell>
+              <TableSortHeader title={copy.colTime} />
+            </TableHeaderCell>
           </TableRow>
         </TableHead>
         <TableBody>
-          {records.map((record) => (
-            <TableRow
-              key={record.request_id}
-              interactive
-              onClick={() => onOpen(record.request_id)}
-            >
-              <TableCell className="whitespace-nowrap text-ink-3">
-                {formatDateTime(record.created_at)}
-              </TableCell>
-              <TableCell>
-                <ModelCell record={record} />
-              </TableCell>
-              <TableCell>
-                <SellerId id={record.seller_id} />
-              </TableCell>
-              <TableCell>{record.token_group || copy.dash}</TableCell>
-              <TableCell>
-                {record.token_name || <span className="text-ink-3">{copy.deletedToken}</span>}
-              </TableCell>
-              <TableCell numeric>
-                <TokensCell record={record} />
-              </TableCell>
-              <TableCell numeric>
-                <LatencyCell record={record} />
-              </TableCell>
-              <TableCell>{record.is_stream ? copy.stream : copy.nonStream}</TableCell>
-              <TableCell numeric>
-                <CostCell record={record} />
-              </TableCell>
-              <TableCell>
-                <StatusCell record={record} />
-              </TableCell>
-            </TableRow>
-          ))}
+          {records.map((record, index) => {
+            const tokenDisplay = record.token_name ? (
+              <span className="font-mono text-meta text-ink-2 truncate max-w-[120px] block" title={record.token_name}>
+                {record.token_name}
+              </span>
+            ) : (
+              <span className="text-caption text-ink-3">{copy.deletedToken}</span>
+            )
+
+            const subtext = record.token_group || record.tier_label || ''
+
+            return (
+              <TableRow
+                key={record.request_id}
+                interactive
+                onClick={() => onOpen(record.request_id)}
+              >
+                {/* 1. 模型 */}
+                <TableCell>
+                  <ModelPillBadge model={record.model} converted={record.converted} />
+                </TableCell>
+
+                {/* 2. 卖家 / 渠道 */}
+                <TableCell>
+                  <ChannelPillBadge
+                    id={record.seller_id}
+                    subtext={subtext || copy.dash}
+                    variant={index % 2 === 0 ? 'blue' : 'amber'}
+                  />
+                </TableCell>
+
+                {/* 3. 令牌 */}
+                <TableCell>{tokenDisplay}</TableCell>
+
+                {/* 4. TOKENS */}
+                <TableCell>
+                  <TokensMetricCell
+                    input={record.input_tokens}
+                    output={record.output_tokens}
+                    cacheRead={record.cache_read_tokens}
+                    cacheWrite={record.cache_write_tokens}
+                  />
+                </TableCell>
+
+                {/* 5. 耗时 */}
+                <TableCell>
+                  <TimingMetricCell
+                    firstTokenMs={record.first_token_ms}
+                    latencyMs={record.latency_ms}
+                    isStream={record.is_stream}
+                  />
+                </TableCell>
+
+                {/* 6. 费用 */}
+                <TableCell>
+                  <CostPillBadge amountMicro={record.total_debit_micro} />
+                </TableCell>
+
+                {/* 7. 详情 */}
+                <TableCell className="text-center text-ink-3">
+                  {copy.dash}
+                </TableCell>
+
+                {/* 8. 时间 + 状态 */}
+                <TableCell>
+                  <TimeAndStatusCell
+                    createdAt={record.created_at}
+                    status={record.status}
+                  />
+                </TableCell>
+              </TableRow>
+            )
+          })}
         </TableBody>
       </Table>
     </div>
   )
 }
 
-/** One compact card; mirrors the table columns in a two-column stack. */
+/** One compact card; mirrors table cells in mobile layout. */
 function BuyerRecordCard({
   record,
   onOpen,
+  index = 0,
 }: {
   record: UsageRecord
   onOpen: (requestId: string) => void
+  index?: number
 }) {
+  const isSuccess = record.status === 'success'
+
   return (
     <button
       type="button"
       onClick={() => onOpen(record.request_id)}
-      className="w-full glass-inset rounded-lg p-3 text-left transition-colors hover:bg-brand/[0.06]"
+      className="w-full glass-inset rounded-xl p-3.5 text-left transition-all hover:bg-brand/[0.06] active:scale-[0.99] border border-line"
     >
+      {/* Top row: Model + Status */}
       <div className="flex items-center justify-between gap-2">
-        <ModelCell record={record} />
-        <StatusCell record={record} />
+        <ModelPillBadge model={record.model} converted={record.converted} />
+        {isSuccess ? (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300">
+            消耗
+            <span className="sr-only">成功</span>
+          </span>
+        ) : (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300">
+            失败
+          </span>
+        )}
       </div>
-      <div className="mt-1 text-caption text-ink-3">{formatDateTime(record.created_at)}</div>
-      <div className="mt-2 flex items-center justify-between gap-2 text-caption text-ink-3">
-        <SellerId id={record.seller_id} />
-        <span className="tabular-nums">
-          {record.is_stream ? copy.stream : copy.nonStream} ·{' '}
-          <span className={firstTokenClass(record.first_token_ms)}>
-            {formatLatency(record.first_token_ms)}
-          </span>{' '}
-          / {formatLatency(record.latency_ms)}
-        </span>
-      </div>
-      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-caption text-ink-2">
-        <span>
-          {copy.colGroup}: {record.token_group || copy.dash}
-        </span>
-        <span>
-          {copy.colToken}:{' '}
-          {record.token_name || <span className="text-ink-3">{copy.deletedToken}</span>}
-        </span>
-      </div>
-      <div className="mt-2 flex items-end justify-between gap-2">
-        <div className="text-caption tabular-nums">
-          <div>
-            {formatCount(record.input_tokens)} → {formatCount(record.output_tokens)}
-            {(record.cache_read_tokens > 0 || record.cache_write_tokens > 0) && (
-              <span className="ml-1 text-ink-3">
-                ({copy.cacheRead} {formatCount(record.cache_read_tokens)} · {copy.cacheWrite}{' '}
-                {formatCount(record.cache_write_tokens)})
-              </span>
-            )}
-          </div>
+
+      {/* Row 2: Seller + Token */}
+      <div className="mt-3 flex items-center justify-between gap-2 border-t border-line/60 pt-2.5">
+        <ChannelPillBadge
+          id={record.seller_id}
+          subtext={record.token_group || record.tier_label || copy.dash}
+          variant={index % 2 === 0 ? 'blue' : 'amber'}
+        />
+        <div className="text-right">
+          <span className="text-caption text-ink-3 block">令牌</span>
+          {record.token_name ? (
+            <span className="font-mono text-meta text-ink-2 truncate max-w-[120px] block">
+              {record.token_name}
+            </span>
+          ) : (
+            <span className="text-caption text-ink-3">{copy.deletedToken}</span>
+          )}
         </div>
-        <CostCell record={record} />
+      </div>
+
+      {/* Row 3: Timing + Tokens */}
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <TimingMetricCell
+          firstTokenMs={record.first_token_ms}
+          latencyMs={record.latency_ms}
+          isStream={record.is_stream}
+        />
+        <div className="text-right">
+          <TokensMetricCell
+            input={record.input_tokens}
+            output={record.output_tokens}
+            cacheRead={record.cache_read_tokens}
+            cacheWrite={record.cache_write_tokens}
+          />
+        </div>
+      </div>
+
+      {/* Row 4: Cost + Time */}
+      <div className="mt-3 flex items-center justify-between gap-2 border-t border-line/60 pt-2.5">
+        <span className="font-mono text-caption text-ink-3 tabular-nums">
+          {record.created_at.replace('T', ' ').substring(0, 19)}
+        </span>
+        <CostPillBadge amountMicro={record.total_debit_micro} />
       </div>
     </button>
   )
@@ -251,9 +239,14 @@ function BuyerRecordCard({
 
 export function BuyerRecordCards({ records, onOpen }: BuyerRecordCardsProps) {
   return (
-    <div className="flex flex-col gap-2 md:hidden">
-      {records.map((record) => (
-        <BuyerRecordCard key={record.request_id} record={record} onOpen={onOpen} />
+    <div className="flex flex-col gap-2.5 md:hidden">
+      {records.map((record, index) => (
+        <BuyerRecordCard
+          key={record.request_id}
+          record={record}
+          onOpen={onOpen}
+          index={index}
+        />
       ))}
     </div>
   )
