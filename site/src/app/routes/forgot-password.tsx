@@ -90,6 +90,15 @@ function ForgotPasswordPage() {
         </>
       ) : (
         <form className="mt-7 space-y-4" onSubmit={onSubmit} noValidate>
+          {status.data && !status.data.smtp_configured ? (
+            <div
+              role="alert"
+              className="rounded-md border border-warn/25 bg-warn/10 px-4 py-3 text-meta text-warn"
+            >
+              当前系统尚未配置邮件服务（SMTP），无法自动发送重置密码邮件。请联系平台管理员协助重置密码。
+            </div>
+          ) : null}
+
           <div>
             <label
               htmlFor="forgot-email"
@@ -121,7 +130,13 @@ function ForgotPasswordPage() {
             </p>
           ) : null}
 
-          <Button type="submit" size="lg" className="w-full" loading={isSubmitting}>
+          <Button
+            type="submit"
+            size="lg"
+            className="w-full"
+            loading={isSubmitting}
+            disabled={isSubmitting || (status.data ? !status.data.smtp_configured : false)}
+          >
             {isSubmitting ? page.submitting : page.submit}
           </Button>
 

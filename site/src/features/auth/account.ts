@@ -27,6 +27,7 @@ export interface SelfProfile {
   display_name?: string
   has_password?: boolean
   role?: number
+  email?: string
 }
 
 interface VerificationMethodOption {
@@ -90,6 +91,23 @@ export async function changeAccountPassword(
     original_password: currentPassword,
   }, {
     headers: { 'X-Security-Proof': proofToken },
+  })
+  if (bundle?.access_token) applyAuthBundle(bundle)
+}
+
+/** Request a 6-digit email verification code sent to the logged-in user's email. */
+export async function sendPasswordChangeEmailCode(): Promise<void> {
+  await api.post('/user/password/email/code')
+}
+
+/** Reset account password using email verification code and keep the rotated session. */
+export async function changePasswordByEmail(
+  code: string,
+  newPassword: string,
+): Promise<void> {
+  const bundle = await api.post<AuthBundlePayload>('/user/password/email/reset', {
+    code,
+    new_password: newPassword,
   })
   if (bundle?.access_token) applyAuthBundle(bundle)
 }

@@ -906,3 +906,34 @@ func TestSecurityAccountUnbindPreservesUsableLoginMethod(t *testing.T) {
 		})
 	}
 }
+
+func TestChangePasswordByEmail(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	require.NoError(t, model.DB.Model(user).Update("email", "test-reset@example.com").Error)
+	user.Email = "test-reset@example.com"
+
+	// Register code
+	code := "654321"
+	common.RegisterVerificationCodeWithKey(user.Email, code, common.PasswordChangePurpose)
+
+	// Call ChangePasswordByEmail with invalid code
+	recorder := securityEnrollmentRequest("POST", "/api/user/password/email/reset", `{"code":"wrong","new_password":"newPassword123"}`, "", identity, ChangePasswordByEmail)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	var resp map[string]any
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	assert.False(t, resp["success"].(bool))
+
+	// Call ChangePasswordByEmail with valid code
+	recorder = securityEnrollmentRequest("POST", "/api/user/password/email/reset", `{"code":"654321","new_password":"newPassword123"}`, "", identity, ChangePasswordByEmail)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	assert.True(t, resp["success"].(bool))
+
+	// Verify user password updated
+	var updated model.User
+	require.NoError(t, model.DB.First(&updated, user.Id).Error)
+	assert.True(t, common.ValidatePasswordAndHash("newPassword123", updated.Password))
+
+	// Verify code deleted
+	assert.False(t, common.VerifyCodeWithKey(user.Email, code, common.PasswordChangePurpose))
+}

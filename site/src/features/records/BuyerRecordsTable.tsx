@@ -72,12 +72,6 @@ function firstTokenClass(ms: number): string {
   return 'text-danger'
 }
 
-/** saved_permille (‰, 1000 = 100%) → "省 37%" / "省 37.5%". */
-function formatSaved(permille: number): string {
-  const pct = permille / 10
-  return `${copy.save} ${pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(1)}%`
-}
-
 function isSuccess(record: UsageRecord): boolean {
   return record.status === 'success'
 }
@@ -123,23 +117,10 @@ function LatencyCell({ record }: { record: UsageRecord }) {
   )
 }
 
-/** 实付 big, 划线官方价 + 省 xx% as a subline. */
 function CostCell({ record }: { record: UsageRecord }) {
-  const showOfficial = record.official_cost_micro > record.total_debit_micro
-  const showSaved = record.saved_permille > 0 && record.official_cost_micro > 0
   return (
-    <div>
-      <div className="font-medium tabular-nums">
-        {formatYuan(record.total_debit_micro)}
-      </div>
-      {showOfficial && (
-        <div className="text-caption text-ink-3 tabular-nums">
-          <span className="line-through">{formatYuan(record.official_cost_micro)}</span>
-          {showSaved && (
-            <span className="ml-1 text-ok">{formatSaved(record.saved_permille)}</span>
-          )}
-        </div>
-      )}
+    <div className="font-medium tabular-nums">
+      {formatYuan(record.total_debit_micro)}
     </div>
   )
 }

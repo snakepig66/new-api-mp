@@ -171,6 +171,10 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/2fa/disable", middleware.DisableCache(), controller.Disable2FA)
 				selfRoute.POST("/2fa/backup_codes", middleware.DisableCache(), controller.RegenerateBackupCodes)
 
+				// Password change via email
+				selfRoute.POST("/password/email/code", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("account-security"), middleware.EmailVerificationRateLimit(), controller.SendPasswordChangeEmailCode)
+				selfRoute.POST("/password/email/reset", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("account-security"), controller.ChangePasswordByEmail)
+
 				// Check-in routes
 				selfRoute.GET("/checkin", controller.GetCheckinStatus)
 				selfRoute.POST("/checkin", middleware.TurnstileCheck(), controller.DoCheckin)

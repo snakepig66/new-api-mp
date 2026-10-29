@@ -925,6 +925,101 @@ func UpdateSelf(c *gin.Context) {
 	return
 }
 
+func SendPasswordChangeEmailCode(c *gin.Context) {
+	userId := c.GetInt("id")
+	user, err := model.GetUserById(userId, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if user.Email == "" {
+		common.ApiErrorT(c, "Please bind an email address first before modifying password via email")
+		return
+	}
+	if common.SMTPServer == "" && common.SMTPAccount == "" {
+		common.ApiErrorT(c, "Email service (SMTP) is not configured, cannot send verification email")
+		return
+	}
+	code := common.GenerateVerificationCode(6)
+	common.RegisterVerificationCodeWithKey(user.Email, code, common.PasswordChangePurpose)
+	lang := user.GetSetting().Language
+	if lang == "" {
+		lang = i18n.StatedLang(c)
+	}
+	systemName := map[string]any{"SystemName": common.SystemName}
+	codeParams := map[string]any{"Code": code}
+	validityParams := map[string]any{"Minutes": common.VerificationValidMinutes}
+	subject := fmt.Sprintf("[%s] %s", common.SystemName, i18n.Translate(lang, i18n.MsgEmailVerificationSubject, systemName))
+	content := fmt.Sprintf("<p>%s</p>"+
+		"<p>%s</p>"+
+		"<p>%s</p>",
+		i18n.Translate(lang, i18n.MsgEmailVerificationGreeting, systemName),
+		i18n.Translate(lang, i18n.MsgEmailVerificationCode, codeParams),
+		i18n.Translate(lang, i18n.MsgEmailVerificationValidity, validityParams))
+	err = common.SendEmail(subject, user.Email, content)
+	if err != nil {
+		logger.LogError(c.Request.Context(), common.LogText("failed to send password change email to %s: %s", user.Email, err.Error()))
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccessT(c, "Verification code sent successfully", nil)
+}
+
+type emailPasswordResetRequest struct {
+	Code        string `json:"code"`
+	NewPassword string `json:"new_password"`
+}
+
+func ChangePasswordByEmail(c *gin.Context) {
+	identity, ok := middleware.GetStepUpIdentity(c)
+	if !ok {
+		writeSecurityOperationError(c, service.ErrAuthTokenInvalid)
+		return
+	}
+	var req emailPasswordResetRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	if len(req.NewPassword) < 8 {
+		common.ApiErrorT(c, "New password must be at least 8 characters long")
+		return
+	}
+	user, err := model.GetUserById(identity.UserID, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if user.Email == "" {
+		common.ApiErrorT(c, "Please bind an email address first before modifying password via email")
+		return
+	}
+	if !common.VerifyCodeWithKey(user.Email, req.Code, common.PasswordChangePurpose) {
+		common.ApiErrorT(c, "Verification code is invalid or has expired")
+		return
+	}
+	if err := model.ChangeUserPasswordByEmail(identity, req.NewPassword); err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	common.DeleteKey(user.Email, common.PasswordChangePurpose)
+	_ = model.PublishUserAuthCache(user.Id)
+	notificationFailed := service.NotifyAccountSecurityChange(service.AccountMailLanguage(c, user.Id), user.Email, i18n.MsgSecurityEventPasswordUpdated) != nil
+	bundle, err := service.AdvanceCurrentSessionToUserVersion(identity, "password_changed")
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	data := authRotationData(bundle)
+	data["has_password"] = true
+	data["notification_warning"] = notificationFailed
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    data,
+	})
+}
+
 func DeleteUser(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {

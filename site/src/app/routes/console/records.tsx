@@ -155,7 +155,6 @@ function RecordsPage() {
           hint: '输入 / 输出',
         },
         { label: '实付', value: formatYuan(summaryData.total_debit_micro) },
-        { label: '节省', value: formatYuan(summaryData.saved_micro) },
         {
           label: '平均耗时',
           value: `${summaryData.avg_first_token_ms > 0 ? `${Math.round(summaryData.avg_first_token_ms)} ms` : '—'} / ${

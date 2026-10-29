@@ -15,8 +15,8 @@ import { Stat, type StatTone } from '@/ui'
 
 const summaryCopy = copy.pages.records.summary
 
-/** Skeleton fallback while loading: six blank tiles fill the lg grid. */
-const EMPTY_SUMMARY_ITEMS: RecordsSummaryItem[] = Array.from({ length: 6 }, () => ({
+/** Skeleton fallback while loading: five blank tiles fill the lg grid. */
+const EMPTY_SUMMARY_ITEMS: RecordsSummaryItem[] = Array.from({ length: 5 }, () => ({
   label: '',
   value: '',
 }))
@@ -37,7 +37,7 @@ export interface RecordsSummaryBarProps {
 }
 
 export function RecordsSummaryBar({ items, loading = false, className }: RecordsSummaryBarProps) {
-  // A loading view still needs tiles to skeleton; fall back to four blanks.
+  // A loading view still needs tiles to skeleton; fall back to five blanks.
   const shown = loading && items.length === 0 ? EMPTY_SUMMARY_ITEMS : items
 
   return (
@@ -45,7 +45,8 @@ export function RecordsSummaryBar({ items, loading = false, className }: Records
       aria-busy={loading || undefined}
       aria-label={summaryCopy.ariaLabel}
       className={cn(
-        'grid grid-cols-2 gap-4 glass p-5 sm:grid-cols-3 lg:grid-cols-6',
+        'grid grid-cols-2 gap-4 glass p-5 sm:grid-cols-3',
+        shown.length <= 5 ? 'lg:grid-cols-5' : 'lg:grid-cols-6',
         className,
       )}
     >

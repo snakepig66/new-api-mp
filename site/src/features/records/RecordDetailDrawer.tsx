@@ -180,19 +180,10 @@ export function RecordDetailContent({ detail, view }: RecordDetailContentProps) 
 
         <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-3 border-t border-line pt-3 text-meta sm:grid-cols-3">
           {buyer ? (
-            <>
-              <Info label={text.official} value={formatYuan(buyerRecord.official_cost_micro)} mono />
-              <MoneyInfo
-                label={text.paid}
-                value={formatYuan(buyerRecord.total_debit_micro)}
-                hint={
-                  buyerRecord.saved_permille > 0
-                    ? text.savedPercent(formatPercent(buyerRecord.saved_permille / 10))
-                    : undefined
-                }
-              />
-              <Info label={text.saved} value={formatYuan(buyerRecord.saved_micro)} mono />
-            </>
+            <MoneyInfo
+              label={text.paid}
+              value={formatYuan(buyerRecord.total_debit_micro)}
+            />
           ) : (
             <>
               <Info label={text.buyerPaid} value={formatYuan(sellerRecord.buyer_paid_micro)} mono />
@@ -307,11 +298,6 @@ function firstTokenClass(ms: number): string {
   if (ms < 1000) return 'text-ok'
   if (ms <= 3000) return 'text-warn'
   return 'text-danger'
-}
-
-/** 697 permille → 69.7; 370 → "37"; 375 → "37.5". */
-function formatPercent(percent: number): string {
-  return percent % 1 === 0 ? percent.toFixed(0) : percent.toFixed(1)
 }
 
 // ---------------------------------------------------------------------------

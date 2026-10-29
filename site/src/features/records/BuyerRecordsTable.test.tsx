@@ -70,15 +70,15 @@ describe('BuyerRecordsTable', () => {
     expect(screen.getByText(/缓存写 100/)).toBeTruthy()
   })
 
-  it('renders latency, type, cost with official price and savings, and status', () => {
+  it('renders latency, type, cost and status without distracting savings', () => {
     const { container } = render(<BuyerRecordsTable records={[record]} onOpen={() => {}} />)
 
     expect(screen.getByText('0.80s')).toBeTruthy()
     expect(screen.getByText(/12\.4s/)).toBeTruthy()
     expect(screen.getByText('流式')).toBeTruthy()
     expect(screen.getByText('¥0.60')).toBeTruthy()
-    expect(screen.getByText('¥0.90')).toBeTruthy()
-    expect(screen.getByText('省 33.3%')).toBeTruthy()
+    expect(screen.queryByText('¥0.90')).toBeNull()
+    expect(screen.queryByText('省 33.3%')).toBeNull()
     expect(screen.getByText('成功')).toBeTruthy()
     expect(container.textContent).toContain('2026-10-24 10:00:00')
     expect(container.textContent).toContain('Key 1')

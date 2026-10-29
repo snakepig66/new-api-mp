@@ -1494,6 +1494,17 @@ console.log(response.choices[0].message.content)
         encryptionUnsupported:
           '站点启用了密码加密传输，当前页面暂不支持修改密码。',
         policyHint: '至少 8 位；建议混合字母、数字和符号。',
+        modePassword: '使用原密码修改',
+        modeEmail: '通过邮箱验证码修改',
+        emailCode: '邮箱验证码',
+        emailCodePlaceholder: '输入 6 位验证码',
+        sendCode: '获取验证码',
+        resendCode: (seconds: number) => `${seconds}s 后重新获取`,
+        codeSent: '验证码已发送至您的绑定邮箱',
+        noEmailTitle: '当前账号尚未绑定邮箱',
+        noEmailHint: '使用邮箱验证码修改密码需要先绑定邮箱。请直接使用原密码修改，或联系管理员绑定邮箱。',
+        boundEmail: (email: string) => `验证码将发送至已绑定邮箱：${email}`,
+        emailCodeRequired: '请输入邮箱验证码',
       },
     },
 

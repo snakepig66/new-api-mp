@@ -1,21 +1,25 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 
 import { copy } from '@/copy'
 import {
   changeAccountPassword,
+  changePasswordByEmail,
   fetchSelfProfile,
   requestPasswordChangeProof,
+  sendPasswordChangeEmailCode,
   type SelfProfile,
 } from '@/features/auth/account'
 import { ErrorBlock, Section, Skeleton } from '@/features/console/components/DataState'
 import { Notice } from '@/features/console/components/form'
 import { ApiError } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { useSession } from '@/lib/session'
-import { Button, PageHeader, PasswordInput, useToast } from '@/ui'
+import { Button, Input, PageHeader, PasswordInput, useToast } from '@/ui'
 
 export const Route = createFileRoute('/console/account')({
   component: AccountPage,
@@ -41,12 +45,26 @@ const schema = z
 
 type PasswordForm = z.infer<typeof schema>
 
+const emailSchema = z
+  .object({
+    code: z.string().trim().min(1, passwordCopy.emailCodeRequired),
+    next: z.string().min(8, passwordCopy.tooShort),
+    confirm: z.string().min(1, copy.validation.required),
+  })
+  .refine((values) => values.next === values.confirm, {
+    path: ['confirm'],
+    message: passwordCopy.mismatch,
+  })
+
+type EmailPasswordFormValues = z.infer<typeof emailSchema>
+
 function AccountPage() {
   const profile = useQuery({
     queryKey: ['account', 'self'],
     queryFn: fetchSelfProfile,
     staleTime: 60_000,
   })
+  const [mode, setMode] = useState<'password' | 'email'>('password')
 
   return (
     <>
@@ -66,10 +84,44 @@ function AccountPage() {
       </Section>
 
       <section className="mt-6 glass p-6">
-        <h2 className="text-title font-semibold tracking-tight text-ink">
-          {passwordCopy.title}
-        </h2>
-        <p className="mt-1.5 text-meta leading-6 text-ink-3">{passwordCopy.hint}</p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-title font-semibold tracking-tight text-ink">
+              {passwordCopy.title}
+            </h2>
+            <p className="mt-1.5 text-meta leading-6 text-ink-3">
+              {mode === 'password'
+                ? passwordCopy.hint
+                : '通过已绑定邮箱接收 6 位验证码直接设定新密码，免输入旧密码。'}
+            </p>
+          </div>
+          <div className="inline-flex rounded-lg border border-line bg-surface/60 p-1 text-meta">
+            <button
+              type="button"
+              onClick={() => setMode('password')}
+              className={cn(
+                'rounded-md px-3 py-1.5 font-medium transition-colors',
+                mode === 'password'
+                  ? 'bg-panel text-ink shadow-sm'
+                  : 'text-ink-3 hover:text-ink',
+              )}
+            >
+              {passwordCopy.modePassword}
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('email')}
+              className={cn(
+                'rounded-md px-3 py-1.5 font-medium transition-colors',
+                mode === 'email'
+                  ? 'bg-panel text-ink shadow-sm'
+                  : 'text-ink-3 hover:text-ink',
+              )}
+            >
+              {passwordCopy.modeEmail}
+            </button>
+          </div>
+        </div>
 
         {profile.isPending ? (
           <div className="mt-5 space-y-3">
@@ -77,12 +129,16 @@ function AccountPage() {
             <Skeleton className="h-12 w-full" />
             <Skeleton className="h-12 w-full" />
           </div>
-        ) : profile.isError ? null : profile.data.has_password === false ? (
-          <Notice className="mt-4" title={passwordCopy.noPassword}>
-            {passwordCopy.noPasswordHint}
-          </Notice>
+        ) : profile.isError ? null : mode === 'password' ? (
+          profile.data.has_password === false ? (
+            <Notice className="mt-4" title={passwordCopy.noPassword}>
+              {passwordCopy.noPasswordHint}
+            </Notice>
+          ) : (
+            <PasswordForm />
+          )
         ) : (
-          <PasswordForm />
+          <EmailPasswordForm email={profile.data.email} />
         )}
       </section>
     </>
@@ -93,9 +149,10 @@ function IdentityRows({ profile }: { profile: SelfProfile }) {
   const session = useSession()
   const username = profile.username || session?.user?.username || '—'
   const displayName = profile.display_name || session?.user?.display_name || '—'
+  const email = profile.email || '—'
 
   return (
-    <dl className="grid gap-4 text-body sm:grid-cols-2">
+    <dl className="grid gap-4 text-body sm:grid-cols-3">
       <div>
         <dt className="text-meta text-ink-3">{page.identity.username}</dt>
         <dd className="mt-0.5 break-all text-ink">{username}</dd>
@@ -104,7 +161,11 @@ function IdentityRows({ profile }: { profile: SelfProfile }) {
         <dt className="text-meta text-ink-3">{page.identity.displayName}</dt>
         <dd className="mt-0.5 break-all text-ink">{displayName}</dd>
       </div>
-      <p className="text-meta leading-6 text-ink-3 sm:col-span-2">
+      <div>
+        <dt className="text-meta text-ink-3">绑定邮箱</dt>
+        <dd className="mt-0.5 break-all text-ink">{email}</dd>
+      </div>
+      <p className="text-meta leading-6 text-ink-3 sm:col-span-3">
         {page.identity.note}
       </p>
     </dl>
@@ -190,6 +251,166 @@ function PasswordForm() {
           </label>
           <PasswordInput
             id="account-confirm-password"
+            autoComplete="new-password"
+            placeholder={passwordCopy.confirmPlaceholder}
+            invalid={Boolean(errors.confirm)}
+            {...register('confirm')}
+          />
+          {errors.confirm ? (
+            <p className="mt-1.5 text-meta text-danger">{errors.confirm.message}</p>
+          ) : null}
+        </div>
+      </div>
+
+      {errors.root?.message ? (
+        <p
+          role="alert"
+          className="rounded-md border border-danger/25 bg-danger/10 px-3 py-2 text-meta leading-5 text-danger"
+        >
+          {errors.root.message}
+        </p>
+      ) : null}
+
+      <div className="flex justify-end">
+        <Button type="submit" loading={isSubmitting}>
+          {isSubmitting ? passwordCopy.submitting : passwordCopy.submit}
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+function EmailPasswordForm({ email }: { email?: string }) {
+  const toast = useToast()
+  const [cooldown, setCooldown] = useState(0)
+  const [sending, setSending] = useState(false)
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setError,
+    clearErrors,
+    formState: { errors, isSubmitting },
+  } = useForm<EmailPasswordFormValues>({
+    resolver: zodResolver(emailSchema),
+    defaultValues: { code: '', next: '', confirm: '' },
+  })
+
+  useEffect(() => {
+    if (cooldown <= 0) return
+    const timer = setInterval(() => {
+      setCooldown((c) => (c <= 1 ? 0 : c - 1))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [cooldown])
+
+  if (!email) {
+    return (
+      <Notice className="mt-5" title={passwordCopy.noEmailTitle}>
+        {passwordCopy.noEmailHint}
+      </Notice>
+    )
+  }
+
+  const handleSendCode = async () => {
+    if (cooldown > 0 || sending) return
+    setSending(true)
+    clearErrors('root')
+    try {
+      await sendPasswordChangeEmailCode()
+      setCooldown(60)
+      toast.show({ title: passwordCopy.codeSent, tone: 'success' })
+    } catch (error) {
+      toast.show({
+        title: error instanceof ApiError ? error.message : '发送验证码失败',
+        tone: 'error',
+      })
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const onSubmit = handleSubmit(async (values) => {
+    clearErrors('root')
+    try {
+      await changePasswordByEmail(values.code, values.next)
+      reset()
+      toast.show({ title: passwordCopy.success, tone: 'success' })
+    } catch (error) {
+      setError('root', {
+        message: error instanceof ApiError ? error.message : passwordCopy.failed,
+      })
+    }
+  })
+
+  return (
+    <form className="mt-5 space-y-4" onSubmit={onSubmit} noValidate>
+      <div className="rounded-md border border-line bg-surface/50 p-3 text-meta text-ink-2">
+        {passwordCopy.boundEmail(email)}
+      </div>
+
+      <div>
+        <label
+          htmlFor="account-email-code"
+          className="mb-2 block text-body font-medium text-ink"
+        >
+          {passwordCopy.emailCode}
+        </label>
+        <div className="flex gap-2">
+          <Input
+            id="account-email-code"
+            autoComplete="one-time-code"
+            placeholder={passwordCopy.emailCodePlaceholder}
+            invalid={Boolean(errors.code)}
+            className="flex-1"
+            {...register('code')}
+          />
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => void handleSendCode()}
+            disabled={cooldown > 0 || sending}
+            loading={sending}
+          >
+            {cooldown > 0 ? passwordCopy.resendCode(cooldown) : passwordCopy.sendCode}
+          </Button>
+        </div>
+        {errors.code ? (
+          <p className="mt-1.5 text-meta text-danger">{errors.code.message}</p>
+        ) : null}
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label
+            htmlFor="account-email-next-password"
+            className="mb-2 block text-body font-medium text-ink"
+          >
+            {passwordCopy.next}
+          </label>
+          <PasswordInput
+            id="account-email-next-password"
+            autoComplete="new-password"
+            placeholder={passwordCopy.nextPlaceholder}
+            invalid={Boolean(errors.next)}
+            {...register('next')}
+          />
+          {errors.next ? (
+            <p className="mt-1.5 text-meta text-danger">{errors.next.message}</p>
+          ) : (
+            <p className="mt-1.5 text-meta text-ink-3">{passwordCopy.policyHint}</p>
+          )}
+        </div>
+        <div>
+          <label
+            htmlFor="account-email-confirm-password"
+            className="mb-2 block text-body font-medium text-ink"
+          >
+            {passwordCopy.confirm}
+          </label>
+          <PasswordInput
+            id="account-email-confirm-password"
             autoComplete="new-password"
             placeholder={passwordCopy.confirmPlaceholder}
             invalid={Boolean(errors.confirm)}
