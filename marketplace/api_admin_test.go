@@ -1095,11 +1095,25 @@ func TestAdminPoolModelsAPI(t *testing.T) {
 	}, f.adminID)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
-	// A referenced model cannot be deleted.
+	// A model referenced by an active seller channel cannot be deleted.
+	require.NoError(t, f.db.Create(&SellerChannelModel{
+		ChannelID: 101, Model: "glm-5.3", UpstreamModel: "glm-5.3",
+		MultiplierMilli: 1000, Enabled: true,
+	}).Error)
 	w = f.do(t, http.MethodDelete, path+"?name=glm-5.3", nil, f.adminID)
 	assert.Equal(t, http.StatusConflict, w.Code)
 	_, ok = ModelPoolByName(f.db, "glm-5.3")
 	assert.True(t, ok)
+
+	// Once the active seller channel is disabled/removed, deleting succeeds and cascades channel models.
+	require.NoError(t, f.db.Model(&SellerChannelModel{}).Where("model = ?", "glm-5.3").Update("enabled", false).Error)
+	w = f.do(t, http.MethodDelete, path+"?name=glm-5.3", nil, f.adminID)
+	require.Equal(t, http.StatusOK, w.Code)
+	_, ok = ModelPoolByName(f.db, "glm-5.3")
+	assert.False(t, ok)
+	var cmCount int64
+	require.NoError(t, f.db.Model(&ChannelModel{}).Where("model = ?", "glm-5.3").Count(&cmCount).Error)
+	assert.Zero(t, cmCount, "channel model mappings for glm-5.3 are cascaded")
 
 	// Unreferenced model deletion succeeds; a missing name is a 400.
 	w = f.do(t, http.MethodDelete, path+"?name=pool-test-model", nil, f.adminID)

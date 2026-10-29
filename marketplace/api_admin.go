@@ -1780,18 +1780,50 @@ func adminPoolDeleteModel(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, ErrModelPoolNameRequired)
 		return
 	}
-	if db.Migrator().HasTable(&ChannelModel{}) {
-		var used int64
-		if err := db.Model(&ChannelModel{}).Where("model = ?", name).Count(&used).Error; err != nil {
-			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query channel models"))
+
+	// Active seller channel check: a model currently in use by an active seller
+	// channel (enabled shadow model or live/canary listing) cannot be deleted.
+	if db.Migrator().HasTable(&SellerChannelModel{}) {
+		var activeSellerCount int64
+		if err := db.Model(&SellerChannelModel{}).Where("model = ? AND enabled = ?", name, true).Count(&activeSellerCount).Error; err != nil {
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query seller channel models"))
 			return
 		}
-		if used > 0 {
+		if activeSellerCount > 0 {
 			common.ApiErrorStatus(c, http.StatusConflict, ErrModelPoolInUse)
 			return
 		}
 	}
-	if err := db.Where("name = ?", name).Delete(&ModelPool{}).Error; err != nil {
+	if db.Migrator().HasTable(&Listing{}) {
+		var liveListings []Listing
+		if err := db.Where("status IN ?", []string{ListingLive, ListingCanary}).Select("id, models").Find(&liveListings).Error; err != nil {
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query listings"))
+			return
+		}
+		for _, l := range liveListings {
+			for _, m := range l.Models {
+				if m == name {
+					common.ApiErrorStatus(c, http.StatusConflict, ErrModelPoolInUse)
+					return
+				}
+			}
+		}
+	}
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if tx.Migrator().HasTable(&ChannelModel{}) {
+			if err := tx.Where("model = ?", name).Delete(&ChannelModel{}).Error; err != nil {
+				return err
+			}
+		}
+		if tx.Migrator().HasTable(&SellerChannelModel{}) {
+			if err := tx.Where("model = ?", name).Delete(&SellerChannelModel{}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Where("name = ?", name).Delete(&ModelPool{}).Error
+	})
+	if err != nil {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to delete model"))
 		return
 	}

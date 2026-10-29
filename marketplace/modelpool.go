@@ -122,7 +122,7 @@ const (
 var (
 	ErrModelPoolNameRequired        = errors.New("model name is required")
 	ErrModelPoolStatusInvalid       = errors.New("status must be active or retired")
-	ErrModelPoolInUse               = errors.New("model is referenced by a channel model")
+	ErrModelPoolInUse               = errors.New("model is referenced by an active seller channel")
 	ErrModelPoolNotFound            = errors.New("model not found")
 	ErrChannelPoolSlugRequired      = errors.New("channel slug is required")
 	ErrChannelPoolKindInvalid       = errors.New("kind must be official, plan or third_party")
@@ -386,52 +386,70 @@ func SeedModelChannelPool(db *gorm.DB) error {
 	if db == nil {
 		return errors.New("marketplace: seed model channel pool: nil database")
 	}
-	for i := range modelPoolSeeds {
-		seed := modelPoolSeeds[i]
-		var cnt int64
-		if err := db.Model(&ModelPool{}).Where("name = ?", seed.Name).Count(&cnt).Error; err != nil {
-			return fmt.Errorf("marketplace: seed model pool: %w", err)
-		}
-		if cnt > 0 {
-			continue
-		}
-		row := seed
-		if err := db.Create(&row).Error; err != nil {
-			return fmt.Errorf("marketplace: seed model pool: %w", err)
+	var modelCount int64
+	if err := db.Model(&ModelPool{}).Count(&modelCount).Error; err != nil {
+		return fmt.Errorf("marketplace: seed model pool: %w", err)
+	}
+	if modelCount == 0 {
+		for i := range modelPoolSeeds {
+			seed := modelPoolSeeds[i]
+			var cnt int64
+			if err := db.Model(&ModelPool{}).Where("name = ?", seed.Name).Count(&cnt).Error; err != nil {
+				return fmt.Errorf("marketplace: seed model pool: %w", err)
+			}
+			if cnt > 0 {
+				continue
+			}
+			row := seed
+			if err := db.Create(&row).Error; err != nil {
+				return fmt.Errorf("marketplace: seed model pool: %w", err)
+			}
 		}
 	}
 
-	for i := range channelPoolSeeds {
-		seed := channelPoolSeeds[i]
-		var cnt int64
-		if err := db.Model(&ChannelPool{}).Where("slug = ?", seed.Slug).Count(&cnt).Error; err != nil {
-			return fmt.Errorf("marketplace: seed channel pool: %w", err)
-		}
-		if cnt > 0 {
-			continue
-		}
-		row := seed
-		if err := db.Create(&row).Error; err != nil {
-			return fmt.Errorf("marketplace: seed channel pool: %w", err)
+	var channelCount int64
+	if err := db.Model(&ChannelPool{}).Count(&channelCount).Error; err != nil {
+		return fmt.Errorf("marketplace: seed channel pool: %w", err)
+	}
+	if channelCount == 0 {
+		for i := range channelPoolSeeds {
+			seed := channelPoolSeeds[i]
+			var cnt int64
+			if err := db.Model(&ChannelPool{}).Where("slug = ?", seed.Slug).Count(&cnt).Error; err != nil {
+				return fmt.Errorf("marketplace: seed channel pool: %w", err)
+			}
+			if cnt > 0 {
+				continue
+			}
+			row := seed
+			if err := db.Create(&row).Error; err != nil {
+				return fmt.Errorf("marketplace: seed channel pool: %w", err)
+			}
 		}
 	}
 
-	for i := range poolChannelModelSeeds {
-		seed := poolChannelModelSeeds[i]
-		var cnt int64
-		// Either unique key being present means this slot is already taken.
-		if err := db.Model(&ChannelModel{}).
-			Where("(channel_slug = ? AND upstream_model = ?) OR (channel_slug = ? AND model = ?)",
-				seed.ChannelSlug, seed.UpstreamModel, seed.ChannelSlug, seed.Model).
-			Count(&cnt).Error; err != nil {
-			return fmt.Errorf("marketplace: seed channel model pool: %w", err)
-		}
-		if cnt > 0 {
-			continue
-		}
-		row := seed
-		if err := db.Create(&row).Error; err != nil {
-			return fmt.Errorf("marketplace: seed channel model pool: %w", err)
+	var cmCount int64
+	if err := db.Model(&ChannelModel{}).Count(&cmCount).Error; err != nil {
+		return fmt.Errorf("marketplace: seed channel model pool: %w", err)
+	}
+	if cmCount == 0 {
+		for i := range poolChannelModelSeeds {
+			seed := poolChannelModelSeeds[i]
+			var cnt int64
+			// Either unique key being present means this slot is already taken.
+			if err := db.Model(&ChannelModel{}).
+				Where("(channel_slug = ? AND upstream_model = ?) OR (channel_slug = ? AND model = ?)",
+					seed.ChannelSlug, seed.UpstreamModel, seed.ChannelSlug, seed.Model).
+				Count(&cnt).Error; err != nil {
+				return fmt.Errorf("marketplace: seed channel model pool: %w", err)
+			}
+			if cnt > 0 {
+				continue
+			}
+			row := seed
+			if err := db.Create(&row).Error; err != nil {
+				return fmt.Errorf("marketplace: seed channel model pool: %w", err)
+			}
 		}
 	}
 
