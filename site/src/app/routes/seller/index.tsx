@@ -145,8 +145,8 @@ function PayoutGate({
       </ul>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        {!realNameVerified || !payoutAccountBound ? (
-          <Link to="/seller/onboarding" className={buttonClasses('secondary', 'sm')}>
+        {!payoutAccountBound ? (
+          <Link to="/seller/payouts" className={buttonClasses('secondary', 'sm')}>
             {page.payoutGate.onboardingLink}
           </Link>
         ) : null}

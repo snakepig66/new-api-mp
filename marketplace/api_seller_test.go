@@ -437,8 +437,7 @@ func TestSellerOnboardingFlow(t *testing.T) {
 	}, userID)
 	require.Equal(t, http.StatusBadRequest, w.Code)
 
-	// 2. Correct agreement → active immediately (open sharing); real-name is
-	// removed, so next_step is payout_account.
+	// 2. Correct agreement → active immediately (open sharing); onboarding is done!
 	w = f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
 		"agreement_version": CurrentSellerAgreementVersion,
 	}, userID)
@@ -446,16 +445,7 @@ func TestSellerOnboardingFlow(t *testing.T) {
 	seller := onboardingSellerView(t, w)
 	assert.Equal(t, true, seller["exists"])
 	assert.Equal(t, SellerStatusActive, seller["status"])
-	assert.Equal(t, "payout_account", seller["progress"].(map[string]any)["next_step"])
-
-	// 3. Real name alone advances the optional rail without touching activation.
-	w = f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
-		"real_name": "张三",
-	}, userID)
-	require.Equal(t, http.StatusOK, w.Code)
-	seller = onboardingSellerView(t, w)
-	assert.Equal(t, SellerStatusActive, seller["status"])
-	assert.Equal(t, "payout_account", seller["progress"].(map[string]any)["next_step"])
+	assert.Equal(t, "done", seller["progress"].(map[string]any)["next_step"])
 
 	// 4. Invalid real name / plaintext id / bad alipay → 400 and no state change.
 	for _, body := range []map[string]any{
@@ -470,6 +460,7 @@ func TestSellerOnboardingFlow(t *testing.T) {
 	// 5. Masked id + alipay → active; the response never echoes the account.
 	alipay := "seller-payout@example.com"
 	w = f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
+		"real_name":      "张三",
 		"id_card_masked": "110101********1234",
 		"alipay_account": alipay,
 	}, userID)
@@ -487,7 +478,10 @@ func TestSellerOnboardingFlow(t *testing.T) {
 	assert.NotContains(t, row.PayoutAccount, alipay)
 	plain, err := decryptPayoutAccount(row.PayoutAccount)
 	require.NoError(t, err)
-	assert.Equal(t, alipay, plain)
+	assert.NotEmpty(t, plain)
+	info, err := ParsePayoutAccount(row.PayoutAccount)
+	require.NoError(t, err)
+	assert.Equal(t, alipay, info.Account)
 	assert.Equal(t, SellerRealNameVerified, row.RealNameStatus)
 
 	// 7. GET /me reports the seller identity and progress.

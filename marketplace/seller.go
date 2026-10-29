@@ -137,8 +137,6 @@ func (s Seller) progress() SellerProgress {
 	switch {
 	case !p.AgreementSigned:
 		p.NextStep = "agreement"
-	case !p.PayoutAccountBound:
-		p.NextStep = "payout_account"
 	default:
 		p.NextStep = "done"
 	}
