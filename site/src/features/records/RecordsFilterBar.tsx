@@ -67,6 +67,10 @@ export interface RecordsFilterBarProps {
   /** Refresh button busy state while the queries are refetching. */
   refreshing?: boolean
   onRefresh?: () => void
+  /** Whether the summary statistics bar is visible. */
+  showSummary?: boolean
+  /** Toggle callback to collapse or expand the summary statistics bar. */
+  onToggleSummary?: () => void
   className?: string
 }
 
@@ -80,6 +84,8 @@ export function RecordsFilterBar({
   groupOptions,
   refreshing = false,
   onRefresh,
+  showSummary = true,
+  onToggleSummary,
   className,
 }: RecordsFilterBarProps) {
   function patch(next: Partial<RecordsFilterState>) {
@@ -215,16 +221,29 @@ export function RecordsFilterBar({
           options={statusOptions}
         />
 
-        <Button
-          variant="secondary"
-          size="lg"
-          className="px-4"
-          disabled={!onRefresh}
-          aria-busy={refreshing || undefined}
-          onClick={onRefresh}
-        >
-          {filtersCopy.refresh}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            size="md"
+            className="h-10 px-4"
+            disabled={!onRefresh}
+            aria-busy={refreshing || undefined}
+            onClick={onRefresh}
+          >
+            {filtersCopy.refresh}
+          </Button>
+          {onToggleSummary ? (
+            <Button
+              variant="ghost"
+              size="md"
+              className="h-10 px-3 text-meta text-ink-3 hover:text-ink hover:bg-white/40"
+              onClick={onToggleSummary}
+              title={showSummary ? '收起数据汇总概览' : '展开数据汇总概览'}
+            >
+              {showSummary ? '收起概览' : '展开概览'}
+            </Button>
+          ) : null}
+        </div>
       </div>
     </div>
   )

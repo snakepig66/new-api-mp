@@ -95,6 +95,26 @@ function RecordsPage() {
   const [openRequestId, setOpenRequestId] = useState<string | null>(null)
   // Bumped by 刷新 so a rolling preset re-anchors its end to now.
   const [refreshNonce, setRefreshNonce] = useState(0)
+  const [showSummary, setShowSummary] = useState(() => {
+    try {
+      return localStorage.getItem('console_records_show_summary') !== 'false'
+    } catch {
+      return true
+    }
+  })
+
+  const toggleSummary = () => {
+    setShowSummary((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('console_records_show_summary', String(next))
+      } catch {
+        // ignore
+      }
+      return next
+    })
+  }
+
   const keys = useQuery(consoleKeysQuery())
   const tokenOptions = useMemo(
     () =>
@@ -210,11 +230,13 @@ function RecordsPage() {
       <PageHeader title={page.title} lead={page.lead} />
 
       <RecordsFilterBar
-        className="mt-6"
+        className="mt-4"
         value={{ preset: search.preset, ...filters }}
         onChange={applyFilters}
         subjectOptions={tokenOptions}
         refreshing={records.isFetching || summary.isFetching}
+        showSummary={showSummary}
+        onToggleSummary={toggleSummary}
         onRefresh={() => {
           if (search.preset === 'custom') {
             void records.refetch()
@@ -225,13 +247,15 @@ function RecordsPage() {
         }}
       />
 
-      <RecordsSummaryBar
-        className="mt-4"
-        items={summaryItems}
-        loading={summary.isPending}
-      />
+      {showSummary ? (
+        <RecordsSummaryBar
+          className="mt-3"
+          items={summaryItems}
+          loading={summary.isPending}
+        />
+      ) : null}
 
-      <div className="mt-6">
+      <div className="mt-4">
         {records.isPending ? (
           <div className="space-y-2">
             <Skeleton className="h-10 w-full" />

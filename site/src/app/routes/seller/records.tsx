@@ -95,6 +95,25 @@ function ShareRecordsPage() {
   const [openRequestId, setOpenRequestId] = useState<string | null>(null)
   // Bumped by 刷新 so a rolling preset re-anchors its end to now.
   const [refreshNonce, setRefreshNonce] = useState(0)
+  const [showSummary, setShowSummary] = useState(() => {
+    try {
+      return localStorage.getItem('seller_records_show_summary') !== 'false'
+    } catch {
+      return true
+    }
+  })
+
+  const toggleSummary = () => {
+    setShowSummary((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('seller_records_show_summary', String(next))
+      } catch {
+        // ignore
+      }
+      return next
+    })
+  }
 
   const listings = useQuery(sellerListingsQuery())
   const groups = useQuery(sellerGroupsQuery())
@@ -213,7 +232,7 @@ function ShareRecordsPage() {
       <PageHeader title={page.title} lead={page.lead} />
 
       <RecordsFilterBar
-        className="mt-6"
+        className="mt-4"
         value={{ preset: search.preset, ...filters }}
         onChange={applyFilters}
         subjectField="listing_id"
@@ -222,6 +241,8 @@ function ShareRecordsPage() {
         subjectOptions={listingOptions}
         groupOptions={groupOptions}
         refreshing={records.isFetching || summary.isFetching}
+        showSummary={showSummary}
+        onToggleSummary={toggleSummary}
         onRefresh={() => {
           if (search.preset === 'custom') {
             void records.refetch()
@@ -232,9 +253,11 @@ function ShareRecordsPage() {
         }}
       />
 
-      <RecordsSummaryBar className="mt-4" items={summaryItems} loading={summary.isPending} />
+      {showSummary ? (
+        <RecordsSummaryBar className="mt-3" items={summaryItems} loading={summary.isPending} />
+      ) : null}
 
-      <div className="mt-6">
+      <div className="mt-4">
         {records.isPending ? (
           <PageSkeleton rows={4} />
         ) : records.isError ? (

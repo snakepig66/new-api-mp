@@ -1,17 +1,15 @@
 /**
- * Shared summary bar for the usage-records page: one row of Stat tiles fed by
+ * Shared summary bar for the usage-records page: one row of compact Stat tiles fed by
  * the buyer (usageSummaryQuery) or seller (shareSummaryQuery) totals.
  *
- * The bar is layout only — labels, values and hints are computed by each view
- * so the money/token formatting stays next to the query that produced it.
- * Mobile keeps the tiles legible by wrapping into two columns.
+ * Space-efficient ribbon layout with minimal vertical height to prioritize table visibility.
  */
 
 import type { ReactNode } from 'react'
 
 import { copy } from '@/copy'
 import { cn } from '@/lib/cn'
-import { Stat, type StatTone } from '@/ui'
+import type { StatTone } from '@/ui'
 
 const summaryCopy = copy.pages.records.summary
 
@@ -20,6 +18,14 @@ const EMPTY_SUMMARY_ITEMS: RecordsSummaryItem[] = Array.from({ length: 5 }, () =
   label: '',
   value: '',
 }))
+
+const toneClass: Record<StatTone, string> = {
+  default: 'text-ink',
+  brand: 'text-brand-ink',
+  success: 'text-brand-ink',
+  warning: 'text-warn',
+  danger: 'text-danger',
+}
 
 export interface RecordsSummaryItem {
   label: string
@@ -45,25 +51,42 @@ export function RecordsSummaryBar({ items, loading = false, className }: Records
       aria-busy={loading || undefined}
       aria-label={summaryCopy.ariaLabel}
       className={cn(
-        'grid grid-cols-2 gap-4 glass p-5 sm:grid-cols-3',
+        'grid grid-cols-2 gap-3 glass py-2.5 px-4 sm:grid-cols-3 sm:py-2.5 sm:px-5',
         shown.length <= 5 ? 'lg:grid-cols-5' : 'lg:grid-cols-6',
+        'lg:divide-x lg:divide-line/30',
         className,
       )}
     >
       {shown.map((item, index) =>
         loading ? (
-          <div key={`summary-skeleton-${index}`} className="min-w-0">
-            <div className="h-3.5 w-16 animate-pulse rounded-sm bg-white/60 motion-reduce:animate-none" />
-            <div className="mt-2 h-7 w-24 animate-pulse rounded-sm bg-white/60 motion-reduce:animate-none" />
+          <div key={`summary-skeleton-${index}`} className="min-w-0 lg:first:pl-0 lg:pl-4">
+            <div className="h-3 w-14 animate-pulse rounded-sm bg-white/60 motion-reduce:animate-none" />
+            <div className="mt-1 h-5 w-20 animate-pulse rounded-sm bg-white/60 motion-reduce:animate-none" />
           </div>
         ) : (
-          <Stat
+          <div
             key={item.label}
-            label={item.label}
-            value={item.value}
-            hint={item.hint}
-            tone={item.tone}
-          />
+            className="min-w-0 flex flex-col justify-center lg:first:pl-0 lg:pl-4"
+          >
+            <div className="text-[11px] font-medium leading-4 text-ink-3 truncate">
+              {item.label}
+            </div>
+            <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5">
+              <span
+                className={cn(
+                  'text-title font-semibold leading-5 tabular-nums tracking-tight',
+                  item.tone && toneClass[item.tone] ? toneClass[item.tone] : 'text-ink',
+                )}
+              >
+                {item.value}
+              </span>
+              {item.hint ? (
+                <span className="text-[11px] leading-4 text-ink-3 font-normal truncate">
+                  {item.hint}
+                </span>
+              ) : null}
+            </div>
+          </div>
         ),
       )}
     </div>
