@@ -1501,6 +1501,9 @@ func PrepareBilling(c *gin.Context, info *relaycommon.RelayInfo, estimateFn func
 		RequestID:   s.requestID,
 		ListingID:   listing.ID,
 		BuyerID:     s.buyerUserID,
+		TokenID:     s.tokenID,
+		Model:       s.model,
+		IsStream:    s.isStream,
 		FrozenMicro: int64(session.GetPreConsumedQuota()),
 		billing:     session,
 	})
@@ -1848,6 +1851,9 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 		RequestID:   s.requestID,
 		ListingID:   next.ID,
 		BuyerID:     s.buyerUserID,
+		TokenID:     s.tokenID,
+		Model:       s.model,
+		IsStream:    s.isStream,
 		FrozenMicro: int64(session.GetPreConsumedQuota()),
 		billing:     session,
 	})

@@ -154,11 +154,23 @@ export function ChannelPillBadge({
   id,
   subtext,
   variant = 'blue',
+  isInProgress = false,
 }: {
-  id: string | number
+  id?: string | number
   subtext?: ReactNode
   variant?: 'blue' | 'amber'
+  isInProgress?: boolean
 }) {
+  if (isInProgress) {
+    return (
+      <div className="inline-flex w-fit items-center">
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-caption font-medium border shadow-2xs bg-blue-50 text-brand border-brand/20 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/50">
+          进行中
+        </span>
+      </div>
+    )
+  }
+
   const isBlue = variant === 'blue'
   return (
     <div className="flex flex-col gap-0.5">
@@ -200,17 +212,19 @@ export function TokensMetricCell({
   output,
   cacheRead = 0,
   cacheWrite = 0,
+  isInProgress = false,
 }: {
   input: number
   output: number
   cacheRead?: number
   cacheWrite?: number
+  isInProgress?: boolean
 }) {
   const isZero = input === 0 && output === 0
   const hasCache = cacheRead > 0 || cacheWrite > 0
 
-  if (isZero) {
-    return <span className="font-mono text-meta text-ink-3">—</span>
+  if (isInProgress || isZero) {
+    return <span className="font-mono text-meta text-ink-3">-</span>
   }
 
   return (
@@ -233,11 +247,34 @@ export function TimingMetricCell({
   firstTokenMs,
   latencyMs,
   isStream,
+  isInProgress = false,
 }: {
   firstTokenMs: number
   latencyMs: number
   isStream: boolean
+  isInProgress?: boolean
 }) {
+  if (isInProgress) {
+    const durationText =
+      formatDuration(latencyMs) === '—' ? '0.0s' : formatDuration(latencyMs)
+    return (
+      <div className="flex items-stretch gap-2">
+        <span
+          aria-hidden="true"
+          className="flex w-1 shrink-0 flex-col overflow-hidden rounded-full my-0.5 bg-amber-500"
+        />
+        <div className="flex min-w-0 flex-col justify-center gap-0.5 text-xs leading-tight tabular-nums">
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-ink-3 shrink-0">耗时</span>
+            <span className="font-medium text-amber-600 dark:text-amber-400">
+              {durationText}
+            </span>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const showFirstToken = isStream
   const ftColors = getFirstTokenColor(firstTokenMs)
   const totalColors = getTotalLatencyColor(latencyMs)
@@ -296,6 +333,8 @@ export function CostPillBadge({
   amountMicro: number | string
   className?: string
 }) {
+  const formatted = formatYuan(amountMicro)
+  const display = formatted === '¥0' ? '¥ 0' : formatted
   return (
     <div
       className={cn(
@@ -303,7 +342,7 @@ export function CostPillBadge({
         className
       )}
     >
-      <span>{formatYuan(amountMicro)}</span>
+      <span>{display}</span>
       {/* File/document icon */}
       <svg
         className="h-3.5 w-3.5 text-ink-3/70 shrink-0"
@@ -334,14 +373,23 @@ export function IncomePillBadge({
   buyerPaidMicro?: number | string
   platformFeeMicro?: number | string
 }) {
+  const isZero = !sellerCreditMicro || Number(sellerCreditMicro) === 0
+  const formatted = formatYuan(sellerCreditMicro)
+
   return (
     <div className="flex flex-col gap-0.5">
       <div className="inline-flex w-fit items-center">
-        <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-cyan-50 text-cyan-700 border border-cyan-200/80 dark:bg-cyan-950/40 dark:text-cyan-300 dark:border-cyan-800/50 font-mono font-medium text-meta tabular-nums shadow-2xs">
-          {formatYuan(sellerCreditMicro)}
-        </span>
+        {isZero ? (
+          <span className="font-mono font-medium text-meta tabular-nums text-emerald-600 dark:text-emerald-400">
+            ¥0
+          </span>
+        ) : (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-cyan-50 text-cyan-700 border border-cyan-200/80 dark:bg-cyan-950/40 dark:text-cyan-300 dark:border-cyan-800/50 font-mono font-medium text-meta tabular-nums shadow-2xs">
+            {formatted}
+          </span>
+        )}
       </div>
-      {buyerPaidMicro != null && platformFeeMicro != null && (
+      {!isZero && buyerPaidMicro != null && platformFeeMicro != null && (
         <span className="text-[11px] text-ink-3 tabular-nums truncate max-w-[180px]">
           实付 {formatYuan(buyerPaidMicro)} · 平台费 {formatYuan(platformFeeMicro)}
         </span>
@@ -358,7 +406,7 @@ export function TimeAndStatusCell({
   createdAt: string
   status: string
 }) {
-  const isSuccess = status === 'success'
+  const isFailed = status === 'failed'
 
   return (
     <div className="flex min-w-0 flex-col gap-1">
@@ -366,14 +414,14 @@ export function TimeAndStatusCell({
         {formatDateTime(createdAt)}
       </span>
       <div className="inline-flex w-fit items-center">
-        {isSuccess ? (
+        {isFailed ? (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300">
+            失败
+          </span>
+        ) : (
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300">
             消耗
             <span className="sr-only">成功</span>
-          </span>
-        ) : (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300">
-            失败
           </span>
         )}
       </div>

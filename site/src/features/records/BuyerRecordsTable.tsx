@@ -79,7 +79,10 @@ export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
         </TableHead>
         <TableBody>
           {records.map((record, index) => {
-            const tokenDisplay = record.token_name ? (
+            const isInProgress = record.status === 'in_progress'
+            const tokenDisplay = isInProgress ? (
+              <span className="font-mono text-meta text-ink-3">-</span>
+            ) : record.token_name ? (
               <span className="font-mono text-meta text-ink-2 truncate max-w-[120px] block" title={record.token_name}>
                 {record.token_name}
               </span>
@@ -106,6 +109,7 @@ export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
                     id={record.seller_id}
                     subtext={subtext || copy.dash}
                     variant={index % 2 === 0 ? 'blue' : 'amber'}
+                    isInProgress={isInProgress}
                   />
                 </TableCell>
 
@@ -119,6 +123,7 @@ export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
                     output={record.output_tokens}
                     cacheRead={record.cache_read_tokens}
                     cacheWrite={record.cache_write_tokens}
+                    isInProgress={isInProgress}
                   />
                 </TableCell>
 
@@ -128,6 +133,7 @@ export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
                     firstTokenMs={record.first_token_ms}
                     latencyMs={record.latency_ms}
                     isStream={record.is_stream}
+                    isInProgress={isInProgress}
                   />
                 </TableCell>
 
@@ -167,7 +173,8 @@ function BuyerRecordCard({
   onOpen: (requestId: string) => void
   index?: number
 }) {
-  const isSuccess = record.status === 'success'
+  const isInProgress = record.status === 'in_progress'
+  const isFailed = record.status === 'failed'
 
   return (
     <button
@@ -178,14 +185,14 @@ function BuyerRecordCard({
       {/* Top row: Model + Status */}
       <div className="flex items-center justify-between gap-2">
         <ModelPillBadge model={record.model} converted={record.converted} />
-        {isSuccess ? (
+        {isFailed ? (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300">
+            失败
+          </span>
+        ) : (
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300">
             消耗
             <span className="sr-only">成功</span>
-          </span>
-        ) : (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300">
-            失败
           </span>
         )}
       </div>
@@ -196,10 +203,13 @@ function BuyerRecordCard({
           id={record.seller_id}
           subtext={record.token_group || record.tier_label || copy.dash}
           variant={index % 2 === 0 ? 'blue' : 'amber'}
+          isInProgress={isInProgress}
         />
         <div className="text-right">
           <span className="text-caption text-ink-3 block">令牌</span>
-          {record.token_name ? (
+          {isInProgress ? (
+            <span className="font-mono text-meta text-ink-3">-</span>
+          ) : record.token_name ? (
             <span className="font-mono text-meta text-ink-2 truncate max-w-[120px] block">
               {record.token_name}
             </span>
@@ -215,6 +225,7 @@ function BuyerRecordCard({
           firstTokenMs={record.first_token_ms}
           latencyMs={record.latency_ms}
           isStream={record.is_stream}
+          isInProgress={isInProgress}
         />
         <div className="text-right">
           <TokensMetricCell
@@ -222,6 +233,7 @@ function BuyerRecordCard({
             output={record.output_tokens}
             cacheRead={record.cache_read_tokens}
             cacheWrite={record.cache_write_tokens}
+            isInProgress={isInProgress}
           />
         </div>
       </div>

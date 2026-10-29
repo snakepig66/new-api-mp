@@ -413,3 +413,74 @@ func TestApiRecordPagination(t *testing.T) {
 	assert.Equal(t, int64(100), apiNum(t, data3, "page_size"), "page_size cap is 100")
 	assert.Len(t, apiPageItems(t, data3), 26)
 }
+
+func TestApiRecordActiveSessionInProgress(t *testing.T) {
+	f := newRecordFixture(t)
+	buyer := int64(1001)
+	seller := int64(2002)
+	listingID := int64(999)
+
+	require.NoError(t, f.db.Create(&Listing{
+		ID: listingID, SellerID: seller, ChannelID: 1, Vendor: "deepseek",
+		Models: []string{"deepseek-flash"}, MultiplierMilli: 300,
+		Status: ListingLive, KeyFingerprint: "fp-active-999",
+	}).Error)
+
+	// Seed one completed request
+	seedRequest(t, f.db, Request{
+		RequestID:        "req-done",
+		BuyerUserID:      buyer,
+		SellerID:         seller,
+		ListingID:        listingID,
+		Model:            "deepseek-flash",
+		InputTokens:      100,
+		OutputTokens:     50,
+		TotalDebitMicro:  1000,
+		Status:           "success",
+		CreatedAt:        time.Now().Add(-time.Minute),
+	})
+
+	// Register an active in-flight session
+	activeReqID := "req-in-flight-1"
+	DefaultSessionRegistry().Register(SessionEntry{
+		RequestID:   activeReqID,
+		ListingID:   listingID,
+		BuyerID:     int(buyer),
+		Model:       "deepseek-flash",
+		IsStream:    true,
+		FrozenMicro: 5000,
+		CreatedAt:   time.Now(),
+	})
+	t.Cleanup(func() {
+		DefaultSessionRegistry().Unregister(activeReqID)
+	})
+
+	// Buyer list usage records should return the active session prepended
+	w := f.get(t, "/api/marketplace/records/usage", buyer)
+	require.Equal(t, http.StatusOK, w.Code)
+	data := apiData(t, decodeAPIBody(t, w))
+	items := apiPageItems(t, data)
+	require.GreaterOrEqual(t, len(items), 2)
+	activeRec := items[0].(map[string]any)
+	assert.Equal(t, activeReqID, activeRec["request_id"])
+	assert.Equal(t, "in_progress", activeRec["status"])
+	assert.Equal(t, "deepseek-flash", activeRec["model"])
+	assert.Equal(t, int64(0), apiNum(t, activeRec, "total_debit_micro"))
+
+	// Buyer get usage detail of in-flight session
+	wDetail := f.get(t, "/api/marketplace/records/usage/"+activeReqID, buyer)
+	require.Equal(t, http.StatusOK, wDetail.Code)
+	detailData := apiData(t, decodeAPIBody(t, wDetail))
+	assert.Equal(t, activeReqID, detailData["request_id"])
+	assert.Equal(t, "in_progress", detailData["status"])
+
+	// Seller list shares should also include the active session
+	wShares := f.get(t, "/api/marketplace/records/shares", seller)
+	require.Equal(t, http.StatusOK, wShares.Code)
+	dataShares := apiData(t, decodeAPIBody(t, wShares))
+	shareItems := apiPageItems(t, dataShares)
+	require.GreaterOrEqual(t, len(shareItems), 2)
+	activeShare := shareItems[0].(map[string]any)
+	assert.Equal(t, activeReqID, activeShare["request_id"])
+	assert.Equal(t, "in_progress", activeShare["status"])
+}

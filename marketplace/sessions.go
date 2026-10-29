@@ -27,6 +27,9 @@ type SessionEntry struct {
 	RequestID   string    `json:"request_id"`
 	ListingID   int64     `json:"listing_id"`
 	BuyerID     int       `json:"buyer_id"`
+	TokenID     int       `json:"token_id"`
+	Model       string    `json:"model"`
+	IsStream    bool      `json:"is_stream"`
 	FrozenMicro int64     `json:"frozen_micro"`
 	CreatedAt   time.Time `json:"created_at"`
 
@@ -109,6 +112,87 @@ func (r *SessionRegistry) List(listingID int64) []SessionEntry {
 			return c
 		}
 		return cmp.Compare(a.RequestID, b.RequestID)
+	})
+	return result
+}
+
+// Get returns one active entry by its request id, refreshed from the live
+// BillingSession when present.
+func (r *SessionRegistry) Get(requestID string) (SessionEntry, bool) {
+	r.mu.Lock()
+	entry, ok := r.entries[requestID]
+	r.mu.Unlock()
+	if !ok || entry == nil {
+		return SessionEntry{}, false
+	}
+	snapshot := *entry
+	if entry.billing != nil {
+		snapshot.FrozenMicro = int64(entry.billing.GetPreConsumedQuota())
+	}
+	return snapshot, true
+}
+
+// ListByBuyer returns the active entries of one buyer, newest first.
+func (r *SessionRegistry) ListByBuyer(buyerID int) []SessionEntry {
+	r.mu.Lock()
+	entries := make([]*SessionEntry, 0, len(r.entries))
+	for _, entry := range r.entries {
+		if buyerID > 0 && entry.BuyerID != buyerID {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	r.mu.Unlock()
+
+	result := make([]SessionEntry, 0, len(entries))
+	for _, entry := range entries {
+		snapshot := *entry
+		if entry.billing != nil {
+			snapshot.FrozenMicro = int64(entry.billing.GetPreConsumedQuota())
+		}
+		result = append(result, snapshot)
+	}
+	slices.SortFunc(result, func(a, b SessionEntry) int {
+		if c := b.CreatedAt.Compare(a.CreatedAt); c != 0 {
+			return c
+		}
+		return cmp.Compare(b.RequestID, a.RequestID)
+	})
+	return result
+}
+
+// ListByListingIDs returns the active entries of any of listingIDs, newest first.
+func (r *SessionRegistry) ListByListingIDs(listingIDs []int64) []SessionEntry {
+	if len(listingIDs) == 0 {
+		return nil
+	}
+	idMap := make(map[int64]bool, len(listingIDs))
+	for _, id := range listingIDs {
+		idMap[id] = true
+	}
+
+	r.mu.Lock()
+	entries := make([]*SessionEntry, 0, len(r.entries))
+	for _, entry := range r.entries {
+		if idMap[entry.ListingID] {
+			entries = append(entries, entry)
+		}
+	}
+	r.mu.Unlock()
+
+	result := make([]SessionEntry, 0, len(entries))
+	for _, entry := range entries {
+		snapshot := *entry
+		if entry.billing != nil {
+			snapshot.FrozenMicro = int64(entry.billing.GetPreConsumedQuota())
+		}
+		result = append(result, snapshot)
+	}
+	slices.SortFunc(result, func(a, b SessionEntry) int {
+		if c := b.CreatedAt.Compare(a.CreatedAt); c != 0 {
+			return c
+		}
+		return cmp.Compare(b.RequestID, a.RequestID)
 	})
 	return result
 }

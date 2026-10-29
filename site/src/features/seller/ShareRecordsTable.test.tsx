@@ -94,4 +94,31 @@ describe('ShareRecordsTable', () => {
     expect(within(row).getByText('失败')).toBeTruthy()
     expect(within(row).queryByText(/···/)).toBeNull()
   })
+
+  it('renders in_progress state with 进行中 badge, dash tokens, and green zero income', () => {
+    const inProgress: ShareRecord = {
+      ...record,
+      request_id: 'req_seller_in_prog',
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      seller_credit_micro: 0,
+      buyer_paid_micro: 0,
+      platform_fee_micro: 0,
+      latency_ms: 0,
+      first_token_ms: 0,
+      status: 'in_progress',
+    }
+    render(<ShareRecordsTable records={[inProgress]} onOpen={() => {}} />)
+
+    const row = screen.getAllByRole('row')[1]
+    expect(within(row).getByText('进行中')).toBeTruthy()
+    expect(within(row).getByText('-')).toBeTruthy()
+    expect(within(row).getByText('0.0s')).toBeTruthy()
+    expect(within(row).getByText('¥ 0')).toBeTruthy()
+    expect(within(row).getByText('¥0')).toBeTruthy()
+    expect(within(row).getByText('消耗')).toBeTruthy()
+    expect(within(row).queryByText(/实付/)).toBeNull()
+  })
 })

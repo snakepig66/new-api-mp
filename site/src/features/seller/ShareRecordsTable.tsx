@@ -84,6 +84,7 @@ export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
         </TableHead>
         <TableBody>
           {records.map((record, index) => {
+            const isInProgress = record.status === 'in_progress'
             const channelSub = [
               record.channel_group,
               record.key_fingerprint4 ? `···${record.key_fingerprint4}` : '',
@@ -108,6 +109,7 @@ export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
                     id={record.listing_id}
                     subtext={channelSub || copy.dash}
                     variant={index % 2 === 0 ? 'amber' : 'blue'}
+                    isInProgress={isInProgress}
                   />
                 </TableCell>
 
@@ -125,6 +127,7 @@ export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
                     output={record.output_tokens}
                     cacheRead={record.cache_read_tokens}
                     cacheWrite={record.cache_write_tokens}
+                    isInProgress={isInProgress}
                   />
                 </TableCell>
 
@@ -134,6 +137,7 @@ export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
                     firstTokenMs={record.first_token_ms}
                     latencyMs={record.latency_ms}
                     isStream={record.is_stream}
+                    isInProgress={isInProgress}
                   />
                 </TableCell>
 
@@ -182,7 +186,8 @@ function ShareRecordCard({
   onOpen: (requestId: string) => void
   index?: number
 }) {
-  const isSuccess = record.status === 'success'
+  const isInProgress = record.status === 'in_progress'
+  const isFailed = record.status === 'failed'
   const channelSub = [
     record.channel_group,
     record.key_fingerprint4 ? `···${record.key_fingerprint4}` : '',
@@ -199,14 +204,14 @@ function ShareRecordCard({
       {/* Top row: Model + Status */}
       <div className="flex items-center justify-between gap-2">
         <ModelPillBadge model={record.model} converted={record.converted} />
-        {isSuccess ? (
+        {isFailed ? (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300">
+            失败
+          </span>
+        ) : (
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300">
             消耗
             <span className="sr-only">成功</span>
-          </span>
-        ) : (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300">
-            失败
           </span>
         )}
       </div>
@@ -217,6 +222,7 @@ function ShareRecordCard({
           id={record.listing_id}
           subtext={channelSub || copy.dash}
           variant={index % 2 === 0 ? 'amber' : 'blue'}
+          isInProgress={isInProgress}
         />
         <div className="text-right">
           <span className="text-caption text-ink-3 block">买家</span>
@@ -232,6 +238,7 @@ function ShareRecordCard({
           firstTokenMs={record.first_token_ms}
           latencyMs={record.latency_ms}
           isStream={record.is_stream}
+          isInProgress={isInProgress}
         />
         <div className="text-right">
           <TokensMetricCell
@@ -239,6 +246,7 @@ function ShareRecordCard({
             output={record.output_tokens}
             cacheRead={record.cache_read_tokens}
             cacheWrite={record.cache_write_tokens}
+            isInProgress={isInProgress}
           />
         </div>
       </div>

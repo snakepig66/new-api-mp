@@ -612,7 +612,7 @@ func usageChannelKind(db *gorm.DB, listingID int64) string {
 // PageInfo envelope. build receives the resolved per-row context (channel
 // kind, token name, channel group, key fingerprint tail) so the views render
 // without an extra query per row.
-func listRecords(c *gin.Context, filters recordFilters, build func(*Request, recordRowContext) any) {
+func listRecords(c *gin.Context, filters recordFilters, activeItems []any, build func(*Request, recordRowContext) any) {
 	page, pageSize := parseRecordPageQuery(c)
 	db := recordDB(c)
 	if db == nil {
@@ -624,12 +624,27 @@ func listRecords(c *gin.Context, filters recordFilters, build func(*Request, rec
 		return
 	}
 	var rows []Request
-	if err := filters.apply(db).
-		Order("created_at DESC").Order("id DESC").
-		Offset((page - 1) * pageSize).Limit(pageSize).
-		Find(&rows).Error; err != nil {
-		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query records"))
-		return
+	queryLimit := pageSize
+	queryOffset := (page - 1) * pageSize
+	if page == 1 && len(activeItems) > 0 {
+		queryLimit = pageSize - len(activeItems)
+		if queryLimit < 0 {
+			queryLimit = 0
+		}
+	} else if page > 1 && len(activeItems) > 0 {
+		queryOffset -= len(activeItems)
+		if queryOffset < 0 {
+			queryOffset = 0
+		}
+	}
+	if queryLimit > 0 {
+		if err := filters.apply(db).
+			Order("created_at DESC").Order("id DESC").
+			Offset(queryOffset).Limit(queryLimit).
+			Find(&rows).Error; err != nil {
+			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query records"))
+			return
+		}
 	}
 
 	channelKinds := usageChannelKinds(db, rows)
@@ -643,7 +658,10 @@ func listRecords(c *gin.Context, filters recordFilters, build func(*Request, rec
 	groupsByListing := listingGroupNames(db, listingIDs)
 	fpsByListing := listingFingerprints4(db, listingIDs)
 
-	items := make([]any, 0, len(rows))
+	items := make([]any, 0, len(activeItems)+len(rows))
+	if page == 1 {
+		items = append(items, activeItems...)
+	}
 	for i := range rows {
 		ctx := recordRowContext{
 			channelType:     channelKinds[rows[i].ListingID],
@@ -656,7 +674,7 @@ func listRecords(c *gin.Context, filters recordFilters, build func(*Request, rec
 		}
 	}
 	pageInfo := &common.PageInfo{Page: page, PageSize: pageSize}
-	pageInfo.SetTotal(int(total))
+	pageInfo.SetTotal(int(total) + len(activeItems))
 	pageInfo.SetItems(items)
 	common.ApiSuccess(c, pageInfo)
 }
@@ -673,7 +691,64 @@ func listUsageRecords(c *gin.Context) {
 		return
 	}
 	filters := parseRecordFilters(c, "buyer_user_id", userID)
-	listRecords(c, filters, func(r *Request, ctx recordRowContext) any {
+	page, _ := parseRecordPageQuery(c)
+	db := recordDB(c)
+	if db == nil {
+		return
+	}
+
+	var activeItems []any
+	if page == 1 && (filters.Status == "" || filters.Status == "in_progress") {
+		activeSessions := DefaultSessionRegistry().ListByBuyer(int(userID))
+		if len(activeSessions) > 0 {
+			var listingIDs []int64
+			var tokenIDs []int64
+			for _, as := range activeSessions {
+				listingIDs = append(listingIDs, as.ListingID)
+				tokenIDs = append(tokenIDs, int64(as.TokenID))
+			}
+			tokenNamesByID := tokenNames(db, tokenIDs)
+			var listings []Listing
+			if len(listingIDs) > 0 {
+				_ = db.Select("id", "seller_id").Where("id IN ?", listingIDs).Find(&listings).Error
+			}
+			sellerByListing := make(map[int64]int64, len(listings))
+			for _, l := range listings {
+				sellerByListing[l.ID] = l.SellerID
+			}
+
+			for _, as := range activeSessions {
+				if filters.Model != "" && as.Model != filters.Model {
+					continue
+				}
+				if filters.TokenID > 0 && int64(as.TokenID) != filters.TokenID {
+					continue
+				}
+				activeItems = append(activeItems, usageRecord{
+					RequestID:        as.RequestID,
+					Model:            as.Model,
+					SellerID:         sellerByListing[as.ListingID],
+					ChannelType:      "",
+					Tier:             "flat",
+					TierLabel:        "标准",
+					TokenName:        tokenNamesByID[int64(as.TokenID)],
+					InputTokens:      0,
+					OutputTokens:     0,
+					CacheReadTokens:  0,
+					CacheWriteTokens: 0,
+					CacheHitTokens:   0,
+					TotalDebitMicro:  0,
+					FirstTokenMs:     0,
+					LatencyMs:        time.Since(as.CreatedAt).Milliseconds(),
+					IsStream:         as.IsStream,
+					Status:           "in_progress",
+					CreatedAt:        as.CreatedAt,
+				})
+			}
+		}
+	}
+
+	listRecords(c, filters, activeItems, func(r *Request, ctx recordRowContext) any {
 		return newUsageRecord(r, ctx)
 	})
 }
@@ -689,10 +764,43 @@ func getUsageRecord(c *gin.Context) {
 	if db == nil {
 		return
 	}
+	requestID := c.Param("request_id")
 	var row Request
-	err := db.Where("request_id = ? AND buyer_user_id = ?", c.Param("request_id"), userID).Take(&row).Error
+	err := db.Where("request_id = ? AND buyer_user_id = ?", requestID, userID).Take(&row).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			if entry, ok := DefaultSessionRegistry().Get(requestID); ok && entry.BuyerID == int(userID) {
+				var l Listing
+				_ = db.Select("id", "seller_id").Where("id = ?", entry.ListingID).Take(&l).Error
+				tokenName := ""
+				if entry.TokenID > 0 {
+					tokenName = tokenNames(db, []int64{int64(entry.TokenID)})[int64(entry.TokenID)]
+				}
+				common.ApiSuccess(c, usageRecordDetail{
+					usageRecord: usageRecord{
+						RequestID:        entry.RequestID,
+						Model:            entry.Model,
+						SellerID:         l.SellerID,
+						ChannelType:      "",
+						Tier:             "flat",
+						TierLabel:        "标准",
+						TokenName:        tokenName,
+						InputTokens:      0,
+						OutputTokens:     0,
+						CacheReadTokens:  0,
+						CacheWriteTokens: 0,
+						CacheHitTokens:   0,
+						TotalDebitMicro:  0,
+						FirstTokenMs:     0,
+						LatencyMs:        time.Since(entry.CreatedAt).Milliseconds(),
+						IsStream:         entry.IsStream,
+						Status:           "in_progress",
+						CreatedAt:        entry.CreatedAt,
+					},
+					RetryChain: "[]",
+				})
+				return
+			}
 			common.ApiErrorStatus(c, http.StatusNotFound, errors.New("record not found"))
 			return
 		}
@@ -733,7 +841,58 @@ func listShareRecords(c *gin.Context) {
 		return
 	}
 	filters := parseRecordFilters(c, "seller_id", userID)
-	listRecords(c, filters, func(r *Request, ctx recordRowContext) any {
+	page, _ := parseRecordPageQuery(c)
+	db := recordDB(c)
+	if db == nil {
+		return
+	}
+
+	var activeItems []any
+	if page == 1 && (filters.Status == "" || filters.Status == "in_progress") {
+		var sellerListingIDs []int64
+		_ = db.Model(&Listing{}).Where("seller_id = ?", userID).Pluck("id", &sellerListingIDs).Error
+		if len(sellerListingIDs) > 0 {
+			activeSessions := DefaultSessionRegistry().ListByListingIDs(sellerListingIDs)
+			groupsByListing := listingGroupNames(db, sellerListingIDs)
+			fpsByListing := listingFingerprints4(db, sellerListingIDs)
+			for _, as := range activeSessions {
+				if filters.Model != "" && as.Model != filters.Model {
+					continue
+				}
+				if filters.ListingID > 0 && as.ListingID != filters.ListingID {
+					continue
+				}
+				code, err := AnonBuyerCode(userID, int64(as.BuyerID))
+				if err != nil {
+					continue
+				}
+				activeItems = append(activeItems, shareRecord{
+					RequestID:         as.RequestID,
+					Model:             as.Model,
+					BuyerCode:         code,
+					Tier:              "flat",
+					TierLabel:         "标准",
+					ChannelGroup:      groupsByListing[as.ListingID],
+					ListingID:         as.ListingID,
+					KeyFingerprint4:   fpsByListing[as.ListingID],
+					InputTokens:       0,
+					OutputTokens:      0,
+					CacheReadTokens:   0,
+					CacheWriteTokens:  0,
+					SellerCreditMicro: 0,
+					BuyerPaidMicro:    0,
+					PlatformFeeMicro:  0,
+					FirstTokenMs:      0,
+					LatencyMs:         time.Since(as.CreatedAt).Milliseconds(),
+					IsStream:          as.IsStream,
+					Status:            "in_progress",
+					CreatedAt:         as.CreatedAt,
+				})
+			}
+		}
+	}
+
+	listRecords(c, filters, activeItems, func(r *Request, ctx recordRowContext) any {
 		code, err := AnonBuyerCode(r.SellerID, r.BuyerUserID)
 		if err != nil {
 			return nil
@@ -757,10 +916,47 @@ func getShareRecord(c *gin.Context) {
 	if db == nil {
 		return
 	}
+	requestID := c.Param("request_id")
 	var row Request
-	err := db.Where("request_id = ? AND seller_id = ?", c.Param("request_id"), userID).Take(&row).Error
+	err := db.Where("request_id = ? AND seller_id = ?", requestID, userID).Take(&row).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			if entry, ok := DefaultSessionRegistry().Get(requestID); ok {
+				var l Listing
+				if takeErr := db.Select("id, seller_id, group_id, key_fingerprint").Where("id = ? AND seller_id = ?", entry.ListingID, userID).Take(&l).Error; takeErr == nil {
+					groupsByListing := listingGroupNames(db, []int64{l.ID})
+					fpsByListing := listingFingerprints4(db, []int64{l.ID})
+					code, codeErr := AnonBuyerCode(userID, int64(entry.BuyerID))
+					if codeErr == nil {
+						common.ApiSuccess(c, shareRecordDetail{
+							shareRecord: shareRecord{
+								RequestID:         entry.RequestID,
+								Model:             entry.Model,
+								BuyerCode:         code,
+								Tier:              "flat",
+								TierLabel:         "标准",
+								ChannelGroup:      groupsByListing[l.ID],
+								ListingID:         l.ID,
+								KeyFingerprint4:   fpsByListing[l.ID],
+								InputTokens:       0,
+								OutputTokens:      0,
+								CacheReadTokens:   0,
+								CacheWriteTokens:  0,
+								SellerCreditMicro: 0,
+								BuyerPaidMicro:    0,
+								PlatformFeeMicro:  0,
+								FirstTokenMs:      0,
+								LatencyMs:         time.Since(entry.CreatedAt).Milliseconds(),
+								IsStream:          entry.IsStream,
+								Status:            "in_progress",
+								CreatedAt:         entry.CreatedAt,
+							},
+							RetryChain: "[]",
+						})
+						return
+					}
+				}
+			}
 			common.ApiErrorStatus(c, http.StatusNotFound, errors.New("record not found"))
 			return
 		}

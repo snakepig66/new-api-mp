@@ -104,4 +104,27 @@ describe('BuyerRecordsTable', () => {
     expect(within(row).getAllByText('—').length).toBeGreaterThanOrEqual(2)
     expect(within(row).queryByText('转换')).toBeNull()
   })
+
+  it('renders in_progress state with 进行中 badge, dash tokens, and 0.0s latency', () => {
+    const inProgress: UsageRecord = {
+      ...record,
+      request_id: 'req_buyer_in_prog',
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      total_debit_micro: 0,
+      latency_ms: 0,
+      first_token_ms: 0,
+      status: 'in_progress',
+    }
+    render(<BuyerRecordsTable records={[inProgress]} onOpen={() => {}} />)
+
+    const row = screen.getAllByRole('row')[1]
+    expect(within(row).getByText('进行中')).toBeTruthy()
+    expect(within(row).getAllByText('-').length).toBe(2)
+    expect(within(row).getByText('0.0s')).toBeTruthy()
+    expect(within(row).getByText('¥ 0')).toBeTruthy()
+    expect(within(row).getByText('消耗')).toBeTruthy()
+  })
 })

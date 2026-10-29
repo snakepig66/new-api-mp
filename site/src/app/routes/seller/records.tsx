@@ -144,7 +144,13 @@ function ShareRecordsPage() {
     search.status,
   ])
 
-  const records = useQuery(shareRecordsQuery(search.page, search.page_size, filters))
+  const records = useQuery({
+    ...shareRecordsQuery(search.page, search.page_size, filters),
+    refetchInterval: (query) =>
+      query.state.data?.items?.some((item) => item.status === 'in_progress')
+        ? 2500
+        : false,
+  })
   const summary = useQuery(shareSummaryQuery(filters))
 
   const total = records.data?.total ?? 0
