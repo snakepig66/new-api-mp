@@ -148,7 +148,7 @@ describe('ModelPicker', () => {
     expect(await screen.findByText('deepseek-flash')).toBeTruthy()
 
     const deepseek = screen.getByRole('button', { name: /DeepSeek 2 个模型/ })
-    expect(deepseek.querySelector('img')?.getAttribute('src')).toBe('/vendors/deepseek.svg')
+    expect(deepseek.querySelector('img')?.getAttribute('src')).toContain('/vendors/deepseek.svg')
 
     const kimi = screen.getByRole('button', { name: /Kimi 1 个模型/ })
     expect(kimi.querySelector('img')).toBeNull()

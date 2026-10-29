@@ -8,6 +8,7 @@ import { CodeBlock } from '@/features/market/code-block'
 import { CopyButton } from '@/features/market/copy-button'
 import { formatCount } from '@/features/market/format'
 import { ModelTable } from '@/features/market/model-table'
+import { withLogoVersion } from '@/features/market/model-logo'
 import { QueryError } from '@/features/market/query-error'
 import { currentBaseUrl } from '@/features/market/url'
 import { savingPercent } from '@/lib/multiplier'
@@ -156,11 +157,11 @@ export function HomePage() {
                 {logoVendors.map((vendor) => (
                   <li key={vendor.key} className="group flex items-center gap-2">
                     <img
-                      src={vendor.logo}
+                      src={withLogoVersion(vendor.logo)}
                       alt={vendor.label}
                       width={28}
                       height={28}
-                      className="h-7 w-7 rounded-md opacity-60 grayscale transition duration-200 group-hover:opacity-100 group-hover:grayscale-0"
+                      className="h-7 w-7 shrink-0 object-contain transition duration-200 group-hover:scale-105"
                     />
                     <span className="text-meta font-medium text-ink-3 transition-colors group-hover:text-ink">
                       {vendor.label}

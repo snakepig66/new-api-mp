@@ -168,7 +168,7 @@ describe('home page', () => {
 
     expect(await screen.findByTestId('vendor-logo-wall')).toBeTruthy()
     const logo = screen.getByRole('img', { name: 'DeepSeek' })
-    expect(logo.getAttribute('src')).toBe('/vendors/deepseek.svg')
+    expect(logo.getAttribute('src')).toContain('/vendors/deepseek.svg')
   })
 
   it('expands and collapses a FAQ answer on click', async () => {

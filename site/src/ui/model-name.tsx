@@ -1,6 +1,6 @@
 import type { HTMLAttributes } from 'react'
 
-import { modelLogo } from '@/features/market/model-logo'
+import { modelLogo, withLogoVersion } from '@/features/market/model-logo'
 import { cn } from '@/lib/cn'
 
 export interface ModelNameProps extends HTMLAttributes<HTMLSpanElement> {
@@ -12,7 +12,7 @@ export interface ModelNameProps extends HTMLAttributes<HTMLSpanElement> {
 /**
  * Renders a model name optionally prepended by its official vendor logo.
  *
- * md icon size is 20px, sm is 16px. If no vendor logo matches, renders only the text.
+ * md icon size is 20px, sm is 18px. If no vendor logo matches, renders only the text.
  * The model name is kept as an unbroken text node so testing-library queries continue to match.
  */
 export function ModelName({ model, size = 'md', className, ...props }: ModelNameProps) {
@@ -25,8 +25,8 @@ export function ModelName({ model, size = 'md', className, ...props }: ModelName
     )
   }
 
-  const iconSize = size === 'sm' ? 16 : 20
-  const iconClass = size === 'sm' ? 'h-4 w-4' : 'h-5 w-5'
+  const iconSize = size === 'sm' ? 18 : 20
+  const iconClass = size === 'sm' ? 'h-[18px] w-[18px]' : 'h-5 w-5'
 
   return (
     <span
@@ -34,7 +34,7 @@ export function ModelName({ model, size = 'md', className, ...props }: ModelName
       {...props}
     >
       <img
-        src={logo}
+        src={withLogoVersion(logo)}
         alt=""
         aria-hidden="true"
         width={iconSize}

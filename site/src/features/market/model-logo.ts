@@ -45,6 +45,13 @@ export function modelVendor(model: string): string {
   return hit ? hit.vendor : ''
 }
 
+export const VENDOR_LOGO_VERSION = '20261029-v2'
+
+export function withLogoVersion(url: string): string {
+  if (!url) return ''
+  return url.includes('?') ? url : `${url}?v=${VENDOR_LOGO_VERSION}`
+}
+
 /** Root-relative path to the vendor SVG, or empty string when unmatched. */
 export function modelLogo(model: string): string {
   const vendor = modelVendor(model)

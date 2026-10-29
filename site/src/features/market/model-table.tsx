@@ -23,7 +23,7 @@ import type {
   SquareTierPrices,
 } from './api'
 import { AddToKeyMenu } from './AddToKeyMenu'
-import { modelLogo } from './model-logo'
+import { modelLogo, withLogoVersion } from './model-logo'
 import { vendorLabel, vendorLogo, type VendorLookup } from './vendors'
 
 export interface ModelTableProps {
@@ -441,10 +441,12 @@ export function ModelTable({
                       <div className="flex min-w-0 items-center gap-2.5">
                         {logo ? (
                           <img
-                            src={logo}
+                            src={withLogoVersion(logo)}
                             alt=""
                             aria-hidden="true"
-                            className="h-6 w-6 shrink-0 rounded-sm"
+                            width={24}
+                            height={24}
+                            className="h-6 w-6 shrink-0 object-contain"
                           />
                         ) : (
                           <span

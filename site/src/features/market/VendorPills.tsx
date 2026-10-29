@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { copy } from '@/copy'
+import { withLogoVersion } from '@/features/market/model-logo'
 import { cn } from '@/lib/cn'
 
 export interface VendorPillOption {
@@ -45,26 +46,26 @@ export function VendorPill({ label, logoUrl, count, active, onClick }: VendorPil
           : 'border-white/70 bg-white/60 text-ink-2 hover:border-line-strong hover:text-ink',
       )}
     >
-      <span
-        className={cn(
-          'grid h-6 w-6 shrink-0 place-items-center overflow-hidden rounded-full text-caption font-semibold',
-          active ? 'bg-white/85 text-brand-ink' : 'bg-white/50 text-ink-2',
-        )}
-        aria-hidden="true"
-      >
-        {showLogo ? (
-          <img
-            src={logoUrl}
-            alt=""
-            width={24}
-            height={24}
-            className="h-4 w-4 object-contain"
-            onError={() => setLogoFailed(true)}
-          />
-        ) : (
-          initial
-        )}
-      </span>
+      {showLogo ? (
+        <img
+          src={withLogoVersion(logoUrl!)}
+          alt=""
+          width={20}
+          height={20}
+          className="h-5 w-5 shrink-0 object-contain"
+          onError={() => setLogoFailed(true)}
+        />
+      ) : (
+        <span
+          className={cn(
+            'grid h-5 w-5 shrink-0 place-items-center overflow-hidden rounded-full text-caption font-semibold',
+            active ? 'bg-white/85 text-brand-ink' : 'bg-white/50 text-ink-2',
+          )}
+          aria-hidden="true"
+        >
+          {initial}
+        </span>
+      )}
       <span className="font-medium">{label}</span>
       <span
         className={cn(
