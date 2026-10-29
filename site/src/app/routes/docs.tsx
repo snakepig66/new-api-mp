@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { copy } from '@/copy'
 import { squareModelsQuery } from '@/features/market/api'
@@ -131,39 +131,144 @@ function requestTabs(
   ]
 }
 
-function useScrollSpy() {
+function useScrollSpy(visible: readonly SectionId[]) {
   const [active, setActive] = useState<SectionId>(SECTION_IDS[0])
+  const isLockedRef = useRef(false)
+  const lockTimerRef = useRef<number | null>(null)
+  const rafIdRef = useRef<number | null>(null)
 
+  const scrollTo = useCallback((id: SectionId) => {
+    const element = document.getElementById(id)
+    if (!element) return
+
+    // Immediately activate the target item for instant, stable visual feedback
+    setActive(id)
+
+    // Lock ScrollSpy updates while smooth scrolling is in flight
+    isLockedRef.current = true
+    if (lockTimerRef.current !== null) {
+      window.clearTimeout(lockTimerRef.current)
+    }
+
+    // Update URL hash cleanly with replaceState without polluting history or jumping
+    if (typeof window !== 'undefined' && window.history?.replaceState) {
+      window.history.replaceState(null, '', `#${id}`)
+    }
+
+    // Offset by 96px (64px sticky glass-bar + 32px comfortable top margin)
+    const elementTop = element.getBoundingClientRect().top + window.scrollY
+    const targetTop = Math.max(0, elementTop - 96)
+
+    window.scrollTo({
+      top: targetTop,
+      behavior: 'smooth',
+    })
+
+    function unlock() {
+      isLockedRef.current = false
+      if (lockTimerRef.current !== null) {
+        window.clearTimeout(lockTimerRef.current)
+        lockTimerRef.current = null
+      }
+    }
+
+    if ('onscrollend' in window) {
+      window.addEventListener('scrollend', unlock, { once: true })
+    }
+
+    // Safety timeout in case scrollend doesn't trigger
+    lockTimerRef.current = window.setTimeout(unlock, 800)
+  }, [])
+
+  // If page loads with a hash (e.g. #billing), scroll to it smoothly
   useEffect(() => {
-    const elements = SECTION_IDS.map((id) => document.getElementById(id)).filter(
-      (element): element is HTMLElement => element !== null,
-    )
+    const hash = window.location.hash.replace(/^#/, '') as SectionId
+    if (SECTION_IDS.includes(hash)) {
+      const timer = window.setTimeout(() => {
+        scrollTo(hash)
+      }, 50)
+      return () => window.clearTimeout(timer)
+    }
+  }, [scrollTo])
 
+  // ScrollSpy listener
+  useEffect(() => {
     function onScroll() {
-      let next = elements[0]?.id ?? SECTION_IDS[0]
-      for (const element of elements) {
-        if (element.getBoundingClientRect().top + window.scrollY <= window.scrollY + 140) {
-          next = element.id
+      if (isLockedRef.current) return
+
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current)
+      }
+
+      rafIdRef.current = requestAnimationFrame(() => {
+        if (isLockedRef.current) return
+
+        const elements = visible
+          .map((id) => document.getElementById(id))
+          .filter((element): element is HTMLElement => element !== null)
+
+        if (elements.length === 0) return
+
+        // 1. Bottom of page check: if scrolled to bottom, highlight the last visible section
+        const scrollBottom = window.innerHeight + window.scrollY
+        const docHeight = document.documentElement.scrollHeight
+        if (scrollBottom >= docHeight - 60) {
+          setActive(elements[elements.length - 1].id as SectionId)
+          return
+        }
+
+        // 2. Threshold check: find the last section whose top is within view range
+        let next = elements[0].id as SectionId
+        for (const element of elements) {
+          if (element.getBoundingClientRect().top <= 140) {
+            next = element.id as SectionId
+          }
+        }
+        setActive(next)
+      })
+    }
+
+    // If user manually interrupts scroll with mouse wheel or touch, release lock
+    function onUserInterrupt() {
+      if (isLockedRef.current) {
+        isLockedRef.current = false
+        if (lockTimerRef.current !== null) {
+          window.clearTimeout(lockTimerRef.current)
+          lockTimerRef.current = null
         }
       }
-      setActive(next as SectionId)
     }
 
     onScroll()
     window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
-  }, [])
+    window.addEventListener('wheel', onUserInterrupt, { passive: true })
+    window.addEventListener('touchstart', onUserInterrupt, { passive: true })
 
-  return active
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      window.removeEventListener('wheel', onUserInterrupt)
+      window.removeEventListener('touchstart', onUserInterrupt)
+      if (rafIdRef.current !== null) cancelAnimationFrame(rafIdRef.current)
+      if (lockTimerRef.current !== null) window.clearTimeout(lockTimerRef.current)
+    }
+  }, [visible])
+
+  // If the currently active item gets filtered out by search, fall back to first visible item
+  useEffect(() => {
+    if (visible.length > 0 && !visible.includes(active)) {
+      setActive(visible[0])
+    }
+  }, [visible, active])
+
+  return { active, scrollTo }
 }
 
-function DocsPage() {
+export function DocsPage() {
   const docs = copy.pages.docs
   const models = useQuery(squareModelsQuery())
   const baseUrl = docs.baseUrl
   const [search, setSearch] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
-  const active = useScrollSpy()
 
   // The first live model keeps the snippets runnable; the seed id is only a
   // fallback while the square request is in flight or unavailable.
@@ -232,6 +337,8 @@ function DocsPage() {
     (id) => !query || keywords[id].toLowerCase().includes(query),
   )
 
+  const { active, scrollTo } = useScrollSpy(visible)
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
@@ -290,6 +397,10 @@ function DocsPage() {
                   <li key={id}>
                     <a
                       href={`#${id}`}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        scrollTo(id)
+                      }}
                       aria-current={active === id ? 'location' : undefined}
                       className={cn(
                         'block rounded-full px-3 py-1.5 text-body transition-colors',
@@ -313,11 +424,15 @@ function DocsPage() {
               <a
                 key={id}
                 href={`#${id}`}
+                onClick={(e) => {
+                  e.preventDefault()
+                  scrollTo(id)
+                }}
                 className={cn(
-                  'rounded-full px-3 py-1.5 text-body',
+                  'rounded-full px-3 py-1.5 text-body transition-colors',
                   active === id
                     ? 'bg-brand-soft font-medium text-brand-ink'
-                    : 'bg-white/55 text-ink-2',
+                    : 'bg-white/55 text-ink-2 hover:bg-white/80 hover:text-ink',
                 )}
               >
                 {docs.sections[id]}
