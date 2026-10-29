@@ -153,7 +153,7 @@ func TestPayoutBelowMinimum(t *testing.T) {
 	const seller = 10011
 	newPayoutSeller(t, db, seller, 100_000_000)
 
-	_, err := RequestPayout(db, seller, 49_999_999, "below-1", payoutTestNow) // 49.999999 元 < ¥50 (§3.9)
+	_, err := RequestPayout(db, seller, 9_999_999, "below-1", payoutTestNow) // 9.999999 元 < ¥10
 	assert.ErrorIs(t, err, ErrPayoutBelowMinimum)
 
 	_, err = RequestPayout(db, seller, 0, "zero", payoutTestNow)
@@ -176,22 +176,26 @@ func TestPayoutFrequency(t *testing.T) {
 	_, err := RequestPayout(db, seller, 50_000_000, "freq-1", payoutTestNow)
 	require.NoError(t, err)
 
-	// A second payout inside the 7-day window is too frequent.
-	_, err = RequestPayout(db, seller, 50_000_000, "freq-2", payoutTestNow.Add(6*24*time.Hour))
+	// Below minimum (¥10) fails.
+	_, err = RequestPayout(db, seller, 9_999_999, "below-min", payoutTestNow.Add(time.Hour))
+	assert.ErrorIs(t, err, ErrPayoutBelowMinimum)
+
+	// A second payout inside the 3-day window is too frequent.
+	_, err = RequestPayout(db, seller, 50_000_000, "freq-2", payoutTestNow.Add(2*24*time.Hour))
 	assert.ErrorIs(t, err, ErrPayoutTooFrequent)
 
-	// Exactly at 7 days the window is still closed (rolling window: within 7 days).
-	_, err = RequestPayout(db, seller, 50_000_000, "freq-3", payoutTestNow.Add(7*24*time.Hour))
+	// Exactly at 3 days the window is still closed (rolling window: within 3 days).
+	_, err = RequestPayout(db, seller, 50_000_000, "freq-3", payoutTestNow.Add(3*24*time.Hour))
 	assert.ErrorIs(t, err, ErrPayoutTooFrequent)
 
-	// 8 days later the window has rolled over and a new payout succeeds.
-	p, err := RequestPayout(db, seller, 50_000_000, "freq-4", payoutTestNow.Add(8*24*time.Hour))
+	// 4 days later the window has rolled over and a new payout succeeds.
+	p, err := RequestPayout(db, seller, 10_000_000, "freq-4", payoutTestNow.Add(4*24*time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, PayoutPending, p.Status)
 
 	// A rejected payout does not block an immediate re-request.
-	require.NoError(t, RejectPayout(db, p.ID, 1, payoutTestNow.Add(8*24*time.Hour)))
-	_, err = RequestPayout(db, seller, 50_000_000, "freq-5", payoutTestNow.Add(8*24*time.Hour+time.Minute))
+	require.NoError(t, RejectPayout(db, p.ID, 1, payoutTestNow.Add(4*24*time.Hour)))
+	_, err = RequestPayout(db, seller, 10_000_000, "freq-5", payoutTestNow.Add(4*24*time.Hour+time.Minute))
 	require.NoError(t, err, "a rejected payout is not in the active set, so it does not count toward frequency")
 }
 

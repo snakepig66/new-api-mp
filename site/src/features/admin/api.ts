@@ -540,6 +540,10 @@ export interface AdminPayout {
   reviewed_at: string | null
   created_at: string
   updated_at: string
+  payout_channel?: string
+  payout_name?: string
+  payout_account?: string
+  payout_qr_code?: string
 }
 
 export function normalizeAdminPayout(raw: unknown): AdminPayout {
@@ -554,6 +558,10 @@ export function normalizeAdminPayout(raw: unknown): AdminPayout {
     reviewed_at: reviewed === undefined ? null : text(reviewed),
     created_at: text(pick(row, 'created_at', 'CreatedAt')),
     updated_at: text(pick(row, 'updated_at', 'UpdatedAt')),
+    payout_channel: text(pick(row, 'payout_channel', 'PayoutChannel')),
+    payout_name: text(pick(row, 'payout_name', 'PayoutName')),
+    payout_account: text(pick(row, 'payout_account', 'PayoutAccount')),
+    payout_qr_code: text(pick(row, 'payout_qr_code', 'PayoutQRCode')),
   }
 }
 

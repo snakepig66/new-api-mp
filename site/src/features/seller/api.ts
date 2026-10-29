@@ -29,6 +29,10 @@ export interface SellerProgress {
   payout_account_bound: boolean
   next_step: SellerNextStep
   agreement_version: string
+  payout_channel?: 'wechat' | 'alipay' | string
+  payout_name?: string
+  payout_account_masked?: string
+  payout_has_qr_code?: boolean
 }
 
 export interface SellerIdentity {
@@ -47,6 +51,10 @@ export interface OnboardingInput {
   real_name?: string
   id_card_masked?: string
   alipay_account?: string
+  payout_channel?: 'wechat' | 'alipay'
+  payout_name?: string
+  payout_account?: string
+  payout_qr_code?: string
 }
 
 export interface OnboardingResponse {

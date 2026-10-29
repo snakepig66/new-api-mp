@@ -22,10 +22,10 @@ import (
 // once a payout is requested, that amount is reserved until it is rejected
 // (which removes it from the active set) or paid out.
 const (
-	// MinPayoutMicro is the minimum withdrawal amount: ¥50 = 50,000,000 微元 (§3.9).
-	MinPayoutMicro int64 = 50_000_000
-	// PayoutWeeklyWindow is the rolling window for the once-per-week rule (§3.9).
-	PayoutWeeklyWindow = 7 * 24 * time.Hour
+	// MinPayoutMicro is the minimum withdrawal amount: ¥10 = 10,000,000 微元.
+	MinPayoutMicro int64 = 10_000_000
+	// PayoutWeeklyWindow is the rolling window for the withdrawal frequency rule (T+3).
+	PayoutWeeklyWindow = 3 * 24 * time.Hour
 )
 
 var (

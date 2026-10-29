@@ -1142,6 +1142,14 @@ func adminRequestTrace(c *gin.Context) {
 // 提现审批 (§3.9): 列表 + approve / reject / mark-paid, 全部走 payout.go.
 // ---------------------------------------------------------------------------
 
+type adminPayoutItem struct {
+	Payout
+	PayoutChannel string `json:"payout_channel"`
+	PayoutName    string `json:"payout_name"`
+	PayoutAccount string `json:"payout_account"`
+	PayoutQRCode  string `json:"payout_qr_code"`
+}
+
 // adminListPayouts serves GET /admin/payouts?status= — the withdrawal queue.
 func adminListPayouts(c *gin.Context) {
 	db := adminDB(c)
@@ -1157,7 +1165,34 @@ func adminListPayouts(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to query payouts"))
 		return
 	}
-	common.ApiSuccess(c, rows)
+
+	sellerIDs := make([]int64, len(rows))
+	for i, r := range rows {
+		sellerIDs[i] = r.SellerID
+	}
+	var sellers []Seller
+	if len(sellerIDs) > 0 {
+		_ = db.Where("user_id IN ?", sellerIDs).Find(&sellers).Error
+	}
+	sellerMap := make(map[int64]Seller, len(sellers))
+	for _, s := range sellers {
+		sellerMap[s.UserID] = s
+	}
+
+	items := make([]adminPayoutItem, len(rows))
+	for i, r := range rows {
+		items[i] = adminPayoutItem{Payout: r}
+		if s, ok := sellerMap[r.SellerID]; ok && s.PayoutAccount != "" {
+			if info, err := ParsePayoutAccount(s.PayoutAccount); err == nil {
+				items[i].PayoutChannel = info.Channel
+				items[i].PayoutName = info.Name
+				items[i].PayoutAccount = info.Account
+				items[i].PayoutQRCode = info.QRCode
+			}
+		}
+	}
+
+	common.ApiSuccess(c, items)
 }
 
 // adminPayoutSellerID loads the payout's owner for the L5 self-review check.

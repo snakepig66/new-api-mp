@@ -41,8 +41,8 @@ export const Route = createFileRoute('/seller/payouts')({
 
 const page = copy.pages.sellerPayouts
 const commonErrors = copy.pages.sellerCommon.errors
-const MIN_PAYOUT_MICRO = 50_000_000n
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000
+const MIN_PAYOUT_MICRO = 10_000_000n
+const FREQ_MS = 3 * 24 * 60 * 60 * 1000
 const PAGE_SIZE = 10
 
 function toBigInt(value: number | string): bigint {
@@ -53,13 +53,13 @@ function toBigInt(value: number | string): bigint {
   }
 }
 
-/** Mirrors the backend: a non-rejected payout inside the rolling 7-day window. */
+/** Mirrors the backend: a non-rejected payout inside the rolling 3-day window. */
 function recentActivePayout(payouts: Payout[], now = Date.now()): Payout | undefined {
   return payouts.find((payout) => {
     if (payout.status === 'rejected') return false
     const date = parseApiTime(payout.created_at)
     if (!date) return false
-    return now - date.getTime() < WEEK_MS
+    return now - date.getTime() < FREQ_MS
   })
 }
 

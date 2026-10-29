@@ -53,7 +53,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock)
   meBody = sellerMe({
     agreement_signed: true,
-    next_step: 'real_name',
+    next_step: 'payout_account',
   })
 })
 
@@ -91,37 +91,34 @@ function renderPage() {
   )
 }
 
-describe('seller onboarding four-step rail', () => {
-  it('renders 协议 → 资料 → 收款 → 完成 with done/current/todo states', async () => {
+describe('seller onboarding three-step rail', () => {
+  it('renders 协议 → 绑定收款 → 完成 with done/current/todo states', async () => {
     renderPage()
     await screen.findByText('签署分享者协议')
 
-    expect(screen.getByText('完善资料')).toBeTruthy()
     expect(screen.getByText('绑定收款')).toBeTruthy()
     expect(screen.getByText('完成')).toBeTruthy()
-    expect(screen.getByText('1/4')).toBeTruthy()
+    expect(screen.getByText('1/3')).toBeTruthy()
 
     const steps = screen.getAllByRole('listitem')
-    expect(steps).toHaveLength(4)
+    expect(steps).toHaveLength(3)
     expect(within(steps[0]).getByText('已完成')).toBeTruthy()
     expect(within(steps[1]).getByText('当前')).toBeTruthy()
     expect(within(steps[2]).getByText('未开始')).toBeTruthy()
-    expect(within(steps[3]).getByText('未开始')).toBeTruthy()
   })
 
-  it('marks all four steps done once agreement, real name and payout are complete', async () => {
+  it('marks all three steps done once agreement and payout are complete', async () => {
     meBody = sellerMe({
       agreement_signed: true,
-      real_name_verified: true,
       payout_account_bound: true,
       next_step: 'done',
     })
     renderPage()
     await screen.findByText('签署分享者协议')
 
-    expect(screen.getByText('4/4')).toBeTruthy()
+    expect(screen.getByText('3/3')).toBeTruthy()
     const steps = screen.getAllByRole('listitem')
-    expect(steps).toHaveLength(4)
+    expect(steps).toHaveLength(3)
     for (const step of steps) {
       expect(within(step).getByText('已完成')).toBeTruthy()
     }

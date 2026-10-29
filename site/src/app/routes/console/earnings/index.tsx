@@ -38,14 +38,16 @@ function StatCard({ children }: { children: ReactNode }) {
 
 function stepLabel(id: PayoutGateStepId): string {
   switch (id) {
-    case 'real_name':
-      return page.payoutGate.realName
+    case 'payout_account':
     case 'alipay':
-      return page.payoutGate.alipay
+      return page.payoutGate.payoutAccount || page.payoutGate.alipay
     case 'minimum':
       return page.payoutGate.minimum
+    case 't3':
     case 't7':
-      return page.payoutGate.t7
+      return page.payoutGate.t3 || page.payoutGate.t7
+    default:
+      return page.payoutGate.realName
   }
 }
 
@@ -55,7 +57,7 @@ function PayoutGate({
   availableMicro,
   pendingMicro,
 }: {
-  realNameVerified: boolean
+  realNameVerified?: boolean
   payoutAccountBound: boolean
   availableMicro: number | string
   pendingMicro: number | string
@@ -69,16 +71,18 @@ function PayoutGate({
 
   function stepHint(id: PayoutGateStepId, done: boolean): string {
     switch (id) {
-      case 'real_name':
-        return done ? page.payoutGate.ready : page.payoutGate.realNameHint
+      case 'payout_account':
       case 'alipay':
-        return done ? page.payoutGate.ready : page.payoutGate.alipayHint
+        return done ? page.payoutGate.ready : page.payoutGate.payoutAccountHint
       case 'minimum':
         return done
           ? page.payoutGate.minimumDone
           : page.payoutGate.minimumHint(formatYuan(state.missingMicro))
+      case 't3':
       case 't7':
-        return done ? page.payoutGate.t7Done : page.payoutGate.t7Hint(formatYuan(pendingMicro))
+        return done ? page.payoutGate.t3Done : page.payoutGate.t3Hint(formatYuan(pendingMicro))
+      default:
+        return page.payoutGate.ready
     }
   }
 

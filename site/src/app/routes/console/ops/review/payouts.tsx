@@ -76,6 +76,7 @@ function PayoutsContent() {
   const [filter, setFilter] = useState<PayoutFilter>('all')
   const [confirming, setConfirming] = useState<{ payout: AdminPayout; action: 'approve' | 'mark-paid' } | null>(null)
   const [rejecting, setRejecting] = useState<AdminPayout | null>(null)
+  const [previewQR, setPreviewQR] = useState<{ name?: string; qrCode: string } | null>(null)
   const [reason, setReason] = useState('')
   const [reasonError, setReasonError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -165,12 +166,13 @@ function PayoutsContent() {
           />
         ) : (
           <div className="glass p-6">
-          <Table minWidth={860}>
+          <Table minWidth={940}>
             <TableHead>
               <TableRow>
                 <TableHeaderCell>{page.columns.id}</TableHeaderCell>
                 <TableHeaderCell>{page.columns.seller}</TableHeaderCell>
                 <TableHeaderCell numeric>{page.columns.amount}</TableHeaderCell>
+                <TableHeaderCell>{page.columns.payoutAccount}</TableHeaderCell>
                 <TableHeaderCell>{page.columns.createdAt}</TableHeaderCell>
                 <TableHeaderCell>{page.columns.status}</TableHeaderCell>
                 <TableHeaderCell numeric>{page.columns.actions}</TableHeaderCell>
@@ -192,6 +194,57 @@ function PayoutsContent() {
                     </TableCell>
                     <TableCell numeric className="font-medium">
                       {formatYuan(payout.amount_micro)}
+                    </TableCell>
+                    <TableCell>
+                      {payout.payout_channel === 'wechat' ? (
+                        <div className="flex flex-col gap-1 text-meta">
+                          <div className="flex items-center gap-1.5">
+                            <Tag tone="brand">微信</Tag>
+                            <span className="font-medium text-ink">{payout.payout_name || '—'}</span>
+                          </div>
+                          {payout.payout_qr_code ? (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className="mt-0.5 h-6 px-2 text-xs"
+                              onClick={() =>
+                                setPreviewQR({
+                                  name: payout.payout_name,
+                                  qrCode: payout.payout_qr_code!,
+                                })
+                              }
+                            >
+                              查看收款码
+                            </Button>
+                          ) : (
+                            <span className="text-xs text-ink-3">未上传收款码</span>
+                          )}
+                        </div>
+                      ) : payout.payout_channel === 'alipay' ? (
+                        <div className="flex flex-col gap-1 text-meta">
+                          <div className="flex items-center gap-1.5">
+                            <Tag tone="neutral">支付宝</Tag>
+                            <span className="font-medium text-ink">{payout.payout_name || '—'}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="tabular-nums text-ink-2">{payout.payout_account || '—'}</span>
+                            {payout.payout_account ? (
+                              <button
+                                type="button"
+                                className="text-xs text-brand hover:underline"
+                                onClick={() => {
+                                  void navigator.clipboard.writeText(payout.payout_account || '')
+                                  toast.show({ title: '已复制支付宝账号', tone: 'success' })
+                                }}
+                              >
+                                复制
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-meta text-ink-3">{payout.payout_account || '—'}</span>
+                      )}
                     </TableCell>
                     <TableCell className="whitespace-nowrap tabular-nums text-meta text-ink-3">
                       {formatDateTime(payout.created_at)}
@@ -275,6 +328,16 @@ function PayoutsContent() {
               <SellerId id={confirming.payout.seller_id} /> ·{' '}
               <span className="tabular-nums">{formatYuan(confirming.payout.amount_micro)}</span>
             </p>
+            <div className="rounded-md border border-line bg-white/50 p-3 text-meta text-ink-2">
+              <span className="font-medium text-ink">收款方式：</span>
+              {confirming.payout.payout_channel === 'wechat' ? (
+                <span>微信支付 ({confirming.payout.payout_name || '未填写姓名'})</span>
+              ) : confirming.payout.payout_channel === 'alipay' ? (
+                <span>支付宝 ({confirming.payout.payout_name || '未填写姓名'} - {confirming.payout.payout_account})</span>
+              ) : (
+                <span>{confirming.payout.payout_account || '—'}</span>
+              )}
+            </div>
             {actionError ? (
               <Notice tone="warning">
                 <span role="alert">{actionError}</span>
@@ -283,6 +346,29 @@ function PayoutsContent() {
           </div>
         ) : null}
       </ConfirmDialog>
+
+      <Dialog
+        open={previewQR !== null}
+        onOpenChange={(next) => {
+          if (!next) setPreviewQR(null)
+        }}
+        title={`微信收款码 · ${previewQR?.name || ''}`}
+        footer={
+          <Button variant="secondary" onClick={() => setPreviewQR(null)}>
+            {copy.pages.adminCommon.cancel}
+          </Button>
+        }
+      >
+        <div className="flex justify-center p-4">
+          {previewQR?.qrCode ? (
+            <img
+              src={previewQR.qrCode}
+              alt="微信收款码"
+              className="max-h-80 max-w-full rounded-md border border-line bg-white p-2 object-contain shadow-sm"
+            />
+          ) : null}
+        </div>
+      </Dialog>
 
       <Dialog
         open={rejecting !== null}

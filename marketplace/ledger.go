@@ -12,9 +12,9 @@ import (
 	"github.com/QuantumNous/new-api/model"
 )
 
-// DefaultMaturity is the T+7 freeze on seller income (§3.9): a seller credit
-// becomes withdrawable seven days after the request settles.
-const DefaultMaturity = 7 * 24 * time.Hour
+// DefaultMaturity is the T+3 freeze on seller income: a seller credit
+// becomes withdrawable three days after the request settles.
+const DefaultMaturity = 3 * 24 * time.Hour
 
 var (
 	// ErrSettlementConflict is returned when a request id is settled again

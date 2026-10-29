@@ -130,19 +130,18 @@ export function sellerStepIndex(progress: SellerProgress): number {
     case 'agreement':
       return 0
     case 'real_name':
-      return 1
     case 'payout_account':
-      return 2
+      return 1
     default:
-      return 3
+      return 2
   }
 }
 
 export function completedStepCount(progress: SellerProgress): number {
   let done = 0
   if (progress.agreement_signed) done += 1
-  if (progress.real_name_verified) done += 1
   if (progress.payout_account_bound) done += 1
+  if (progress.agreement_signed && progress.payout_account_bound) done += 1
   return done
 }
 

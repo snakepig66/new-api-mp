@@ -93,12 +93,11 @@ func TestCheckWithdrawalEligibility(t *testing.T) {
 	addLoginAudit(t, db, "evt-204", 204, "203.0.113.30")
 
 	assert.NoError(t, CheckWithdrawalEligibility(db, 201))
-	assert.ErrorIs(t, CheckWithdrawalEligibility(db, 202), ErrPayoutRealNameRequired)
+	assert.NoError(t, CheckWithdrawalEligibility(db, 202), "real-name verification is removed, so unverified seller is eligible")
 	assert.ErrorIs(t, CheckWithdrawalEligibility(db, 203), ErrPayoutRelatedAccounts)
 	assert.ErrorIs(t, CheckWithdrawalEligibility(db, 999), ErrPayoutNotFound)
 
-	// The gate is wired into RequestPayout: an unverified seller with enough
-	// balance is refused instead of creating a payout.
+	// An unverified seller with enough balance and a bound payout account can withdraw.
 	require.NoError(t, db.Create(&Seller{
 		UserID: 301, Status: SellerStatusActive, RealNameStatus: SellerRealNameUnverified,
 		AgreementVersion: "v1", PayoutAccount: "bound-account", CreditScore: 100,
@@ -111,8 +110,9 @@ func TestCheckWithdrawalEligibility(t *testing.T) {
 		Status:      LedgerAvailable,
 		CreatedAt:   now,
 	}).Error)
-	_, err := RequestPayout(db, 301, MinPayoutMicro, "risk-payout-1", now)
-	assert.ErrorIs(t, err, ErrPayoutRealNameRequired)
+	payout, err := RequestPayout(db, 301, MinPayoutMicro, "risk-payout-1", now)
+	assert.NoError(t, err)
+	assert.Equal(t, PayoutPending, payout.Status)
 }
 
 // TestAdminRelatedUsersEndpoint protects the admin route contract: user_id is

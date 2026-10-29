@@ -19,6 +19,7 @@ package marketplace
 
 import (
 	"cmp"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -69,9 +70,9 @@ func FindRelatedUsers(db *gorm.DB, userID int) ([]RelatedUser, error) {
 	if userID <= 0 {
 		return nil, fmt.Errorf("marketplace: invalid risk-graph user id %d", userID)
 	}
-	logDB := model.LOG_DB
+	logDB := db
 	if logDB == nil {
-		logDB = db
+		logDB = model.LOG_DB
 	}
 
 	related := make([]RelatedUser, 0)
@@ -191,23 +192,19 @@ func sharedPayoutAccountRelations(db *gorm.DB, userID int) ([]RelatedUser, error
 }
 
 // CheckWithdrawalEligibility is the hard risk gate for a withdrawal: the seller
-// must exist, have a verified real name, and share no login IP with another
-// account. It returns ErrPayoutNotFound for a missing seller so callers keep
-// RequestPayout's existing error mapping.
+// must exist, and share no login IP with another account. It returns ErrPayoutNotFound
+// for a missing seller so callers keep RequestPayout's existing error mapping.
 func CheckWithdrawalEligibility(db *gorm.DB, sellerID int64) error {
 	if db == nil {
 		return errors.New("marketplace: risk check requires a database handle")
 	}
 	var seller Seller
-	err := db.Select("user_id", "real_name_status").Where("user_id = ?", sellerID).Take(&seller).Error
+	err := db.Select("user_id").Where("user_id = ?", sellerID).Take(&seller).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ErrPayoutNotFound
 	}
 	if err != nil {
 		return fmt.Errorf("marketplace: load seller for risk check: %w", err)
-	}
-	if seller.RealNameStatus != SellerRealNameVerified {
-		return ErrPayoutRealNameRequired
 	}
 	related, err := FindRelatedUsers(db, int(sellerID))
 	if err != nil {
@@ -236,6 +233,20 @@ func linkableIP(raw string) bool {
 // maskPayoutAccount keeps only the first and last two runes, so the relation can
 // be recognized in the console without returning the bound account.
 func maskPayoutAccount(account string) string {
+	account = strings.TrimSpace(account)
+	if strings.HasPrefix(account, "{") {
+		var info struct {
+			Account string `json:"account"`
+			Name    string `json:"name"`
+		}
+		if err := json.Unmarshal([]byte(account), &info); err == nil {
+			if info.Account != "" {
+				account = info.Account
+			} else if info.Name != "" {
+				account = info.Name
+			}
+		}
+	}
 	runes := []rune(account)
 	if len(runes) <= 4 {
 		return "***"

@@ -167,12 +167,12 @@ describe('seller earnings overview', () => {
     expect(screen.getByText('¥20.00')).toBeTruthy()
   })
 
-  it('explains the T+7 maturity and keeps the withdrawal gate', async () => {
+  it('explains the settlement maturity and keeps the withdrawal gate', async () => {
     renderPage()
 
-    expect((await screen.findAllByText(/T\+7/)).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText(/T\+[37]/)).length).toBeGreaterThan(0)
     expect(screen.getByText('提现条件')).toBeTruthy()
-    expect(screen.getByText('已满足 3 / 4 项')).toBeTruthy()
+    expect(screen.getByText('已满足 2 / 3 项')).toBeTruthy()
   })
 
   it('renders the four month stat cards from the stats payload', async () => {

@@ -55,42 +55,88 @@ var (
 	ErrSellerAgreementVersion     = errors.New("marketplace: unsupported agreement version")
 	ErrSellerInvalidRealName      = errors.New("marketplace: invalid real name")
 	ErrSellerInvalidIDCardMasked  = errors.New("marketplace: id_card_masked must be a masked id number")
-	ErrSellerInvalidPayoutAccount = errors.New("marketplace: invalid alipay account")
+	ErrSellerInvalidPayoutAccount = errors.New("marketplace: invalid payout account")
 )
+
+// PayoutAccountInfo represents the structured payout method (WeChat or Alipay).
+type PayoutAccountInfo struct {
+	Channel string `json:"channel"` // "wechat" or "alipay"
+	Name    string `json:"name"`    // 姓名
+	Account string `json:"account"` // 支付宝账号（手机号或邮箱）
+	QRCode  string `json:"qr_code"` // 微信收款码（Base64 data:image/... 或 URL）
+}
+
+// ParsePayoutAccount decrypts and unmarshals the payout account data.
+func ParsePayoutAccount(storedEncrypted string) (PayoutAccountInfo, error) {
+	if strings.TrimSpace(storedEncrypted) == "" {
+		return PayoutAccountInfo{}, errors.New("empty payout account")
+	}
+	plain, err := decryptPayoutAccount(storedEncrypted)
+	if err != nil {
+		return PayoutAccountInfo{}, err
+	}
+	plain = strings.TrimSpace(plain)
+	if strings.HasPrefix(plain, "{") {
+		var info PayoutAccountInfo
+		if err := json.Unmarshal([]byte(plain), &info); err == nil && info.Channel != "" {
+			return info, nil
+		}
+	}
+	return PayoutAccountInfo{
+		Channel: "alipay",
+		Account: plain,
+	}, nil
+}
 
 // SellerOnboardingInput is the POST /seller/onboarding body (§3.1). Every
 // field is optional: a call advances whatever step the body provides and the
 // response tells the client the next step.
 type SellerOnboardingInput struct {
 	AgreementVersion string `json:"agreement_version"`
-	RealName         string `json:"real_name"`
+	RealName         string `json:"real_name"` // optional/legacy
 	IDCardMasked     string `json:"id_card_masked"` // format-checked only, never stored
-	AlipayAccount    string `json:"alipay_account"`
+	AlipayAccount    string `json:"alipay_account"` // legacy
+	PayoutChannel    string `json:"payout_channel"` // "wechat" or "alipay"
+	PayoutName       string `json:"payout_name"`    // 收款人姓名
+	PayoutAccount    string `json:"payout_account"` // 支付宝手机号
+	PayoutQRCode     string `json:"payout_qr_code"` // 微信收款码
 }
 
 // SellerProgress is the onboarding progress rendered to the frontend (§5
 // FRONTEND-REBUILD /seller onboarding wizard).
 type SellerProgress struct {
-	AgreementSigned    bool   `json:"agreement_signed"`
-	RealNameVerified   bool   `json:"real_name_verified"`
-	PayoutAccountBound bool   `json:"payout_account_bound"`
-	NextStep           string `json:"next_step"` // agreement / real_name / payout_account / done
-	AgreementVersion   string `json:"agreement_version"`
+	AgreementSigned     bool   `json:"agreement_signed"`
+	RealNameVerified    bool   `json:"real_name_verified"`
+	PayoutAccountBound  bool   `json:"payout_account_bound"`
+	NextStep            string `json:"next_step"` // agreement / payout_account / done
+	AgreementVersion    string `json:"agreement_version"`
+	PayoutChannel       string `json:"payout_channel,omitempty"`
+	PayoutName          string `json:"payout_name,omitempty"`
+	PayoutAccountMasked string `json:"payout_account_masked,omitempty"`
+	PayoutHasQRCode     bool   `json:"payout_has_qr_code,omitempty"`
 }
 
 // progress derives the wizard state from the stored row.
 func (s Seller) progress() SellerProgress {
 	p := SellerProgress{
 		AgreementSigned:    strings.TrimSpace(s.AgreementVersion) != "",
-		RealNameVerified:   s.RealNameStatus == SellerRealNameVerified,
+		RealNameVerified:   true, // 实名认证已取消
 		PayoutAccountBound: strings.TrimSpace(s.PayoutAccount) != "",
 		AgreementVersion:   s.AgreementVersion,
+	}
+	if p.PayoutAccountBound {
+		if info, err := ParsePayoutAccount(s.PayoutAccount); err == nil {
+			p.PayoutChannel = info.Channel
+			p.PayoutName = info.Name
+			if info.Channel == "alipay" {
+				p.PayoutAccountMasked = maskPayoutAccount(info.Account)
+			}
+			p.PayoutHasQRCode = info.QRCode != ""
+		}
 	}
 	switch {
 	case !p.AgreementSigned:
 		p.NextStep = "agreement"
-	case !p.RealNameVerified:
-		p.NextStep = "real_name"
 	case !p.PayoutAccountBound:
 		p.NextStep = "payout_account"
 	default:
@@ -192,14 +238,78 @@ func OnboardSeller(db *gorm.DB, userID int64, in SellerOnboardingInput, now time
 	if realName != "" {
 		s.RealNameStatus = SellerRealNameVerified
 	}
-	if alipay != "" {
-		stored, err := encryptPayoutAccount(alipay)
+
+	// Payout account binding: WeChat (QR code + Name) or Alipay (Account + Name)
+	channel := strings.TrimSpace(strings.ToLower(in.PayoutChannel))
+	payoutName := strings.TrimSpace(in.PayoutName)
+	if payoutName == "" {
+		payoutName = realName
+	}
+	payoutAccount := strings.TrimSpace(in.PayoutAccount)
+	if payoutAccount == "" {
+		payoutAccount = alipay
+	}
+	payoutQRCode := strings.TrimSpace(in.PayoutQRCode)
+
+	if channel == "" && (payoutAccount != "" || payoutQRCode != "") {
+		if payoutQRCode != "" {
+			channel = "wechat"
+		} else {
+			channel = "alipay"
+		}
+	}
+
+	if channel == "wechat" {
+		if payoutName != "" && !validRealName(payoutName) {
+			return Seller{}, SellerProgress{}, ErrSellerInvalidRealName
+		}
+		if payoutQRCode == "" {
+			return Seller{}, SellerProgress{}, ErrSellerInvalidPayoutAccount
+		}
+		info := PayoutAccountInfo{
+			Channel: "wechat",
+			Name:    payoutName,
+			QRCode:  payoutQRCode,
+		}
+		data, _ := json.Marshal(info)
+		stored, err := encryptPayoutAccount(string(data))
 		if err != nil {
 			return Seller{}, SellerProgress{}, err
 		}
-		// The plaintext never touches the row: only the AES-256-GCM blob,
-		// base64-armored so the TEXT column stays valid UTF-8 on every dialect.
 		s.PayoutAccount = stored
+		if payoutName != "" {
+			s.RealNameStatus = SellerRealNameVerified
+		}
+	} else if channel == "alipay" {
+		if payoutName != "" && !validRealName(payoutName) {
+			return Seller{}, SellerProgress{}, ErrSellerInvalidRealName
+		}
+		if payoutAccount != "" && !validAlipayAccount(payoutAccount) {
+			return Seller{}, SellerProgress{}, ErrSellerInvalidPayoutAccount
+		}
+		if payoutAccount != "" {
+			var stored string
+			var err error
+			if payoutName == "" {
+				// Legacy compatibility: plain account string
+				stored, err = encryptPayoutAccount(payoutAccount)
+			} else {
+				info := PayoutAccountInfo{
+					Channel: "alipay",
+					Name:    payoutName,
+					Account: payoutAccount,
+				}
+				data, _ := json.Marshal(info)
+				stored, err = encryptPayoutAccount(string(data))
+			}
+			if err != nil {
+				return Seller{}, SellerProgress{}, err
+			}
+			s.PayoutAccount = stored
+			if payoutName != "" {
+				s.RealNameStatus = SellerRealNameVerified
+			}
+		}
 	}
 
 	s.Status = nextSellerStatus(s)

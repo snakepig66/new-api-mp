@@ -1,9 +1,6 @@
-import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { useState } from 'react'
-import { useForm } from 'react-hook-form'
-import { z } from 'zod'
+import { useRef, useState } from 'react'
 
 import { copy } from '@/copy'
 import { cn } from '@/lib/cn'
@@ -19,62 +16,31 @@ import {
 import { Field } from '@/features/seller/components'
 import { notify } from '@/features/seller/components'
 import { sellerErrorMessage } from '@/features/seller/errors'
-import { completedStepCount, isSellerActive, sellerStepIndex } from '@/features/seller/status'
+import { isSellerActive } from '@/features/seller/status'
 
 export const Route = createFileRoute('/seller/onboarding')({
   component: SellerOnboardingPage,
 })
 
 const page = copy.pages.sellerOnboarding
-
 const namePattern = /^[\p{L} ·.\-•]{2,64}$/u
 
-const realNameSchema = z.object({
-  real_name: z
-    .string()
-    .trim()
-    .min(2, copy.pages.sellerCommon.errors.realName)
-    .refine((value) => namePattern.test(value), copy.pages.sellerCommon.errors.realName),
-  id_card_masked: z
-    .string()
-    .trim()
-    .refine((value) => {
-      if (value.length < 8 || value.length > 32) return false
-      if (!/^[0-9Xx*]+$/.test(value)) return false
-      const digits = value.replace(/[^0-9]/g, '').length
-      const stars = value.replace(/[^*]/g, '').length
-      return digits >= 4 && stars >= 4
-    }, copy.pages.sellerCommon.errors.idCard),
-})
-
-type RealNameForm = z.infer<typeof realNameSchema>
-
-const alipaySchema = z.object({
-  alipay_account: z
-    .string()
-    .trim()
-    .refine((value) => {
-      if (!value || /[ \t\r\n]/.test(value)) return false
-      const at = value.indexOf('@')
-      if (at > 0) {
-        const domain = value.slice(at + 1)
-        return (
-          at === value.lastIndexOf('@') &&
-          domain.length > 0 &&
-          domain.includes('.') &&
-          !domain.startsWith('.') &&
-          !domain.endsWith('.')
-        )
-      }
-      return /^1\d{10}$/.test(value)
-    }, copy.pages.sellerCommon.errors.alipay),
-})
-
-type AlipayForm = z.infer<typeof alipaySchema>
-
 function StepRail({ seller }: { seller: SellerIdentity }) {
-  const current = sellerStepIndex(seller.progress)
-  const done = completedStepCount(seller.progress)
+  const progress = seller.progress
+  const agreementDone = progress.agreement_signed
+  const payoutDone = progress.payout_account_bound
+  const steps = [
+    { title: page.stepTitles[0], hint: page.stepHints[0], done: agreementDone, optional: false },
+    { title: page.stepTitles[1], hint: page.stepHints[1], done: payoutDone, optional: true },
+    {
+      title: page.stepTitles[2],
+      hint: page.stepHints[2],
+      done: agreementDone && payoutDone,
+      optional: false,
+    },
+  ]
+  const done = steps.filter((step) => step.done).length
+  const current = steps.findIndex((step) => !step.done)
 
   return (
     <section aria-label={page.progress} className="mt-6 glass p-6">
@@ -83,13 +49,12 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
         <span className="tabular-nums text-meta text-ink-3">{done}/3</span>
       </div>
       <ol className="mt-5 grid gap-3 sm:grid-cols-3">
-        {page.stepTitles.map((title, index) => {
-          const completed = index < current
-          const active = index === current && current < 3
-          const optional = index > 0
+        {steps.map((step, index) => {
+          const completed = step.done
+          const active = index === current
           return (
             <li
-              key={title}
+              key={step.title}
               aria-current={active ? 'step' : undefined}
               className={cn(
                 'relative rounded-md border p-4',
@@ -128,11 +93,11 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
                     completed || active ? 'text-ink' : 'text-ink-3',
                   )}
                 >
-                  {title}
+                  {step.title}
                 </span>
-                {optional ? <Tag>{page.state.optional}</Tag> : null}
+                {step.optional ? <Tag>{page.state.optional}</Tag> : null}
               </div>
-              <p className="mt-2 text-meta leading-5 text-ink-3">{page.stepHints[index]}</p>
+              <p className="mt-2 text-meta leading-5 text-ink-3">{step.hint}</p>
               <p className="mt-1 text-meta text-ink-3">
                 {completed ? page.state.done : active ? page.state.current : page.state.todo}
               </p>
@@ -144,120 +109,256 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
   )
 }
 
-interface OptionalCardProps {
+function PayoutAccountCard({
+  seller,
+  onSubmit,
+  pending,
+  errorText,
+}: {
+  seller: SellerIdentity
   onSubmit: (input: OnboardingInput) => void
   pending: boolean
   errorText: string | null
-}
+}) {
+  const isBound = seller.progress.payout_account_bound
+  const [editing, setEditing] = useState(!isBound)
+  const [channel, setChannel] = useState<'wechat' | 'alipay'>(
+    seller.progress.payout_channel === 'alipay' ? 'alipay' : 'wechat',
+  )
+  const [name, setName] = useState(seller.progress.payout_name || '')
+  const [alipayAccount, setAlipayAccount] = useState('')
+  const [qrCode, setQrCode] = useState('')
+  const [validationError, setValidationError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-function RealNameCard({ onSubmit, pending, errorText }: OptionalCardProps) {
-  const form = useForm<RealNameForm>({
-    resolver: zodResolver(realNameSchema),
-    defaultValues: { real_name: '', id_card_masked: '' },
-    mode: 'onTouched',
-  })
-
-  return (
-    <section className="mt-6 glass p-6">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-title font-semibold tracking-tight text-ink">
-          {page.realName.title}
-        </h2>
-        <Tag>{page.state.optional}</Tag>
-      </div>
-      <form
-        className="mt-5 space-y-5"
-        onSubmit={form.handleSubmit((values) =>
-          onSubmit({
-            real_name: values.real_name,
-            id_card_masked: values.id_card_masked,
-          }),
-        )}
-      >
-        <p className="text-meta leading-6 text-ink-3">{page.realName.lead}</p>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field
-            label={page.realName.nameLabel}
-            htmlFor="real-name"
-            hint={page.realName.nameHint}
-            error={form.formState.errors.real_name?.message}
-          >
-            <Input
-              id="real-name"
-              autoComplete="name"
-              placeholder={page.realName.namePlaceholder}
-              invalid={Boolean(form.formState.errors.real_name)}
-              {...form.register('real_name')}
-            />
-          </Field>
-          <Field
-            label={page.realName.idLabel}
-            htmlFor="id-card"
-            hint={page.realName.idHint}
-            error={form.formState.errors.id_card_masked?.message}
-          >
-            <Input
-              id="id-card"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder={page.realName.idPlaceholder}
-              invalid={Boolean(form.formState.errors.id_card_masked)}
-              {...form.register('id_card_masked')}
-            />
-          </Field>
-        </div>
-
-        {errorText ? (
-          <p className="text-meta text-danger" role="alert">
-            {errorText}
-          </p>
-        ) : null}
-
-        <div className="flex justify-end border-t border-line pt-4">
-          <Button type="submit" loading={pending}>
-            {pending ? page.realName.submitting : page.realName.submit}
+  if (isBound && !editing) {
+    const isWx = seller.progress.payout_channel === 'wechat'
+    return (
+      <section className="mt-6 glass p-6">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <h2 className="text-title font-semibold tracking-tight text-ink">
+              {page.payout.title}
+            </h2>
+            <Tag tone="brand">{page.state.done}</Tag>
+          </div>
+          <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
+            {page.payout.changeAccount}
           </Button>
         </div>
-      </form>
-    </section>
-  )
-}
+        <div className="mt-4 flex flex-wrap items-center gap-4 text-meta text-ink-2">
+          <Tag tone={isWx ? 'brand' : 'neutral'}>
+            {isWx ? page.payout.channelWechat : page.payout.channelAlipay}
+          </Tag>
+          {seller.progress.payout_name ? (
+            <span>收款人：{seller.progress.payout_name}</span>
+          ) : null}
+          {isWx ? (
+            <span className="text-brand-ink">✓ 微信收款码已保存</span>
+          ) : seller.progress.payout_account_masked ? (
+            <span>账号：{seller.progress.payout_account_masked}</span>
+          ) : null}
+        </div>
+      </section>
+    )
+  }
 
-function AlipayCard({ onSubmit, pending, errorText }: OptionalCardProps) {
-  const form = useForm<AlipayForm>({
-    resolver: zodResolver(alipaySchema),
-    defaultValues: { alipay_account: '' },
-    mode: 'onTouched',
-  })
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!['image/png', 'image/jpeg', 'image/jpg', 'image/webp'].includes(file.type)) {
+      setValidationError('只支持 PNG / JPG / WEBP 格式图片')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setValidationError('收款码图片大小不能超过 5MB')
+      return
+    }
+    setValidationError(null)
+    const reader = new FileReader()
+    reader.onload = () => {
+      setQrCode(reader.result as string)
+    }
+    reader.readAsDataURL(file)
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setValidationError(null)
+    const trimmedName = name.trim()
+    if (!trimmedName || !namePattern.test(trimmedName)) {
+      setValidationError(copy.pages.sellerCommon.errors.realName)
+      return
+    }
+    if (channel === 'wechat') {
+      if (!qrCode && !seller.progress.payout_has_qr_code) {
+        setValidationError('请上传微信收款码')
+        return
+      }
+      onSubmit({
+        payout_channel: 'wechat',
+        payout_name: trimmedName,
+        payout_qr_code: qrCode || undefined,
+      })
+    } else {
+      const trimmedAccount = alipayAccount.trim()
+      if (!/^1\d{10}$/.test(trimmedAccount)) {
+        setValidationError('请输入 11 位中国大陆手机号')
+        return
+      }
+      onSubmit({
+        payout_channel: 'alipay',
+        payout_name: trimmedName,
+        payout_account: trimmedAccount,
+      })
+    }
+  }
 
   return (
     <section className="mt-6 glass p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-title font-semibold tracking-tight text-ink">{page.alipay.title}</h2>
-        <Tag>{page.state.optional}</Tag>
+        <h2 className="text-title font-semibold tracking-tight text-ink">{page.payout.title}</h2>
+        <div className="flex items-center gap-2">
+          {isBound ? (
+            <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
+              取消修改
+            </Button>
+          ) : (
+            <Tag>{page.state.optional}</Tag>
+          )}
+        </div>
       </div>
-      <form
-        className="mt-5 space-y-5"
-        onSubmit={form.handleSubmit((values) =>
-          onSubmit({ alipay_account: values.alipay_account }),
-        )}
-      >
-        <p className="text-meta leading-6 text-ink-3">{page.alipay.lead}</p>
+      <p className="mt-2 text-meta leading-6 text-ink-3">{page.payout.lead}</p>
+
+      {/* 渠道切换选项卡 */}
+      <div className="mt-5 flex gap-2 border-b border-line pb-3">
+        <button
+          type="button"
+          onClick={() => {
+            setChannel('wechat')
+            setValidationError(null)
+          }}
+          className={cn(
+            'flex items-center gap-2 rounded-md px-3.5 py-1.5 text-meta font-medium transition-colors',
+            channel === 'wechat'
+              ? 'bg-brand text-white shadow-sm'
+              : 'text-ink-2 hover:bg-white/50 hover:text-ink',
+          )}
+        >
+          <span>{page.payout.channelWechat}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setChannel('alipay')
+            setValidationError(null)
+          }}
+          className={cn(
+            'flex items-center gap-2 rounded-md px-3.5 py-1.5 text-meta font-medium transition-colors',
+            channel === 'alipay'
+              ? 'bg-brand text-white shadow-sm'
+              : 'text-ink-2 hover:bg-white/50 hover:text-ink',
+          )}
+        >
+          <span>{page.payout.channelAlipay}</span>
+        </button>
+      </div>
+
+      <form className="mt-5 space-y-5" onSubmit={handleSubmit}>
         <Field
-          label={page.alipay.accountLabel}
-          htmlFor="alipay-account"
-          hint={page.alipay.hint}
-          error={form.formState.errors.alipay_account?.message}
+          label={page.payout.nameLabel}
+          htmlFor="payout-name"
+          hint={page.payout.nameHint}
         >
           <Input
-            id="alipay-account"
-            autoComplete="off"
-            placeholder={page.alipay.accountPlaceholder}
-            invalid={Boolean(form.formState.errors.alipay_account)}
-            {...form.register('alipay_account')}
+            id="payout-name"
+            autoComplete="name"
+            placeholder={page.payout.namePlaceholder}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
           />
         </Field>
 
+        {channel === 'wechat' ? (
+          <Field
+            label={page.payout.wechatQRLabel}
+            hint={page.payout.wechatQRHint}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={handleFileChange}
+            />
+            {qrCode ? (
+              <div className="flex items-center gap-4">
+                <div className="relative h-32 w-32 overflow-hidden rounded-lg border border-line bg-white/70 p-1">
+                  <img
+                    src={qrCode}
+                    alt="微信收款码预览"
+                    className="h-full w-full object-contain"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    {page.payout.reuploadPrompt}
+                  </Button>
+                  <p className="text-meta text-ink-3">已选定新收款码图片</p>
+                </div>
+              </div>
+            ) : (
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-line p-6 transition-colors hover:border-brand/60 hover:bg-brand-soft/20"
+              >
+                <svg
+                  className="h-8 w-8 text-ink-3"
+                  stroke="currentColor"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="1.5"
+                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                  />
+                </svg>
+                <span className="mt-2 text-meta font-medium text-ink-2">
+                  {page.payout.uploadPrompt}
+                </span>
+                <span className="mt-1 text-meta text-ink-3">支持 PNG、JPG、WEBP 格式，最大 5MB</span>
+              </div>
+            )}
+          </Field>
+        ) : (
+          <Field
+            label={page.payout.alipayAccountLabel}
+            htmlFor="alipay-account"
+            hint={page.payout.alipayAccountHint}
+          >
+            <Input
+              id="alipay-account"
+              autoComplete="tel"
+              placeholder={page.payout.alipayAccountPlaceholder}
+              value={alipayAccount}
+              onChange={(e) => setAlipayAccount(e.target.value)}
+            />
+          </Field>
+        )}
+
+        {validationError ? (
+          <p className="text-meta text-danger" role="alert">
+            {validationError}
+          </p>
+        ) : null}
+
         {errorText ? (
           <p className="text-meta text-danger" role="alert">
             {errorText}
@@ -266,7 +367,7 @@ function AlipayCard({ onSubmit, pending, errorText }: OptionalCardProps) {
 
         <div className="flex justify-end border-t border-line pt-4">
           <Button type="submit" loading={pending}>
-            {pending ? page.alipay.submitting : page.alipay.submit}
+            {pending ? page.payout.submitting : page.payout.submit}
           </Button>
         </div>
       </form>
@@ -274,29 +375,7 @@ function AlipayCard({ onSubmit, pending, errorText }: OptionalCardProps) {
   )
 }
 
-function OptionalDone({ label }: { label: string }) {
-  return (
-    <div className="mt-3 flex items-center gap-2 text-meta text-ink-3">
-      <span
-        className="grid h-4 w-4 place-items-center rounded-full bg-brand-soft text-brand-ink"
-        aria-hidden="true"
-      >
-        <svg width="9" height="9" viewBox="0 0 12 12" fill="none">
-          <path
-            d="M2.5 6.2l2.2 2.2 4.8-5"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </span>
-      {label}
-    </div>
-  )
-}
-
-function SellerOnboardingPage() {
+export function SellerOnboardingPage() {
   const toast = useToast()
   const queryClient = useQueryClient()
   const { data } = useQuery(meQuery())
@@ -373,21 +452,12 @@ function SellerOnboardingPage() {
 
               <p className="mt-4 text-meta text-ink-3">{page.optionalHint}</p>
 
-              {seller.progress.real_name_verified ? (
-                <OptionalDone label={page.realName.done} />
-              ) : (
-                <RealNameCard
-                  onSubmit={submit}
-                  pending={mutation.isPending}
-                  errorText={errorText}
-                />
-              )}
-
-              {seller.progress.payout_account_bound ? (
-                <OptionalDone label={page.alipay.done} />
-              ) : (
-                <AlipayCard onSubmit={submit} pending={mutation.isPending} errorText={errorText} />
-              )}
+              <PayoutAccountCard
+                seller={seller}
+                onSubmit={submit}
+                pending={mutation.isPending}
+                errorText={errorText}
+              />
             </>
           ) : (
             <section className="mt-6 glass p-6">

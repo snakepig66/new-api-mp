@@ -437,8 +437,8 @@ func TestSellerOnboardingFlow(t *testing.T) {
 	}, userID)
 	require.Equal(t, http.StatusBadRequest, w.Code)
 
-	// 2. Correct agreement → active immediately (open sharing); real-name and
-	// payout onboarding stay as optional nudges for withdrawal.
+	// 2. Correct agreement → active immediately (open sharing); real-name is
+	// removed, so next_step is payout_account.
 	w = f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
 		"agreement_version": CurrentSellerAgreementVersion,
 	}, userID)
@@ -446,7 +446,7 @@ func TestSellerOnboardingFlow(t *testing.T) {
 	seller := onboardingSellerView(t, w)
 	assert.Equal(t, true, seller["exists"])
 	assert.Equal(t, SellerStatusActive, seller["status"])
-	assert.Equal(t, "real_name", seller["progress"].(map[string]any)["next_step"])
+	assert.Equal(t, "payout_account", seller["progress"].(map[string]any)["next_step"])
 
 	// 3. Real name alone advances the optional rail without touching activation.
 	w = f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
@@ -508,6 +508,60 @@ func TestSellerOnboardingFlow(t *testing.T) {
 	meSeller = data["seller"].(map[string]any)
 	assert.Equal(t, false, meSeller["exists"])
 	assert.Equal(t, "agreement", meSeller["progress"].(map[string]any)["next_step"])
+}
+
+func TestSellerOnboardingWechatAndAlipay(t *testing.T) {
+	f := newSellerAPIFixture(t)
+	userID := int(f.buyerID)
+
+	// Sign agreement
+	w := f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
+		"agreement_version": CurrentSellerAgreementVersion,
+	}, userID)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// Bind WeChat payout
+	w = f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
+		"payout_channel": "wechat",
+		"payout_name":    "李四",
+		"payout_qr_code": "data:image/png;base64,fake-qr-code",
+	}, userID)
+	require.Equal(t, http.StatusOK, w.Code)
+	seller := onboardingSellerView(t, w)
+	progress := seller["progress"].(map[string]any)
+	assert.Equal(t, "done", progress["next_step"])
+	assert.Equal(t, "wechat", progress["payout_channel"])
+	assert.Equal(t, "李四", progress["payout_name"])
+	assert.Equal(t, true, progress["payout_has_qr_code"])
+
+	// Parse stored account
+	var row Seller
+	require.NoError(t, f.db.Where("user_id = ?", f.buyerID).Take(&row).Error)
+	info, err := ParsePayoutAccount(row.PayoutAccount)
+	require.NoError(t, err)
+	assert.Equal(t, "wechat", info.Channel)
+	assert.Equal(t, "李四", info.Name)
+	assert.Equal(t, "data:image/png;base64,fake-qr-code", info.QRCode)
+
+	// Switch to Alipay
+	w = f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
+		"payout_channel": "alipay",
+		"payout_name":    "王五",
+		"payout_account": "13912345678",
+	}, userID)
+	require.Equal(t, http.StatusOK, w.Code)
+	seller = onboardingSellerView(t, w)
+	progress = seller["progress"].(map[string]any)
+	assert.Equal(t, "done", progress["next_step"])
+	assert.Equal(t, "alipay", progress["payout_channel"])
+	assert.Equal(t, "王五", progress["payout_name"])
+
+	require.NoError(t, f.db.Where("user_id = ?", f.buyerID).Take(&row).Error)
+	info, err = ParsePayoutAccount(row.PayoutAccount)
+	require.NoError(t, err)
+	assert.Equal(t, "alipay", info.Channel)
+	assert.Equal(t, "王五", info.Name)
+	assert.Equal(t, "13912345678", info.Account)
 }
 
 func onboardingSellerView(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
@@ -575,7 +629,7 @@ func TestPayoutRequiresBoundAccount(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	seller := onboardingSellerView(t, w)
 	assert.Equal(t, SellerStatusActive, seller["status"])
-	assert.Equal(t, "real_name", seller["progress"].(map[string]any)["next_step"])
+	assert.Equal(t, "done", seller["progress"].(map[string]any)["next_step"])
 
 	w = f.do(t, http.MethodPost, "/api/marketplace/seller/payouts", map[string]any{
 		"amount_micro": 50_000_000, "idempotency_key": "no-account-payout-2",

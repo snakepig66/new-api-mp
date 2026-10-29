@@ -8,12 +8,12 @@
  * Nothing here invents a backend field.
  */
 
-export const MIN_PAYOUT_MICRO = 50_000_000n
+export const MIN_PAYOUT_MICRO = 10_000_000n
 
-export type PayoutGateStepId = 'real_name' | 'alipay' | 'minimum' | 't7'
+export type PayoutGateStepId = 'payout_account' | 'minimum' | 't3' | 'real_name' | 'alipay' | 't7'
 
 export interface PayoutGateInput {
-  realNameVerified: boolean
+  realNameVerified?: boolean
   payoutAccountBound: boolean
   availableMicro: number | string
   pendingMicro: number | string
@@ -29,7 +29,7 @@ export interface PayoutGateState {
   doneCount: number
   total: number
   ready: boolean
-  /** Micro-yuan still missing to reach the ¥50 minimum (0 when met). */
+  /** Micro-yuan still missing to reach the ¥10 minimum (0 when met). */
   missingMicro: bigint
 }
 
@@ -47,10 +47,9 @@ export function payoutGateState(input: PayoutGateInput): PayoutGateState {
   const minimumDone = available >= MIN_PAYOUT_MICRO
   const missing = minimumDone ? 0n : MIN_PAYOUT_MICRO - available
   const steps: PayoutGateStep[] = [
-    { id: 'real_name', done: input.realNameVerified },
-    { id: 'alipay', done: input.payoutAccountBound },
+    { id: 'payout_account', done: input.payoutAccountBound },
     { id: 'minimum', done: minimumDone },
-    { id: 't7', done: pending <= 0n },
+    { id: 't3', done: pending <= 0n },
   ]
   const doneCount = steps.filter((step) => step.done).length
   return {

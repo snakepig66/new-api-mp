@@ -1538,6 +1538,10 @@ type sellerOnboardingRequest struct {
 	RealName         string `json:"real_name"`
 	IDCardMasked     string `json:"id_card_masked"`
 	AlipayAccount    string `json:"alipay_account"`
+	PayoutChannel    string `json:"payout_channel"`
+	PayoutName       string `json:"payout_name"`
+	PayoutAccount    string `json:"payout_account"`
+	PayoutQRCode     string `json:"payout_qr_code"`
 }
 
 // sellerIdentityView is the seller block of GET /me and the onboarding
@@ -1559,8 +1563,8 @@ func sellerIdentityViewOf(s Seller, exists bool) sellerIdentityView {
 	return sellerIdentityView{Exists: true, Status: s.Status, Progress: s.progress()}
 }
 
-// postSellerOnboarding serves POST /seller/onboarding — the §3.1 state machine
-// 协议 → 实名 → 支付宝. A partial body advances only the provided steps; the
+// postSellerOnboarding serves POST /seller/onboarding — the state machine
+// 协议 → 绑定收款账户. A partial body advances only the provided steps; the
 // response carries the progress and the next step.
 func postSellerOnboarding(c *gin.Context) {
 	sellerID, ok := sellerUserID(c)
@@ -1581,6 +1585,10 @@ func postSellerOnboarding(c *gin.Context) {
 		RealName:         req.RealName,
 		IDCardMasked:     req.IDCardMasked,
 		AlipayAccount:    req.AlipayAccount,
+		PayoutChannel:    req.PayoutChannel,
+		PayoutName:       req.PayoutName,
+		PayoutAccount:    req.PayoutAccount,
+		PayoutQRCode:     req.PayoutQRCode,
 	}, time.Now())
 	if err != nil {
 		status, msg := sellerOnboardingStatus(err)
