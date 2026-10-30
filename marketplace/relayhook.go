@@ -494,9 +494,19 @@ func (s *RelaySession) endRelay(c *gin.Context) {
 	s.handBackProbe(false)
 }
 
-// ConvergeOutwardError preserves the upstream relay error without collapsing or
-// masking its status code or message, aligning with native New-API behavior.
+// ConvergeOutwardError passes the upstream error body through (native
+// New-API behaviour, upstream addresses are masked by ToOpenAIError) but
+// converges the status code: an upstream 401/403 means the seller's key or
+// account is bad, not the buyer's, so it becomes 503. Clients such as the
+// OpenAI SDK treat 401 as "your key is invalid" and stop retrying.
 func ConvergeOutwardError(apiErr *types.NewAPIError) *types.NewAPIError {
+	if apiErr == nil {
+		return nil
+	}
+	switch apiErr.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		apiErr.StatusCode = http.StatusServiceUnavailable
+	}
 	return apiErr
 }
 
@@ -1029,7 +1039,10 @@ func keyModelCapMilli(db *gorm.DB, tokenID int, modelName string) (int64, error)
 		return 0, ErrModelNotAddedToKey
 	}
 	var count int64
-	if countErr := db.Model(&KeyModel{}).Where("token_id = ?", tokenID).Count(&count).Error; countErr == nil && count > 0 {
+	if countErr := db.Model(&KeyModel{}).Where("token_id = ?", tokenID).Count(&count).Error; countErr != nil {
+		return 0, countErr
+	}
+	if count > 0 {
 		return 0, ErrModelNotAddedToKey
 	}
 
@@ -2298,10 +2311,45 @@ func vendorToolCountsReadable(vendor string) bool {
 	return false
 }
 
-// StripInboundServerTools is a no-op to align with native New-API behavior:
-// client requests are preserved as-is and server tools are never silently stripped.
+// StripInboundServerTools removes server-side search/fetch tools from the raw
+// inbound body before any parsing or format conversion (§3.4) when the
+// current vendor's tool counts are not billable-readable. The stripped body
+// replaces the cached body storage so every later parse (validation,
+// conversion, pass-through) sees the stripped form; the event folds into the
+// retry chain. No-op for non-marketplace requests.
 func StripInboundServerTools(c *gin.Context) {
-	// No-op: client request tools are transparently forwarded.
+	s := CurrentRelaySession(c)
+	if s == nil {
+		return
+	}
+	if vendorToolCountsReadable(s.CurrentListing().Vendor) {
+		return
+	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil || storage == nil {
+		return
+	}
+	body, err := storage.Bytes()
+	if err != nil || len(body) == 0 {
+		return
+	}
+	stripped, removed, err := StripServerToolsFromRawRequest(body)
+	if err != nil || removed == 0 {
+		return
+	}
+	newStorage, err := common.CreateBodyStorage(stripped)
+	if err != nil {
+		common.SysError(common.LogText("marketplace: rebuild stripped body storage: %s", err.Error()))
+		return
+	}
+	c.Set(common.KeyBodyStorage, newStorage)
+	c.Request.Body = newStorage
+	_ = storage.Close()
+
+	s.mu.Lock()
+	s.strippedTools += removed
+	s.mu.Unlock()
+	s.addHop(HopEventStripTools, fmt.Sprintf("removed=%d", removed))
 }
 
 // ---------------------------------------------------------------------------
