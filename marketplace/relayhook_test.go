@@ -786,17 +786,26 @@ func TestStripInboundServerTools(t *testing.T) {
 	StripInboundServerTools(c)
 
 	s := CurrentRelaySession(c)
-	assert.Equal(t, 0, s.StrippedTools(), "tools are preserved transparently")
+	assert.Equal(t, 1, s.StrippedTools())
 	storage, gerr := common.GetBodyStorage(c)
 	require.NoError(t, gerr)
-	raw, berr := storage.Bytes()
+	stripped, berr := storage.Bytes()
 	require.NoError(t, berr)
-	assert.Contains(t, string(raw), "web_search", "web_search is preserved without stripping")
-	assert.Contains(t, string(raw), "get_weather")
+	assert.NotContains(t, string(stripped), "web_search")
+	assert.Contains(t, string(stripped), "get_weather")
 
-	// Idempotent: second pass still preserves tools.
+	// The strip event folds into the retry chain (§3.8).
+	found := false
+	for _, h := range s.HopEvents() {
+		if h.Event == HopEventStripTools {
+			found = true
+		}
+	}
+	assert.True(t, found)
+
+	// Idempotent: a second pass finds nothing to strip.
 	StripInboundServerTools(c)
-	assert.Equal(t, 0, s.StrippedTools())
+	assert.Equal(t, 1, s.StrippedTools())
 }
 
 func TestStripInboundServerToolsNoSession(t *testing.T) {
@@ -1591,4 +1600,21 @@ func TestReselectChannelReleasesFreezeDifference(t *testing.T) {
 	assert.Equal(t, int(expected.TotalDebit), frozenAfter)
 	assert.Less(t, frozenAfter, frozenBefore, "the cheaper quote released the difference")
 	assert.Equal(t, quotaBefore+(frozenBefore-frozenAfter), buyerQuota(t, int64(f.buyerID)))
+}
+
+func TestConvergeOutwardErrorMapsSellerAuthTo503(t *testing.T) {
+	cases := map[int]int{
+		http.StatusUnauthorized:        http.StatusServiceUnavailable,
+		http.StatusForbidden:           http.StatusServiceUnavailable,
+		http.StatusTooManyRequests:     http.StatusTooManyRequests,
+		http.StatusBadRequest:          http.StatusBadRequest,
+		http.StatusInternalServerError: http.StatusInternalServerError,
+	}
+	for in, want := range cases {
+		e := types.NewErrorWithStatusCode(errors.New("upstream says boom"), types.ErrorCodeBadResponseStatusCode, in)
+		got := ConvergeOutwardError(e)
+		assert.Equal(t, want, got.StatusCode, "status %d", in)
+		assert.Contains(t, got.Error(), "upstream says boom", "error text passes through")
+	}
+	assert.Nil(t, ConvergeOutwardError(nil))
 }

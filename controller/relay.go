@@ -100,7 +100,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			service.RecordRequestPolicyTermination(c, newAPIError)
 			logger.LogError(c, common.LogText("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			if marketplace.IsRelayRequest(c) {
-				// MP-HOOK: Raw pass-through of upstream status codes and JSON error messages (native New-API behavior).
+				// MP-HOOK: upstream error text passes through (native New-API); an upstream 401/403 (seller key) is converged to 503.
 				newAPIError = marketplace.ConvergeOutwardError(newAPIError)
 			}
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
@@ -129,7 +129,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}()
 
-	// MP-HOOK: marketplace inbound server tools are preserved transparently (native New-API behavior)
+	// MP-HOOK: strip server search/fetch tools for vendors whose tool counts cannot be billed (§3.4)
 	marketplace.StripInboundServerTools(c)
 	request, err := helper.GetAndValidateRequest(c, relayFormat)
 	if err != nil {
