@@ -217,6 +217,7 @@ func TestBeginDistributeNotMarketplace(t *testing.T) {
 func TestBeginDistributeModelNotAdded(t *testing.T) {
 	f := newRelayFixture(t, 0)
 	f.addListing(t, 500)
+	require.NoError(t, f.db.Create(&KeyPref{TokenID: 77, ModelScope: ModelScopeSelected}).Error)
 	c := f.newRelayContext(t, []byte(`{"model":"deepseek-flash"}`))
 
 	// The model has live listings but the key never added it → 400 (§3.6).
@@ -225,6 +226,18 @@ func TestBeginDistributeModelNotAdded(t *testing.T) {
 	assert.True(t, handled)
 	assert.Equal(t, http.StatusBadRequest, status)
 	assert.Contains(t, err.Error(), "not added to this key")
+}
+
+func TestBeginDistributeDefaultKeyAllowsAllModels(t *testing.T) {
+	f := newRelayFixture(t, 10_000_000)
+	f.addListing(t, 500)
+	// Default token with NO KeyPref and NO KeyModel:
+	c := f.newRelayContext(t, []byte(`{"model":"deepseek-flash"}`))
+	ch, handled, status, err := BeginDistribute(c, "deepseek-flash")
+	require.NoError(t, err)
+	assert.True(t, handled)
+	assert.Equal(t, 0, status)
+	assert.NotNil(t, ch)
 }
 
 func TestBeginDistributeSelectsAndPins(t *testing.T) {
@@ -773,26 +786,17 @@ func TestStripInboundServerTools(t *testing.T) {
 	StripInboundServerTools(c)
 
 	s := CurrentRelaySession(c)
-	assert.Equal(t, 1, s.StrippedTools())
+	assert.Equal(t, 0, s.StrippedTools(), "tools are preserved transparently")
 	storage, gerr := common.GetBodyStorage(c)
 	require.NoError(t, gerr)
-	stripped, berr := storage.Bytes()
+	raw, berr := storage.Bytes()
 	require.NoError(t, berr)
-	assert.NotContains(t, string(stripped), "web_search")
-	assert.Contains(t, string(stripped), "get_weather")
+	assert.Contains(t, string(raw), "web_search", "web_search is preserved without stripping")
+	assert.Contains(t, string(raw), "get_weather")
 
-	// The strip event folds into the retry chain (§3.8).
-	found := false
-	for _, h := range s.HopEvents() {
-		if h.Event == HopEventStripTools {
-			found = true
-		}
-	}
-	assert.True(t, found)
-
-	// Idempotent: a second pass finds nothing to strip.
+	// Idempotent: second pass still preserves tools.
 	StripInboundServerTools(c)
-	assert.Equal(t, 1, s.StrippedTools())
+	assert.Equal(t, 0, s.StrippedTools())
 }
 
 func TestStripInboundServerToolsNoSession(t *testing.T) {

@@ -301,7 +301,7 @@ func TestPromoteAvailable(t *testing.T) {
 	require.NoError(t, PostSettlement(db, s))
 	sellerAccount := SellerAccount(s.SellerUserID)
 
-	n, err := PromoteAvailable(db, s.Now.Add(6*24*time.Hour))
+	n, err := PromoteAvailable(db, s.Now.Add(DefaultMaturity-24*time.Hour))
 	require.NoError(t, err)
 	assert.Zero(t, n, "one day before maturity nothing may be promoted")
 
@@ -310,9 +310,9 @@ func TestPromoteAvailable(t *testing.T) {
 	assert.Equal(t, Micro(0), avail)
 	assert.Equal(t, Micro(wantCredit), pending)
 
-	n, err = PromoteAvailable(db, s.Now.Add(7*24*time.Hour))
+	n, err = PromoteAvailable(db, s.Now.Add(DefaultMaturity))
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), n, "at exactly Now+7d the credit matures")
+	assert.Equal(t, int64(1), n, "at exactly Now+DefaultMaturity the credit matures")
 
 	seller := rowByType(t, rowsOfRequest(t, db, s.RequestID), EntrySellerCredit)
 	assert.Equal(t, LedgerAvailable, seller.Status)

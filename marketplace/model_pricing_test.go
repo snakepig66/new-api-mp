@@ -49,7 +49,9 @@ func TestModelPriceDecreaseIsImmediate(t *testing.T) {
 
 func TestModelPriceIncreaseIsStagedAndPromoted(t *testing.T) {
 	db, listing := pricingFixture(t, 400)
-	now := time.Now()
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	now := time.Date(2026, 10, 24, 10, 0, 0, 0, loc)
 	rows, err := SetListingModelsState(db, listing.ID, listing.SellerID,
 		[]string{"deepseek-flash"}, ModelStateInput{MultiplierMilli: int64Ptr(600)}, now)
 	require.NoError(t, err)

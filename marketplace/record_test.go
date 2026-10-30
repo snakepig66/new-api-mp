@@ -180,7 +180,7 @@ func TestSettleRelaySuccess(t *testing.T) {
 	require.NotNil(t, credit)
 	assert.Equal(t, LedgerPending, credit.Status)
 	require.NotNil(t, credit.AvailableAt)
-	assert.True(t, credit.AvailableAt.After(time.Now().Add(6*24*time.Hour)))
+	assert.True(t, credit.AvailableAt.After(time.Now().Add(DefaultMaturity-24*time.Hour)))
 
 	// Concurrency slot released at request end (§3.5).
 	assert.Equal(t, 0, f.selector.Slots.InFlight(l.ID))

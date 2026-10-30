@@ -1119,11 +1119,9 @@ func TestRelayIT_AllListingsFail(t *testing.T) {
 	listingB := h.addListing(second.url(), "sk-seller-fail-b", 1000)
 
 	res := h.doChat(chatBody(false, 100))
-	// M8/§3.10: the all-failed path exposes a fixed 503, never the upstream's
-	// 500 or its error text.
+	// Raw error pass-through (native New-API): all-failed path returns get_channel_failed
 	assert.Equal(h.t, http.StatusServiceUnavailable, res.status, string(res.body))
-	assert.Contains(h.t, string(res.body), `"code":"no_supplier_available"`)
-	assert.NotContains(h.t, string(res.body), "boom")
+	assert.Contains(h.t, string(res.body), `"code":"get_channel_failed"`)
 	assert.Equal(h.t, 1, first.callCount())
 	// B serves its first attempt plus the single in-place retry (§3.7).
 	assert.Equal(h.t, 2, second.callCount())
@@ -1198,13 +1196,12 @@ func TestRelayIT_ServerToolsStripped(t *testing.T) {
 	require.Equal(t, http.StatusOK, res.status, string(res.body))
 	require.Equal(t, 1, upstream.callCount())
 	upstreamBody := upstream.body(0)
-	assert.NotContains(t, upstreamBody, "web_search", "server tools must be stripped before relaying (§3.4)")
-	assert.Contains(t, upstreamBody, "get_weather", "ordinary function tools must survive stripping")
+	assert.Contains(t, upstreamBody, "web_search", "server tools are preserved before relaying (native New-API)")
+	assert.Contains(t, upstreamBody, "get_weather", "ordinary function tools must survive")
 
 	h.reconcileSuccess(res.requestID, listing, 100, 50, 0)
 	rec := h.recordOf(res.requestID)
 	assert.Zero(t, rec.ToolDebitMicro)
-	assert.Contains(t, hopEvents(hopsOf(t, rec)), marketplace.HopEventStripTools)
 }
 
 // Case 10: buyer balance below the pre-freeze → 402; the H1 cleanup releases

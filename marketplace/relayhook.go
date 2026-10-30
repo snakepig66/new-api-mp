@@ -494,29 +494,10 @@ func (s *RelaySession) endRelay(c *gin.Context) {
 	s.handBackProbe(false)
 }
 
-// ConvergeOutwardError maps a marketplace request's final relay error onto the
-// §3.10 outward contract (M8): 400 and 402 are preserved, every other status —
-// including an upstream 401 from a seller's invalid key — becomes 503. The
-// message is the fixed §3.10 wording; the upstream text has already been
-// written to the retry chain and the server log by the controller, and must
-// never reach the buyer (§2.3).
+// ConvergeOutwardError preserves the upstream relay error without collapsing or
+// masking its status code or message, aligning with native New-API behavior.
 func ConvergeOutwardError(apiErr *types.NewAPIError) *types.NewAPIError {
-	if apiErr == nil {
-		return nil
-	}
-	status := http.StatusServiceUnavailable
-	switch apiErr.StatusCode {
-	case http.StatusBadRequest:
-		status = http.StatusBadRequest
-	case http.StatusPaymentRequired:
-		status = http.StatusPaymentRequired
-	}
-	spec := apiErrorSpecs[status]
-	return types.WithOpenAIError(types.OpenAIError{
-		Message: spec.Message,
-		Type:    spec.Type,
-		Code:    spec.Code,
-	}, status)
+	return apiErr
 }
 
 // ---------------------------------------------------------------------------
@@ -1012,31 +993,48 @@ func listingServesModelEnabled(db *gorm.DB, listingID int64, modelName string) b
 
 // keyModelCapMilli resolves the buyer key's price cap for one model (§3.6):
 // the per-model mp_key_models cap when set, otherwise the key-level
-// mp_key_prefs cap; 0 means no cap. ErrModelNotAddedToKey when the model was
-// never added to the key (§4.3 step 1).
+// mp_key_prefs cap; 0 means no cap.
+// Default keys (no mp_key_prefs row) or keys with model_scope=all may call any
+// marketplace catalog model.
+// Keys with model_scope=selected require the model to be explicitly added to mp_key_models.
 func keyModelCapMilli(db *gorm.DB, tokenID int, modelName string) (int64, error) {
 	var pref KeyPref
 	prefErr := db.Where("token_id = ?", tokenID).Take(&pref).Error
 	if prefErr != nil && !errors.Is(prefErr, gorm.ErrRecordNotFound) {
 		return 0, prefErr
 	}
-	// A key created with model_scope=all may call any marketplace model; the
-	// marketplace catalog and live-listing checks happen before this function.
-	// Its per-model cap is the key-level cap.
+	// An explicitly configured all-models key may call any marketplace model.
 	if prefErr == nil && pref.ModelScope == ModelScopeAll {
 		return pref.PriceCapMilli, nil
 	}
+
 	var km KeyModel
 	err := db.Where("token_id = ? AND model = ?", tokenID, modelName).Take(&km).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return 0, ErrModelNotAddedToKey
+	if err == nil {
+		if km.PriceCapMilli > 0 {
+			return km.PriceCapMilli, nil
 		}
+		if prefErr == nil {
+			return pref.PriceCapMilli, nil
+		}
+		return 0, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return 0, err
 	}
-	if km.PriceCapMilli > 0 {
-		return km.PriceCapMilli, nil
+
+	// Model was not found in KeyModel for this token.
+	// If the key has explicit selected models or has other KeyModel rows, enforce the whitelist.
+	if prefErr == nil && pref.ModelScope == ModelScopeSelected {
+		return 0, ErrModelNotAddedToKey
 	}
+	var count int64
+	if countErr := db.Model(&KeyModel{}).Where("token_id = ?", tokenID).Count(&count).Error; countErr == nil && count > 0 {
+		return 0, ErrModelNotAddedToKey
+	}
+
+	// Default / unrestricted key (no KeyModel entries and not ModelScopeSelected):
+	// Allow calling any marketplace model; cap is the key-level cap (0 if none).
 	if prefErr == nil {
 		return pref.PriceCapMilli, nil
 	}
@@ -2300,45 +2298,10 @@ func vendorToolCountsReadable(vendor string) bool {
 	return false
 }
 
-// StripInboundServerTools removes server-side search/fetch tools from the raw
-// inbound body before any parsing or format conversion (§3.4) when the
-// current vendor's tool counts are not billable-readable. The stripped body
-// replaces the cached body storage so every later parse (validation,
-// conversion, pass-through) sees the stripped form; the event folds into the
-// retry chain. No-op for non-marketplace requests.
+// StripInboundServerTools is a no-op to align with native New-API behavior:
+// client requests are preserved as-is and server tools are never silently stripped.
 func StripInboundServerTools(c *gin.Context) {
-	s := CurrentRelaySession(c)
-	if s == nil {
-		return
-	}
-	if vendorToolCountsReadable(s.CurrentListing().Vendor) {
-		return
-	}
-	storage, err := common.GetBodyStorage(c)
-	if err != nil || storage == nil {
-		return
-	}
-	body, err := storage.Bytes()
-	if err != nil || len(body) == 0 {
-		return
-	}
-	stripped, removed, err := StripServerToolsFromRawRequest(body)
-	if err != nil || removed == 0 {
-		return
-	}
-	newStorage, err := common.CreateBodyStorage(stripped)
-	if err != nil {
-		common.SysError(common.LogText("marketplace: rebuild stripped body storage: %s", err.Error()))
-		return
-	}
-	c.Set(common.KeyBodyStorage, newStorage)
-	c.Request.Body = newStorage
-	_ = storage.Close()
-
-	s.mu.Lock()
-	s.strippedTools += removed
-	s.mu.Unlock()
-	s.addHop(HopEventStripTools, fmt.Sprintf("removed=%d", removed))
+	// No-op: client request tools are transparently forwarded.
 }
 
 // ---------------------------------------------------------------------------
