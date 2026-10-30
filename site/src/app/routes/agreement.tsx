@@ -11,7 +11,7 @@ function AgreementPage() {
   const page = copy.pages.agreement
 
   return (
-    <div className="mx-auto max-w-[1180px] px-5 py-10">
+    <div className="mx-auto max-w-[1200px] px-5 py-10">
       <PageHeader title={page.title} />
       <article className="mt-8 max-w-2xl space-y-4 text-body leading-7 text-ink-2">
         <p>{page.placeholder}</p>

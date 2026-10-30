@@ -674,11 +674,11 @@ function ScopeButton({
       type="button"
       aria-pressed={active}
       onClick={onClick}
-      className={
+      className={`rounded-sm px-3 py-1.5 text-meta font-medium transition-colors ${
         active
-          ? 'rounded-sm bg-white/90 px-3 py-1.5 text-meta font-medium text-brand-ink shadow-sm'
-          : 'rounded-sm px-3 py-1.5 text-meta text-ink-3 hover:text-ink'
-      }
+          ? 'bg-white/90 text-brand-ink shadow-sm'
+          : 'text-ink-3 hover:text-ink'
+      }`}
     >
       {label}
     </button>

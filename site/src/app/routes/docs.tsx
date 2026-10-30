@@ -351,7 +351,7 @@ export function DocsPage() {
   }, [])
 
   return (
-    <div className="mx-auto w-full max-w-[1240px] px-5 py-12 sm:px-6 sm:py-16">
+    <div className="mx-auto w-full max-w-[1200px] px-5 py-12 sm:px-6 sm:py-16">
       <header>
         <h1 className="text-h1 font-semibold leading-tight tracking-tight text-ink">
           {docs.title}

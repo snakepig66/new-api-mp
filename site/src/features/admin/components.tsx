@@ -275,9 +275,9 @@ export function FilterTabs<T extends string>({
             aria-selected={active}
             onClick={() => onChange(option.value)}
             className={cn(
-              'inline-flex h-9 shrink-0 items-center rounded-full px-3.5 text-body transition-colors',
+              'inline-flex h-9 shrink-0 items-center rounded-full px-3.5 text-body font-medium transition-colors',
               active
-                ? 'bg-brand-soft font-medium text-brand-ink'
+                ? 'bg-brand-soft text-brand-ink'
                 : 'text-ink-2 hover:bg-brand/[0.06] hover:text-ink',
             )}
           >

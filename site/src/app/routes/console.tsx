@@ -92,7 +92,7 @@ function ConsoleLayout() {
 
         <main
           ref={mainRef}
-          className="min-w-0 flex-1 px-5 py-8 sm:px-8 lg:h-full lg:overflow-y-auto lg:overscroll-contain lg:px-10 lg:py-10"
+          className="min-w-0 flex-1 px-5 py-8 sm:px-8 lg:h-full lg:overflow-y-auto lg:overscroll-contain [scrollbar-gutter:stable] lg:px-10 lg:py-10"
         >
           <div className="mx-auto w-full max-w-[1040px]">
             <Outlet />

@@ -77,8 +77,8 @@ function MobileNavItem({
       to={to}
       onClick={onNavigate}
       className={cn(
-        'flex h-11 items-center rounded-full px-4 text-body transition-colors',
-        active ? 'bg-brand-soft/70 font-medium text-brand-ink' : 'text-ink-2 hover:bg-white/60 hover:text-ink',
+        'flex h-11 items-center rounded-full px-4 text-body font-medium transition-colors',
+        active ? 'bg-brand-soft/70 text-brand-ink' : 'text-ink-2 hover:bg-white/60 hover:text-ink',
       )}
     >
       {label}

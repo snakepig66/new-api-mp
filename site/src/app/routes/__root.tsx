@@ -106,7 +106,7 @@ export function RouteErrorComponent({ error }: ErrorComponentProps) {
 
 function NotFoundPage() {
   return (
-    <div className="mx-auto max-w-[1180px] px-5 py-16">
+    <div className="mx-auto max-w-[1200px] px-5 py-16">
       <Empty
         title={copy.pages.notFound.title}
         reason={copy.pages.notFound.reason}

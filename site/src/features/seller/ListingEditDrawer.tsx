@@ -932,9 +932,9 @@ export function ListingEditDrawer({
               aria-current={activeSection === key ? 'true' : undefined}
               onClick={() => scrollToSection(key)}
               className={cn(
-                'w-full rounded-md px-2.5 py-1.5 text-left text-meta leading-5 transition-colors',
+                'w-full rounded-md px-2.5 py-1.5 text-left text-meta font-medium leading-5 transition-colors',
                 activeSection === key
-                  ? 'bg-brand-soft font-medium text-brand-ink'
+                  ? 'bg-brand-soft text-brand-ink'
                   : 'text-ink-3 hover:bg-brand/[0.06] hover:text-ink',
               )}
             >
