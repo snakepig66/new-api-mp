@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Outlet, createFileRoute, redirect, useRouterState } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 
-import { ConsoleSidebar } from '@/app/shell/ConsoleSidebar'
+import { ConsoleSidebar, getConsoleNavIcon } from '@/app/shell/ConsoleSidebar'
 import { consoleGroups } from '@/app/shell/console-nav'
 import { copy } from '@/copy'
 import { ensureAuth, useAuth } from '@/lib/auth'
@@ -49,14 +49,17 @@ function ConsoleLayout() {
   const sellerActive = seller.data ? isSellerActive(seller.data.seller) : false
 
   const groups = consoleGroups({ sellerActive, isAdmin })
-  const mobileLabel =
-    groups
-      .flatMap((group) => group.items)
-      .find((item) =>
-        item.exact
-          ? pathname === item.to || pathname === `${item.to}/`
-          : pathname === item.to || pathname.startsWith(`${item.to}/`),
-      )?.label ?? copy.pages.console.nav.overview
+  const activeItem = groups
+    .flatMap((group) => group.items)
+    .find((item) =>
+      item.exact
+        ? pathname === item.to || pathname === `${item.to}/`
+        : pathname === item.to || pathname.startsWith(`${item.to}/`),
+    )
+  const mobileLabel = activeItem?.label ?? copy.pages.console.nav.overview
+  const mobileIcon =
+    activeItem?.icon ??
+    (activeItem ? getConsoleNavIcon(activeItem.to) : getConsoleNavIcon(pathname))
 
   return (
     <div className="min-h-screen lg:h-[calc(100dvh-4rem)] lg:min-h-0">
@@ -69,7 +72,14 @@ function ConsoleLayout() {
           <Button variant="secondary" size="sm" onClick={() => setMenuOpen(true)}>
             {shell.menu}
           </Button>
-          <span className="text-body font-medium text-ink">{mobileLabel}</span>
+          <div className="flex min-w-0 items-center gap-2">
+            {mobileIcon ? (
+              <span className="grid h-4 w-4 shrink-0 place-items-center text-brand" aria-hidden="true">
+                {mobileIcon}
+              </span>
+            ) : null}
+            <span className="truncate text-body font-medium text-ink">{mobileLabel}</span>
+          </div>
         </div>
 
         <DialogPrimitive.Root open={menuOpen} onOpenChange={setMenuOpen}>
