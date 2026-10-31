@@ -14,7 +14,7 @@ import { formatYuan } from '@/lib/money'
 import { Button, Empty, Input, PageHeader, buttonClasses } from '@/ui'
 import type { SquareModel, SquareTierPrices } from '@/features/market/api'
 
-type SortKey = 'saving' | 'price' | 'success' | 'latency'
+type SortKey = 'price' | 'success' | 'latency'
 
 interface ModelsSearch {
   vendor?: string
@@ -30,9 +30,7 @@ const searchSchema = (search: Record<string, unknown>): ModelsSearch => {
   const sort =
     search.sort === 'price' || search.sort === 'success' || search.sort === 'latency'
       ? search.sort
-      : search.sort === 'saving'
-        ? 'saving'
-        : undefined
+      : undefined
   return {
     ...(vendor ? { vendor } : {}),
     ...(q.trim() ? { q } : {}),
@@ -70,18 +68,6 @@ function inputMicro(model: SquareModel): number | null {
   if (!price) return null
   const value = Number(price.input_micro_per_mtok)
   return Number.isFinite(value) ? value : null
-}
-
-function savingsOf(
-  model: SquareModel,
-  officialInput: number | string | undefined,
-): number | null {
-  const market = inputMicro(model)
-  const official = Number(officialInput)
-  if (market === null || !Number.isFinite(official) || official <= 0 || market >= official) {
-    return null
-  }
-  return 1 - market / official
 }
 
 function FlatPriceNote() {
@@ -123,7 +109,7 @@ export function ModelsPage() {
   const search = Route.useSearch()
   const vendor = search.vendor ?? null
   const query = (search.q ?? '').trim()
-  const sort = search.sort ?? 'saving'
+  const sort = search.sort ?? 'price'
   const officialOnly = Boolean(search.official)
   const freeOnly = Boolean(search.free)
 
@@ -169,11 +155,7 @@ export function ModelsPage() {
 
   const sorted = useMemo(() => {
     const list = [...filtered]
-    const officialInput = (model: SquareModel) =>
-      details.get(model.model)?.official_prices?.flat?.input_micro_per_mtok
     switch (sort) {
-      case 'price':
-        return list.sort((a, b) => (inputMicro(a) ?? Infinity) - (inputMicro(b) ?? Infinity))
       case 'success':
         return list.sort(
           (a, b) =>
@@ -184,17 +166,11 @@ export function ModelsPage() {
           (a, b) =>
             (a.metrics?.latency_ms || Infinity) - (b.metrics?.latency_ms || Infinity),
         )
-      case 'saving':
+      case 'price':
       default:
-        return list.sort((a, b) => {
-          // Saving needs the official book; models without it rank last.
-          const sa = savingsOf(a, officialInput(a)) ?? -1
-          const sb = savingsOf(b, officialInput(b)) ?? -1
-          if (sa !== sb) return sb - sa
-          return (inputMicro(a) ?? Infinity) - (inputMicro(b) ?? Infinity)
-        })
+        return list.sort((a, b) => (inputMicro(a) ?? Infinity) - (inputMicro(b) ?? Infinity))
     }
-  }, [filtered, details, sort])
+  }, [filtered, sort])
 
   const lowestPrice = useMemo(() => {
     let lowest: number | null = null
@@ -274,7 +250,6 @@ export function ModelsPage() {
             <span className="text-meta text-ink-3">{modelsCopy.filters.sort}</span>
             {(
               [
-                ['saving', modelsCopy.filters.sortSaving],
                 ['price', modelsCopy.filters.sortPrice],
                 ['success', modelsCopy.filters.sortSuccess],
                 ['latency', modelsCopy.filters.sortLatency],
@@ -283,7 +258,7 @@ export function ModelsPage() {
               <FilterPill
                 key={value}
                 active={sort === value}
-                onClick={() => patchSearch({ sort: value === 'saving' ? undefined : value })}
+                onClick={() => patchSearch({ sort: value === 'price' ? undefined : value })}
               >
                 {label}
               </FilterPill>

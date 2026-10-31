@@ -74,14 +74,6 @@ function channelInputPrice(officialInput: number | string | undefined, channel: 
   return Math.round((base * coefficient * channel.min_multiplier_milli) / 1_000_000)
 }
 
-/** Saving versus the official price, in percent. */
-function savingOf(official: number | string | undefined, market: number | string | undefined): number | null {
-  const o = Number(official)
-  const m = Number(market)
-  if (!Number.isFinite(o) || o <= 0 || !Number.isFinite(m) || m < 0 || m >= o) return null
-  return Math.round((1 - m / o) * 100)
-}
-
 function skeletonCell(width = 'w-16') {
   return <div className={`h-3.5 animate-pulse rounded-sm bg-line ${width}`} />
 }
@@ -127,14 +119,6 @@ function ExpandedRow({
   columns: number
 }) {
   const t = copy.pages.models.expand
-  const official = detail?.official_prices?.flat
-  const market = currentPrices(model)
-  const rows: { key: string; label: string; official?: number | string; market?: number | string }[] = [
-    { key: 'input', label: t.input, official: official?.input_micro_per_mtok, market: market?.input_micro_per_mtok },
-    { key: 'cacheRead', label: t.cacheRead, official: official?.cache_read_micro_per_mtok, market: market?.cache_read_micro_per_mtok },
-    { key: 'cacheWrite', label: t.cacheWrite, official: official?.cache_write_micro_per_mtok, market: market?.cache_write_micro_per_mtok },
-    { key: 'output', label: t.output, official: official?.output_micro_per_mtok, market: market?.output_micro_per_mtok },
-  ]
   const metrics = model.metrics
   const rate = (milli: number | undefined) => rateText(milli) ?? t.noSample
   const latency = latencyText(metrics?.latency_ms)
@@ -146,46 +130,7 @@ function ExpandedRow({
       <TableCell colSpan={columns} className="px-4 py-5">
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
           <div>
-            <h3 className="text-meta font-medium text-ink-3">{t.priceTable}</h3>
-            <div className="mt-2 overflow-hidden glass-inset rounded-sm">
-              <table className="w-full text-meta">
-                <thead>
-                  <tr className="text-ink-3">
-                    <th className="px-3 py-2 text-left font-normal">{t.metric}</th>
-                    <th className="px-3 py-2 text-right font-normal">{t.official}</th>
-                    <th className="px-3 py-2 text-right font-normal">{t.market}</th>
-                    <th className="px-3 py-2 text-right font-normal">{copy.pages.models.columns.saving}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => {
-                    const saving = savingOf(row.official, row.market)
-                    return (
-                      <tr key={row.key} className="border-t border-line">
-                        <td className="px-3 py-2 text-ink-2">{row.label}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-ink-3">
-                          {row.official === undefined ? t.noSample : formatYuan(row.official)}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums text-ink">
-                          {row.market === undefined ? t.noSample : formatYuan(row.market)}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {saving === null ? (
-                            <span className="text-ink-3">{copy.common.none}</span>
-                          ) : (
-                            <span className="rounded-full bg-brand-soft px-2 py-0.5 text-caption text-brand-ink">
-                              {copy.pages.models.savingShort(saving)}
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <h3 className="mt-5 text-meta font-medium text-ink-3">{t.channelsTitle}</h3>
+            <h3 className="text-meta font-medium text-ink-3">{t.channelsTitle}</h3>
             {detailLoading ? (
               <div className="mt-2 space-y-2">
                 <SkeletonLine />
@@ -360,13 +305,9 @@ export function ModelTable({
 
   // P0: a column with no data anywhere in the table is hidden outright.
   const anyMetrics = models.some((model) => model.metrics)
-  const anyOfficial = Boolean(
-    details && [...details.values()].some((detail) => Object.keys(detail.official_prices ?? {}).length > 0),
-  )
   const columnCount =
     2 + // model, input price + output price are stacked in the price cell
-    (anyOfficial ? 1 : 0) +
-    (anyMetrics ? 3 : 0) +
+    (anyMetrics ? 2 : 0) +
     1 + // channels
     (showAddToKey ? 1 : 0)
 
@@ -374,7 +315,6 @@ export function ModelTable({
     <>
       <TableHeaderCell>{columns.model}</TableHeaderCell>
       <TableHeaderCell numeric>{columns.price}</TableHeaderCell>
-      {anyOfficial ? <TableHeaderCell numeric>{columns.saving}</TableHeaderCell> : null}
       {anyMetrics ? <TableHeaderCell numeric>{columns.success}</TableHeaderCell> : null}
       {anyMetrics ? <TableHeaderCell numeric>{columns.latency}</TableHeaderCell> : null}
       <TableHeaderCell numeric>{columns.channels}</TableHeaderCell>
@@ -425,7 +365,6 @@ export function ModelTable({
               const row = currentPrices(model)
               const detail = details?.get(model.model)
               const official = detail?.official_prices?.flat
-              const saving = savingOf(official?.input_micro_per_mtok, row?.input_micro_per_mtok)
               const metrics = model.metrics
               const isOpen = expanded === model.model
               const logo = modelLogo(model.model) || vendorLogo(origin, vendorMeta)
@@ -491,17 +430,6 @@ export function ModelTable({
                         <Missing />
                       )}
                     </TableCell>
-                    {anyOfficial ? (
-                      <TableCell numeric>
-                        {saving === null ? (
-                          <Missing />
-                        ) : (
-                          <span className="inline-flex rounded-full bg-brand-soft px-2 py-0.5 text-caption tabular-nums text-brand-ink">
-                            {copy.pages.models.savingShort(saving)}
-                          </span>
-                        )}
-                      </TableCell>
-                    ) : null}
                     {anyMetrics ? (
                       <TableCell numeric>
                         <span className="tabular-nums text-ink-2">

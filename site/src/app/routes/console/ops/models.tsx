@@ -3,13 +3,17 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 
 import { copy } from '@/copy'
+import { cn } from '@/lib/cn'
 import { formatYuan } from '@/lib/money'
 import {
   Button,
   Dialog,
+  DropdownMenu,
   Empty,
   ModelName,
   PageHeader,
+  Segmented,
+  Switch,
   Table,
   TableBody,
   TableCell,
@@ -34,7 +38,6 @@ import {
   ErrorBlock,
   Field,
   OpsTabNav,
-  Section,
   Select,
   TableSkeleton,
   TextInput,
@@ -42,17 +45,39 @@ import {
 } from '@/features/admin/components'
 import { adminErrorMessage } from '@/features/admin/errors'
 import { defaultEffectiveAt, shanghaiDateTimeToRfc3339 } from '@/features/admin/schemas'
+import { withLogoVersion } from '@/features/market/model-logo'
+import { vendorLabel, vendorLogo } from '@/features/market/vendors'
 
 export const Route = createFileRoute('/console/ops/models')({
   component: ModelsAndPricingPage,
 })
 
 const page = copy.pages.adminPool
-const labels = page.status
 
 const tabs: readonly OpsTabLink[] = [
   { to: '/console/ops/models', label: '模型与定价' },
   { to: '/console/ops/pricing/per-call', label: copy.pages.adminCommon.nav.perCallPrices },
+]
+
+const CAPABILITY_LABELS: Record<string, string> = {
+  text: '文本',
+  chat: '对话',
+  tools: '工具',
+  cache: '缓存',
+  vision: '视觉',
+  image: '图像',
+  embedding: '向量',
+  reasoning: '推理',
+  search: '搜索',
+}
+
+type StatusFilter = 'all' | 'active' | 'retired' | 'unpriced'
+
+const statusFilterOptions = [
+  { value: 'all', label: '全部模型' },
+  { value: 'active', label: '仅在售' },
+  { value: 'retired', label: '已停用' },
+  { value: 'unpriced', label: '未配置定价' },
 ]
 
 function splitList(value: string): string[] {
@@ -67,18 +92,6 @@ function parseNonNegativeInt(value: string): number | null {
   const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed < 0) return null
   return parsed
-}
-
-function statusLabel(status: string): string {
-  return (labels as Record<string, string>)[status] ?? labels.unknown
-}
-
-function StatusTag({ status }: { status: string }) {
-  return (
-    <Tag tone={status === 'active' ? 'brand' : 'neutral'} dot={status === 'active'}>
-      {statusLabel(status)}
-    </Tag>
-  )
 }
 
 interface UnifiedModelForm {
@@ -117,6 +130,8 @@ function ModelsAndPricingPage() {
   const prices = useQuery(adminPricesQuery())
 
   const [search, setSearch] = useState('')
+  const [selectedVendor, setSelectedVendor] = useState('all')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
   const [form, setForm] = useState<UnifiedModelForm>(emptyForm)
@@ -137,17 +152,65 @@ function ModelsAndPricingPage() {
     return map
   }, [prices.data])
 
-  const rows = useMemo(() => {
+  // Aggregate vendor metrics for vendor filter pills
+  const vendorList = useMemo(() => {
     const list = models.data ?? []
-    if (!search.trim()) return list
-    const q = search.trim().toLowerCase()
-    return list.filter(
-      (m) =>
-        m.name.toLowerCase().includes(q) ||
-        m.origin_vendor.toLowerCase().includes(q) ||
-        m.aliases.some((a) => a.toLowerCase().includes(q)),
-    )
-  }, [models.data, search])
+    const counts = new Map<string, number>()
+    for (const m of list) {
+      const v = m.origin_vendor?.trim() || 'custom'
+      counts.set(v, (counts.get(v) ?? 0) + 1)
+    }
+    return Array.from(counts.entries())
+      .map(([vendor, count]) => ({
+        vendor,
+        label: vendorLabel(vendor),
+        logo: vendorLogo(vendor),
+        count,
+      }))
+      .sort((a, b) => b.count - a.count)
+  }, [models.data])
+
+  // Filtered rows
+  const filteredRows = useMemo(() => {
+    let list = models.data ?? []
+    if (search.trim()) {
+      const q = search.trim().toLowerCase()
+      list = list.filter(
+        (m) =>
+          m.name.toLowerCase().includes(q) ||
+          m.origin_vendor.toLowerCase().includes(q) ||
+          m.aliases.some((a) => a.toLowerCase().includes(q)),
+      )
+    }
+    if (selectedVendor !== 'all') {
+      list = list.filter((m) => (m.origin_vendor?.trim() || 'custom') === selectedVendor)
+    }
+    if (statusFilter === 'active') {
+      list = list.filter((m) => m.status === 'active')
+    } else if (statusFilter === 'retired') {
+      list = list.filter((m) => m.status === 'retired')
+    } else if (statusFilter === 'unpriced') {
+      list = list.filter((m) => !latestPriceMap.has(m.name))
+    }
+    return list
+  }, [models.data, search, selectedVendor, statusFilter, latestPriceMap])
+
+  // Group filtered rows by vendor
+  const groupedByVendor = useMemo(() => {
+    const groups = new Map<string, AdminPoolModel[]>()
+    for (const m of filteredRows) {
+      const v = m.origin_vendor?.trim() || 'custom'
+      const arr = groups.get(v) ?? []
+      arr.push(m)
+      groups.set(v, arr)
+    }
+    return Array.from(groups.entries()).map(([vendor, vendorRows]) => ({
+      vendor,
+      label: vendorLabel(vendor),
+      logo: vendorLogo(vendor),
+      rows: vendorRows,
+    }))
+  }, [filteredRows])
 
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: adminPoolModelsQuery().queryKey })
@@ -305,132 +368,321 @@ function ModelsAndPricingPage() {
       />
 
       <div className="mt-6 space-y-6">
+        {/* 厂商药丸过滤栏 */}
+        {vendorList.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2 border-b border-line pb-4">
+            <button
+              type="button"
+              onClick={() => setSelectedVendor('all')}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-caption font-medium transition-colors cursor-pointer',
+                selectedVendor === 'all'
+                  ? 'bg-brand text-white shadow-xs'
+                  : 'bg-card text-ink-2 ring-1 ring-inset ring-line hover:bg-brand-soft/50 hover:text-ink',
+              )}
+            >
+              <span>全部厂商</span>
+              <span
+                className={cn(
+                  'rounded-full px-1.5 py-0.2 text-[11px]',
+                  selectedVendor === 'all' ? 'bg-white/20 text-white' : 'bg-line text-ink-3',
+                )}
+              >
+                {models.data?.length ?? 0}
+              </span>
+            </button>
+            {vendorList.map((v) => {
+              const active = selectedVendor === v.vendor
+              return (
+                <button
+                  key={v.vendor}
+                  type="button"
+                  onClick={() => setSelectedVendor(v.vendor)}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-caption font-medium transition-colors cursor-pointer',
+                    active
+                      ? 'bg-brand text-white shadow-xs'
+                      : 'bg-card text-ink-2 ring-1 ring-inset ring-line hover:bg-brand-soft/50 hover:text-ink',
+                  )}
+                >
+                  {v.logo ? (
+                    <img
+                      src={withLogoVersion(v.logo)}
+                      alt=""
+                      className="h-3.5 w-3.5 object-contain"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  <span>{v.label}</span>
+                  <span
+                    className={cn(
+                      'rounded-full px-1.5 py-0.2 text-[11px]',
+                      active ? 'bg-white/20 text-white' : 'bg-line text-ink-3',
+                    )}
+                  >
+                    {v.count}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        ) : null}
+
+        {/* 搜索与快捷状态过滤条 */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="w-full max-w-xs">
-            <TextInput
-              placeholder="搜索模型名称、厂商、别名..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="w-full sm:w-72">
+              <TextInput
+                placeholder="搜索模型名称、厂商、别名..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <Segmented
+              options={statusFilterOptions}
+              value={statusFilter}
+              onChange={(v) => setStatusFilter(v as StatusFilter)}
+              size="sm"
+              ariaLabel="模型状态筛选"
             />
           </div>
-          <span className="text-meta text-ink-3">
-            共 {rows.length} 个模型 (已配置定价: {latestPriceMap.size})
-          </span>
+          <div className="flex items-center gap-2 text-meta text-ink-3">
+            <span>
+              共 <strong className="font-medium text-ink">{filteredRows.length}</strong> 个模型
+            </span>
+            <span>·</span>
+            <span>
+              已配置定价 <strong className="font-medium text-ink">{latestPriceMap.size}</strong>
+            </span>
+          </div>
         </div>
 
-        <Section title="标准模型与定价表">
-          {models.isPending || prices.isPending ? (
-            <TableSkeleton rows={8} columns={7} />
-          ) : models.isError ? (
-            <ErrorBlock error={models.error} onRetry={refresh} />
-          ) : rows.length === 0 ? (
-            <Empty
-              title="暂无模型"
-              reason={search ? '没有匹配搜索条件的模型' : '标准模型池当前为空'}
-              next="点击右上角按钮添加第一个模型及定价"
-              action={
-                <Button variant="secondary" size="sm" onClick={openCreate}>
-                  + 添加模型与定价
-                </Button>
-              }
-            />
-          ) : (
-            <Table minWidth={1000}>
-              <TableHead>
-                <TableRow interactive={false}>
-                  <TableHeaderCell>模型名称</TableHeaderCell>
-                  <TableHeaderCell>厂商</TableHeaderCell>
-                  <TableHeaderCell numeric>上下文</TableHeaderCell>
-                  <TableHeaderCell numeric>输入单价 (元/M tok)</TableHeaderCell>
-                  <TableHeaderCell numeric>输出单价 (元/M tok)</TableHeaderCell>
-                  <TableHeaderCell numeric>缓存读/写 (元/M tok)</TableHeaderCell>
-                  <TableHeaderCell>状态</TableHeaderCell>
-                  <TableHeaderCell numeric>操作</TableHeaderCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {rows.map((row) => {
-                  const p = latestPriceMap.get(row.name)
-                  const hasPrice = Boolean(p)
-                  return (
-                    <TableRow key={row.name}>
-                      <TableCell>
-                        <div className="flex flex-col gap-0.5">
-                          <ModelName model={row.name} size="sm" />
-                          {row.aliases.length > 0 ? (
-                            <span className="text-caption text-ink-3">
-                              别名: {row.aliases.join(', ')}
-                            </span>
-                          ) : null}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-meta text-ink-2">
-                        {row.origin_vendor || '—'}
-                      </TableCell>
-                      <TableCell numeric className="font-mono text-meta text-ink-2">
-                        {row.context_length
-                          ? `${Math.round(row.context_length / 1024)}k`
-                          : '—'}
-                      </TableCell>
-                      <TableCell numeric className="font-mono text-meta">
-                        {hasPrice && p ? (
-                          <span className="text-brand font-medium">
-                            {formatYuan(p.input_micro_per_mtok)}
-                          </span>
-                        ) : (
-                          <span className="text-ink-4">未配置</span>
-                        )}
-                      </TableCell>
-                      <TableCell numeric className="font-mono text-meta">
-                        {hasPrice && p ? (
-                          <span className="text-ink font-medium">
-                            {formatYuan(p.output_micro_per_mtok)}
-                          </span>
-                        ) : (
-                          <span className="text-ink-4">未配置</span>
-                        )}
-                      </TableCell>
-                      <TableCell numeric className="font-mono text-caption text-ink-3">
-                        {hasPrice && p && p.cache_read_micro_per_mtok
-                          ? `${formatYuan(p.cache_read_micro_per_mtok)} / ${formatYuan(p.cache_write_micro_per_mtok)}`
-                          : '—'}
-                      </TableCell>
-                      <TableCell>
-                        <StatusTag status={row.status} />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1.5">
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => openEdit(row)}
-                          >
-                            编辑
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            loading={toggleStatus.isPending}
-                            onClick={() => toggleStatus.mutate(row)}
-                          >
-                            {row.status === 'active' ? '停用' : '启用'}
-                          </Button>
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            onClick={() => setDeleteTarget(row)}
-                          >
-                            删除
-                          </Button>
-                        </div>
-                      </TableCell>
+        {/* 模型列表区块 */}
+        {models.isPending || prices.isPending ? (
+          <TableSkeleton rows={8} columns={5} />
+        ) : models.isError ? (
+          <ErrorBlock error={models.error} onRetry={refresh} />
+        ) : filteredRows.length === 0 ? (
+          <Empty
+            title="暂无模型"
+            reason={
+              search || selectedVendor !== 'all' || statusFilter !== 'all'
+                ? '没有匹配筛选条件的模型'
+                : '标准模型池当前为空'
+            }
+            next="点击右上角按钮添加模型及定价，或调整筛选条件"
+            action={
+              <Button variant="secondary" size="sm" onClick={openCreate}>
+                + 添加模型与定价
+              </Button>
+            }
+          />
+        ) : (
+          <div className="space-y-6">
+            {groupedByVendor.map((group) => (
+              <div
+                key={group.vendor}
+                className="overflow-hidden rounded-xl border border-line bg-card/60 shadow-xs backdrop-blur-sm"
+              >
+                {/* 厂商头部 */}
+                <div className="flex items-center justify-between border-b border-line bg-surface/50 px-4 py-3">
+                  <div className="flex items-center gap-2.5">
+                    {group.logo ? (
+                      <img
+                        src={withLogoVersion(group.logo)}
+                        alt=""
+                        className="h-5 w-5 shrink-0 object-contain"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-soft text-[10px] font-bold text-brand-ink uppercase">
+                        {group.label.slice(0, 1)}
+                      </span>
+                    )}
+                    <h3 className="text-body font-semibold text-ink">
+                      {group.label}
+                    </h3>
+                    <span className="rounded-full bg-line/80 px-2 py-0.5 text-caption font-medium text-ink-3">
+                      {group.rows.length} 个模型
+                    </span>
+                  </div>
+                </div>
+
+                {/* 规范高密度数据表格 */}
+                <Table minWidth={760}>
+                  <TableHead>
+                    <TableRow interactive={false}>
+                      <TableHeaderCell className="w-[34%]">模型名称 / 能力</TableHeaderCell>
+                      <TableHeaderCell className="w-[12%] text-center">上下文</TableHeaderCell>
+                      <TableHeaderCell className="w-[32%]">Token 计费 (元/M tok)</TableHeaderCell>
+                      <TableHeaderCell className="w-[10%]">状态</TableHeaderCell>
+                      <TableHeaderCell numeric className="w-[12%]">操作</TableHeaderCell>
                     </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </Section>
+                  </TableHead>
+                  <TableBody>
+                    {group.rows.map((row) => {
+                      const p = latestPriceMap.get(row.name)
+                      const hasPrice = Boolean(p)
+                      const isThisToggling =
+                        toggleStatus.isPending && toggleStatus.variables?.name === row.name
+
+                      return (
+                        <TableRow key={row.name}>
+                          {/* 1. 模型名称 + 别名 + 能力标签 */}
+                          <TableCell>
+                            <div className="flex flex-col gap-1.5 py-1">
+                              <div className="flex items-center gap-2">
+                                <ModelName
+                                  model={row.name}
+                                  size="md"
+                                  className="font-semibold text-ink"
+                                />
+                                {row.status !== 'active' ? (
+                                  <span className="rounded bg-line/60 px-1.5 py-0.5 text-[11px] text-ink-4">
+                                    已停用
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {row.aliases.length > 0 ? (
+                                  <span className="text-caption text-ink-3">
+                                    别名: {row.aliases.join(', ')}
+                                  </span>
+                                ) : null}
+                                {row.capabilities && row.capabilities.length > 0 ? (
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    {row.capabilities.map((cap) => (
+                                      <Tag
+                                        key={cap}
+                                        tone="neutral"
+                                        className="h-[18px] px-1.5 text-[11px] leading-none text-ink-3"
+                                      >
+                                        {CAPABILITY_LABELS[cap] ?? cap}
+                                      </Tag>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          </TableCell>
+
+                          {/* 2. 上下文 */}
+                          <TableCell className="text-center">
+                            {row.context_length ? (
+                              <span className="inline-block rounded-md bg-line/50 px-2 py-0.5 font-mono text-caption font-medium text-ink-2">
+                                {Math.round(row.context_length / 1024)}k
+                              </span>
+                            ) : (
+                              <span className="text-ink-4">—</span>
+                            )}
+                          </TableCell>
+
+                          {/* 3. Token 复合计费 */}
+                          <TableCell>
+                            {hasPrice && p ? (
+                              <div className="flex flex-col gap-0.5 py-0.5">
+                                <div className="flex items-center gap-2 font-mono text-meta">
+                                  <span className="inline-flex items-center gap-1">
+                                    <span className="text-caption text-ink-3">输入</span>
+                                    <span className="font-semibold text-brand">
+                                      {formatYuan(p.input_micro_per_mtok)}
+                                    </span>
+                                  </span>
+                                  <span className="text-ink-4">/</span>
+                                  <span className="inline-flex items-center gap-1">
+                                    <span className="text-caption text-ink-3">输出</span>
+                                    <span className="font-semibold text-ink">
+                                      {formatYuan(p.output_micro_per_mtok)}
+                                    </span>
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 font-mono text-caption text-ink-3">
+                                  {p.cache_read_micro_per_mtok || p.cache_write_micro_per_mtok ? (
+                                    <span>
+                                      缓存 读{' '}
+                                      <span className="text-ink-2">
+                                        {formatYuan(p.cache_read_micro_per_mtok)}
+                                      </span>{' '}
+                                      / 写{' '}
+                                      <span className="text-ink-2">
+                                        {formatYuan(p.cache_write_micro_per_mtok)}
+                                      </span>
+                                    </span>
+                                  ) : (
+                                    <span className="text-ink-4">无独立缓存费率</span>
+                                  )}
+                                </div>
+                              </div>
+                            ) : (
+                              <Tag tone="warning" className="whitespace-nowrap">
+                                未配置定价
+                              </Tag>
+                            )}
+                          </TableCell>
+
+                          {/* 4. 状态 Switch */}
+                          <TableCell>
+                            <div className="flex items-center gap-2 whitespace-nowrap">
+                              <Switch
+                                checked={row.status === 'active'}
+                                loading={isThisToggling}
+                                onCheckedChange={() => toggleStatus.mutate(row)}
+                                aria-label={row.status === 'active' ? '点击停用' : '点击启用'}
+                              />
+                              <span
+                                className={cn(
+                                  'text-caption font-medium',
+                                  row.status === 'active' ? 'text-brand-ink' : 'text-ink-4',
+                                )}
+                              >
+                                {row.status === 'active' ? '在售' : '停用'}
+                              </span>
+                            </div>
+                          </TableCell>
+
+                          {/* 5. 精简操作列 */}
+                          <TableCell numeric>
+                            <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => openEdit(row)}
+                              >
+                                编辑
+                              </Button>
+                              <DropdownMenu
+                                align="end"
+                                menuLabel="更多操作"
+                                trigger={
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    aria-label="更多操作"
+                                    className="px-2 font-mono text-base text-ink-3 hover:text-ink"
+                                  >
+                                    ⋯
+                                  </Button>
+                                }
+                                items={[
+                                  {
+                                    key: 'delete',
+                                    label: '删除模型',
+                                    danger: true,
+                                    onSelect: () => setDeleteTarget(row),
+                                  },
+                                ]}
+                              />
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 一体化新增 / 编辑模型与定价弹窗 */}

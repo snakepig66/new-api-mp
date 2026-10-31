@@ -144,8 +144,7 @@ describe('home page', () => {
     renderHome()
 
     expect(await screen.findByText('在售模型')).toBeTruthy()
-    expect(screen.getByText('88%')).toBeTruthy()
-    expect(screen.getByText('最高可省')).toBeTruthy()
+    expect(screen.queryByText('最高可省')).toBeNull()
     expect(screen.getByText('今日调用量')).toBeTruthy()
   })
 

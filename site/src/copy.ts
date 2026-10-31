@@ -76,7 +76,7 @@ export const copy = {
   },
 
   multiplier: {
-    savings: (percent: string) => `省 ${percent}%`,
+    savings: (_percent: string) => '',
   },
 
   identity: {
@@ -135,7 +135,6 @@ export const copy = {
       ],
       stats: {
         models: '在售模型',
-        maxSaving: '最高可省',
         callsToday: '今日调用量',
       },
       why: {
@@ -345,7 +344,6 @@ console.log(resp.choices[0].message.content);`,
       sellerUnit: '位',
       outputPrefix: '出',
       perMillion: '/M',
-      savingShort: (percent: number) => `省 ${percent}%`,
       columns: {
         model: '模型',
         price: '最低价（输入 / 输出）',
@@ -355,7 +353,6 @@ console.log(resp.choices[0].message.content);`,
         buyerPrice: '最低到手价',
         channels: '渠道数',
         sellers: '分享者',
-        saving: '比官方省',
         success: '24h 成功率',
         latency: '延迟',
         actions: '操作',
@@ -395,7 +392,6 @@ console.log(resp.choices[0].message.content);`,
       filters: {
         clear: '清除筛选',
         sort: '排序',
-        sortSaving: '省最多',
         sortPrice: '价格最低',
         sortSuccess: '成功率最高',
         sortLatency: '延迟最低',
@@ -914,7 +910,7 @@ console.log(response.choices[0].message.content)
 
     console: {
       title: '控制台',
-      lead: '余额、用量、节省与最近请求。',
+      lead: '余额、用量与最近请求。',
       nav: {
         aria: '控制台导航',
         overview: '概览',
@@ -928,8 +924,6 @@ console.log(response.choices[0].message.content)
         balanceHint: '实时余额，来自市场钱包',
         spendThisMonth: '本月花费',
         spendHint: '按实际扣费统计（Asia/Shanghai）',
-        savedThisMonth: '本月节省',
-        savedHint: '相对官方价省下的金额',
         requests7d: '近 7 天请求',
         requests7dHint: '按天汇总的调用次数',
       },
@@ -939,7 +933,6 @@ console.log(response.choices[0].message.content)
         aria: '近 7 天每日请求次数柱状图',
         requests: '请求数',
         spend: '实付',
-        saved: '节省',
         emptyTitle: '近 7 天还没有调用',
         emptyReason: '这个账号在最近 7 天没有产生请求，所以图表没有数据。',
         emptyNext: '创建 Key 并完成第一次调用后，这里会按天显示用量。',
@@ -954,7 +947,6 @@ console.log(response.choices[0].message.content)
           seller: '分享者',
           tokens: 'tokens',
           paid: '实付',
-          saved: '省了',
         },
         emptyTitle: '还没有调用记录',
         emptyReason: '这个账号还没有通过市场完成过调用，所以这里没有请求。',
@@ -962,7 +954,7 @@ console.log(response.choices[0].message.content)
       },
       empty: {
         title: '还没有调用记录',
-        reason: '创建 Key 并把模型加进 Key 之后，用量、费用和节省会出现在这里。',
+        reason: '创建 Key 并把模型加进 Key 之后，用量与费用会出现在这里。',
         next: '先读接入文档，拿到可以直接粘贴的调用示例。',
       },
       shareCard: {
@@ -1218,7 +1210,7 @@ console.log(response.choices[0].message.content)
           options: {
             cheapest: {
               label: '最便宜',
-              hint: '优先当前价格最低的分享者，省钱第一。',
+              hint: '优先当前价格最低的分享者。',
             },
             balanced: {
               label: '均衡',
@@ -1389,7 +1381,6 @@ console.log(response.choices[0].message.content)
         tools: '搜索 / 抓取',
         official: '官方价',
         paid: '实付',
-        saved: '省了',
         status: '状态',
         actions: '操作',
       },
@@ -1444,7 +1435,6 @@ console.log(response.choices[0].message.content)
         toolDebit: '工具费用',
         official: '官方价',
         paid: '实付',
-        saved: '省了',
         unitPrice: '单价',
         officialUnitPrice: '官方综合单价',
         paidUnitPrice: '实付综合单价',
@@ -1516,7 +1506,6 @@ console.log(response.choices[0].message.content)
       balance: '可用余额',
       balanceHint: '实时余额，来自市场钱包',
       monthSpend: '本月花费',
-      monthSaved: '本月节省',
       recharge: {
         title: '充值',
         body: '选择金额后跳到支付页面，支付成功后余额会自动到账。',
@@ -2755,8 +2744,6 @@ console.log(response.choices[0].message.content)
         times: (count: string) => `${count} 次`,
         official: '官方价',
         paid: '实付',
-        saved: '节省',
-        savedPercent: (percent: string) => `省 ${percent}%`,
         buyerPaid: '买家实付',
         platformFee: '平台费',
         sellerCredit: '到手',

@@ -189,15 +189,6 @@ export function ModelDetailPage() {
   const officialInput = officialCurrent?.input_micro_per_mtok
   const officialMicro = officialInput === undefined ? null : Number(officialInput)
   const currentMicro = price ? Number(price.input_micro_per_mtok) : null
-  const savedPercent =
-    !officialOnly &&
-    officialMicro !== null &&
-    currentMicro !== null &&
-    Number.isFinite(officialMicro) &&
-    Number.isFinite(currentMicro) &&
-    officialMicro > currentMicro
-      ? Math.round((1 - currentMicro / officialMicro) * 100)
-      : null
   const channels = data.channels ?? []
   const dimensions = [
     { key: 'input_micro_per_mtok', label: page.dimensions.input },
@@ -249,11 +240,6 @@ export function ModelDetailPage() {
                     {!officialOnly && officialInput ? (
                       <p className="mt-2 text-body text-ink-2">
                         官方 <span className="tabular-nums">{formatYuan(officialInput)}</span>
-                        {savedPercent !== null ? (
-                          <span className="ml-2 inline-flex h-[22px] items-center rounded-full bg-brand-soft px-2 text-caption leading-none text-brand-ink">
-                            {copy.multiplier.savings(String(savedPercent))}
-                          </span>
-                        ) : null}
                       </p>
                     ) : null}
                   </div>

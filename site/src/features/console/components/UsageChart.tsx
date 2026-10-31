@@ -22,7 +22,6 @@ function tooltipHtml(item: UsageDayStat): string {
     `<div style="font-weight:600;margin-bottom:4px">${item.date}</div>`,
     `<div>${copy.pages.console.chart.requests} ${item.requests}</div>`,
     `<div>${copy.pages.console.chart.spend} ${formatYuan(item.total_debit_micro)}</div>`,
-    `<div>${copy.pages.console.chart.saved} ${formatYuan(item.saved_micro)}</div>`,
   ].join('')
 }
 

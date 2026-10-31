@@ -299,14 +299,15 @@ describe('models page', () => {
     expect(screen.getAllByText('glm-4-plus').length).toBeGreaterThan(0)
   })
 
-  it('expands a row in place with price comparison, channels and reliability', async () => {
+  it('expands a row in place with channels and reliability', async () => {
     renderPage()
     await screen.findByText('deepseek-chat')
 
     fireEvent.click(screen.getByText('deepseek-chat').closest('tr')!)
 
-    expect(await screen.findByText('价格对比（¥ / 百万 tokens）')).toBeTruthy()
-    expect(screen.getByText('渠道最低价')).toBeTruthy()
+    expect(await screen.findAllByText('渠道')).toHaveLength(2)
+    expect(screen.queryByText('价格对比（¥ / 百万 tokens）')).toBeNull()
+    expect(screen.queryByText('比官方省')).toBeNull()
     expect(screen.getByText('可靠性')).toBeTruthy()
     expect(screen.getAllByText('99.5%').length).toBeGreaterThan(0)
     expect(screen.getByText('99.8%')).toBeTruthy()

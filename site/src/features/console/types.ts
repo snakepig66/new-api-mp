@@ -122,7 +122,7 @@ export interface UsageRecord {
   official_cost_micro: number
   total_debit_micro: number
   saved_micro: number
-  /** 省了千分之几 = saved / official × 1000; 0 when official = 0. */
+  /** saved_permille = saved / official × 1000; 0 when official = 0. */
   saved_permille: number
   /** 首字耗时 ms; 0 = 未记录. */
   first_token_ms: number
@@ -158,7 +158,7 @@ export interface UsageSummary {
   cache_write_tokens: number
   /** 实付合计. */
   total_debit_micro: number | string
-  /** 比官方节省合计. */
+  /** saved_micro合计. */
   saved_micro: number | string
   /** 首字平均 ms; 0 = 无数据. */
   avg_first_token_ms: number

@@ -11,7 +11,6 @@ import { ModelTable } from '@/features/market/model-table'
 import { withLogoVersion } from '@/features/market/model-logo'
 import { QueryError } from '@/features/market/query-error'
 import { currentBaseUrl } from '@/features/market/url'
-import { savingPercent } from '@/lib/multiplier'
 import { Empty, buttonClasses } from '@/ui'
 
 export const Route = createFileRoute('/')({
@@ -92,19 +91,10 @@ export function HomePage() {
   }, [models.data])
 
   // §0：没有在售模型时整条数据条隐藏，不出「0 / —」这种占位观感的数字。
-  // 优惠幅度没有真实数据时只隐藏那一项，另外两项照常显示。
   const statItems =
     stats.data && stats.data.models_on_sale > 0
       ? [
           { value: formatCount(stats.data.models_on_sale), label: home.stats.models },
-          ...(stats.data.min_multiplier_milli > 0
-            ? [
-                {
-                  value: `${savingPercent(stats.data.min_multiplier_milli)}%`,
-                  label: home.stats.maxSaving,
-                },
-              ]
-            : []),
           { value: formatCount(stats.data.today_requests), label: home.stats.callsToday },
         ]
       : []

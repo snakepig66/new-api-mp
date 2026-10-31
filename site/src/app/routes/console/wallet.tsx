@@ -224,7 +224,7 @@ export function WalletPage() {
           onRetry={() => void wallet.refetch()}
         />
       ) : (
-        <div className="mt-6 grid gap-6 glass p-6 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)] sm:divide-x sm:divide-line">
+        <div className="mt-6 grid gap-6 glass p-6 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] sm:divide-x sm:divide-line">
           <div className="min-w-0 sm:pr-6">
             <div className="text-meta text-ink-3">{page.balance}</div>
             <div className="mt-1 break-all text-h1 font-semibold leading-tight tracking-tight tabular-nums text-brand-ink">
@@ -235,12 +235,6 @@ export function WalletPage() {
           <Stat
             label={page.monthSpend}
             value={formatYuan(wallet.data.month_spend_micro)}
-            className="sm:px-6"
-          />
-          <Stat
-            label={page.monthSaved}
-            value={formatYuan(wallet.data.month_saved_micro)}
-            tone="brand"
             className="sm:pl-6"
           />
         </div>

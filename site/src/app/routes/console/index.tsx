@@ -116,12 +116,9 @@ function ConsoleOverviewPage() {
           onRetry={() => void wallet.refetch()}
         />
       ) : (
-        <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
           {wallet.isPending ? (
             <>
-              <StatCard>
-                <StatSkeleton />
-              </StatCard>
               <StatCard>
                 <StatSkeleton />
               </StatCard>
@@ -144,13 +141,6 @@ function ConsoleOverviewPage() {
                   label={page.stats.spendThisMonth}
                   value={formatYuan(wallet.data.month_spend_micro)}
                   hint={page.stats.spendHint}
-                />
-              </StatCard>
-              <StatCard>
-                <Stat
-                  label={page.stats.savedThisMonth}
-                  value={formatYuan(wallet.data.month_saved_micro)}
-                  hint={page.stats.savedHint}
                 />
               </StatCard>
             </>
@@ -207,7 +197,7 @@ function ConsoleOverviewPage() {
         }
       >
         {recent.isPending ? (
-          <TableSkeleton rows={5} columns={6} />
+          <TableSkeleton rows={5} columns={5} />
         ) : recent.isError ? (
           <ErrorBlock error={recent.error} onRetry={() => void recent.refetch()} />
         ) : recent.data.items.length === 0 ? (
@@ -230,7 +220,6 @@ function ConsoleOverviewPage() {
                 <TableHeaderCell>{page.recent.columns.seller}</TableHeaderCell>
                 <TableHeaderCell numeric>{page.recent.columns.tokens}</TableHeaderCell>
                 <TableHeaderCell numeric>{page.recent.columns.paid}</TableHeaderCell>
-                <TableHeaderCell numeric>{page.recent.columns.saved}</TableHeaderCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -274,9 +263,6 @@ function ConsoleOverviewPage() {
                       )}
                     </TableCell>
                     <TableCell numeric>{formatYuan(row.totalDebitMicro)}</TableCell>
-                    <TableCell numeric className="text-brand-ink">
-                      {formatYuan(row.savedMicro)}
-                    </TableCell>
                   </TableRow>
                 )
               })}
