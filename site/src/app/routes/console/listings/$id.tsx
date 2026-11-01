@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute, redirect } from '@tanstack/react-router'
 import { useState, type ReactNode } from 'react'
 
 import { copy } from '@/copy'
@@ -41,6 +41,13 @@ import {
 import { VerificationSummary } from '@/features/seller/verification'
 
 export const Route = createFileRoute('/console/listings/$id')({
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: '/console/listings',
+      search: { edit: Number(params.id) },
+      replace: true,
+    })
+  },
   component: SellerListingDetailPage,
 })
 

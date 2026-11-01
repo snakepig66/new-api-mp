@@ -802,7 +802,7 @@ export function SellerListingsPage() {
                             <Link
                               to="/console/listings/$id"
                               params={{ id: String(listing.id) }}
-                              className="font-medium text-ink hover:text-brand-ink"
+                              className="font-medium text-ink hover:text-brand-ink hover:underline"
                             >
                               {channelName(listing)}
                             </Link>

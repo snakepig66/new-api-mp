@@ -327,7 +327,7 @@ func TestSettleRelayCappedAtPreFreeze(t *testing.T) {
 	require.NoError(t, f.db.Model(&model.User{}).Where("id = ?", f.buyerID).Update("quota", 0).Error)
 
 	// Output far above the pre-freeze's max_tokens=100.
-	usage := &dto.Usage{PromptTokens: 900, CompletionTokens: 5000}
+	usage := &dto.Usage{PromptTokens: 900, CompletionTokens: 30000}
 	micro := SettleRelay(c, info, usage)
 	assert.Equal(t, int(frozen), micro, "the charge is capped at the frozen amount")
 

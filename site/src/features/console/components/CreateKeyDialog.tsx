@@ -393,6 +393,49 @@ export function CreateKeyDialog({
                   htmlFor="create-key-expiry"
                   hint={dialogCopy.expiry.hint}
                 >
+                  <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                    {[
+                      { label: '永不过期', days: 'never' as const },
+                      { label: '7 天', days: 7 },
+                      { label: '30 天', days: 30 },
+                      { label: '90 天', days: 90 },
+                    ].map((preset) => {
+                      const isSelected =
+                        preset.days === 'never'
+                          ? neverExpires
+                          : !neverExpires &&
+                            expiresAt &&
+                            Math.abs(
+                              dateTimeInputToUnix(expiresAt) -
+                                (Math.floor(Date.now() / 1000) + preset.days * 86400),
+                            ) < 300
+                      return (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          onClick={() => {
+                            if (preset.days === 'never') {
+                              setNeverExpires(true)
+                              setExpiresAt('')
+                            } else {
+                              setNeverExpires(false)
+                              const futureUnix =
+                                Math.floor(Date.now() / 1000) + preset.days * 86400
+                              setExpiresAt(unixToDateTimeInput(futureUnix))
+                            }
+                          }}
+                          className={cn(
+                            'rounded px-2.5 py-1 text-meta transition-colors',
+                            isSelected
+                              ? 'bg-brand text-white font-medium shadow-xs'
+                              : 'glass-inset text-ink-3 hover:text-ink',
+                          )}
+                        >
+                          {preset.label}
+                        </button>
+                      )
+                    })}
+                  </div>
                   <Input
                     id="create-key-expiry"
                     type="datetime-local"

@@ -66,8 +66,7 @@ describe('BuyerRecordsTable', () => {
     expect(screen.getByText('deepseek-v3')).toBeTruthy()
     expect(screen.getByText('转换')).toBeTruthy()
     expect(screen.getByText('1,000 / 500')).toBeTruthy()
-    expect(screen.getByText(/缓存↓ 200/)).toBeTruthy()
-    expect(screen.getByText(/↑ 100/)).toBeTruthy()
+    expect(screen.getByText(/缓存命中 200/)).toBeTruthy()
   })
 
   it('renders latency, cost and status without distracting savings', () => {

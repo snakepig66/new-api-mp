@@ -11,7 +11,6 @@ type NavTo = '/' | '/models' | '/docs' | '/leaderboard' | '/share' | '/console'
 
 const navItems: { to: NavTo; label: string; exact?: boolean }[] = [
   { to: '/models', label: copy.nav.models },
-  { to: '/leaderboard', label: copy.nav.leaderboard },
   { to: '/docs', label: copy.nav.docs },
   { to: '/share', label: copy.nav.seller },
 ]

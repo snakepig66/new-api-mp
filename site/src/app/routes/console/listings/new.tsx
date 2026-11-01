@@ -230,12 +230,21 @@ function flattenHours(availability: WizardForm['availability']): FlatHours {
   return { windows, valid, any }
 }
 
-function StepRail({ step, onJump }: { step: number; onJump: (next: WizardStep) => void }) {
+function StepRail({
+  step,
+  canFastTrack = false,
+  onJump,
+}: {
+  step: number
+  canFastTrack?: boolean
+  onJump: (next: WizardStep) => void
+}) {
   return (
     <ol className="mt-6 grid grid-cols-2 gap-3 glass p-4 sm:grid-cols-5">
       {page.steps.map((title, index) => {
         const completed = index < step
         const active = index === step
+        const disabled = index > step && !(index === 4 && canFastTrack)
         return (
           <li
             key={title}
@@ -247,11 +256,11 @@ function StepRail({ step, onJump }: { step: number; onJump: (next: WizardStep) =
           >
             <button
               type="button"
-              disabled={index > step}
+              disabled={disabled}
               onClick={() => onJump(index as WizardStep)}
               className={cn(
                 'flex w-full items-center gap-2 text-left',
-                index > step ? 'cursor-not-allowed' : 'cursor-pointer',
+                disabled ? 'cursor-not-allowed' : 'cursor-pointer',
               )}
             >
               <span
@@ -743,8 +752,15 @@ export function NewListingPage() {
     }
   }
 
+  function handleFastTrackVerify() {
+    if (!canLeaveStep(1, snapshot)) return
+    void form.trigger('models')
+    setStep(4)
+    void probeAllKeys(true, values.models)
+  }
+
   function handleJump(next: WizardStep) {
-    if (next <= step) {
+    if (next <= step || (next === 4 && step >= 1 && canLeaveStep(1, snapshot))) {
       setStep(next)
       if (next === 4) {
         void probeAllKeys(true, values.models)
@@ -856,7 +872,11 @@ export function NewListingPage() {
           </span>
         }
       />
-      <StepRail step={step} onJump={handleJump} />
+      <StepRail
+        step={step}
+        canFastTrack={step >= 1 && canLeaveStep(1, snapshot)}
+        onJump={handleJump}
+      />
 
       <form
         className="mt-6 glass p-6"
@@ -1497,10 +1517,21 @@ export function NewListingPage() {
             ) : null}
             {step < 4 ? (
               <Button
+                variant={step === 1 ? 'secondary' : 'primary'}
                 onClick={handleNext}
                 disabled={!canLeaveStep(step, snapshot) || probingKeys}
               >
                 {page.actions.next}
+              </Button>
+            ) : null}
+            {step === 1 ? (
+              <Button
+                type="button"
+                variant="primary"
+                onClick={handleFastTrackVerify}
+                disabled={!canLeaveStep(step, snapshot) || probingKeys}
+              >
+                直接验真上架
               </Button>
             ) : null}
           </div>

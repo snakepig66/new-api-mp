@@ -36,6 +36,7 @@ export function consoleGroups({
             label: shell.groups.share,
             items: [
               { to: '/console/listings', label: sellerNav.listings },
+              { to: '/seller/records', label: '被调明细' },
               { to: '/console/earnings', label: sellerNav.payouts },
             ],
           },

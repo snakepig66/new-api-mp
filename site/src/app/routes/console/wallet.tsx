@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 
 import { copy } from '@/copy'
@@ -35,6 +35,7 @@ import {
   walletTransactionsExportUrl,
 } from '@/features/console/api'
 import type { WalletFlowKind, WalletFlowRow } from '@/features/console/api'
+import { sellerBalanceQuery } from '@/features/seller/api'
 import {
   ErrorBlock,
   Section,
@@ -170,6 +171,7 @@ export function WalletPage() {
   const [exporting, setExporting] = useState(false)
   const wallet = useQuery(walletQuery())
   const transactions = useQuery(walletFlowQuery(currentPage, kind))
+  const sellerBalance = useQuery({ ...sellerBalanceQuery(), retry: false })
 
   const total = transactions.data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
@@ -224,7 +226,7 @@ export function WalletPage() {
           onRetry={() => void wallet.refetch()}
         />
       ) : (
-        <div className="mt-6 grid gap-6 glass p-6 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] sm:divide-x sm:divide-line">
+        <div className="mt-6 grid gap-6 glass p-6 sm:grid-cols-3 sm:divide-x sm:divide-line">
           <div className="min-w-0 sm:pr-6">
             <div className="text-meta text-ink-3">{page.balance}</div>
             <div className="mt-1 break-all text-h1 font-semibold leading-tight tracking-tight tabular-nums text-brand-ink">
@@ -235,8 +237,27 @@ export function WalletPage() {
           <Stat
             label={page.monthSpend}
             value={formatYuan(wallet.data.month_spend_micro)}
-            className="sm:pl-6"
+            className="sm:px-6"
           />
+          <div className="min-w-0 pt-4 sm:pt-0 sm:pl-6">
+            <div className="flex items-center justify-between">
+              <div className="text-meta text-ink-3">渠道收益</div>
+              <Link
+                to="/console/earnings/payouts"
+                className="text-meta text-brand hover:underline font-medium"
+              >
+                提现 →
+              </Link>
+            </div>
+            <div className="mt-1 break-all text-h1 font-semibold leading-tight tracking-tight tabular-nums text-ink">
+              {sellerBalance.data ? formatYuan(sellerBalance.data.available_micro) : '¥0.00'}
+            </div>
+            <div className="mt-1.5 text-meta leading-5 text-ink-3">
+              {sellerBalance.data
+                ? `待结算: ${formatYuan(sellerBalance.data.pending_micro)} · 累计已提: ${formatYuan(sellerBalance.data.paid_micro)}`
+                : '分享渠道赚取收益'}
+            </div>
+          </div>
         </div>
       )}
 

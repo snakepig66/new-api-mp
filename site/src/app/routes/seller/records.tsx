@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 
 import { copy } from '@/copy'
 import { formatYuan } from '@/lib/money'
@@ -230,6 +230,21 @@ function ShareRecordsPage() {
   return (
     <>
       <PageHeader title={page.title} lead={page.lead} />
+
+      <div className="mt-4 flex items-center gap-1.5 overflow-x-auto">
+        <Link
+          to="/console/records"
+          className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-full px-4 text-body font-medium text-ink-2 transition-colors hover:bg-white/60 hover:text-ink"
+        >
+          我的调用（消费）
+        </Link>
+        <Link
+          to="/seller/records"
+          className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-full px-4 text-body font-medium bg-brand text-white shadow-xs"
+        >
+          渠道收益调用（分享）
+        </Link>
+      </div>
 
       <RecordsFilterBar
         className="mt-4"

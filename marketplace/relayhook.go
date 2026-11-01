@@ -1394,7 +1394,16 @@ func PrepareBilling(c *gin.Context, info *relaycommon.RelayInfo, estimateFn func
 
 	s.mu.Lock()
 	if s.freezeAt.IsZero() {
-		s.freezeAt = time.Now()
+		if c != nil {
+			if v, ok := c.Get("test_freeze_at"); ok {
+				if t, ok := v.(time.Time); ok {
+					s.freezeAt = t
+				}
+			}
+		}
+		if s.freezeAt.IsZero() {
+			s.freezeAt = time.Now()
+		}
 	}
 	freezeAt := s.freezeAt
 	listing := s.listing

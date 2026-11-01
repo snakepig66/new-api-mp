@@ -134,6 +134,7 @@ func (f *relayFixture) newRelayContextAt(t *testing.T, path string, body []byte)
 	c.Request = httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set("token_id", 77)
+	c.Set("test_freeze_at", shTime(2026, time.October, 25, 12, 0, 0))
 	common.SetContextKey(c, constant.ContextKeyUserId, f.buyerID)
 	c.Set(common.RequestIdKey, "req_relayhook_test")
 	return c
