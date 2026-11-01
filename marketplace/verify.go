@@ -468,6 +468,13 @@ func VerifyListing(ctx context.Context, db *gorm.DB, client *http.Client, limite
 
 	if len(passed) > 0 {
 		res.KeyValid = true
+		res.FailReason = ""
+		for _, mr := range res.ModelResults {
+			if mr.OK && mr.LatencyMs > 0 {
+				res.LatencyMs = mr.LatencyMs
+				break
+			}
+		}
 		// Only the callable models go live; the rest stay visible to the
 		// seller in ModelResults with their individual reason.
 		if err := setListingModelsForVerification(db, listingID, passed); err != nil {

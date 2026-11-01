@@ -327,6 +327,15 @@ func patrolOneListingWithClient(db *gorm.DB, limiter *VerifyLimiter, client *htt
 	res.ModelResults = modelResults
 	if passed > 0 {
 		keyRes.KeyValid = true
+		keyRes.FailReason = ""
+		res.KeyValid = true
+		res.FailReason = ""
+		for _, mr := range modelResults {
+			if mr.OK && mr.LatencyMs > 0 {
+				res.LatencyMs = mr.LatencyMs
+				break
+			}
+		}
 	}
 	res.OK = passed > 0
 	if !res.OK && res.FailReason == "" {
