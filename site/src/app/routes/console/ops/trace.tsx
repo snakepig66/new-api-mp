@@ -223,7 +223,7 @@ function TraceResult({ trace }: { trace: AdminRequestTrace }) {
 
 function RequestDetails({ request }: { request: AdminTraceRequest }) {
   const tokens = `${request.input_tokens} / ${request.output_tokens}`
-  const cache = `${request.cache_read_tokens} / ${request.cache_write_tokens}`
+  const cache = `${request.cache_read_tokens}`
   const tools = `${request.search_count} / ${request.fetch_count}`
   return (
     <>

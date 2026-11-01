@@ -37,7 +37,7 @@ export const editorText = {
   selectedEmpty: '还没有选择模型。',
   official: '官方参考价',
   multiplier: '倍率',
-  derived: '输入 / 输出 / 缓存读 / 缓存写（元/百万 tokens）',
+  derived: '买家到手价（元 / 1M tokens）',
   remove: '移除',
   poolTitle: '从模型池选择',
   poolSearch: '搜索模型或厂商',
@@ -102,14 +102,10 @@ export function selectableUpstream(
 }
 
 function priceText(p: PoolModelPrice): string {
-  return [
-    p.input_micro_per_mtok,
-    p.output_micro_per_mtok,
-    p.cache_read_micro_per_mtok,
-    p.cache_write_micro_per_mtok,
-  ]
-    .map((v) => formatYuan(v))
-    .join(' / ')
+  if (p.cache_read_micro_per_mtok > 0) {
+    return `${formatYuan(p.input_micro_per_mtok)} / ${formatYuan(p.output_micro_per_mtok)} (缓存命中 ${formatYuan(p.cache_read_micro_per_mtok)})`
+  }
+  return `${formatYuan(p.input_micro_per_mtok)} / ${formatYuan(p.output_micro_per_mtok)}`
 }
 
 export interface ChannelModelsEditorProps {

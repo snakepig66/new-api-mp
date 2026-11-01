@@ -191,11 +191,12 @@ export function ModelDetailPage() {
   const currentMicro = price ? Number(price.input_micro_per_mtok) : null
   const channels = data.channels ?? []
   const dimensions = [
-    { key: 'input_micro_per_mtok', label: page.dimensions.input },
-    { key: 'output_micro_per_mtok', label: page.dimensions.output },
-    { key: 'cache_read_micro_per_mtok', label: page.dimensions.cacheRead },
-    { key: 'cache_write_micro_per_mtok', label: page.dimensions.cacheWrite },
-  ] as const
+    { key: 'input_micro_per_mtok' as const, label: page.dimensions.input },
+    { key: 'output_micro_per_mtok' as const, label: page.dimensions.output },
+    ...(officialCurrent && Number(officialCurrent.cache_read_micro_per_mtok) > 0
+      ? [{ key: 'cache_read_micro_per_mtok' as const, label: page.dimensions.cacheRead }]
+      : []),
+  ]
 
   const codeTabs = (Object.keys(page.code.tabs) as CodeTab[]).map((key) => ({
     key,

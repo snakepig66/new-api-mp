@@ -243,22 +243,13 @@ function ConsoleOverviewPage() {
                           formatCount(row.outputTokens)
                         )}
                       </div>
-                      {(row.cacheReadTokens > 0 || row.cacheWriteTokens > 0) && (
+                      {row.cacheReadTokens > 0 && (
                         <div className="flex items-center gap-1 text-meta tabular-nums text-ink-3">
-                          {row.cacheReadTokens > 0 && (
-                            <span>
-                              {copy.pages.consoleRecords.tokens.cache(
-                                formatCount(row.cacheReadTokens)
-                              )}
-                            </span>
-                          )}
-                          {row.cacheWriteTokens > 0 && (
-                            <span>
-                              {copy.pages.consoleRecords.tokens.cacheWrite(
-                                formatCount(row.cacheWriteTokens)
-                              )}
-                            </span>
-                          )}
+                          <span>
+                            {copy.pages.consoleRecords.tokens.cache(
+                              formatCount(row.cacheReadTokens)
+                            )}
+                          </span>
                         </div>
                       )}
                     </TableCell>

@@ -291,13 +291,12 @@ function ReplaceKeyDialog({
 // ---------------------------------------------------------------------------
 
 const PRICE_DIMENSIONS: {
-  key: 'input_micro_per_mtok' | 'output_micro_per_mtok' | 'cache_read_micro_per_mtok' | 'cache_write_micro_per_mtok'
+  key: 'input_micro_per_mtok' | 'output_micro_per_mtok' | 'cache_read_micro_per_mtok'
   label: string
 }[] = [
   { key: 'input_micro_per_mtok', label: page.models.dimensions.input },
   { key: 'output_micro_per_mtok', label: page.models.dimensions.output },
-  { key: 'cache_read_micro_per_mtok', label: page.models.dimensions.cache_read },
-  { key: 'cache_write_micro_per_mtok', label: page.models.dimensions.cache_write },
+  { key: 'cache_read_micro_per_mtok', label: '缓存命中' },
 ]
 
 function ModelPriceTable({ row, feePercent }: { row: SellerModelRow; feePercent: number }) {
@@ -318,7 +317,12 @@ function ModelPriceTable({ row, feePercent }: { row: SellerModelRow; feePercent:
           </TableRow>
         </TableHead>
         <TableBody>
-          {PRICE_DIMENSIONS.map((dimension) => {
+          {PRICE_DIMENSIONS.filter((dim) => {
+            if (dim.key === 'cache_read_micro_per_mtok') {
+              return Boolean(officialPrices?.cache_read_micro_per_mtok || buyerPrices?.cache_read_micro_per_mtok)
+            }
+            return true
+          }).map((dimension) => {
             const official = officialPrices?.[dimension.key]
             const buyer = buyerPrices?.[dimension.key]
             // 到手价 = 买家价 × (1 - 平台费)。整数微元上取整，仅用于展示。

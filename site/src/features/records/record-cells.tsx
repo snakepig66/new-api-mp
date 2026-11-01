@@ -232,10 +232,9 @@ export function TokensMetricCell({
       <span className="font-mono text-meta font-medium tabular-nums text-ink leading-tight">
         {formatNum(input)} / {formatNum(output)}
       </span>
-      {hasCache && (
+      {cacheRead > 0 && (
         <div className="flex items-center gap-1.5 text-[11px] text-ink-3 tabular-nums leading-tight">
-          {cacheRead > 0 && <span>缓存↓ {formatNum(cacheRead)}</span>}
-          {cacheWrite > 0 && <span>↑ {formatNum(cacheWrite)}</span>}
+          <span>缓存命中 {formatNum(cacheRead)}</span>
         </div>
       )}
     </div>

@@ -165,11 +165,10 @@ export function RecordDetailContent({ detail, view }: RecordDetailContentProps) 
         <h3 className="border-b border-line pb-1.5 text-meta font-medium text-ink">
           {text.tokensAndCost}
         </h3>
-        <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 text-meta sm:grid-cols-4">
+        <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 text-meta sm:grid-cols-3">
           <Info label={text.input} value={formatCount(record.input_tokens)} mono />
           <Info label={text.output} value={formatCount(record.output_tokens)} mono />
-          <Info label={text.cacheRead} value={formatCount(record.cache_read_tokens)} mono />
-          <Info label={text.cacheWrite} value={formatCount(record.cache_write_tokens)} mono />
+          <Info label="缓存命中" value={formatCount(record.cache_read_tokens)} mono />
           <Info
             label={text.search}
             value={text.times(formatCount(record.search_count))}
