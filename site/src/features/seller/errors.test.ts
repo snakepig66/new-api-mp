@@ -52,11 +52,11 @@ describe('sellerErrorMessage', () => {
 })
 
 describe('modelVerifyReason', () => {
-  it('explains a model missing from the key /models list', () => {
+  it('explains a model missing from the key model list', () => {
     expect(
       modelVerifyReason('该模型不在这个 Key 的可用模型列表中'),
-    ).toContain('/models')
-    expect(modelVerifyReason('model not in this key model list')).toContain('/models')
+    ).toContain('可用列表中')
+    expect(modelVerifyReason('model not in this key model list')).toContain('可用列表中')
   })
 
   it('keeps other Chinese reasons readable', () => {

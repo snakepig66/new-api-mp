@@ -519,10 +519,10 @@ export function NewListingPage() {
     ? planWindowText(matchedVendor?.quota_window)
     : null
 
-  const probeInput = (key: string) => ({
+  const probeInput = (key: string, modelsToProbe?: string[]) => ({
     vendor_id: matchedVendor?.id ?? '',
     api_key: key,
-    models: [] as string[],
+    models: modelsToProbe ?? values.models ?? [],
     custom_base_url: matchedVendor ? undefined : values.url.trim(),
   })
 
@@ -690,10 +690,10 @@ export function NewListingPage() {
     },
   })
 
-  async function probeOneKey(key: string, force: boolean): Promise<void> {
+  async function probeOneKey(key: string, force: boolean, modelsToProbe?: string[]): Promise<void> {
     if (!force && keyProbes[key]) return
     try {
-      const result = await probeListing(probeInput(key))
+      const result = await probeListing(probeInput(key, modelsToProbe))
       setKeyProbes((current) => ({ ...current, [key]: result }))
       setProbeErrors((current) => {
         const next = { ...current }
@@ -705,12 +705,12 @@ export function NewListingPage() {
     }
   }
 
-  async function probeAllKeys(force = false): Promise<void> {
+  async function probeAllKeys(force = false, modelsToProbe?: string[]): Promise<void> {
     if (probingKeys || !validApiKeys(keys) || !validCustomURL(values.url)) return
     setProbingKeys(true)
     try {
       for (const key of keys) {
-        await probeOneKey(key, force)
+        await probeOneKey(key, force, modelsToProbe)
       }
     } finally {
       setProbingKeys(false)
@@ -739,11 +739,17 @@ export function NewListingPage() {
       void form.trigger('headers')
       setAdvancedOpen(false)
       setStep(4)
+      void probeAllKeys(true, values.models)
     }
   }
 
   function handleJump(next: WizardStep) {
-    if (next <= step) setStep(next)
+    if (next <= step) {
+      setStep(next)
+      if (next === 4) {
+        void probeAllKeys(true, values.models)
+      }
+    }
   }
 
   function applyBatchMultiplier() {
@@ -1366,7 +1372,7 @@ export function NewListingPage() {
                     variant="secondary"
                     size="sm"
                     loading={probingKeys}
-                    onClick={() => void probeAllKeys(true)}
+                    onClick={() => void probeAllKeys(true, values.models)}
                   >
                     {probingKeys ? page.verify.rechecking : page.verify.recheck}
                   </Button>

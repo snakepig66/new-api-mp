@@ -438,13 +438,24 @@ func VerifyListing(ctx context.Context, db *gorm.DB, client *http.Client, limite
 	for _, m := range listing.Models {
 		mr := ModelVerifyResult{Model: m, UpstreamModel: upstreamByModel[m]}
 		switch {
-		case !res.KeyValid || len(res.Models) == 0:
-			mr.FailReason = "Key 未能读取模型列表，未进行调用检测"
-		case !keyExposesModel(res.Models, upstreamByModel[m]):
+		case !res.KeyValid && strings.Contains(res.FailReason, "key rejected"):
+			mr.FailReason = "Key 未通过身份认证"
+		case len(res.Models) > 0 && !keyExposesModel(res.Models, upstreamByModel[m]):
 			mr.FailReason = "该模型不在这个 Key 的可用模型列表中"
 		default:
 			mr.OK, mr.PromptCacheSupport, mr.LatencyMs, mr.FailReason =
 				probeModelCall(ctx, client, base, upstreamByModel[m], apiKey)
+			if !mr.OK && strings.Contains(mr.FailReason, "404") && isCustomChannelSlug(listing.Vendor) {
+				altBase := strings.TrimSuffix(base, "/") + "/v1"
+				if altOk, altCache, altLat, _ := probeModelCall(ctx, client, altBase, upstreamByModel[m], apiKey); altOk {
+					mr.OK = true
+					mr.PromptCacheSupport = altCache
+					mr.LatencyMs = altLat
+					mr.FailReason = ""
+					base = altBase
+					_, _ = pinCustomVendor(db, &listing, vendor, altBase)
+				}
+			}
 		}
 		if mr.OK {
 			passed = append(passed, m)
@@ -455,7 +466,8 @@ func VerifyListing(ctx context.Context, db *gorm.DB, client *http.Client, limite
 		res.ModelResults = append(res.ModelResults, mr)
 	}
 
-	if res.KeyValid && len(res.Models) > 0 && len(passed) > 0 {
+	if len(passed) > 0 {
+		res.KeyValid = true
 		// Only the callable models go live; the rest stay visible to the
 		// seller in ModelResults with their individual reason.
 		if err := setListingModelsForVerification(db, listingID, passed); err != nil {
@@ -463,7 +475,7 @@ func VerifyListing(ctx context.Context, db *gorm.DB, client *http.Client, limite
 		}
 		listing.Models = passed
 	}
-	res.OK = res.KeyValid && len(res.Models) > 0 && len(passed) > 0
+	res.OK = res.KeyValid && len(passed) > 0
 	if !res.OK && res.FailReason == "" {
 		var failures []string
 		for _, mr := range res.ModelResults {

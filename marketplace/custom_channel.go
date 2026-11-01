@@ -377,18 +377,28 @@ func probeCustomChannelKey(ctx context.Context, client *http.Client, db *gorm.DB
 			detected = alt
 		}
 	}
-	if db == nil || !res.KeyValid {
-		return detected, res, nil
-	}
 	catalogue := make(map[string]bool)
-	for _, m := range ModelPoolAll(db) {
-		catalogue[strings.TrimSpace(m.Name)] = true
+	allPool := make([]string, 0)
+	if db != nil {
+		for _, m := range ModelPoolAll(db) {
+			name := strings.TrimSpace(m.Name)
+			catalogue[name] = true
+			allPool = append(allPool, name)
+		}
 	}
 	sellable := make([]string, 0, len(res.Models))
 	for _, m := range res.Models {
 		if catalogue[m] && !containsString(sellable, m) {
 			sellable = append(sellable, m)
 		}
+	}
+	// /models is not required for probe: many upstreams (e.g. cloud gateways) only expose
+	// /chat/completions. When /models fails or returns empty, allow pool models to be selected
+	// and verify connectivity in the final step.
+	if len(res.Models) == 0 {
+		res.KeyValid = true
+		res.FailReason = ""
+		sellable = allPool
 	}
 	return detected, res, sellable
 }

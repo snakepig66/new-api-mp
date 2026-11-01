@@ -230,8 +230,10 @@ export function buildVerificationMatrix(
         failReason = '尚未检测'
       } else if (!probe.key_valid) {
         failReason = probe.fail_reason || 'Key 无效'
-      } else if (!callable.has(model)) {
+      } else if (callable.size > 0 && !callable.has(model)) {
         failReason = probe.fail_reason || '该模型不在这个 Key 的可用列表中'
+      } else if (callable.size === 0 && probe.fail_reason) {
+        failReason = probe.fail_reason
       } else {
         ok = true
       }

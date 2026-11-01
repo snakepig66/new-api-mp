@@ -1908,30 +1908,65 @@ func postSellerListingProbe(c *gin.Context) {
 		}
 		defer limiter.Release()
 		detected, keyRes, sellable := probeCustomChannelKey(ctx, client, db, req.CustomBaseURL, apiKey)
+		var balance *int64
+		promptCache := false
+		verifiedModels := make([]string, 0, len(req.Models))
+		if len(req.Models) > 0 {
+			var lastFailReason string
+			for _, m := range req.Models {
+				ok, cache, lat, reason := probeModelCall(ctx, client, detected, m, apiKey)
+				if !ok && strings.Contains(reason, "404") {
+					alt := strings.TrimSuffix(detected, "/") + "/v1"
+					if altOk, altCache, altLat, _ := probeModelCall(ctx, client, alt, m, apiKey); altOk {
+						ok = altOk
+						cache = altCache
+						lat = altLat
+						reason = ""
+						detected = alt
+					}
+				}
+				if ok {
+					verifiedModels = append(verifiedModels, m)
+					if lat > 0 {
+						keyRes.LatencyMs = lat
+					}
+					if cache {
+						promptCache = true
+					}
+				} else if lastFailReason == "" {
+					lastFailReason = reason
+				}
+			}
+			if len(verifiedModels) > 0 {
+				keyRes.KeyValid = true
+				keyRes.FailReason = ""
+				sellable = verifiedModels
+			} else {
+				keyRes.KeyValid = false
+				keyRes.FailReason = lastFailReason
+			}
+		} else {
+			verifiedModels = sellable
+			if keyRes.KeyValid && len(sellable) > 0 && detected != "" {
+				balance = fetchBalanceMicro(ctx, client, detected, apiKey)
+				promptCache = probePromptCacheSupport(ctx, client, detected, sellable[0], apiKey)
+			}
+		}
 		coefficients := make(map[string]int64, len(sellable))
 		for _, m := range sellable {
 			coefficients[m] = 1000
 		}
-		var balance *int64
-		promptCache := false
-		if keyRes.KeyValid && len(sellable) > 0 && detected != "" {
-			balance = fetchBalanceMicro(ctx, client, detected, apiKey)
-			promptCache = probePromptCacheSupport(ctx, client, detected, sellable[0], apiKey)
-		}
-		missing := make([]string, 0)
-		for _, m := range req.Models {
-			if !containsString(sellable, m) && !containsString(missing, m) {
-				missing = append(missing, m)
-			}
-		}
 		catalog := sellerModelCatalogFor(db, keyRes.Models, time.Now())
-		missing = missing[:0]
+		missing := make([]string, 0)
 		for _, m := range req.Models {
 			if _, ok := sellableModelPrice(db, m, time.Now()); !ok && !containsString(missing, m) {
 				missing = append(missing, m)
 			}
 		}
 		probeOK := keyRes.KeyValid && len(missing) == 0
+		if len(req.Models) > 0 && len(verifiedModels) == 0 {
+			probeOK = false
+		}
 		failReason := stripKey(keyRes.FailReason, apiKey)
 		if sellable == nil {
 			sellable = make([]string, 0)
@@ -1945,7 +1980,7 @@ func postSellerListingProbe(c *gin.Context) {
 		common.ApiSuccess(c, gin.H{
 			"ok":                 probeOK,
 			"models":             sellable,
-			"verified_models":    sellable,
+			"verified_models":    verifiedModels,
 			"coefficients":       coefficients,
 			"missing_models":     missing,
 			"latency_ms":         keyRes.LatencyMs,
@@ -2023,7 +2058,48 @@ func postSellerListingProbe(c *gin.Context) {
 			missing = append(missing, m)
 		}
 	}
+	verifiedModels := make([]string, 0, len(req.Models))
+	if len(req.Models) > 0 {
+		base := VendorOpenAIBase(vendor)
+		var lastFailReason string
+		for _, m := range req.Models {
+			upstreamModel := m
+			for _, um := range catalog.UpstreamModels {
+				if um.SuggestedModel != nil && *um.SuggestedModel == m {
+					upstreamModel = um.Upstream
+					break
+				}
+			}
+			ok, cache, lat, reason := probeModelCall(ctx, client, base, upstreamModel, apiKey)
+			if ok {
+				verifiedModels = append(verifiedModels, m)
+				if lat > 0 {
+					keyRes.LatencyMs = lat
+				}
+				if cache {
+					promptCache = true
+				}
+			} else if lastFailReason == "" {
+				lastFailReason = reason
+			}
+		}
+		if len(verifiedModels) > 0 {
+			keyRes.KeyValid = true
+			keyRes.OK = true
+			keyRes.FailReason = ""
+		} else if !keyRes.OK {
+			if keyRes.FailReason == "" {
+				keyRes.FailReason = lastFailReason
+			}
+		}
+	} else {
+		verifiedModels = available
+	}
+
 	probeOK := keyRes.OK && len(missing) == 0
+	if len(req.Models) > 0 && len(verifiedModels) == 0 {
+		probeOK = false
+	}
 	failReason := stripKey(keyRes.FailReason, apiKey)
 
 	if available == nil {
@@ -2039,7 +2115,7 @@ func postSellerListingProbe(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{
 		"ok":                 probeOK,
 		"models":             available,
-		"verified_models":    available, // explicit alias for the seller wizard
+		"verified_models":    verifiedModels, // explicit alias for the seller wizard
 		"coefficients":       coefficients,
 		"missing_models":     missing,
 		"latency_ms":         keyRes.LatencyMs,
