@@ -801,9 +801,9 @@ func GoLive(db *gorm.DB, id int64) error {
 	return TransitionListing(db, id, ListingCanary, ListingLive)
 }
 
-// PauseListing moves live → paused.
+// PauseListing moves live/canary → paused.
 func PauseListing(db *gorm.DB, id int64) error {
-	return TransitionListing(db, id, ListingLive, ListingPaused)
+	return transitionListingFrom(db, id, []string{ListingLive, ListingCanary}, ListingPaused)
 }
 
 // ResumeListing moves paused → draft. A pause (patrol failure, operator

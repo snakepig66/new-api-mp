@@ -92,14 +92,13 @@ function isListingAbnormal(listing: SellerListing): boolean {
 function matchesFilter(listing: SellerListing, filter: ListingFilter): boolean {
   switch (filter) {
     case 'running':
-      return listing.status === 'live' && !isListingAbnormal(listing)
+      return (listing.status === 'live' || listing.status === 'canary') && !isListingAbnormal(listing)
     case 'cooldown':
-      return listing.status === 'paused'
+      return listing.status === 'paused' || listing.status === 'banned'
     case 'review':
       return (
         listing.status === 'draft' ||
-        listing.status === 'verifying' ||
-        listing.status === 'canary'
+        listing.status === 'verifying'
       )
     case 'abnormal':
       return isListingAbnormal(listing)
@@ -837,7 +836,7 @@ export function SellerListingsPage() {
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-2">
                             <Switch
-                              checked={listing.status === 'live'}
+                              checked={listing.status === 'live' || listing.status === 'canary'}
                               loading={pausingThis || resumingThis}
                               disabled={!canToggle}
                               title={

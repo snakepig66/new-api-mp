@@ -326,7 +326,10 @@ func TestListingStateMachine(t *testing.T) {
 	assert.Equal(t, ListingVerifying, status())
 	passVerification()
 	assert.Equal(t, ListingCanary, status())
-	require.NoError(t, GoLive(db, listing.ID))
+	// A canary listing can be paused/closed directly by seller without waiting for GoLive
+	require.NoError(t, PauseListing(db, listing.ID))
+	assert.Equal(t, ListingPaused, status())
+	require.NoError(t, ResumeSellerListing(db, listing.ID))
 	assert.Equal(t, ListingLive, status())
 	require.NoError(t, PauseListing(db, listing.ID))
 	assert.Equal(t, ListingPaused, status())

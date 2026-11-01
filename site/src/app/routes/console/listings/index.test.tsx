@@ -288,7 +288,7 @@ describe('seller listings table view', () => {
     expect(within(row1).getByText('#1')).toBeTruthy()
     expect(within(row1).getByText('官方')).toBeTruthy()
     expect(within(row1).getByText('¥12.34')).toBeTruthy()
-    expect(within(row1).getByText('在售')).toBeTruthy()
+    expect(within(row1).getByText('运行中')).toBeTruthy()
 
     // 成功率 windows: 99% / — / 98%.
     expect(within(row1).getByText('99%')).toBeTruthy()
@@ -330,8 +330,8 @@ describe('seller listings table view', () => {
     const chip = (label: string) => screen.getByRole('button', { name: new RegExp(label) })
     expect(chip('全部').textContent).toContain('5')
     expect(chip('运行中').textContent).toContain('2')
-    expect(chip('冷却中').textContent).toContain('1')
-    expect(chip('待审核').textContent).toContain('1')
+    expect(chip('已关闭').textContent).toContain('1')
+    expect(chip('待检测').textContent).toContain('1')
     expect(chip('异常').textContent).toContain('1')
     expect(document.querySelectorAll('tbody tr')).toHaveLength(5)
 
@@ -344,13 +344,13 @@ describe('seller listings table view', () => {
     expect(document.querySelectorAll('tbody tr')).toHaveLength(1)
     expect(screen.getByText('1 / 3')).toBeTruthy()
 
-    fireEvent.click(chip('冷却中'))
+    fireEvent.click(chip('已关闭'))
     expect(document.querySelectorAll('tbody tr')).toHaveLength(1)
     expect(screen.getByText('套餐渠道')).toBeTruthy()
 
-    fireEvent.click(chip('待审核'))
+    fireEvent.click(chip('待检测'))
     expect(document.querySelectorAll('tbody tr')).toHaveLength(1)
-    expect(screen.getByText('待验真')).toBeTruthy()
+    expect(within(document.querySelector('tbody')!).getByText('待检测')).toBeTruthy()
 
     fireEvent.click(chip('全部'))
     expect(document.querySelectorAll('tbody tr')).toHaveLength(5)

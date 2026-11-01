@@ -27,7 +27,7 @@ export function listingStatusView(status: string): StatusView {
     case 'paused':
       return { label: common.status.paused, tone: 'neutral' }
     case 'banned':
-      return { label: common.status.banned, tone: 'danger' }
+      return { label: common.status.banned, tone: 'neutral' }
     default:
       return { label: common.status.unknown, tone: 'neutral' }
   }
@@ -85,7 +85,7 @@ export function pauseReasonView(reason: string | undefined | null): string {
 }
 
 export function isListingPausable(status: string): boolean {
-  return status === 'live'
+  return status === 'live' || status === 'canary'
 }
 
 export function isListingResumable(status: string): boolean {
@@ -112,8 +112,8 @@ export function isListingReverifiable(listing: { status: string }): boolean {
   return listing.status === 'draft'
 }
 
-export function isListingKeyReplaceable(status: string): boolean {
-  return status !== 'banned'
+export function isListingKeyReplaceable(_status: string): boolean {
+  return true
 }
 
 export function isSellerActive(seller: SellerIdentity | undefined | null): boolean {

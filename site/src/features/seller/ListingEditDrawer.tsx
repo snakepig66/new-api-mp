@@ -983,12 +983,31 @@ export function ListingEditDrawer({
             <Section id="overview" title={page.overview.title} lead={page.overview.lead}>
               <dl className="grid gap-3 sm:grid-cols-2">
                 <InfoField label={page.overview.fields.status}>
-                  <Tag tone={status.tone} dot>
-                    {status.label}
-                  </Tag>
+                  <div className="flex items-center gap-3">
+                    <Tag tone={status.tone} dot>
+                      {status.label}
+                    </Tag>
+                    {isListingPausable(listing.status) || isListingSellerResumable(listing) ? (
+                      <Switch
+                        checked={listing.status === 'live' || listing.status === 'canary'}
+                        loading={pause.isPending || resume.isPending}
+                        aria-label="渠道开关"
+                        onCheckedChange={(next) => (next ? resume.mutate() : pause.mutate())}
+                      />
+                    ) : null}
+                  </div>
                 </InfoField>
                 <InfoField label={page.overview.fields.fingerprint}>
-                  <span className="font-mono">{listing.key_fingerprint8 || '—'}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono">{listing.key_fingerprint8 || '—'}</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setKeyDialogOpen(true)}
+                    >
+                      {page.key.replace}
+                    </Button>
+                  </div>
                 </InfoField>
                 <InfoField label={page.overview.fields.vendor}>
                   {vendorName(listing.vendor)}
@@ -1001,9 +1020,22 @@ export function ListingEditDrawer({
                 </InfoField>
               </dl>
               <div>
-                <h4 className="text-meta font-medium text-ink">
-                  {page.overview.verificationTitle}
-                </h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-meta font-medium text-ink">
+                    {page.overview.verificationTitle}
+                  </h4>
+                  {isListingReverifiable(listing) || listing.status === 'verifying' ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      loading={verify.isPending}
+                      disabled={listing.status === 'verifying'}
+                      onClick={() => verify.mutate()}
+                    >
+                      {verify.isPending ? page.verify.rechecking : page.verify.recheck}
+                    </Button>
+                  ) : null}
+                </div>
                 <div className="mt-2">
                   {listing.verification ? (
                     <VerificationSummary verification={listing.verification} compact />

@@ -334,14 +334,14 @@ describe('ListingEditDrawer', () => {
     }
 
     // 概览：状态、指纹、备注、创建时间、验真摘要
-    expect(screen.getAllByText('在售').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('运行中').length).toBeGreaterThan(0)
     expect(screen.getAllByText('abcd1234').length).toBeGreaterThan(0)
     expect(screen.getByText('2026-10-24 10:00:00')).toBeTruthy()
     expect(screen.getByText('全部模型通过')).toBeTruthy()
     expect(screen.getByText('最近验真')).toBeTruthy()
 
     // 密钥区块
-    expect(screen.getByRole('button', { name: '更换 Key' })).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: '更换 Key' }).length).toBeGreaterThan(0)
 
     // 模型与价格：平台费说明 + 官方价/买家价/到手价
     expect(screen.getByText('到手价为买家价扣除 7% 平台费后的金额。')).toBeTruthy()
