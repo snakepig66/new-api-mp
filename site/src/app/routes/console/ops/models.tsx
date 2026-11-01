@@ -71,6 +71,32 @@ const CAPABILITY_LABELS: Record<string, string> = {
   search: '搜索',
 }
 
+const PRESET_VENDORS: { value: string; label: string }[] = [
+  { value: 'deepseek', label: 'DeepSeek' },
+  { value: 'zhipu', label: '智谱 AI' },
+  { value: 'qwen', label: '阿里云千问 (Qwen)' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'anthropic', label: 'Anthropic (Claude)' },
+  { value: 'google', label: 'Google (Gemini)' },
+  { value: 'moonshot', label: '月之暗面 (Kimi)' },
+  { value: 'minimax', label: 'MiniMax' },
+  { value: 'doubao', label: '字节跳动 (豆包)' },
+  { value: 'baidu', label: '百度 (文心一言)' },
+  { value: 'xai', label: 'xAI (Grok)' },
+  { value: '01ai', label: '零一万物 (Yi)' },
+]
+
+const STANDARD_CAPABILITIES: { key: string; label: string }[] = [
+  { key: 'chat', label: '对话 (chat)' },
+  { key: 'tools', label: '工具调用 (tools)' },
+  { key: 'reasoning', label: '深度推理 (reasoning)' },
+  { key: 'vision', label: '视觉理解 (vision)' },
+  { key: 'cache', label: '提示词缓存 (cache)' },
+  { key: 'search', label: '联网搜索 (search)' },
+  { key: 'image', label: '图像生成 (image)' },
+  { key: 'embedding', label: '文本向量 (embedding)' },
+]
+
 type StatusFilter = 'all' | 'active' | 'retired' | 'unpriced'
 
 const statusFilterOptions = [
@@ -211,6 +237,49 @@ function ModelsAndPricingPage() {
       rows: vendorRows,
     }))
   }, [filteredRows])
+
+  // Vendor options for the modal select dropdown
+  const dialogVendorOptions = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const v of PRESET_VENDORS) {
+      map.set(v.value, v.label)
+    }
+    for (const m of models.data ?? []) {
+      const v = m.origin_vendor?.trim()
+      if (v && !map.has(v)) {
+        map.set(v, `${vendorLabel(v)} (${v})`)
+      }
+    }
+    return Array.from(map.entries()).map(([value, label]) => ({ value, label }))
+  }, [models.data])
+
+  const selectedCaps = useMemo(() => {
+    return new Set(splitList(form.capabilities))
+  }, [form.capabilities])
+
+  const customCapsList = useMemo(() => {
+    const stdKeys = new Set(STANDARD_CAPABILITIES.map((c) => c.key))
+    return splitList(form.capabilities).filter((cap) => !stdKeys.has(cap))
+  }, [form.capabilities])
+
+  function toggleCap(key: string) {
+    const next = new Set(splitList(form.capabilities))
+    if (next.has(key)) {
+      next.delete(key)
+    } else {
+      next.add(key)
+    }
+    update('capabilities', Array.from(next).join(', '))
+  }
+
+  function handleCustomCapsChange(val: string) {
+    const std = splitList(form.capabilities).filter((cap) =>
+      STANDARD_CAPABILITIES.some((c) => c.key === cap),
+    )
+    const custom = splitList(val)
+    const merged = Array.from(new Set([...std, ...custom]))
+    update('capabilities', merged.join(', '))
+  }
 
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: adminPoolModelsQuery().queryKey })
@@ -736,14 +805,48 @@ function ModelsAndPricingPage() {
               <Field
                 label="厂商标识 (Vendor)"
                 htmlFor="unified-vendor"
-                hint="用于渲染厂商矢量图标与分类"
+                hint="选择或自定义厂商，用于渲染品牌矢量图标与分类"
               >
-                <TextInput
+                <Select
                   id="unified-vendor"
-                  value={form.origin_vendor}
-                  placeholder="deepseek / openai / anthropic"
-                  onChange={(e) => update('origin_vendor', e.target.value)}
-                />
+                  value={
+                    dialogVendorOptions.some((o) => o.value === form.origin_vendor)
+                      ? form.origin_vendor
+                      : form.origin_vendor
+                        ? '__custom__'
+                        : ''
+                  }
+                  onChange={(e) => {
+                    const val = e.target.value
+                    if (val === '__custom__') {
+                      if (dialogVendorOptions.some((o) => o.value === form.origin_vendor)) {
+                        update('origin_vendor', '')
+                      }
+                    } else {
+                      update('origin_vendor', val)
+                    }
+                  }}
+                >
+                  <option value="" disabled>
+                    请选择厂商...
+                  </option>
+                  {dialogVendorOptions.map((v) => (
+                    <option key={v.value} value={v.value}>
+                      {v.label} ({v.value})
+                    </option>
+                  ))}
+                  <option value="__custom__">其他厂商（手动输入）...</option>
+                </Select>
+                {(!dialogVendorOptions.some((o) => o.value === form.origin_vendor) ||
+                  form.origin_vendor === '') && (
+                  <div className="mt-2">
+                    <TextInput
+                      placeholder="输入自定义厂商标识 slug，例如 mistral"
+                      value={form.origin_vendor}
+                      onChange={(e) => update('origin_vendor', e.target.value.trim().toLowerCase())}
+                    />
+                  </div>
+                )}
               </Field>
 
               <Field
@@ -789,13 +892,40 @@ function ModelsAndPricingPage() {
                 label="功能能力 / 标签"
                 htmlFor="unified-caps"
                 className="sm:col-span-2"
+                hint="勾选模型具备的特性能力，用于模型广场与控制台的筛选和标示"
               >
-                <TextInput
-                  id="unified-caps"
-                  value={form.capabilities}
-                  placeholder="chat, tools, vision"
-                  onChange={(e) => update('capabilities', e.target.value)}
-                />
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {STANDARD_CAPABILITIES.map((cap) => {
+                    const checked = selectedCaps.has(cap.key)
+                    return (
+                      <label
+                        key={cap.key}
+                        className={cn(
+                          'flex items-center gap-2 rounded-lg border px-3 py-2 text-meta transition-all cursor-pointer select-none',
+                          checked
+                            ? 'border-brand bg-brand-soft/40 text-brand-ink font-medium shadow-2xs'
+                            : 'border-line bg-card/60 text-ink-2 hover:border-line-hover hover:bg-surface',
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-line text-brand accent-brand cursor-pointer"
+                          checked={checked}
+                          onChange={() => toggleCap(cap.key)}
+                        />
+                        <span className="truncate">{cap.label}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+                <div className="mt-2.5">
+                  <TextInput
+                    id="unified-caps-custom"
+                    placeholder="其他自定义能力（可选，逗号分隔，例如 audio, code）"
+                    value={customCapsList.join(', ')}
+                    onChange={(e) => handleCustomCapsChange(e.target.value)}
+                  />
+                </div>
               </Field>
             </div>
           </div>
