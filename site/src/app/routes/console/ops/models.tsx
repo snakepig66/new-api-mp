@@ -61,10 +61,11 @@ const tabs: readonly OpsTabLink[] = [
 
 const CAPABILITY_LABELS: Record<string, string> = {
   text: '文本',
-  chat: '对话',
+  vision: '视觉',
+  video: '视频',
+  chat: '文本',
   tools: '工具',
   cache: '缓存',
-  vision: '视觉',
   image: '图像',
   embedding: '向量',
   reasoning: '推理',
@@ -87,14 +88,9 @@ const PRESET_VENDORS: { value: string; label: string }[] = [
 ]
 
 const STANDARD_CAPABILITIES: { key: string; label: string }[] = [
-  { key: 'chat', label: '对话 (chat)' },
-  { key: 'tools', label: '工具调用 (tools)' },
-  { key: 'reasoning', label: '深度推理 (reasoning)' },
-  { key: 'vision', label: '视觉理解 (vision)' },
-  { key: 'cache', label: '提示词缓存 (cache)' },
-  { key: 'search', label: '联网搜索 (search)' },
-  { key: 'image', label: '图像生成 (image)' },
-  { key: 'embedding', label: '文本向量 (embedding)' },
+  { key: 'text', label: '文本' },
+  { key: 'vision', label: '视觉' },
+  { key: 'video', label: '视频' },
 ]
 
 type StatusFilter = 'all' | 'active' | 'retired' | 'unpriced'
@@ -132,7 +128,6 @@ interface UnifiedModelForm {
   input_yuan: string
   output_yuan: string
   cache_read_yuan: string
-  cache_write_yuan: string
 }
 
 const emptyForm: UnifiedModelForm = {
@@ -146,7 +141,6 @@ const emptyForm: UnifiedModelForm = {
   input_yuan: '',
   output_yuan: '',
   cache_read_yuan: '',
-  cache_write_yuan: '',
 }
 
 function ModelsAndPricingPage() {
@@ -165,6 +159,7 @@ function ModelsAndPricingPage() {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<AdminPoolModel | null>(null)
+  const [customVendorMode, setCustomVendorMode] = useState(false)
 
   // Map each model name to its latest flat price row
   const latestPriceMap = useMemo(() => {
@@ -254,16 +249,26 @@ function ModelsAndPricingPage() {
   }, [models.data])
 
   const selectedCaps = useMemo(() => {
-    return new Set(splitList(form.capabilities))
+    const list = splitList(form.capabilities)
+    const set = new Set<string>()
+    for (const c of list) {
+      if (c === 'chat' || c === 'text') set.add('text')
+      else if (c === 'vision') set.add('vision')
+      else if (c === 'video') set.add('video')
+      else set.add(c)
+    }
+    return set
   }, [form.capabilities])
 
   const customCapsList = useMemo(() => {
-    const stdKeys = new Set(STANDARD_CAPABILITIES.map((c) => c.key))
+    const stdKeys = new Set(['text', 'vision', 'video', 'chat'])
     return splitList(form.capabilities).filter((cap) => !stdKeys.has(cap))
   }, [form.capabilities])
 
   function toggleCap(key: string) {
-    const next = new Set(splitList(form.capabilities))
+    const list = splitList(form.capabilities)
+    const normalized = list.map((c) => (c === 'chat' ? 'text' : c))
+    const next = new Set(normalized)
     if (next.has(key)) {
       next.delete(key)
     } else {
@@ -273,9 +278,10 @@ function ModelsAndPricingPage() {
   }
 
   function handleCustomCapsChange(val: string) {
-    const std = splitList(form.capabilities).filter((cap) =>
-      STANDARD_CAPABILITIES.some((c) => c.key === cap),
-    )
+    const list = splitList(form.capabilities)
+    const std = list
+      .map((c) => (c === 'chat' ? 'text' : c))
+      .filter((cap) => STANDARD_CAPABILITIES.some((c) => c.key === cap))
     const custom = splitList(val)
     const merged = Array.from(new Set([...std, ...custom]))
     update('capabilities', merged.join(', '))
@@ -317,6 +323,7 @@ function ModelsAndPricingPage() {
   function openCreate() {
     setEditing(null)
     setForm(emptyForm)
+    setCustomVendorMode(false)
     setErrors({})
     setSubmitError(null)
     setDialogOpen(true)
@@ -324,6 +331,8 @@ function ModelsAndPricingPage() {
 
   function openEdit(model: AdminPoolModel) {
     const p = latestPriceMap.get(model.name)
+    const isKnown = dialogVendorOptions.some((o) => o.value === model.origin_vendor)
+    setCustomVendorMode(Boolean(model.origin_vendor && !isKnown))
     setEditing(model.name)
     setForm({
       name: model.name,
@@ -336,7 +345,6 @@ function ModelsAndPricingPage() {
       input_yuan: p ? String(Number(p.input_micro_per_mtok) / 1_000_000) : '',
       output_yuan: p ? String(Number(p.output_micro_per_mtok) / 1_000_000) : '',
       cache_read_yuan: p && p.cache_read_micro_per_mtok ? String(Number(p.cache_read_micro_per_mtok) / 1_000_000) : '',
-      cache_write_yuan: p && p.cache_write_micro_per_mtok ? String(Number(p.cache_write_micro_per_mtok) / 1_000_000) : '',
     })
     setErrors({})
     setSubmitError(null)
@@ -396,7 +404,6 @@ function ModelsAndPricingPage() {
         const inputMicro = Math.round(Number(form.input_yuan) * 1_000_000)
         const outputMicro = Math.round(Number(form.output_yuan) * 1_000_000)
         const cacheReadMicro = form.cache_read_yuan ? Math.round(Number(form.cache_read_yuan) * 1_000_000) : 0
-        const cacheWriteMicro = form.cache_write_yuan ? Math.round(Number(form.cache_write_yuan) * 1_000_000) : 0
 
         await createAdminPrice({
           model: name,
@@ -405,7 +412,7 @@ function ModelsAndPricingPage() {
           input_micro_per_mtok: inputMicro,
           output_micro_per_mtok: outputMicro,
           cache_read_micro_per_mtok: cacheReadMicro,
-          cache_write_micro_per_mtok: cacheWriteMicro,
+          cache_write_micro_per_mtok: 0,
           effective_at: shanghaiDateTimeToRfc3339(defaultEffectiveAt()) ?? new Date().toISOString(),
         })
       }
@@ -666,19 +673,15 @@ function ModelsAndPricingPage() {
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-1.5 font-mono text-caption text-ink-3">
-                                  {p.cache_read_micro_per_mtok || p.cache_write_micro_per_mtok ? (
+                                  {p.cache_read_micro_per_mtok ? (
                                     <span>
-                                      缓存 读{' '}
-                                      <span className="text-ink-2">
+                                      缓存命中{' '}
+                                      <span className="font-medium text-ink-2">
                                         {formatYuan(p.cache_read_micro_per_mtok)}
-                                      </span>{' '}
-                                      / 写{' '}
-                                      <span className="text-ink-2">
-                                        {formatYuan(p.cache_write_micro_per_mtok)}
                                       </span>
                                     </span>
                                   ) : (
-                                    <span className="text-ink-4">无独立缓存费率</span>
+                                    <span className="text-ink-4">无独立缓存价</span>
                                   )}
                                 </div>
                               </div>
@@ -810,19 +813,19 @@ function ModelsAndPricingPage() {
                 <Select
                   id="unified-vendor"
                   value={
-                    dialogVendorOptions.some((o) => o.value === form.origin_vendor)
-                      ? form.origin_vendor
-                      : form.origin_vendor
-                        ? '__custom__'
+                    customVendorMode
+                      ? '__custom__'
+                      : dialogVendorOptions.some((o) => o.value === form.origin_vendor)
+                        ? form.origin_vendor
                         : ''
                   }
                   onChange={(e) => {
                     const val = e.target.value
                     if (val === '__custom__') {
-                      if (dialogVendorOptions.some((o) => o.value === form.origin_vendor)) {
-                        update('origin_vendor', '')
-                      }
+                      setCustomVendorMode(true)
+                      update('origin_vendor', '')
                     } else {
+                      setCustomVendorMode(false)
                       update('origin_vendor', val)
                     }
                   }}
@@ -837,13 +840,13 @@ function ModelsAndPricingPage() {
                   ))}
                   <option value="__custom__">其他厂商（手动输入）...</option>
                 </Select>
-                {(!dialogVendorOptions.some((o) => o.value === form.origin_vendor) ||
-                  form.origin_vendor === '') && (
+                {customVendorMode && (
                   <div className="mt-2">
                     <TextInput
-                      placeholder="输入自定义厂商标识 slug，例如 mistral"
+                      placeholder="输入自定义厂商标识 slug，例如 mistral, groq"
                       value={form.origin_vendor}
                       onChange={(e) => update('origin_vendor', e.target.value.trim().toLowerCase())}
+                      autoFocus
                     />
                   </div>
                 )}
@@ -892,16 +895,16 @@ function ModelsAndPricingPage() {
                 label="功能能力 / 标签"
                 htmlFor="unified-caps"
                 className="sm:col-span-2"
-                hint="勾选模型具备的特性能力，用于模型广场与控制台的筛选和标示"
+                hint="勾选模型具备的特性（文本、视觉、视频），支持多选"
               >
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="grid grid-cols-3 gap-2.5">
                   {STANDARD_CAPABILITIES.map((cap) => {
                     const checked = selectedCaps.has(cap.key)
                     return (
                       <label
                         key={cap.key}
                         className={cn(
-                          'flex items-center gap-2 rounded-lg border px-3 py-2 text-meta transition-all cursor-pointer select-none',
+                          'flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-meta transition-all cursor-pointer select-none',
                           checked
                             ? 'border-brand bg-brand-soft/40 text-brand-ink font-medium shadow-2xs'
                             : 'border-line bg-card/60 text-ink-2 hover:border-line-hover hover:bg-surface',
@@ -921,7 +924,7 @@ function ModelsAndPricingPage() {
                 <div className="mt-2.5">
                   <TextInput
                     id="unified-caps-custom"
-                    placeholder="其他自定义能力（可选，逗号分隔，例如 audio, code）"
+                    placeholder="其他自定义能力（可选，逗号分隔，例如 audio, search）"
                     value={customCapsList.join(', ')}
                     onChange={(e) => handleCustomCapsChange(e.target.value)}
                   />
@@ -971,28 +974,17 @@ function ModelsAndPricingPage() {
               </Field>
 
               <Field
-                label="缓存命中读取 (元 / 1M tokens，可选)"
+                label="缓存命中单价 (元 / 1M tokens，可选)"
                 htmlFor="unified-cache-read"
+                className="sm:col-span-2"
+                hint="仅当模型支持上下文缓存且命中时享受优惠价时填写；若不支持或无优惠可留空"
               >
                 <TextInput
                   id="unified-cache-read"
                   value={form.cache_read_yuan}
-                  placeholder="0.50"
+                  placeholder="0.50（留空表示无独立缓存命中价格）"
                   inputMode="decimal"
                   onChange={(e) => update('cache_read_yuan', e.target.value)}
-                />
-              </Field>
-
-              <Field
-                label="缓存写入创建 (元 / 1M tokens，可选)"
-                htmlFor="unified-cache-write"
-              >
-                <TextInput
-                  id="unified-cache-write"
-                  value={form.cache_write_yuan}
-                  placeholder="2.00"
-                  inputMode="decimal"
-                  onChange={(e) => update('cache_write_yuan', e.target.value)}
                 />
               </Field>
             </div>
