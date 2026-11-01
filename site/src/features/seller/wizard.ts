@@ -222,7 +222,7 @@ export function buildVerificationMatrix(
   const cells: VerificationCell[] = []
   for (const key of keys) {
     const probe = probes[key]
-    const callable = new Set(probe ? probe.verified_models ?? probe.models : [])
+    const callable = new Set(probe ? (probe.verified_models ?? probe.models ?? []) : [])
     for (const model of models) {
       let ok = false
       let failReason = ''

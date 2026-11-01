@@ -609,17 +609,17 @@ export function NewListingPage() {
     if (!probed) return matchedVendor?.models ?? []
     const union = new Set<string>()
     Object.values(keyProbes).forEach((probe) => {
-      for (const model of probe.verified_models ?? probe.models) union.add(model)
+      for (const model of probe.verified_models ?? probe.models ?? []) union.add(model)
     })
     if (recognition) {
-      for (const model of recognition.verified_models ?? recognition.models) union.add(model)
+      for (const model of recognition.verified_models ?? recognition.models ?? []) union.add(model)
     }
     return Array.from(union).sort()
   }, [probed, keyProbes, recognition, matchedVendor])
   // Pool picks the upstream matcher did not suggest still count as available.
   const availableModels = useMemo(() => {
     const union = new Set(suggestedModels)
-    for (const model of values.models) if (poolIds.has(model)) union.add(model)
+    for (const model of values.models ?? []) if (poolIds.has(model)) union.add(model)
     return Array.from(union).sort()
   }, [suggestedModels, values.models, poolIds])
 
@@ -628,7 +628,7 @@ export function NewListingPage() {
   // model so the common case needs no extra clicks.
   useEffect(() => {
     const available = new Set(suggestedModels)
-    const current = form.getValues('models')
+    const current = form.getValues('models') ?? []
     const kept = current.filter((model) => available.has(model) || poolIds.has(model))
     const next = kept.length > 0 ? kept : suggestedModels
     if (next.length !== current.length || next.some((model, index) => current[index] !== model)) {
@@ -783,7 +783,7 @@ export function NewListingPage() {
     const payloads: CreateListingInput[] = []
     for (const key of keys) {
       const probe = keyProbes[key]
-      const callable = new Set(probe ? probe.verified_models ?? probe.models : [])
+      const callable = new Set(probe ? (probe.verified_models ?? probe.models ?? []) : [])
       const models =
         mode === 'passing'
           ? data.models.filter(
@@ -827,7 +827,7 @@ export function NewListingPage() {
   const hasPassingModels = keys.some((key) => {
     const probe = keyProbes[key]
     if (!probe?.key_valid) return false
-    const callable = new Set(probe.verified_models ?? probe.models)
+    const callable = new Set(probe.verified_models ?? probe.models ?? [])
     return values.models.some((model) => callable.has(model) || poolIds.has(model))
   })
   // The three fields a submission cannot go without: upstream address, at
@@ -912,6 +912,11 @@ export function NewListingPage() {
                     error={recognizeError}
                   />
                 </div>
+                {recognition && !recognition.key_valid && recognition.fail_reason ? (
+                  <p className="text-meta leading-5 text-danger" role="alert">
+                    检测未通过: {recognition.fail_reason}
+                  </p>
+                ) : null}
                 {trust?.trust === 'blocked' ? (
                   <p className="text-meta leading-5 text-danger" role="alert">
                     {page.trust.blocked}

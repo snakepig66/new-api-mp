@@ -1933,6 +1933,15 @@ func postSellerListingProbe(c *gin.Context) {
 		}
 		probeOK := keyRes.KeyValid && len(missing) == 0
 		failReason := stripKey(keyRes.FailReason, apiKey)
+		if sellable == nil {
+			sellable = make([]string, 0)
+		}
+		if catalog.UpstreamModels == nil {
+			catalog.UpstreamModels = make([]upstreamModelView, 0)
+		}
+		if catalog.PoolModels == nil {
+			catalog.PoolModels = make([]poolModelView, 0)
+		}
 		common.ApiSuccess(c, gin.H{
 			"ok":                 probeOK,
 			"models":             sellable,
@@ -2016,6 +2025,16 @@ func postSellerListingProbe(c *gin.Context) {
 	}
 	probeOK := keyRes.OK && len(missing) == 0
 	failReason := stripKey(keyRes.FailReason, apiKey)
+
+	if available == nil {
+		available = make([]string, 0)
+	}
+	if catalog.UpstreamModels == nil {
+		catalog.UpstreamModels = make([]upstreamModelView, 0)
+	}
+	if catalog.PoolModels == nil {
+		catalog.PoolModels = make([]poolModelView, 0)
+	}
 
 	common.ApiSuccess(c, gin.H{
 		"ok":                 probeOK,
