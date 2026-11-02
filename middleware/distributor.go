@@ -109,47 +109,7 @@ func Distribute() func(c *gin.Context) {
 				}
 			}
 			if channel == nil {
-				tokenID := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
-				keyType := common.GetContextKeyString(c, constant.ContextKeyTokenKeyType)
-				if keyType == "" {
-					keyType = c.GetString("token_key_type")
-				}
-				if tokenID > 0 && keyType == "" {
-					if allowed, _ := marketplace.KeyPrefAllowsModel(model.DB, int64(tokenID), modelRequest.Model); allowed {
-						keyType = model.KeyTypeShared
-					} else {
-						keyType = model.KeyTypeStandard
-					}
-				}
-
-				const errNotInScope = "该模型不在此密钥可用范围内（普通密钥只能用模型广场模型 / 共享密钥请先在模型市场把该模型加入此密钥）"
-
-				if tokenID > 0 && keyType == model.KeyTypeShared {
-					// 共享密钥：只能调用该密钥里手动添加的模型市场模型，走现有市场分发
-					allowed, chkErr := marketplace.KeyPrefAllowsModel(model.DB, int64(tokenID), modelRequest.Model)
-					if chkErr != nil || !allowed {
-						abortWithOpenAiMessage(c, http.StatusBadRequest, errNotInScope)
-						return
-					}
-					mpChannel, mpHandled, mpStatus, mpErr := marketplace.BeginDistribute(c, modelRequest.Model)
-					if mpHandled {
-						defer marketplace.EndRelay(c)
-						if mpErr != nil {
-							abortWithOpenAiMessage(c, mpStatus, mpErr.Error())
-							return
-						}
-						channel = mpChannel
-					} else {
-						// 共享密钥不得回退到原生自营渠道
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, "暂无可用供应商")
-						return
-					}
-				} else if tokenID > 0 && keyType == model.KeyTypeStandard {
-					// 普通密钥：只能调用模型广场的模型，走 new-api 原生渠道分发，不经过 BeginDistribute
-					if !marketplace.IsPlazaModel(model.DB, modelRequest.Model) {
-						abortWithOpenAiMessage(c, http.StatusBadRequest, errNotInScope)
-						return
-					}
+				if !marketplace.Enabled() {
 					channel, _, selectErr = service.SelectChannelForRequest(c, modelRequest.Model, &service.RetryParam{
 						Ctx:         c,
 						ModelName:   modelRequest.Model,
@@ -158,13 +118,63 @@ func Distribute() func(c *gin.Context) {
 						Retry:       common.GetPointer(0),
 					})
 				} else {
-					channel, _, selectErr = service.SelectChannelForRequest(c, modelRequest.Model, &service.RetryParam{
-						Ctx:         c,
-						ModelName:   modelRequest.Model,
-						TokenGroup:  usingGroup,
-						RequestPath: c.Request.URL.Path,
-						Retry:       common.GetPointer(0),
-					})
+					tokenID := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
+					keyType := common.GetContextKeyString(c, constant.ContextKeyTokenKeyType)
+					if keyType == "" {
+						keyType = c.GetString("token_key_type")
+					}
+					if tokenID > 0 && keyType == "" {
+						if allowed, _ := marketplace.KeyPrefAllowsModel(model.DB, int64(tokenID), modelRequest.Model); allowed {
+							keyType = model.KeyTypeShared
+						} else {
+							keyType = model.KeyTypeStandard
+						}
+					}
+
+					const errNotInScope = "该模型不在此密钥可用范围内（普通密钥只能用模型广场模型 / 共享密钥请先在模型市场把该模型加入此密钥）"
+
+					if tokenID > 0 && keyType == model.KeyTypeShared {
+						// 共享密钥：只能调用该密钥里手动添加的模型市场模型，走现有市场分发
+						allowed, chkErr := marketplace.KeyPrefAllowsModel(model.DB, int64(tokenID), modelRequest.Model)
+						if chkErr != nil || !allowed {
+							abortWithOpenAiMessage(c, http.StatusBadRequest, errNotInScope)
+							return
+						}
+						mpChannel, mpHandled, mpStatus, mpErr := marketplace.BeginDistribute(c, modelRequest.Model)
+						if mpHandled {
+							defer marketplace.EndRelay(c)
+							if mpErr != nil {
+								abortWithOpenAiMessage(c, mpStatus, mpErr.Error())
+								return
+							}
+							channel = mpChannel
+						} else {
+							// 共享密钥不得回退到原生自营渠道
+							abortWithOpenAiMessage(c, http.StatusServiceUnavailable, "暂无可用供应商")
+							return
+						}
+					} else if tokenID > 0 && keyType == model.KeyTypeStandard {
+						// 普通密钥：只能调用模型广场的模型，走 new-api 原生渠道分发，不经过 BeginDistribute
+						if !marketplace.IsPlazaModel(model.DB, modelRequest.Model) {
+							abortWithOpenAiMessage(c, http.StatusBadRequest, errNotInScope)
+							return
+						}
+						channel, _, selectErr = service.SelectChannelForRequest(c, modelRequest.Model, &service.RetryParam{
+							Ctx:         c,
+							ModelName:   modelRequest.Model,
+							TokenGroup:  usingGroup,
+							RequestPath: c.Request.URL.Path,
+							Retry:       common.GetPointer(0),
+						})
+					} else {
+						channel, _, selectErr = service.SelectChannelForRequest(c, modelRequest.Model, &service.RetryParam{
+							Ctx:         c,
+							ModelName:   modelRequest.Model,
+							TokenGroup:  usingGroup,
+							RequestPath: c.Request.URL.Path,
+							Retry:       common.GetPointer(0),
+						})
+					}
 				}
 			}
 			if selectErr != nil {
