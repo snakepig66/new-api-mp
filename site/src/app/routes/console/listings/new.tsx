@@ -483,6 +483,7 @@ function simplifyProbeError(reason?: string): string {
   if (
     lower.includes('timeout') ||
     lower.includes('timed out') ||
+    lower.includes('deadline') ||
     lower.includes('超时') ||
     lower.includes('connect') ||
     lower.includes('connection') ||

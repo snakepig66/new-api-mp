@@ -190,7 +190,16 @@ func probeModelCallOutcomeWithHeaders(ctx context.Context, client *http.Client, 
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		out.UpstreamMessage = sanitizeUpstreamMessage(string(raw), apiKey)
-		out.FailReason = modelCallFailureReason(resp.StatusCode)
+		lowerMsg := strings.ToLower(out.UpstreamMessage)
+		if resp.StatusCode == http.StatusPaymentRequired ||
+			(resp.StatusCode == http.StatusTooManyRequests &&
+				(strings.Contains(lowerMsg, "quota") || strings.Contains(lowerMsg, "insufficient") ||
+					strings.Contains(lowerMsg, "balance") || strings.Contains(lowerMsg, "余额") ||
+					strings.Contains(lowerMsg, "欠费"))) {
+			out.FailReason = "上游余额不足"
+		} else {
+			out.FailReason = modelCallFailureReason(resp.StatusCode)
+		}
 		return out
 	}
 	var cr struct {

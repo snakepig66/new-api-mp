@@ -34,3 +34,24 @@
   前端 `validCustomURL` 强制匹配 `^https:\/\/` 且 `parsed.protocol === 'https:'`，将 `http://127.0.0.1:3202` 判定为无效地址，禁止下一步及自动检测。
 - **修复方案**:
   更新 `site/src/features/seller/wizard.ts` 中的 `validCustomURL`，允许回环地址使用 `http:` 协议，其他外部域名继续强制 `https:`。补齐相应单元测试。
+
+---
+
+### BUG-003: 429 余额/额度不足及超时错误未被简化为大白话文案（"上游余额不足" / "地址连不上"）
+
+- **所属模块**: `marketplace/model_health.go`, `marketplace/verify.go`, `marketplace/custom_channel.go`, `site/src/app/routes/console/listings/new.tsx`
+- **严重程度**: Medium (用户体验缺陷，导致错误报错展示为原始技术信息或通用报错而非大白话)
+- **复现步骤**:
+  1. 上游返回 HTTP 429 且响应体为额度用尽（如 `{"error": {"message": "You exceeded your current quota...", "code": "insufficient_quota"}}`）或 HTTP 402。
+  2. 触发探活检测，`model_health.go` 抛弃了上游响应体，直接按 429 状态码返回通用限流文案（"上游限流（HTTP 429），请稍后重新检测"），未能识别为"上游余额不足"。
+  3. 当发生 `context deadline exceeded` 时，因未包含 "timeout" 字符串，未能简化为"地址连不上"。
+- **预期结果**:
+  - Key 无效 (401/403) 统一展示为 "Key 无效或没权限"；
+  - 余额/额度不足 (402 或 429 包含 quota/insufficient/balance) 统一展示为 "上游余额不足"；
+  - 地址超时/连不上（包含 connection refused, connectex, deadline exceeded, dns 等）统一展示为 "地址连不上"。
+- **实际结果**:
+  429 额度用尽被提示为"上游限流"，402 返回"模型探活失败（HTTP 402）"，deadline 错误原样展示。
+- **修复方案**:
+  1. 在 `marketplace/model_health.go` 中解析上游响应体消息，当 402 或 429 且包含 quota/insufficient/balance/余额等时归类为"上游余额不足"；
+  2. 在 `marketplace/verify.go` 的 `modelCallFailureReason` 中对 402 显式返回"上游余额不足（HTTP 402）"，在 `SimplifyProbeFailureReason` 中增加 `deadline` 判定；
+  3. 在 `site/src/app/routes/console/listings/new.tsx` 的 `simplifyProbeError` 中增加 `deadline` 判定并对 429 quota 转换为"上游余额不足"。补齐单元测试。

@@ -17,6 +17,20 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
+func TestSimplifyProbeFailureReason(t *testing.T) {
+	assert.Equal(t, "Key 无效或没权限", SimplifyProbeFailureReason("unauthorized", 401))
+	assert.Equal(t, "Key 无效或没权限", SimplifyProbeFailureReason("forbidden", 403))
+	assert.Equal(t, "Key 无效或没权限", SimplifyProbeFailureReason("key invalid", 0))
+
+	assert.Equal(t, "上游余额不足", SimplifyProbeFailureReason("insufficient_quota", 429))
+	assert.Equal(t, "上游余额不足", SimplifyProbeFailureReason("payment required", 402))
+	assert.Equal(t, "上游余额不足", SimplifyProbeFailureReason("上游余额不足", 0))
+
+	assert.Equal(t, "地址连不上", SimplifyProbeFailureReason("dial tcp 127.0.0.1:3202: connectex: connection refused", 0))
+	assert.Equal(t, "地址连不上", SimplifyProbeFailureReason("context deadline exceeded", 0))
+	assert.Equal(t, "地址连不上", SimplifyProbeFailureReason("timeout", 0))
+}
+
 // verifyTestKey is the plaintext seller key used across this file. Every
 // error and probe-detail assertion also checks it never leaks (§2.3).
 const verifyTestKey = "sk-verify-test-key-abcde"

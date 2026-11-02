@@ -439,7 +439,7 @@ func probeCustomChannelKey(ctx context.Context, client *http.Client, db *gorm.DB
 				lastStatus = http.StatusUnauthorized
 				break
 			}
-			if strings.Contains(reason, "402") {
+			if strings.Contains(reason, "402") || strings.Contains(reason, "余额不足") {
 				lastStatus = http.StatusPaymentRequired
 				break
 			}

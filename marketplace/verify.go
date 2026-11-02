@@ -261,6 +261,7 @@ func SimplifyProbeFailureReason(reason string, code int) string {
 		return "上游余额不足"
 	}
 	if strings.Contains(lower, "timeout") || strings.Contains(lower, "timed out") ||
+		strings.Contains(lower, "deadline") ||
 		strings.Contains(lower, "超时") || strings.Contains(lower, "dns") ||
 		strings.Contains(lower, "no such host") || strings.Contains(lower, "connection") ||
 		strings.Contains(lower, "connect") || strings.Contains(lower, "refused") ||
@@ -281,6 +282,8 @@ func modelCallFailureReason(code int) string {
 		return "上游拒绝请求（HTTP 400）：模型可能未开通或参数不受支持"
 	case code == http.StatusUnauthorized || code == http.StatusForbidden:
 		return fmt.Sprintf("这个 Key 无权调用该模型（HTTP %d）", code)
+	case code == http.StatusPaymentRequired:
+		return "上游余额不足（HTTP 402）"
 	case code == http.StatusNotFound:
 		return "模型不存在（HTTP 404）：百炼/火山等平台可能还需要单独开通模型或推理接入点"
 	case code == http.StatusTooManyRequests:
