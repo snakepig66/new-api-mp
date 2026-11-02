@@ -104,8 +104,6 @@ export interface SquareChannel {
 export interface SquareModelDetail extends SquareModel {
   multiplier_min_milli: number
   multiplier_max_milli: number
-  /** Official price book; absent when the vendor published none. */
-  official_prices: { flat?: SquareTierPrices & { version: number } }
   channels: SquareChannel[]
 }
 
@@ -127,12 +125,11 @@ export const squareModelQuery = (model: string) =>
   })
 
 /**
- * The list endpoint only carries buyer prices and the listing count. The
- * official price book and the multiplier band live on the detail endpoint, so
- * tables that must show 官方价/最低倍率 enrich their rows with one detail query
- * per model. These queries share the cache with the detail page (same key), and
- * the catalog is small in v1. Fold this back into the list endpoint once the
- * backend exposes the two fields there.
+ * The list endpoint only carries buyer prices and the listing count. Detail
+ * information lives on the detail endpoint, so tables that need extra fields
+ * enrich their rows with one detail query per model. These queries share the cache
+ * with the detail page (same key), and the catalog is small in v1. Fold this
+ * back into the list endpoint once the backend exposes fields there.
  */
 export function useSquareModelDetails(models: SquareModel[] | undefined) {
   const results = useQueries({

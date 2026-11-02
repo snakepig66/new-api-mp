@@ -13,14 +13,6 @@ import { ToastProvider } from '@/ui'
 
 import { ModelDetailPage } from './$id'
 
-const officialPrice = {
-  input_micro_per_mtok: 4_000_000,
-  output_micro_per_mtok: 16_000_000,
-  cache_read_micro_per_mtok: 0,
-  cache_write_micro_per_mtok: 0,
-  version: 1,
-}
-
 function detail(overrides: Record<string, unknown> = {}) {
   return {
     model: 'deepseek-flash',
@@ -40,7 +32,6 @@ function detail(overrides: Record<string, unknown> = {}) {
     generated_at: '2030-01-01T00:00:00+08:00',
     multiplier_min_milli: 300,
     multiplier_max_milli: 600,
-    official_prices: { flat: officialPrice },
     channels: [
       {
         channel_slug: 'deepseek',
@@ -133,11 +124,11 @@ describe('model detail channels', () => {
     expect(screen.getByText('未验真')).toBeTruthy()
     expect(screen.getByText('上下文 128K')).toBeTruthy()
     expect(screen.getByText('无图片')).toBeTruthy()
-    expect(screen.getByText('与官方一致')).toBeTruthy()
+    expect(screen.getByText('标准完整')).toBeTruthy()
     expect(screen.getByText('2 个渠道 · 3 位分享者')).toBeTruthy()
   })
 
-  it('shows the official price and an empty channel list without supply', async () => {
+  it('shows not available status and an empty channel list without supply', async () => {
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (!url.startsWith('/api/marketplace/square/models/')) {
@@ -166,7 +157,7 @@ describe('model detail channels', () => {
 
     expect(await screen.findByText('渠道信息')).toBeTruthy()
     expect(screen.getByText('暂时没有渠道')).toBeTruthy()
-    expect(screen.getAllByText('官方价').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('暂未开售').length).toBeGreaterThan(0)
     expect(screen.getByText('0 个渠道 · 0 位分享者')).toBeTruthy()
   })
 })

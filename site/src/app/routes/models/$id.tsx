@@ -182,16 +182,14 @@ export function ModelDetailPage() {
   const data = detail.data
   const originVendor = data.origin_vendor || data.vendor
   const price = currentPrices(data)
-  const officialCurrent = data.official_prices.flat
   const capabilities = capabilitiesOf(data.model)
   const officialOnly =
     data.buyer_price_source === 'official' || data.listing_count === 0
-  const officialInput = officialCurrent?.input_micro_per_mtok
   const channels = data.channels ?? []
   const dimensions = [
     { key: 'input_micro_per_mtok' as const, label: page.dimensions.input },
     { key: 'output_micro_per_mtok' as const, label: page.dimensions.output },
-    ...(officialCurrent && Number(officialCurrent.cache_read_micro_per_mtok) > 0
+    ...(price && Number(price.cache_read_micro_per_mtok) > 0
       ? [{ key: 'cache_read_micro_per_mtok' as const, label: page.dimensions.cacheRead }]
       : []),
   ]
@@ -231,16 +229,13 @@ export function ModelDetailPage() {
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0">
                 <div className="text-meta text-ink-3">
-                  {officialOnly ? page.officialPrice : page.buyerPrice}
+                  {page.buyerPrice}
                 </div>
-                {price ? (
+                {officialOnly ? (
+                  <p className="mt-2 text-title font-semibold text-ink-3">暂未开售</p>
+                ) : price ? (
                   <div className="mt-2">
                     <Price value={price.input_micro_per_mtok} size="lg" />
-                    {!officialOnly && officialInput ? (
-                      <p className="mt-2 text-body text-ink-2">
-                        官方 <span className="tabular-nums">{formatYuan(officialInput)}</span>
-                      </p>
-                    ) : null}
                   </div>
                 ) : (
                   <p className="mt-2 text-body text-ink-3">{copy.common.none}</p>
@@ -258,7 +253,7 @@ export function ModelDetailPage() {
               </summary>
               <p className="mt-1 text-meta text-ink-3">{page.tierNote}</p>
 
-              {!officialCurrent ? (
+              {officialOnly || !price ? (
                 <div className="mt-3">
                   <Empty
                     title={page.noOfficial.title}
@@ -280,7 +275,7 @@ export function ModelDetailPage() {
                         <TableRow key={dimension.key}>
                           <TableCell className="text-ink-2">{dimension.label}</TableCell>
                           <TableCell numeric className="tabular-nums">
-                            {formatYuan(officialCurrent[dimension.key])}
+                            {formatYuan(price[dimension.key])}
                           </TableCell>
                         </TableRow>
                       ))}

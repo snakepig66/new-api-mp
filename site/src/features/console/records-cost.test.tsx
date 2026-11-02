@@ -95,7 +95,7 @@ describe('record detail drawer', () => {
 
     expect(screen.getByText('买家实付')).toBeTruthy()
     expect(screen.getByText('平台费')).toBeTruthy()
-    expect(screen.getByText('到手')).toBeTruthy()
+    expect(screen.getByText('实收')).toBeTruthy()
     expect(screen.getByText(/Key ···abcd/)).toBeTruthy()
     expect(screen.getAllByText('本渠道')).toHaveLength(3)
   })

@@ -21,7 +21,14 @@ describe('MultiplierSlider', () => {
     expect(slider.value).toBe('0.8')
 
     expect(input.value).toBe('0.80')
-    expect(screen.getByText('官方价 8 折')).toBeTruthy()
+    expect(screen.getByText('0.80x')).toBeTruthy()
+  })
+
+  it('renders multiplier and actual price when basePriceMicro is provided', () => {
+    const onChange = vi.fn()
+    render(<MultiplierSlider value={0.8} basePriceMicro={1_000_000} onChange={onChange} />)
+
+    expect(screen.getByText('0.80x · ¥0.80/M')).toBeTruthy()
   })
 
   it('adjusts value on slider change with 0.01 precision', () => {

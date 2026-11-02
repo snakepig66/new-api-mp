@@ -54,7 +54,6 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         ...item,
         multiplier_min_milli: 300,
         multiplier_max_milli: 480,
-        official_prices: { flat: { ...item.prices.flat, version: 1 } },
         channels: [],
       },
     })
@@ -152,7 +151,7 @@ describe('home page', () => {
     renderHome()
 
     expect((await screen.findByRole('heading', { level: 1 })).textContent).toBe(
-      '同一个 Key，用官方模型更便宜',
+      '同一个 Key，调用全网大模型',
     )
     expect(screen.getByRole('link', { name: '开始使用' })).toBeTruthy()
     expect(screen.getByRole('link', { name: '浏览模型' })).toBeTruthy()

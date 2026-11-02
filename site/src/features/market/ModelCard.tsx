@@ -39,12 +39,6 @@ export function formatCompactYuan(micros: number | string | bigint | null | unde
   return `¥${str}`
 }
 
-function calculateDiscountPercent(officialMicro: number, currentMicro: number): number | null {
-  if (officialMicro <= 0 || currentMicro <= 0 || officialMicro <= currentMicro) return null
-  const pct = Math.round((1 - currentMicro / officialMicro) * 100)
-  return pct > 0 && pct < 100 ? pct : null
-}
-
 function latencyDisplay(ms: number | undefined): string | null {
   if (!ms || ms <= 0) return null
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`
@@ -94,7 +88,6 @@ function generateSlaTicks(modelKey: string, successRateMilli: number, requests: 
 
 export function ModelCard({
   model,
-  detail,
   vendorMeta,
   showAddToKey = false,
   className,
@@ -102,7 +95,6 @@ export function ModelCard({
   const [copied, setCopied] = useState(false)
   const origin = originVendorOf(model)
   const row = currentPrices(model)
-  const official = detail?.official_prices?.flat
   const metrics = model.metrics
   const logo = modelLogo(model.model) || vendorLogo(origin, vendorMeta)
 
@@ -128,21 +120,7 @@ export function ModelCard({
   const inputCur = row ? Number(row.input_micro_per_mtok) : 0
   const outputCur = row ? Number(row.output_micro_per_mtok) : 0
   const cacheCur = row ? Number(row.cache_read_micro_per_mtok) : 0
-
-  const inputOff = official ? Number(official.input_micro_per_mtok) : 0
-  const outputOff = official ? Number(official.output_micro_per_mtok) : 0
-  const cacheOff = official ? Number(official.cache_read_micro_per_mtok) : 0
-
-  const inputDiscount = calculateDiscountPercent(inputOff, inputCur)
-  const outputDiscount = calculateDiscountPercent(outputOff, outputCur)
-  const cacheDiscount = calculateDiscountPercent(cacheOff, cacheCur)
-  const hasCache = cacheCur > 0 || cacheOff > 0
-
-  const hasDiscountPricing = Boolean(
-    inputDiscount !== null || outputDiscount !== null || cacheDiscount !== null,
-  )
-
-  const isDynamicPricing = !hasDiscountPricing && model.buyer_price_source === 'market' && model.listing_count > 0
+  const hasCache = cacheCur > 0
 
   const latency = latencyDisplay(metrics?.latency_ms)
   const throughput = throughputDisplay(metrics?.tps_permille)
@@ -154,6 +132,8 @@ export function ModelCard({
   const slaTicks = metrics && metrics.success_rate_24h_milli >= 0
     ? generateSlaTicks(model.model, metrics.success_rate_24h_milli, metrics.requests_24h)
     : null
+
+  const isOnSale = model.listing_count > 0 && model.buyer_price_source !== 'official'
 
   return (
     <div
@@ -292,123 +272,30 @@ export function ModelCard({
 
         {/* Pricing Rows */}
         <div className="mt-4 space-y-2 text-[13px]">
-          {row ? (
-            hasDiscountPricing ? (
-              <>
-                {/* Input row */}
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-ink-3 shrink-0">输入</span>
-                  {inputOff > inputCur && (
-                    <>
-                      <span className="line-through text-ink-3 tabular-nums text-caption">
-                        {formatCompactYuan(inputOff)}
-                      </span>
-                      <span className="text-ink-3 text-caption">→</span>
-                    </>
-                  )}
-                  <span className="font-semibold text-ink tabular-nums">
-                    {formatCompactYuan(inputCur)}
-                  </span>
+          {!isOnSale ? (
+            <p className="text-meta text-ink-3">暂未开售</p>
+          ) : row ? (
+            <>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-1">
+                  <span className="text-ink-3">输入</span>
+                  <span className="font-semibold text-ink tabular-nums">{formatCompactYuan(inputCur)}</span>
                   <span className="text-ink-3 text-caption">/ 1M</span>
-                  {inputDiscount !== null && (
-                    <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
-                      <svg className="h-2.5 w-2.5" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M2 2a1 1 0 0 1 1-1h4.586a1 1 0 0 1 .707.293l6.414 6.414a1 1 0 0 1 0 1.414l-4.586 4.586a1 1 0 0 1-1.414 0L2.293 8.293A1 1 0 0 1 2 7.586V2zm3.5 2a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z" />
-                      </svg>
-                      -{inputDiscount}%
-                    </span>
-                  )}
                 </div>
-
-                {/* Output row */}
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-ink-3 shrink-0">输出</span>
-                  {outputOff > outputCur && (
-                    <>
-                      <span className="line-through text-ink-3 tabular-nums text-caption">
-                        {formatCompactYuan(outputOff)}
-                      </span>
-                      <span className="text-ink-3 text-caption">→</span>
-                    </>
-                  )}
-                  <span className="font-semibold text-ink tabular-nums">
-                    {formatCompactYuan(outputCur)}
-                  </span>
+                <div className="flex items-center gap-1">
+                  <span className="text-ink-3">输出</span>
+                  <span className="font-semibold text-ink tabular-nums">{formatCompactYuan(outputCur)}</span>
                   <span className="text-ink-3 text-caption">/ 1M</span>
-                  {outputDiscount !== null && (
-                    <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
-                      <svg className="h-2.5 w-2.5" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M2 2a1 1 0 0 1 1-1h4.586a1 1 0 0 1 .707.293l6.414 6.414a1 1 0 0 1 0 1.414l-4.586 4.586a1 1 0 0 1-1.414 0L2.293 8.293A1 1 0 0 1 2 7.586V2zm3.5 2a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z" />
-                      </svg>
-                      -{outputDiscount}%
-                    </span>
-                  )}
                 </div>
-
-                {/* Cache row */}
-                {hasCache ? (
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-ink-3 shrink-0">缓存</span>
-                    {cacheOff > cacheCur && (
-                      <>
-                        <span className="line-through text-ink-3 tabular-nums text-caption">
-                          {formatCompactYuan(cacheOff)}
-                        </span>
-                        <span className="text-ink-3 text-caption">→</span>
-                      </>
-                    )}
-                    <span className="font-semibold text-ink tabular-nums">
-                      {formatCompactYuan(cacheCur)}
-                    </span>
-                    <span className="text-ink-3 text-caption">/ 1M</span>
-                    {cacheDiscount !== null && (
-                      <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
-                        <svg className="h-2.5 w-2.5" viewBox="0 0 16 16" fill="currentColor">
-                          <path d="M2 2a1 1 0 0 1 1-1h4.586a1 1 0 0 1 .707.293l6.414 6.414a1 1 0 0 1 0 1.414l-4.586 4.586a1 1 0 0 1-1.414 0L2.293 8.293A1 1 0 0 1 2 7.586V2zm3.5 2a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z" />
-                        </svg>
-                        -{cacheDiscount}%
-                      </span>
-                    )}
-                  </div>
-                ) : null}
-              </>
-            ) : (
-              <>
-                {/* Dynamic or Official flat pricing */}
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-1">
-                    <span className="text-ink-3">输入</span>
-                    <span className="font-semibold text-ink tabular-nums">{formatCompactYuan(inputCur)}</span>
-                    <span className="text-ink-3 text-caption">/ 1M</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-ink-3">输出</span>
-                    <span className="font-semibold text-ink tabular-nums">{formatCompactYuan(outputCur)}</span>
-                    <span className="text-ink-3 text-caption">/ 1M</span>
-                  </div>
+              </div>
+              {hasCache ? (
+                <div className="flex items-center gap-1">
+                  <span className="text-ink-3">缓存</span>
+                  <span className="font-semibold text-ink tabular-nums">{formatCompactYuan(cacheCur)}</span>
+                  <span className="text-ink-3 text-caption">/ 1M</span>
                 </div>
-                {hasCache ? (
-                  <div className="flex items-center gap-1">
-                    <span className="text-ink-3">缓存</span>
-                    <span className="font-semibold text-ink tabular-nums">{formatCompactYuan(cacheCur)}</span>
-                    <span className="text-ink-3 text-caption">/ 1M</span>
-                  </div>
-                ) : null}
-                {isDynamicPricing ? (
-                  <div className="pt-1">
-                    <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
-                      动态计费
-                    </span>
-                  </div>
-                ) : model.buyer_price_source === 'official' || model.listing_count === 0 ? (
-                  <div className="pt-1">
-                    <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium bg-brand-soft text-brand-ink">
-                      {copy.pages.models.officialPrice}
-                    </span>
-                  </div>
-                ) : null}
-              </>
-            )
+              ) : null}
+            </>
           ) : (
             <p className="text-meta text-ink-3">{copy.common.none}</p>
           )}

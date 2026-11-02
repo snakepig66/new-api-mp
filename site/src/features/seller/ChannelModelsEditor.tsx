@@ -36,9 +36,9 @@ export const editorText = {
   unmatched: '未匹配，请手动选择',
   selectedTitle: (n: number) => `已选 ${n} 个模型`,
   selectedEmpty: '还没有选择模型。',
-  official: '官方参考价',
+  official: '基准价',
   multiplier: '倍率',
-  derived: '买家到手价（元 / 1M tokens）',
+  derived: '实际价格（元 / 1M tokens）',
   remove: '移除',
   poolTitle: '从模型池选择',
   poolSearch: '搜索模型或厂商',
@@ -279,6 +279,9 @@ export function ChannelModelsEditor({
                 multiplierText[config.model] ?? (config.multiplier_milli / 1000).toString()
               const invalid = parseMultiplierText(text) === null
               const coefficient = coefficients?.[config.model] ?? 1000
+              const baseInputMicro = poolRow?.price?.input_micro_per_mtok
+                ? Number(poolRow.price.input_micro_per_mtok) * (coefficient / 1000)
+                : undefined
               return (
                 <li key={config.model} className="glass-inset p-3">
                   <div className="flex flex-wrap items-center gap-3">
@@ -294,6 +297,7 @@ export function ChannelModelsEditor({
                         id={`mult-${config.model}`}
                         aria-label={`${config.model} ${editorText.multiplier}`}
                         value={text}
+                        basePriceMicro={baseInputMicro}
                         onChange={(_val, newText) => setMultiplier(config.model, newText)}
                         sliderClassName="w-20 sm:w-28"
                       />

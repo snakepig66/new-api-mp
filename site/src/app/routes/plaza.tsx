@@ -190,7 +190,7 @@ function PlazaModelCard({
 
         {/* Price display: 元 / 1M tokens */}
         <div className="rounded-lg border border-line bg-bg/80 px-3.5 py-2.5">
-          <div className="text-caption text-ink-3">平台官方定价 (元 / 1M tokens)</div>
+          <div className="text-caption text-ink-3">价格 (元 / 1M tokens)</div>
           <div className="mt-1 flex items-center justify-between text-meta">
             <span className="text-ink-2">
               输入 <span className="font-semibold text-ink tabular-nums">{inputPrice}</span>

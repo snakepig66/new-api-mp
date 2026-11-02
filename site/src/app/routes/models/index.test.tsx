@@ -168,14 +168,10 @@ const vendors = [
 
 function detailFor(model: string) {
   const item = squareItems.find((row) => row.model === model)!
-  const officialPrices = Object.fromEntries(
-    Object.entries(item.prices).map(([tier, price]) => [tier, { ...price, version: 1 }]),
-  )
   return {
     ...item,
     multiplier_min_milli: model === 'deepseek-r1' ? 520 : model === 'glm-4-plus' ? 680 : 300,
     multiplier_max_milli: model === 'deepseek-r1' ? 650 : 480,
-    official_prices: officialPrices,
     channels:
       model === 'deepseek-chat'
         ? [

@@ -32,7 +32,6 @@ const buyerBlocks = [
   copy.pages.home,
   copy.pages.models,
   copy.pages.modelDetail,
-  copy.pages.docs,
   copy.pages.login,
   copy.pages.forgotPassword,
   copy.pages.resetPassword,
@@ -47,6 +46,7 @@ const buyerBlocks = [
 ]
 
 const sellerBlocks = [
+  copy.pages.docs,
   copy.pages.seller,
   copy.pages.sellerCommon,
   copy.pages.sellerVerification,

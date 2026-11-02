@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { cn } from '@/lib/cn'
 import { Input } from '@/ui/input'
-import { formatMultiplierAsDiscount } from './wizard'
+import { formatMultiplierText } from './wizard'
 
 export interface MultiplierSliderProps {
   /** Current multiplier value, either as number (e.g. 0.8) or string ("0.80"). */
@@ -17,17 +17,18 @@ export interface MultiplierSliderProps {
   step?: number
   /** Whether controls are disabled. */
   disabled?: boolean
-  /** Whether to show the discount pill (e.g. 官方价 8 折). Defaults to true. */
+  /** Whether to show the multiplier capsule. Defaults to true. */
   showDiscount?: boolean
   /** Whether to show the numeric input. Defaults to true. */
   showInput?: boolean
+  /** Base price in micro-yuan per 1M tokens. When provided, capsule shows actual price. */
+  basePriceMicro?: number
   /** Class name for the container. */
   className?: string
   /** Class name for the range slider. */
   sliderClassName?: string
   /** Class name for the numeric input. */
   inputClassName?: string
-  /** Input element id. */
   id?: string
   /** ARIA label for screen readers. */
   'aria-label'?: string
@@ -47,6 +48,7 @@ export function MultiplierSlider({
   disabled = false,
   showDiscount = true,
   showInput = true,
+  basePriceMicro,
   className,
   sliderClassName,
   inputClassName,
@@ -177,7 +179,7 @@ export function MultiplierSlider({
 
       {showDiscount ? (
         <span className="shrink-0 rounded bg-brand-soft/80 px-2 py-0.5 text-meta font-medium text-brand-ink">
-          {formatMultiplierAsDiscount(Math.round(clampedNum * 1000))}
+          {formatMultiplierText(Math.round(clampedNum * 1000), basePriceMicro)}
         </span>
       ) : null}
     </div>
