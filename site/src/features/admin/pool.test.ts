@@ -7,7 +7,7 @@ import {
 } from './api'
 
 describe('admin pool normalization', () => {
-  it('normalizes a standard model, including JSON-string lists', () => {
+  it('normalizes a standard model, including JSON-string lists and enable_plaza', () => {
     expect(
       normalizeAdminPoolModel({
         id: 1,
@@ -18,6 +18,7 @@ describe('admin pool normalization', () => {
         aliases: ['deepseek-chat'],
         verify_prompt: 'ping',
         status: 'active',
+        enable_plaza: false,
       }),
     ).toEqual({
       id: 1,
@@ -28,6 +29,7 @@ describe('admin pool normalization', () => {
       aliases: ['deepseek-chat'],
       verify_prompt: 'ping',
       status: 'active',
+      enable_plaza: false,
     })
   })
 
