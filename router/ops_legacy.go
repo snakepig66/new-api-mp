@@ -26,7 +26,8 @@ import (
 // legacyPathShim runs before the deferred legacy bundles. The upstream SPA
 // has no base path support, so it must see "/" as the current location; the
 // address bar is rewritten accordingly for the duration of the ops session.
-var legacyPathShim = []byte(`<script>(function(){try{if(location.pathname.indexOf("/ops-legacy")===0){history.replaceState(null,"","/");}}catch(e){}})();</script>`)
+var legacyPathShim = []byte(`<script>(function(){try{if(location.pathname.indexOf("/ops-legacy")===0){history.replaceState(null,"","/"+(location.search||""));}}catch(e){}})();</script>`)
+var legacyTrampoline = []byte(`<!doctype html><html><head><script>(function(){try{var r=localStorage.getItem("token-market.auth.v1");if(r){var a=JSON.parse(r);if(a&&a.accessToken){location.replace("/ops-legacy?token="+encodeURIComponent(a.accessToken));return;}}}catch(e){}location.replace("/login");})();</script></head><body></body></html>`)
 
 func SetOpsLegacyRouter(router *gin.Engine, assets WebAssets) {
 	legacyFS := common.EmbedFolder(assets.BuildFS, "web/dist")
@@ -72,6 +73,11 @@ func opsLegacyAuth() gin.HandlerFunc {
 		if strings.TrimSpace(c.GetHeader("Authorization")) == "" {
 			if token := strings.TrimSpace(c.Query("token")); token != "" {
 				c.Request.Header.Set("Authorization", "Bearer "+token)
+			} else if strings.Contains(c.GetHeader("Accept"), "text/html") {
+				c.Header("Cache-Control", "no-store")
+				c.Data(http.StatusOK, "text/html; charset=utf-8", legacyTrampoline)
+				c.Abort()
+				return
 			}
 		}
 		middleware.RootAuth()(c)

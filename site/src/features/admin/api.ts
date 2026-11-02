@@ -755,6 +755,7 @@ function bool(value: unknown): boolean {
 
 export function normalizeAdminPoolModel(raw: unknown): AdminPoolModel {
   const row = record(raw)
+  const enablePlazaRaw = pick(row, 'enable_plaza', 'EnablePlaza')
   return {
     id: int(pick(row, 'id', 'ID')),
     name: text(pick(row, 'name', 'Name')),
@@ -764,6 +765,7 @@ export function normalizeAdminPoolModel(raw: unknown): AdminPoolModel {
     aliases: stringList(pick(row, 'aliases', 'Aliases')),
     verify_prompt: text(pick(row, 'verify_prompt', 'VerifyPrompt')),
     status: text(pick(row, 'status', 'Status')),
+    ...(enablePlazaRaw !== undefined ? { enable_plaza: bool(enablePlazaRaw) } : {}),
   }
 }
 

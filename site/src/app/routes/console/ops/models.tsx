@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react'
 import { copy } from '@/copy'
 import { cn } from '@/lib/cn'
 import { formatYuan } from '@/lib/money'
+import { getSession } from '@/lib/session'
 import {
   Button,
   buttonClasses,
@@ -465,7 +466,11 @@ function ModelsAndPricingPage() {
         actions={
           <div className="flex items-center gap-2">
             <a
-              href="/ops-legacy"
+              href={
+                getSession()?.accessToken
+                  ? `/ops-legacy?token=${encodeURIComponent(getSession()!.accessToken)}`
+                  : '/ops-legacy'
+              }
               className={buttonClasses('secondary', 'sm')}
               title="前往 new-api 原生渠道管理页"
             >
