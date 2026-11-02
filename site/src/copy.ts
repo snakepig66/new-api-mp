@@ -1003,7 +1003,7 @@ console.log(response.choices[0].message.content)
         available: '可提现',
         availableHint: '已结算金额，单笔满 ¥10 可申请提现。',
         paid: '已提现',
-        paidHint: '已打款到你绑定收款账户的累计金额。',
+        paidHint: '已打款到你绑定的收款账户',
       },
       stats: {
         calls: '调用次数（本月至今）',

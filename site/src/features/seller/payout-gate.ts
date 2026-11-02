@@ -1,9 +1,9 @@
 /**
  * Withdrawal readiness derived from data the seller APIs really return:
- *   - meQuery: real-name + Alipay binding progress;
- *   - sellerStatsQuery: available balance (T+7 matured) and pending balance.
+ *   - meQuery: real-name + Alipay/WeChat binding progress;
+ *   - sellerStatsQuery: available balance (T+3 matured) and pending balance.
  *
- * The exact T+7 unlock date is not exposed per ledger row, so the T+7 step is
+ * The exact T+3 unlock date is not exposed per ledger row, so the T+3 step is
  * described statically and marked pending while any amount is still pending.
  * Nothing here invents a backend field.
  */
