@@ -110,6 +110,8 @@ func Init(db *gorm.DB) error {
 		if rdb == nil {
 			return
 		}
+		cacheRead, cacheWrite := plazaLogCacheTokens(log.Other)
+		input := max(int64(log.PromptTokens)-cacheRead-cacheWrite, 0)
 		reqRow := Request{
 			RequestID:       log.RequestId,
 			BuyerUserID:     int64(log.UserId),
@@ -122,8 +124,10 @@ func Init(db *gorm.DB) error {
 			Source:          RequestSourcePlaza,
 			Tier:            "standard",
 			Status:          RequestSuccess,
-			InputTokens:     int64(log.PromptTokens),
-			OutputTokens:    int64(log.CompletionTokens),
+			InputTokens:      input,
+			OutputTokens:     int64(log.CompletionTokens),
+			CacheReadTokens:  cacheRead,
+			CacheWriteTokens: cacheWrite,
 			TotalDebitMicro: int64(log.Quota),
 			TokenDebitMicro: int64(log.Quota),
 			LatencyMs:       int64(log.UseTime * 1000),
@@ -136,4 +140,37 @@ func Init(db *gorm.DB) error {
 
 	common.SysLog("marketplace enabled: migrations applied")
 	return nil
+}
+
+// plazaLogCacheTokens reads the cache counters new-api stores in a consume
+// log's Other JSON (cache_tokens / cache_creation_tokens). new-api's
+// PromptTokens already includes them, while mp_requests.input_tokens follows
+// the marketplace convention of excluding cache (see record.go), so the hook
+// subtracts them back out.
+func plazaLogCacheTokens(other string) (cacheRead, cacheWrite int64) {
+	if other == "" {
+		return 0, 0
+	}
+	var m map[string]any
+	if err := common.UnmarshalJsonStr(other, &m); err != nil {
+		return 0, 0
+	}
+	num := func(k string) int64 {
+		switch v := m[k].(type) {
+		case float64:
+			if v > 0 {
+				return int64(v)
+			}
+		case int64:
+			if v > 0 {
+				return v
+			}
+		case int:
+			if v > 0 {
+				return int64(v)
+			}
+		}
+		return 0
+	}
+	return num("cache_tokens"), num("cache_creation_tokens")
 }

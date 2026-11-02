@@ -253,7 +253,7 @@ function RecordsPage() {
         },
         {
           label: sellerPageCopy.summary.tokens,
-          value: `${formatCount(summaryData.input_tokens)} / ${formatCount(summaryData.output_tokens)}`,
+          value: `${formatCount(summaryData.input_tokens + (summaryData.cache_read_tokens ?? 0) + (summaryData.cache_write_tokens ?? 0))} / ${formatCount(summaryData.output_tokens)}`,
           hint: sellerPageCopy.summary.tokensHint,
         },
         { label: sellerPageCopy.summary.income, value: formatYuan(summaryData.seller_credit_micro) },
@@ -279,7 +279,7 @@ function RecordsPage() {
       },
       {
         label: 'Tokens',
-        value: `${formatCount(summaryData.input_tokens)} / ${formatCount(summaryData.output_tokens)}`,
+        value: `${formatCount(summaryData.input_tokens + (summaryData.cache_read_tokens ?? 0) + (summaryData.cache_write_tokens ?? 0))} / ${formatCount(summaryData.output_tokens)}`,
         hint: '输入 / 输出',
       },
       { label: '实付', value: formatYuan(summaryData.total_debit_micro) },

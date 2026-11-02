@@ -65,7 +65,7 @@ describe('BuyerRecordsTable', () => {
 
     expect(screen.getByText('deepseek-v3')).toBeTruthy()
     expect(screen.getByText('转换')).toBeTruthy()
-    expect(screen.getByText('1,000 / 500')).toBeTruthy()
+    expect(screen.getByText('1,300 / 500')).toBeTruthy()
     expect(screen.getByText(/缓存命中 200/)).toBeTruthy()
   })
 

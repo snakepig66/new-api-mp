@@ -84,7 +84,7 @@ export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
           </TableRow>
         </TableHead>
         <TableBody>
-          {records.map((record, index) => {
+          {records.map((record) => {
             const isInProgress = record.status === 'in_progress'
             const channelSub = [
               record.channel_group,
@@ -109,7 +109,7 @@ export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
                   <ChannelPillBadge
                     id={record.listing_id}
                     subtext={channelSub || copy.dash}
-                    variant={index % 2 === 0 ? 'amber' : 'blue'}
+                    cacheHit={record.cache_read_tokens > 0}
                     isInProgress={isInProgress}
                   />
                 </TableCell>
@@ -191,7 +191,6 @@ export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
 function ShareRecordCard({
   record,
   onOpen,
-  index = 0,
 }: {
   record: ShareRecord
   onOpen: (requestId: string) => void
@@ -232,7 +231,7 @@ function ShareRecordCard({
         <ChannelPillBadge
           id={record.listing_id}
           subtext={channelSub || copy.dash}
-          variant={index % 2 === 0 ? 'amber' : 'blue'}
+          cacheHit={record.cache_read_tokens > 0}
           isInProgress={isInProgress}
         />
         <div className="text-right">

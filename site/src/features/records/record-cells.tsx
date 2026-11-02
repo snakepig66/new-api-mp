@@ -176,11 +176,14 @@ export function ChannelPillBadge({
   id,
   subtext,
   variant = 'blue',
+  cacheHit = false,
   isInProgress = false,
 }: {
   id?: string | number
   subtext?: ReactNode
   variant?: 'blue' | 'amber'
+  /** 星星只在本次请求命中缓存时出现 */
+  cacheHit?: boolean
   isInProgress?: boolean
 }) {
   if (isInProgress) {
@@ -206,6 +209,7 @@ export function ChannelPillBadge({
           )}
         >
           <span>#{id}</span>
+          {cacheHit && (
           <svg
             className="h-2.5 w-2.5 fill-amber-400 text-amber-500 shrink-0"
             viewBox="0 0 24 24"
@@ -214,6 +218,7 @@ export function ChannelPillBadge({
           >
             <path d="M12 2l2.4 7.4 7.6 2.6-7.6 2.6L12 22l-2.4-7.4L2 12l7.6-2.6L12 2z" />
           </svg>
+          )}
         </span>
       </div>
       {subtext && (
@@ -242,7 +247,8 @@ export function TokensMetricCell({
   cacheWrite?: number
   isInProgress?: boolean
 }) {
-  const isZero = input === 0 && output === 0
+  const promptTotal = input + cacheRead + cacheWrite
+  const isZero = promptTotal === 0 && output === 0
 
   if (isInProgress || isZero) {
     return <span className="font-mono text-meta text-ink-3">-</span>
@@ -251,10 +257,10 @@ export function TokensMetricCell({
   return (
     <div className="flex flex-col gap-0.5">
       <span className="font-mono text-meta font-medium tabular-nums text-ink leading-tight">
-        {formatNum(input)} / {formatNum(output)}
+        {formatNum(promptTotal)} / {formatNum(output)}
       </span>
       {(cacheRead > 0 || cacheWrite > 0) && (
-        <div className="flex items-center gap-1.5 text-[11px] text-ink-3 tabular-nums leading-tight">
+        <div className="flex items-center gap-1.5 text-[11px] text-ink-3/70 font-mono tabular-nums leading-tight">
           {cacheRead > 0 && <span>缓存命中 {formatNum(cacheRead)}</span>}
           {cacheWrite > 0 && <span>写入 {formatNum(cacheWrite)}</span>}
         </div>

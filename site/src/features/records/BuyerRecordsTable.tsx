@@ -79,7 +79,7 @@ export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
           </TableRow>
         </TableHead>
         <TableBody>
-          {records.map((record, index) => {
+          {records.map((record) => {
             const isInProgress = record.status === 'in_progress'
             const tokenDisplay = isInProgress ? (
               <span className="font-mono text-meta text-ink-3">-</span>
@@ -109,7 +109,7 @@ export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
                   <ChannelPillBadge
                     id={record.seller_id}
                     subtext={subtext || copy.dash}
-                    variant={index % 2 === 0 ? 'blue' : 'amber'}
+                    cacheHit={record.cache_read_tokens > 0}
                     isInProgress={isInProgress}
                   />
                 </TableCell>
@@ -177,7 +177,6 @@ export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
 function BuyerRecordCard({
   record,
   onOpen,
-  index = 0,
 }: {
   record: UsageRecord
   onOpen: (requestId: string) => void
@@ -212,7 +211,7 @@ function BuyerRecordCard({
         <ChannelPillBadge
           id={record.seller_id}
           subtext={record.token_group || record.tier_label || copy.dash}
-          variant={index % 2 === 0 ? 'blue' : 'amber'}
+          cacheHit={record.cache_read_tokens > 0}
           isInProgress={isInProgress}
         />
         <div className="text-right">

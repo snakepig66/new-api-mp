@@ -70,7 +70,7 @@ describe('ShareRecordsTable', () => {
 
     expect(screen.getByText('deepseek-v3')).toBeTruthy()
     expect(screen.getByText('转换')).toBeTruthy()
-    expect(screen.getByText('1,000 / 500')).toBeTruthy()
+    expect(screen.getByText('1,300 / 500')).toBeTruthy()
     expect(screen.getByText('0.80s')).toBeTruthy()
     expect(screen.getByText('¥0.0186')).toBeTruthy()
     expect(screen.getByText(/实付 ¥0\.02 · 平台费 ¥0\.0014/)).toBeTruthy()
