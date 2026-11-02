@@ -374,6 +374,32 @@ func TestSelect(t *testing.T) {
 		assert.ErrorIs(t, err, ErrNoListingAvailable)
 	})
 
+	t.Run("canary-only model is still served when no live listing can", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		c := addSelectorListing(t, db, "fp-a", func(l *Listing) { l.Status = ListingCanary })
+		s := newSelector()
+		s.CanaryFraction = 0.1
+		s.Rand = rand.New(rand.NewSource(1))
+		for i := 0; i < 20; i++ {
+			got, err := s.Select(db, SelectInput{Model: "deepseek-flash", Now: now})
+			require.NoError(t, err)
+			assert.Equal(t, c.ID, got.ID)
+			s.Slots.Release(got.ID)
+		}
+	})
+
+	t.Run("live listing is preferred over a held-back canary", func(t *testing.T) {
+		db := newTestDB(t)
+		migrateAll(t, db)
+		addSelectorListing(t, db, "fp-a", func(l *Listing) { l.Status = ListingCanary; l.MultiplierMilli = 100 })
+		live := addSelectorListing(t, db, "fp-b", func(l *Listing) { l.MultiplierMilli = 900 })
+		s := newSelector()
+		s.CanaryFraction = 0.0000001
+		got, err := s.Select(db, SelectInput{Model: "deepseek-flash", Now: now})
+		require.NoError(t, err)
+		assert.Equal(t, live.ID, got.ID)
+	})
 	t.Run("canary is admitted at fraction one", func(t *testing.T) {
 		db := newTestDB(t)
 		migrateAll(t, db)

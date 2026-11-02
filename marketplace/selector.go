@@ -965,6 +965,7 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 	effectiveByID := make(map[int64]int64, len(rows))
 	multiplierByID := make(map[int64]int64, len(rows))
 	var cands []Listing
+	var heldCanaries []Listing
 	for i := range rows {
 		l := rows[i]
 		if slices.Contains(in.ExcludeListingIDs, l.ID) {
@@ -986,9 +987,11 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 		if in.OfficialOnly && ch.Kind != ChannelKindOfficial {
 			continue
 		}
-		if l.Status == ListingCanary && !s.canaryAdmit() {
-			continue
-		}
+		// A canary listing not admitted by the dice is held back, not dropped:
+		// when no live listing can serve the model it is still used, so a model
+		// whose only suppliers are new (canary) listings does not 503 on ~90%
+		// of requests and can collect the samples it needs to be promoted.
+		heldCanary := l.Status == ListingCanary && !s.canaryAdmit()
 		coefficient, foundCoefficient := coefficients[l.Vendor]
 		if !foundCoefficient || coefficient <= 0 {
 			// Missing coefficients mean official price.
@@ -1022,7 +1025,15 @@ func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, 
 		}
 		effectiveByID[l.ID] = effective
 		multiplierByID[l.ID] = multiplier
+		if heldCanary {
+			heldCanaries = append(heldCanaries, l)
+			continue
+		}
 		cands = append(cands, l)
+	}
+	if len(cands) == 0 && s.CanaryFraction > 0 {
+		// Fraction 0 stays a hard kill switch for canary traffic.
+		cands = heldCanaries
 	}
 	if len(cands) == 0 {
 		return Listing{}, false, ErrNoListingAvailable
