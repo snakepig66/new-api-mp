@@ -336,11 +336,12 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 
 	applyUsagePostProcessing(info, &simpleResponse.Usage, responseBody)
 
+	if !marketplace.HasModelRewrite(c) && info.OriginModelName != "" {
+		simpleResponse.Model = info.OriginModelName
+	}
+
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
-		if !marketplace.HasModelRewrite(c) && info.OriginModelName != "" {
-			simpleResponse.Model = info.OriginModelName
-		}
 		if usageModified {
 			var bodyMap map[string]any
 			err = common.Unmarshal(responseBody, &bodyMap)

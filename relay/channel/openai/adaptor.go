@@ -192,14 +192,16 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			return relayconstant.BuildEndpointURL(info.ChannelBaseUrl, relayconstant.EndpointOpenAIChat), nil
 		}
 		// MP-HOOK: a Claude-format request goes to the vendor-native Messages
-		// endpoint. A marketplace /v1/messages request is served by the Claude
-		// adaptor (marketplace.ForceClaudeAdaptor), but this branch keeps the
-		// OpenAI adaptor correct for any caller that still reaches it.
+		// endpoint when pass-through is enabled or an Anthropic base is specified.
+		// Otherwise, converted Claude requests go to chat/completions.
 		if info.RelayFormat == types.RelayFormatClaude {
 			if info.ChannelSetting.MPAnthropicMessagesURL != "" {
 				return info.ChannelSetting.MPAnthropicMessagesURL, nil
 			}
-			return relayconstant.BuildEndpointURL(info.ChannelBaseUrl, relayconstant.EndpointAnthropicMessages), nil
+			if info.ChannelSetting.PassThroughBodyEnabled || strings.Contains(info.ChannelBaseUrl, "/anthropic") {
+				return relayconstant.BuildEndpointURL(info.ChannelBaseUrl, relayconstant.EndpointAnthropicMessages), nil
+			}
+			return relayconstant.BuildEndpointURL(info.ChannelBaseUrl, relayconstant.EndpointOpenAIChat), nil
 		}
 		if info.RelayFormat == types.RelayFormatGemini {
 			return relayconstant.BuildEndpointURL(info.ChannelBaseUrl, relayconstant.EndpointOpenAIChat), nil

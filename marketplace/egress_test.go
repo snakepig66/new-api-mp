@@ -141,6 +141,13 @@ func TestCheckEgressHostSellerExactMatchRejectsIPLiteral(t *testing.T) {
 		"an IP literal is never a whitelisted domain, even in the seller list")
 }
 
+func TestCheckEgressHostLoopbackAllowedWhenEnvSet(t *testing.T) {
+	t.Setenv("MP_ALLOW_LOOPBACK_BASE_URL", "1")
+	assert.NoError(t, CheckEgressHost("127.0.0.1"))
+	assert.NoError(t, CheckEgressHost("::1"))
+	assert.ErrorIs(t, CheckEgressHost("192.168.1.1"), ErrEgressDenied)
+}
+
 func TestValidateEgressIP(t *testing.T) {
 	// Every non-public range from §3.11 must be refused.
 	denied := []string{
@@ -192,6 +199,12 @@ func TestValidateEgressIP(t *testing.T) {
 
 	t.Run("deny nil ip", func(t *testing.T) {
 		assert.ErrorIs(t, ValidateEgressIP(nil), ErrEgressDenied)
+	})
+
+	t.Run("allow loopback when opted in via env", func(t *testing.T) {
+		t.Setenv(MPAllowLoopbackBaseURLEnv, "1")
+		assert.NoError(t, ValidateEgressIP(net.ParseIP("127.0.0.1")))
+		assert.NoError(t, ValidateEgressIP(net.ParseIP("::1")))
 	})
 }
 
