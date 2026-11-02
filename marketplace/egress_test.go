@@ -193,6 +193,12 @@ func TestValidateEgressIP(t *testing.T) {
 	t.Run("deny nil ip", func(t *testing.T) {
 		assert.ErrorIs(t, ValidateEgressIP(nil), ErrEgressDenied)
 	})
+
+	t.Run("allow loopback when opted in via env", func(t *testing.T) {
+		t.Setenv(MPAllowLoopbackBaseURLEnv, "1")
+		assert.NoError(t, ValidateEgressIP(net.ParseIP("127.0.0.1")))
+		assert.NoError(t, ValidateEgressIP(net.ParseIP("::1")))
+	})
 }
 
 func TestSetEgressDomains(t *testing.T) {

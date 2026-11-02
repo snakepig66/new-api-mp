@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -193,6 +194,9 @@ func ValidateEgressIP(ip net.IP) error {
 	// Unmap first: an IPv4-mapped IPv6 address (::ffff:127.0.0.1) is judged
 	// as the IPv4 address it embeds (127.0.0.1).
 	addr = addr.Unmap()
+	if addr.IsLoopback() && strings.TrimSpace(os.Getenv(MPAllowLoopbackBaseURLEnv)) == "1" {
+		return nil
+	}
 	if !addr.IsGlobalUnicast() || addr.IsUnspecified() || addr.IsLoopback() || addr.IsPrivate() ||
 		addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsMulticast() {
 		return fmt.Errorf("%w: non-public ip %s", ErrEgressDenied, addr)
