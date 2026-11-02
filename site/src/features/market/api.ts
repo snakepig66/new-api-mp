@@ -210,7 +210,10 @@ export interface PlazaModel {
 export const plazaModelsQuery = () =>
   queryOptions({
     queryKey: ['plaza', 'models'],
-    queryFn: () => api.get<PlazaModel[]>('/plaza/models'),
+    queryFn: async () => {
+      const res = await api.get<PlazaModel[] | { items: PlazaModel[] }>('/plaza/models')
+      return Array.isArray(res) ? res : (res.items ?? [])
+    },
     staleTime: 30_000,
   })
 

@@ -77,10 +77,12 @@ export function AddToKeyMenu({
   }>({ left: 12, width: 320, maxHeight: 360, top: 0 })
 
   const keysQuery = useQuery({ ...consoleKeysQuery(), enabled: open })
-  const options: KeyOption[] = (keysQuery.data ?? []).map((item) => ({
-    item,
-    state: keyState(item, model),
-  }))
+  const options: KeyOption[] = (keysQuery.data ?? [])
+    .filter((item) => item.token.key_type !== 'standard')
+    .map((item) => ({
+      item,
+      state: keyState(item, model),
+    }))
   const selectedCount = selected.size
 
   useEffect(() => {
@@ -369,6 +371,7 @@ export function AddToKeyMenu({
           onOpenChange={setCreateOpen}
           onCreated={() => void refreshAfterCreate()}
           initialModel={model}
+          initialKeyType="shared"
         />
       ) : null}
     </>

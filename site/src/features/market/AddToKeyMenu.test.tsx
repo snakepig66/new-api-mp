@@ -200,7 +200,7 @@ function loginAsBuyer() {
 describe('AddToKeyMenu', () => {
   it('sends a logged-out click to login with the current URL as redirect', async () => {
     const router = renderMenu()
-    fireEvent.click(await screen.findByRole('button', { name: '加入 Key' }))
+    fireEvent.click(await screen.findByRole('button', { name: '加入共享密钥' }))
 
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/login')
@@ -213,7 +213,7 @@ describe('AddToKeyMenu', () => {
   it('adds the model to the selected keys only', async () => {
     loginAsBuyer()
     renderMenu()
-    fireEvent.click(await screen.findByRole('button', { name: '加入 Key' }))
+    fireEvent.click(await screen.findByRole('button', { name: '加入共享密钥' }))
 
     const dialog = await screen.findByRole('dialog')
     await screen.findByRole('checkbox', { name: /alpha/ })
@@ -239,10 +239,10 @@ describe('AddToKeyMenu', () => {
   it('opens the create-key dialog with the model preselected', async () => {
     loginAsBuyer()
     renderMenu()
-    fireEvent.click(await screen.findByRole('button', { name: '加入 Key' }))
+    fireEvent.click(await screen.findByRole('button', { name: '加入共享密钥' }))
 
     await screen.findByRole('dialog')
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Key' }))
+    fireEvent.click(await screen.findByRole('button', { name: '新建共享密钥' }))
 
     expect(await screen.findByText('新建 API Key')).toBeTruthy()
     expect((await screen.findAllByText('已选 1 个')).length).toBeGreaterThan(0)
