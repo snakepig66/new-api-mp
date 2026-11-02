@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/marketplace"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -130,25 +131,7 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 				data = patchClaudeMessageDeltaUsageData(data, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo))
 			}
 		}
-		if c != nil {
-			if _, ok := c.Get("mp_relay_session"); !ok {
-				if info != nil && info.OriginModelName != "" {
-					if claudeResponse.Message != nil {
-						claudeResponse.Message.Model = info.OriginModelName
-					}
-					if gjson.Get(data, "message.model").Exists() {
-						if patched, err := sjson.Set(data, "message.model", info.OriginModelName); err == nil {
-							data = patched
-						}
-					}
-					if gjson.Get(data, "model").Exists() {
-						if patched, err := sjson.Set(data, "model", info.OriginModelName); err == nil {
-							data = patched
-						}
-					}
-				}
-			}
-		} else if info != nil && info.OriginModelName != "" {
+		if !marketplace.HasModelRewrite(c) && info != nil && info.OriginModelName != "" {
 			if claudeResponse.Message != nil {
 				claudeResponse.Message.Model = info.OriginModelName
 			}
@@ -449,15 +432,7 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 	case types.RelayFormatClaude:
-		if c != nil {
-			if _, ok := c.Get("mp_relay_session"); !ok {
-				if info != nil && info.OriginModelName != "" && gjson.GetBytes(data, "model").Exists() {
-					if patched, err := sjson.SetBytes(data, "model", info.OriginModelName); err == nil {
-						data = patched
-					}
-				}
-			}
-		} else if info != nil && info.OriginModelName != "" && gjson.GetBytes(data, "model").Exists() {
+		if !marketplace.HasModelRewrite(c) && info != nil && info.OriginModelName != "" && gjson.GetBytes(data, "model").Exists() {
 			if patched, err := sjson.SetBytes(data, "model", info.OriginModelName); err == nil {
 				data = patched
 			}

@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/marketplace"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -38,7 +39,7 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 
 	info.ObserveResponseModel(responsesResponse.Model)
 	responseBody = rewriteSGLangResponsesCreatedAt(info, responseBody, "created_at", responsesResponse.CreatedAt)
-	if info != nil && info.OriginModelName != "" && gjson.GetBytes(responseBody, "model").Exists() {
+	if !marketplace.HasModelRewrite(c) && info != nil && info.OriginModelName != "" && gjson.GetBytes(responseBody, "model").Exists() {
 		if patched, err := sjson.SetBytes(responseBody, "model", info.OriginModelName); err == nil {
 			responseBody = patched
 		}
@@ -93,13 +94,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 		if streamResponse.Response != nil {
 			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
-			if info != nil && info.OriginModelName != "" && gjson.Get(data, "response.model").Exists() {
+			if !marketplace.HasModelRewrite(c) && info != nil && info.OriginModelName != "" && gjson.Get(data, "response.model").Exists() {
 				if patched, err := sjson.Set(data, "response.model", info.OriginModelName); err == nil {
 					data = patched
 				}
 			}
 		}
-		if info != nil && info.OriginModelName != "" && gjson.Get(data, "model").Exists() {
+		if !marketplace.HasModelRewrite(c) && info != nil && info.OriginModelName != "" && gjson.Get(data, "model").Exists() {
 			if patched, err := sjson.Set(data, "model", info.OriginModelName); err == nil {
 				data = patched
 			}

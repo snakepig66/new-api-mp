@@ -104,18 +104,18 @@ func (w *modelRewriteWriter) setUpstream(names ...string) {
 }
 
 func (w *modelRewriteWriter) rewrite(data []byte) []byte {
-	out := data
-	w.observeModel(out)
-	if w.standard != "" && len(w.names) > 0 {
-		replacement := []byte(`"model":"` + w.standard + `"`)
-		for _, re := range w.names {
-			if re.Match(out) {
-				// Literal replacement: a '$' in the standard id must not be read as a
-				// capture-group expansion.
-				out = re.ReplaceAllLiteral(out, replacement)
-			}
+	out := modelValuePattern.ReplaceAllFunc(data, func(match []byte) []byte {
+		sub := modelValuePattern.FindSubmatch(match)
+		if len(sub) < 2 {
+			return match
 		}
-	}
+		val := string(sub[1])
+		w.observeModel(val)
+		if w.standard != "" {
+			return []byte(`"model":"` + w.standard + `"`)
+		}
+		return match
+	})
 	if bytes.Contains(out, []byte("system_fingerprint")) {
 		out = systemFingerprintPattern.ReplaceAllLiteral(out, nil)
 	}
@@ -125,16 +125,13 @@ func (w *modelRewriteWriter) rewrite(data []byte) []byte {
 // observeModel records the raw upstream model of the response and flags a
 // fingerprint anomaly when the returned id is not one of the upstream names
 // selected for this request (exact or date-suffixed).
-func (w *modelRewriteWriter) observeModel(data []byte) {
-	for _, m := range modelValuePattern.FindAllSubmatch(data, -1) {
-		value := string(m[1])
-		if value == "" {
-			continue
-		}
-		w.upstreamModel = value
-		if !w.isExpectedModel(value) {
-			w.modelAnomaly = true
-		}
+func (w *modelRewriteWriter) observeModel(value string) {
+	if value == "" {
+		return
+	}
+	w.upstreamModel = value
+	if !w.isExpectedModel(value) {
+		w.modelAnomaly = true
 	}
 }
 
@@ -248,4 +245,17 @@ func responseIdentityFromContext(c *gin.Context) (string, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.upstreamModel, w.modelAnomaly
+}
+
+// HasModelRewrite reports whether c's response writer has been wrapped by
+// modelRewriteWriter for marketplace model rewriting.
+func HasModelRewrite(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	if _, ok := c.Get(modelRewriteContextKey); ok {
+		return true
+	}
+	_, ok := c.Writer.(*modelRewriteWriter)
+	return ok
 }

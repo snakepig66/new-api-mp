@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/marketplace"
 	"github.com/QuantumNous/new-api/relay/channel/openrouter"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -27,13 +28,9 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		return nil
 	}
 
-	if c != nil {
-		if _, ok := c.Get("mp_relay_session"); !ok {
-			if info != nil && info.OriginModelName != "" && gjson.Get(data, "model").Exists() {
-				if patched, err := sjson.Set(data, "model", info.OriginModelName); err == nil {
-					data = patched
-				}
-			}
+	if !marketplace.HasModelRewrite(c) && info != nil && info.OriginModelName != "" && gjson.Get(data, "model").Exists() {
+		if patched, err := sjson.Set(data, "model", info.OriginModelName); err == nil {
+			data = patched
 		}
 	}
 
@@ -45,7 +42,7 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 	if err := common.UnmarshalJsonStr(data, &lastStreamResponse); err != nil {
 		return err
 	}
-	if info != nil && info.OriginModelName != "" {
+	if !marketplace.HasModelRewrite(c) && info != nil && info.OriginModelName != "" {
 		lastStreamResponse.Model = info.OriginModelName
 	}
 
@@ -341,7 +338,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
-		if info.OriginModelName != "" {
+		if !marketplace.HasModelRewrite(c) && info.OriginModelName != "" {
 			simpleResponse.Model = info.OriginModelName
 		}
 		if usageModified {
@@ -351,13 +348,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 				return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 			}
 			bodyMap["usage"] = simpleResponse.Usage
-			if c != nil {
-				if _, ok := c.Get("mp_relay_session"); !ok {
-					if info.OriginModelName != "" {
-						bodyMap["model"] = info.OriginModelName
-					}
-				}
-			} else if info.OriginModelName != "" {
+			if !marketplace.HasModelRewrite(c) && info.OriginModelName != "" {
 				bodyMap["model"] = info.OriginModelName
 			}
 			responseBody, _ = common.Marshal(bodyMap)
@@ -368,15 +359,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 				return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 			}
 		} else {
-			if c != nil {
-				if _, ok := c.Get("mp_relay_session"); !ok {
-					if info.OriginModelName != "" && gjson.GetBytes(responseBody, "model").Exists() {
-						if patched, err := sjson.SetBytes(responseBody, "model", info.OriginModelName); err == nil {
-							responseBody = patched
-						}
-					}
-				}
-			} else if info.OriginModelName != "" && gjson.GetBytes(responseBody, "model").Exists() {
+			if !marketplace.HasModelRewrite(c) && info.OriginModelName != "" && gjson.GetBytes(responseBody, "model").Exists() {
 				if patched, err := sjson.SetBytes(responseBody, "model", info.OriginModelName); err == nil {
 					responseBody = patched
 				}

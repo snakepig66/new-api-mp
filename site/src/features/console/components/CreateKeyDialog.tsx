@@ -402,13 +402,14 @@ export function CreateKeyDialog({
                       { label: '30 天', days: 30 },
                       { label: '90 天', days: 90 },
                     ].map((preset) => {
+                      const parsedUnix = expiresAt ? dateTimeInputToUnix(expiresAt) : null
                       const isSelected =
                         preset.days === 'never'
-                          ? neverExpires
+                          ? neverExpires || parsedUnix === null
                           : !neverExpires &&
-                            expiresAt &&
+                            parsedUnix !== null &&
                             Math.abs(
-                              (dateTimeInputToUnix(expiresAt) ?? 0) -
+                              parsedUnix -
                                 (Math.floor(Date.now() / 1000) + preset.days * 86400),
                             ) < 300
                       return (

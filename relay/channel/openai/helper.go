@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/marketplace"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -198,7 +199,7 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 	case types.RelayFormatOpenAI:
 		if info.ShouldIncludeUsage && !containStreamUsage {
 			finalModel := model
-			if info.OriginModelName != "" {
+			if !marketplace.HasModelRewrite(c) && info.OriginModelName != "" {
 				finalModel = info.OriginModelName
 			}
 			response := helper.GenerateFinalUsageResponse(responseId, createAt, finalModel, *usage)

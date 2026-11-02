@@ -37,15 +37,6 @@ func TestModelRewriteJSON(t *testing.T) {
 	assert.NotContains(t, got, `"model":"glm-5.3-oc"`)
 }
 
-func TestModelRewriteUnknownModelUntouched(t *testing.T) {
-	c, rec := newRewriteTestContext(t)
-	installModelRewrite(c, "glm-5.3", "glm-5.3-oc")
-
-	_, err := c.Writer.Write([]byte(`{"model":"another-model"}`))
-	require.NoError(t, err)
-	assert.Equal(t, `{"model":"another-model"}`, rec.Body.String())
-}
-
 func TestModelRewriteSSEFramesAcrossWrites(t *testing.T) {
 	c, rec := newRewriteTestContext(t)
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
@@ -136,8 +127,8 @@ func TestModelRewriteVersionSuffixJSON(t *testing.T) {
 }
 
 // Suffix matching is prefix-bounded: a name that merely starts with the
-// registered upstream id but continues without a separator is not rewritten,
-// and unrelated model values stay untouched.
+// registered upstream id but continues without a separator is not a date suffix;
+// it is rewritten to the requested standard name and recorded as an anomaly.
 func TestModelRewriteSuffixDoesNotOvermatch(t *testing.T) {
 	c, rec := newRewriteTestContext(t)
 	installModelRewrite(c, "glm-5.3", "glm-5.3-oc")
@@ -145,7 +136,10 @@ func TestModelRewriteSuffixDoesNotOvermatch(t *testing.T) {
 	body := `{"model":"glm-5.3-ocx"}{"model":"another-model-0813"}`
 	_, err := c.Writer.Write([]byte(body))
 	require.NoError(t, err)
-	assert.Equal(t, body, rec.Body.String())
+	assert.Equal(t, `{"model":"glm-5.3"}{"model":"glm-5.3"}`, rec.Body.String())
+	upstream, anomaly := responseIdentityFromContext(c)
+	assert.Equal(t, "another-model-0813", upstream)
+	assert.True(t, anomaly)
 }
 
 func TestModelRewriteVersionSuffixSSE(t *testing.T) {
@@ -158,7 +152,7 @@ func TestModelRewriteVersionSuffixSSE(t *testing.T) {
 
 	got := rec.Body.String()
 	assert.Contains(t, got, `data: {"model":"kimi-k3"}`)
-	assert.Contains(t, got, `data: {"model":"glm-5.3"}`, "unregistered upstream values stay untouched")
+	assert.Equal(t, 2, strings.Count(got, `"model":"kimi-k3"`))
 }
 
 // system_fingerprint identifies the upstream deployment, so it must never reach
@@ -198,9 +192,9 @@ func TestModelRewriteStripsSystemFingerprintSSE(t *testing.T) {
 	assert.Equal(t, "data: {\"model\":\"kimi-k3\"}\n\n", got)
 }
 
-// A suffix that is not a pure date identifies a different model id: it is not
-// rewritten and is recorded as a fingerprint anomaly, while the raw upstream
-// model is still captured for mp_requests.
+// A suffix that is not a pure date identifies a different model id: it is
+// rewritten to the requested standard name for the buyer, but the raw upstream
+// model is captured and recorded as a fingerprint anomaly.
 func TestModelRewriteNonDateSuffixIsAnomaly(t *testing.T) {
 	c, rec := newRewriteTestContext(t)
 	installModelRewrite(c, "glm-5.3", "glm-5.3-oc")
@@ -209,10 +203,10 @@ func TestModelRewriteNonDateSuffixIsAnomaly(t *testing.T) {
 	_, err := c.Writer.Write([]byte(body))
 	require.NoError(t, err)
 
-	assert.Equal(t, body, rec.Body.String(), "a non-date suffix names another model")
+	assert.Equal(t, `{"model":"glm-5.3"}`, rec.Body.String(), "rewritten to standard name")
 	upstream, anomaly := responseIdentityFromContext(c)
-	assert.Equal(t, "glm-5.3-oc-beta", upstream)
-	assert.True(t, anomaly)
+	assert.Equal(t, "glm-5.3-oc-beta", upstream, "observeModel receives raw upstream model")
+	assert.True(t, anomaly, "records anomaly")
 }
 
 // The raw upstream model is captured before rewriting; exact ids and pure date
@@ -239,17 +233,18 @@ func TestModelRewriteRecordsRawUpstreamModel(t *testing.T) {
 	}
 }
 
-// A model value the buyer never sees is not rewritten; the writer records the
-// mismatch instead of corrupting the body.
+// An unknown model returned by the upstream is rewritten to the requested
+// standard name for the buyer, but the raw upstream name is recorded and
+// flagged as an anomaly.
 func TestModelRewriteUnknownModelRecordsAnomaly(t *testing.T) {
 	c, rec := newRewriteTestContext(t)
 	installModelRewrite(c, "glm-5.3", "glm-5.3-oc")
 
 	_, err := c.Writer.Write([]byte(`{"model":"another-model"}`))
 	require.NoError(t, err)
-	assert.Equal(t, `{"model":"another-model"}`, rec.Body.String())
+	assert.Equal(t, `{"model":"glm-5.3"}`, rec.Body.String(), "rewritten to standard name")
 
 	upstream, anomaly := responseIdentityFromContext(c)
-	assert.Equal(t, "another-model", upstream)
-	assert.True(t, anomaly)
+	assert.Equal(t, "another-model", upstream, "observeModel receives raw upstream model")
+	assert.True(t, anomaly, "records anomaly")
 }
