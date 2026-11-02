@@ -331,7 +331,11 @@ function PayoutsContent() {
             <div className="rounded-md border border-line bg-white/50 p-3 text-meta text-ink-2">
               <span className="font-medium text-ink">收款方式：</span>
               {confirming.payout.payout_channel === 'wechat' ? (
-                <span>微信支付 ({confirming.payout.payout_name || '未填写姓名'})</span>
+                <span>
+                  微信支付 ({confirming.payout.payout_name || '未填写姓名'}
+                  {confirming.payout.payout_account ? ` - ${confirming.payout.payout_account}` : ''}
+                  {confirming.payout.payout_qr_code ? ' · 含收款码' : ''})
+                </span>
               ) : confirming.payout.payout_channel === 'alipay' ? (
                 <span>支付宝 ({confirming.payout.payout_name || '未填写姓名'} - {confirming.payout.payout_account})</span>
               ) : (
