@@ -1577,6 +1577,7 @@ type adminPoolModelView struct {
 	Aliases       []string  `json:"aliases"`
 	VerifyPrompt  string    `json:"verify_prompt"`
 	Status        string    `json:"status"`
+	EnablePlaza   bool      `json:"enable_plaza"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
@@ -1591,6 +1592,7 @@ func toAdminPoolModelView(row ModelPool) adminPoolModelView {
 		Aliases:       parseStringList(row.Aliases),
 		VerifyPrompt:  row.VerifyPrompt,
 		Status:        row.Status,
+		EnablePlaza:   row.EnablePlaza,
 		CreatedAt:     row.CreatedAt,
 		UpdatedAt:     row.UpdatedAt,
 	}
@@ -1691,6 +1693,7 @@ type adminPoolModelRequest struct {
 	Aliases       flexJSON `json:"aliases"`
 	VerifyPrompt  *string  `json:"verify_prompt"`
 	Status        string   `json:"status"`
+	EnablePlaza   *bool    `json:"enable_plaza"`
 }
 
 // adminPoolListModels serves GET /admin/pool/models.
@@ -1772,6 +1775,11 @@ func adminPoolPutModel(c *gin.Context) {
 	if req.VerifyPrompt != nil {
 		row.VerifyPrompt = *req.VerifyPrompt
 	}
+	if req.EnablePlaza != nil {
+		row.EnablePlaza = *req.EnablePlaza
+	} else if !found {
+		row.EnablePlaza = true
+	}
 	if status != "" {
 		row.Status = status
 	}
@@ -1787,6 +1795,7 @@ func adminPoolPutModel(c *gin.Context) {
 			"aliases":        row.Aliases,
 			"verify_prompt":  row.VerifyPrompt,
 			"status":         row.Status,
+			"enable_plaza":   row.EnablePlaza,
 			"updated_at":     time.Now(),
 		}
 		if err := db.Model(&ModelPool{}).Where("id = ?", row.ID).Updates(updates).Error; err != nil {

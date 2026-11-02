@@ -46,7 +46,7 @@ type ModelPool struct {
 	Aliases       string `gorm:"type:text;not null;default:''" json:"aliases"`
 	VerifyPrompt  string `gorm:"type:text;not null;default:''" json:"verify_prompt"`
 	Status        string `gorm:"size:32;not null;default:'active'" json:"status"` // active / retired
-	EnablePlaza   bool   `gorm:"not null;default:true" json:"enable_plaza"`
+	EnablePlaza   bool   `gorm:"not null" json:"enable_plaza"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -422,6 +422,7 @@ func SeedModelChannelPool(db *gorm.DB) error {
 				continue
 			}
 			row := seed
+			row.EnablePlaza = true
 			if err := db.Create(&row).Error; err != nil {
 				return fmt.Errorf("marketplace: seed model pool: %w", err)
 			}

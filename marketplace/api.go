@@ -18,6 +18,8 @@ import (
 func RegisterRoutes(g *gin.RouterGroup) {
 	g.GET("/marketplace/status", getMarketplaceStatus)
 	RegisterSquareRoutes(g.Group("/marketplace"))
+	RegisterPlazaRoutes(g.Group("/marketplace"))
+	RegisterPlazaRoutes(g)
 	RegisterPublicStatsRoutes(g.Group("/marketplace"))
 	RegisterVendorsRoutes(g.Group("/marketplace"))
 	// P6 排行榜: public, aggregate-only, 60s cache.
