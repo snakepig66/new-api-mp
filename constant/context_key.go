@@ -85,4 +85,6 @@ const (
 	ContextKeyTokenAuditParams ContextKey = "token_audit_params"
 	// ContextKeyTokenAuditSucceeded disambiguates token responses that exceed the audit buffer.
 	ContextKeyTokenAuditSucceeded ContextKey = "token_audit_succeeded"
+	// ContextKeyTokenKeyType stores the token's key_type: standard or shared.
+	ContextKeyTokenKeyType ContextKey = "token_key_type"
 )

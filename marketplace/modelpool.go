@@ -46,12 +46,33 @@ type ModelPool struct {
 	Aliases       string `gorm:"type:text;not null;default:''" json:"aliases"`
 	VerifyPrompt  string `gorm:"type:text;not null;default:''" json:"verify_prompt"`
 	Status        string `gorm:"size:32;not null;default:'active'" json:"status"` // active / retired
+	EnablePlaza   bool   `gorm:"not null;default:true" json:"enable_plaza"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
 func (ModelPool) TableName() string { return "mp_models" }
+
+// IsPlazaModel reports whether the given model name is an active Plaza model
+// configured for platform self-operated distribution.
+func IsPlazaModel(db *gorm.DB, modelName string) bool {
+	if db == nil || strings.TrimSpace(modelName) == "" {
+		return false
+	}
+	modelName = strings.TrimSpace(modelName)
+	if standard, ok := ModelPoolResolveAlias(db, modelName); ok {
+		modelName = standard
+	}
+	var count int64
+	err := db.Model(&ModelPool{}).
+		Where("name = ? AND status = ? AND enable_plaza = ?", modelName, PoolStatusActive, true).
+		Count(&count).Error
+	if err != nil {
+		return false
+	}
+	return count > 0
+}
 
 // ChannelPool is a supplier definition. It mirrors the subset of Vendor the
 // probe/relay paths need, so ChannelPoolAsVendor can hand a pool row to code

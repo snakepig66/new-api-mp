@@ -11,6 +11,11 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	KeyTypeStandard = "standard"
+	KeyTypeShared   = "shared"
+)
+
 type Token struct {
 	Id                 int            `json:"id"`
 	UserId             int            `json:"user_id" gorm:"index"`
@@ -32,6 +37,8 @@ type Token struct {
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 	// 允许用此令牌查询所属用户的额度；新建令牌默认开启，已有令牌升级后保持关闭
 	AllowUserQuotaQuery bool `json:"allow_user_quota_query"`
+	// KeyType 区分普通密钥 (standard) 与共享密钥 (shared)
+	KeyType string `json:"key_type" gorm:"type:varchar(32);default:'standard'"`
 }
 
 func (token *Token) GetAutoGroups() ([]string, error) {
@@ -361,7 +368,7 @@ func (token *Token) Update(updateQuota ...bool) (err error) {
 	selectFields := []string{
 		"name", "status", "expired_time",
 		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups",
-		"allow_user_quota_query",
+		"allow_user_quota_query", "key_type",
 	}
 	if shouldUpdateQuota {
 		selectFields = append(selectFields, "remain_quota", "unlimited_quota")

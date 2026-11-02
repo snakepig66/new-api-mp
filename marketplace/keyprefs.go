@@ -115,17 +115,18 @@ func UpsertKeyPref(db *gorm.DB, tokenID int64, in KeyPrefInput) error {
 // relay checks for a live listing.
 func KeyPrefAllowsModel(db *gorm.DB, tokenID int64, modelName string) (bool, error) {
 	pref, err := GetKeyPref(db, tokenID)
-	if errors.Is(err, ErrKeyPrefNotFound) {
-		return false, nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrKeyPrefNotFound) {
 		return false, err
 	}
-	if pref.ModelScope == ModelScopeAll {
+	if err == nil && pref.ModelScope == ModelScopeAll {
 		return true, nil
 	}
+	standard := modelName
+	if std, ok := ModelPoolResolveAlias(db, modelName); ok {
+		standard = std
+	}
 	var cnt int64
-	if err := db.Model(&KeyModel{}).Where("token_id = ? AND model = ?", tokenID, modelName).
+	if err := db.Model(&KeyModel{}).Where("token_id = ? AND (model = ? OR model = ?)", tokenID, modelName, standard).
 		Count(&cnt).Error; err != nil {
 		return false, err
 	}

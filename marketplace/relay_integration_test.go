@@ -209,6 +209,7 @@ func (h *mpHarness) addBuyer(quota int) {
 		Status:         common.TokenStatusEnabled,
 		ExpiredTime:    -1,
 		UnlimitedQuota: true,
+		KeyType:        model.KeyTypeShared,
 	}
 	require.NoError(h.t, h.db.Create(&token).Error)
 	require.NoError(h.t, h.db.Create(&marketplace.KeyModel{

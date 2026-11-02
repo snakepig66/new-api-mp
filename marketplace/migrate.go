@@ -64,7 +64,73 @@ func Migrate(db *gorm.DB) error {
 	if err := ensureUserIDStart(db, FirstUserID); err != nil {
 		return fmt.Errorf("marketplace user id watermark: %w", err)
 	}
+	if err := MigrateKeyTypes(db); err != nil {
+		return fmt.Errorf("marketplace migrate key types: %w", err)
+	}
 	return nil
+}
+
+// MigrateKeyTypes migrates existing marketplace tokens to key_type = 'shared',
+// and expands any model_scope = 'all' preferences to explicit mp_key_models rows.
+func MigrateKeyTypes(db *gorm.DB) error {
+	if db == nil {
+		return nil
+	}
+	if !db.Migrator().HasTable("tokens") || !db.Migrator().HasTable("mp_key_prefs") {
+		return nil
+	}
+	// 1. Mark existing tokens that have mp_key_prefs or mp_key_models as shared.
+	if err := db.Exec("UPDATE tokens SET key_type = 'shared' WHERE id IN (SELECT token_id FROM mp_key_prefs UNION SELECT token_id FROM mp_key_models)").Error; err != nil {
+		return fmt.Errorf("migrate key types: %w", err)
+	}
+
+	// 2. Query any key prefs that still have model_scope = 'all'.
+	var allPrefs []KeyPref
+	if err := db.Where("model_scope = ?", ModelScopeAll).Find(&allPrefs).Error; err != nil {
+		return fmt.Errorf("find all-scope key prefs: %w", err)
+	}
+	if len(allPrefs) == 0 {
+		return nil
+	}
+
+	if !db.Migrator().HasTable("mp_models") {
+		return nil
+	}
+
+	// Active catalog models from mp_models.
+	var activeModels []ModelPool
+	if err := db.Where("status = ?", PoolStatusActive).Find(&activeModels).Error; err != nil {
+		return fmt.Errorf("query active models for scope expansion: %w", err)
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		for _, pref := range allPrefs {
+			for _, m := range activeModels {
+				var count int64
+				if err := tx.Model(&KeyModel{}).
+					Where("token_id = ? AND model = ?", pref.TokenID, m.Name).
+					Count(&count).Error; err != nil {
+					return err
+				}
+				if count == 0 {
+					km := KeyModel{
+						TokenID:       pref.TokenID,
+						Model:         m.Name,
+						PriceCapMilli: 1000,
+					}
+					if err := tx.Create(&km).Error; err != nil {
+						return err
+					}
+				}
+			}
+			if err := tx.Model(&KeyPref{}).
+				Where("token_id = ?", pref.TokenID).
+				Update("model_scope", ModelScopeSelected).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // ensureUserIDStart raises the users table auto-increment watermark to start,

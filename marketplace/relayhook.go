@@ -603,7 +603,7 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 		capMilli, qerr = keyModelCapMilli(db, tokenID, requestedModel)
 	}
 	if errors.Is(qerr, ErrModelNotAddedToKey) {
-		return nil, true, http.StatusBadRequest, fmt.Errorf("model %q %s", requestedModel, ErrModelNotAddedToKey.Error())
+		return nil, true, http.StatusBadRequest, fmt.Errorf("%w: 该模型不在此密钥可用范围内（普通密钥只能用模型广场模型 / 共享密钥请先在模型市场把该模型加入此密钥）", ErrModelNotAddedToKey)
 	}
 	if qerr != nil {
 		common.SysError(common.LogText("marketplace: query key models: %s", qerr.Error()))

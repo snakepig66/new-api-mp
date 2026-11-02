@@ -37,6 +37,7 @@ type keyCreateModel struct {
 // the existing token/preference/model concepts plus model_scope.
 type keyCreateRequest struct {
 	Name            string  `json:"name"`
+	KeyType         string  `json:"key_type"`
 	Strategy        string  `json:"strategy"`
 	ModelScope      string  `json:"model_scope"`
 	PriceCapMilli   int64   `json:"price_cap_milli"`
@@ -96,69 +97,81 @@ func postCreateKey(c *gin.Context) {
 		}
 	}
 
-	scope := strings.TrimSpace(req.ModelScope)
-	if scope == "" {
-		if len(req.Models) > 0 {
-			scope = ModelScopeSelected
-		} else {
-			scope = ModelScopeAll
-		}
+	keyType := strings.TrimSpace(req.KeyType)
+	if keyType == "" {
+		keyType = model.KeyTypeShared
 	}
-	if scope != ModelScopeAll && scope != ModelScopeSelected {
-		writeKeyAPIBadRequest(c, "invalid_model_scope", ErrKeyModelScope.Error())
-		return
+	if keyType != model.KeyTypeStandard && keyType != model.KeyTypeShared {
+		keyType = model.KeyTypeShared
 	}
 
+	scope := strings.TrimSpace(req.ModelScope)
 	models := make([]KeyModel, 0, len(req.Models))
-	if scope == ModelScopeSelected {
-		if len(req.Models) == 0 {
-			writeKeyAPIBadRequest(c, "models_required",
-				"select at least one model or use the all-models scope")
+	var in KeyPrefInput
+
+	if keyType == model.KeyTypeShared {
+		if scope == "" {
+			if len(req.Models) > 0 {
+				scope = ModelScopeSelected
+			} else {
+				scope = ModelScopeAll
+			}
+		}
+		if scope != ModelScopeAll && scope != ModelScopeSelected {
+			writeKeyAPIBadRequest(c, "invalid_model_scope", ErrKeyModelScope.Error())
 			return
 		}
-		seen := make(map[string]struct{}, len(req.Models))
-		for _, m := range req.Models {
-			modelName := strings.TrimSpace(m.Model)
-			if modelName == "" {
-				writeKeyAPIBadRequest(c, "invalid_key_model", "model must not be empty")
-				return
-			}
-			if _, dup := seen[modelName]; dup {
-				continue
-			}
-			seen[modelName] = struct{}{}
-			poolModel, found := ModelPoolByName(db, modelName)
-			if !found || poolModel.Status != PoolStatusActive {
-				writeKeyAPIBadRequest(c, "unknown_model",
-					fmt.Sprintf("model %q is not in the marketplace catalog", modelName))
-				return
-			}
-			if m.PriceCapMilli < 0 || m.PriceCapMilli > 1000 {
-				writeKeyAPIBadRequest(c, "invalid_price_cap",
-					"per-model price cap must be between 0 and 1000 milli")
-				return
-			}
-			models = append(models, KeyModel{Model: modelName, PriceCapMilli: m.PriceCapMilli})
-		}
-	}
 
-	in := KeyPrefInput{
-		Strategy:        req.Strategy,
-		ModelScope:      scope,
-		PriceCapMilli:   req.PriceCapMilli,
-		PreferSellerIDs: req.PreferSellerIDs,
-		BlockSellerIDs:  req.BlockSellerIDs,
-		OnlySellerID:    req.OnlySellerID,
-		AllowFallback:   req.AllowFallback,
-		RPM:             req.RPM,
-		OfficialOnly:    req.OfficialOnly,
-	}
-	if in.Strategy == "" {
-		in.Strategy = StrategyBalanced
-	}
-	if err := in.validate(); err != nil {
-		writeKeyAPIBadRequest(c, "invalid_preference", err.Error())
-		return
+		if scope == ModelScopeSelected {
+			if len(req.Models) == 0 {
+				writeKeyAPIBadRequest(c, "models_required",
+					"select at least one model or use the all-models scope")
+				return
+			}
+			seen := make(map[string]struct{}, len(req.Models))
+			for _, m := range req.Models {
+				modelName := strings.TrimSpace(m.Model)
+				if modelName == "" {
+					writeKeyAPIBadRequest(c, "invalid_key_model", "model must not be empty")
+					return
+				}
+				if _, dup := seen[modelName]; dup {
+					continue
+				}
+				seen[modelName] = struct{}{}
+				poolModel, found := ModelPoolByName(db, modelName)
+				if !found || poolModel.Status != PoolStatusActive {
+					writeKeyAPIBadRequest(c, "unknown_model",
+						fmt.Sprintf("model %q is not in the marketplace catalog", modelName))
+					return
+				}
+				if m.PriceCapMilli < 0 || m.PriceCapMilli > 1000 {
+					writeKeyAPIBadRequest(c, "invalid_price_cap",
+						"per-model price cap must be between 0 and 1000 milli")
+					return
+				}
+				models = append(models, KeyModel{Model: modelName, PriceCapMilli: m.PriceCapMilli})
+			}
+		}
+
+		in = KeyPrefInput{
+			Strategy:        req.Strategy,
+			ModelScope:      scope,
+			PriceCapMilli:   req.PriceCapMilli,
+			PreferSellerIDs: req.PreferSellerIDs,
+			BlockSellerIDs:  req.BlockSellerIDs,
+			OnlySellerID:    req.OnlySellerID,
+			AllowFallback:   req.AllowFallback,
+			RPM:             req.RPM,
+			OfficialOnly:    req.OfficialOnly,
+		}
+		if in.Strategy == "" {
+			in.Strategy = StrategyBalanced
+		}
+		if err := in.validate(); err != nil {
+			writeKeyAPIBadRequest(c, "invalid_preference", err.Error())
+			return
+		}
 	}
 
 	spendCap := int64(0)
@@ -198,30 +211,33 @@ func postCreateKey(c *gin.Context) {
 		RemainQuota:         int(spendCap),
 		UnlimitedQuota:      unlimited,
 		AllowUserQuotaQuery: true,
+		KeyType:             keyType,
 	}
 	err = db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&token).Error; err != nil {
 			return err
 		}
-		pref := KeyPref{
-			TokenID:         int64(token.Id),
-			Strategy:        in.Strategy,
-			ModelScope:      scope,
-			PriceCapMilli:   in.PriceCapMilli,
-			PreferSellerIDs: in.PreferSellerIDs,
-			BlockSellerIDs:  in.BlockSellerIDs,
-			OnlySellerID:    in.OnlySellerID,
-			AllowFallback:   in.AllowFallback,
-			RPM:             in.RPM,
-			OfficialOnly:    in.OfficialOnly,
-		}
-		if err := tx.Create(&pref).Error; err != nil {
-			return err
-		}
-		for i := range models {
-			models[i].TokenID = int64(token.Id)
-			if err := tx.Create(&models[i]).Error; err != nil {
+		if keyType == model.KeyTypeShared {
+			pref := KeyPref{
+				TokenID:         int64(token.Id),
+				Strategy:        in.Strategy,
+				ModelScope:      scope,
+				PriceCapMilli:   in.PriceCapMilli,
+				PreferSellerIDs: in.PreferSellerIDs,
+				BlockSellerIDs:  in.BlockSellerIDs,
+				OnlySellerID:    in.OnlySellerID,
+				AllowFallback:   in.AllowFallback,
+				RPM:             in.RPM,
+				OfficialOnly:    in.OfficialOnly,
+			}
+			if err := tx.Create(&pref).Error; err != nil {
 				return err
+			}
+			for i := range models {
+				models[i].TokenID = int64(token.Id)
+				if err := tx.Create(&models[i]).Error; err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -242,6 +258,7 @@ func postCreateKey(c *gin.Context) {
 		"id":              token.Id,
 		"name":            token.Name,
 		"key":             key,
+		"key_type":        keyType,
 		"model_scope":     scope,
 		"models":          toKeyModelJSON(models),
 		"strategy":        in.Strategy,
