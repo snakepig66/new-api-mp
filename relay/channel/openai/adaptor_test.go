@@ -65,6 +65,11 @@ func TestGetRequestURLUsesFixedEndpointPaths(t *testing.T) {
 			mode: relayconstant.RelayModeClaude, format: types.RelayFormatClaude,
 			want: "https://api.deepseek.com/anthropic/v1/messages",
 		},
+		{
+			name: "converted claude goes to the chat endpoint", base: "https://api.deepseek.com",
+			mode: relayconstant.RelayModeClaude, format: types.RelayFormatClaude,
+			want: "https://api.deepseek.com/v1/chat/completions",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
