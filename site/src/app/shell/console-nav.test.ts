@@ -34,8 +34,8 @@ describe('console navigation', () => {
       expect.arrayContaining([
         '运营看板',
         '团体工具',
-        '渠道管理',
-        '模型目录',
+        '广场渠道管理',
+        '广场模型上架',
         '发布审核',
       ]),
     )

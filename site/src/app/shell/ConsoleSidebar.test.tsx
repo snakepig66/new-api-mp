@@ -92,4 +92,23 @@ describe('ConsoleSidebar', () => {
       expect(icon).not.toBeNull()
     }
   })
+
+  it('renders collapsible groups as default collapsed unless an item is active', () => {
+    const groups = [
+      {
+        label: '常用',
+        items: [{ to: '/console', label: '概览', exact: true }],
+      },
+      {
+        label: '更多',
+        collapsible: true,
+        items: [{ to: '/docs', label: '帮助中心' }],
+      },
+    ]
+
+    const { container } = render(<ConsoleSidebar groups={groups} />)
+    const details = container.querySelector('details')
+    expect(details).not.toBeNull()
+    expect(details?.open).toBe(false)
+  })
 })
