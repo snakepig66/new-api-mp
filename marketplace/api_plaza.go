@@ -4,9 +4,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type PlazaModel struct {
@@ -38,10 +39,18 @@ func listPlazaModels(c *gin.Context) {
 		return
 	}
 
+	served := plazaServedModels(db)
+
 	now := time.Now()
 	items := make([]PlazaModel, 0, len(rows))
 
 	for _, row := range rows {
+		// Only list models that at least one enabled platform (non-marketplace)
+		// channel can serve right now, so deleting or disabling the channels in
+		// the native admin takes the model off the plaza immediately.
+		if !served[row.Name] {
+			continue
+		}
 		vendor := row.OriginVendor
 		if vendor == "" {
 			vendor = originVendorOf(row)
@@ -75,4 +84,23 @@ func listPlazaModels(c *gin.Context) {
 	}
 
 	common.ApiSuccess(c, gin.H{"items": items})
+}
+
+// plazaServedModels returns the set of model names served by at least one
+// enabled ability on an enabled native channel. Marketplace seller channels
+// are named "mp:..." and never back the plaza.
+func plazaServedModels(db *gorm.DB) map[string]bool {
+	out := map[string]bool{}
+	var names []string
+	err := db.Table("abilities").
+		Joins("JOIN channels ON channels.id = abilities.channel_id").
+		Where("abilities.enabled = ? AND channels.status = ? AND channels.name NOT LIKE ?", true, 1, "mp:%").
+		Distinct().Pluck("abilities.model", &names).Error
+	if err != nil {
+		return out
+	}
+	for _, n := range names {
+		out[n] = true
+	}
+	return out
 }

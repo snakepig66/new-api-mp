@@ -36,6 +36,17 @@ func TestPlazaModelsListAndFiltering(t *testing.T) {
 	require.NoError(t, db.Create(&m1).Error)
 	require.NoError(t, db.Create(&m2).Error)
 	require.NoError(t, db.Create(&m3).Error)
+	m4 := ModelPool{Name: "plaza-model-nochan", OriginVendor: "deepseek", Status: PoolStatusActive, EnablePlaza: true}
+	m5 := ModelPool{Name: "plaza-model-mponly", OriginVendor: "deepseek", Status: PoolStatusActive, EnablePlaza: true}
+	require.NoError(t, db.Create(&m4).Error)
+	require.NoError(t, db.Create(&m5).Error)
+
+	// Native channel 1 serves plaza-model-1; seller channel 2 (mp:) serves
+	// plaza-model-mponly; disabled native channel 3 serves plaza-model-nochan.
+	require.NoError(t, db.Exec("CREATE TABLE IF NOT EXISTS channels (id INTEGER PRIMARY KEY, name TEXT, status INTEGER)").Error)
+	require.NoError(t, db.Exec("CREATE TABLE IF NOT EXISTS abilities (\"group\" TEXT, model TEXT, channel_id INTEGER, enabled NUMERIC)").Error)
+	require.NoError(t, db.Exec("INSERT INTO channels (id, name, status) VALUES (1, 'native', 1), (2, 'mp:seller:1', 1), (3, 'dead', 2)").Error)
+	require.NoError(t, db.Exec("INSERT INTO abilities (\"group\", model, channel_id, enabled) VALUES ('default', 'plaza-model-1', 1, 1), ('default', 'plaza-model-mponly', 2, 1), ('default', 'plaza-model-nochan', 3, 1)").Error)
 
 	engine := gin.New()
 	RegisterPlazaRoutes(engine.Group("/api/marketplace"))
@@ -73,6 +84,10 @@ func TestPlazaModelsListAndFiltering(t *testing.T) {
 	assert.True(t, found1, "active plaza model must be listed")
 	assert.False(t, found2, "plaza model with enable_plaza=false must not be listed")
 	assert.False(t, found3, "retired model must not be listed")
+	for _, it := range resp.Data.Items {
+		assert.NotEqual(t, "plaza-model-nochan", it.Model, "model whose only native channel is disabled must not be listed")
+		assert.NotEqual(t, "plaza-model-mponly", it.Model, "model served only by seller channels must not be listed")
+	}
 
 	// Also test IsPlazaModel helper
 	assert.True(t, IsPlazaModel(db, "plaza-model-1"))
