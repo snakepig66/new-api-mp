@@ -46,7 +46,7 @@ type ModelPool struct {
 	Aliases       string `gorm:"type:text;not null;default:''" json:"aliases"`
 	VerifyPrompt  string `gorm:"type:text;not null;default:''" json:"verify_prompt"`
 	Status        string `gorm:"size:32;not null;default:'active'" json:"status"` // active / retired
-	EnablePlaza   bool   `gorm:"not null" json:"enable_plaza"`
+	EnablePlaza   bool   `gorm:"not null;default:false" json:"enable_plaza"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
