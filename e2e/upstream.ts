@@ -97,6 +97,7 @@ const server = Bun.serve({
         object: 'list',
         data: [
           { id: 'deepseek-chat', object: 'model', created: 1700000000, owned_by: 'custom-upstream' },
+          { id: 'deepseek-flash', object: 'model', created: 1700000000, owned_by: 'custom-upstream' },
           { id: 'gpt-4o-mini', object: 'model', created: 1700000000, owned_by: 'custom-upstream' },
           { id: 'claude-3-5-sonnet-20241022', object: 'model', created: 1700000000, owned_by: 'custom-upstream' },
         ],
