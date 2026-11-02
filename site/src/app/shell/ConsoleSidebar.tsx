@@ -1,5 +1,5 @@
 import { Link, useRouterState } from '@tanstack/react-router'
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 import { cn } from '@/lib/cn'
 
@@ -284,6 +284,53 @@ function SidebarNavLink({
   )
 }
 
+function CollapsibleNavGroup({
+  group,
+  pathname,
+  search,
+  onNavigate,
+}: {
+  group: ConsoleNavGroup
+  pathname: string
+  search: Record<string, unknown>
+  onNavigate?: () => void
+}) {
+  const isCurrentGroupActive = group.items.some((item) => isActive(pathname, search, item))
+  const [isOpen, setIsOpen] = useState(isCurrentGroupActive)
+
+  useEffect(() => {
+    if (isCurrentGroupActive) {
+      setIsOpen(true)
+    }
+  }, [isCurrentGroupActive])
+
+  return (
+    <details
+      className="group/details border-t border-line/60 pt-3"
+      open={isOpen}
+      onToggle={(e) => setIsOpen(e.currentTarget.open)}
+    >
+      <summary className="flex cursor-pointer select-none items-center justify-between px-3 text-caption font-medium uppercase tracking-[0.12em] text-ink-3 hover:text-ink">
+        <span>{group.label}</span>
+        <span className="text-caption text-ink-3 transition-transform group-open/details:rotate-180">
+          ▼
+        </span>
+      </summary>
+      <div className="mt-2 flex flex-col gap-0.5">
+        {group.items.map((item) => (
+          <SidebarNavLink
+            key={item.label + item.to}
+            item={item}
+            active={isActive(pathname, search, item)}
+            icon={item.icon ?? getConsoleNavIcon(item.to)}
+            onNavigate={onNavigate}
+          />
+        ))}
+      </div>
+    </details>
+  )
+}
+
 /**
  * One grouped navigation for buyer, seller and operator views. The layout
  * decides which groups exist (seller/admin gating); this component only
@@ -311,32 +358,15 @@ export function ConsoleSidebar({
   return (
     <nav className="flex flex-col gap-6" aria-label="控制台导航">
       {groups.map((group) => {
-        const isCurrentGroupActive = group.items.some((item) => isActive(pathname, search, item))
         if (group.collapsible) {
           return (
-            <details
+            <CollapsibleNavGroup
               key={group.label}
-              className="group/details border-t border-line/60 pt-3"
-              open={isCurrentGroupActive}
-            >
-              <summary className="flex cursor-pointer select-none items-center justify-between px-3 text-caption font-medium uppercase tracking-[0.12em] text-ink-3 hover:text-ink">
-                <span>{group.label}</span>
-                <span className="text-caption text-ink-3 transition-transform group-open/details:rotate-180">
-                  ▼
-                </span>
-              </summary>
-              <div className="mt-2 flex flex-col gap-0.5">
-                {group.items.map((item) => (
-                  <SidebarNavLink
-                    key={item.label + item.to}
-                    item={item}
-                    active={isActive(pathname, search, item)}
-                    icon={item.icon ?? getConsoleNavIcon(item.to)}
-                    onNavigate={onNavigate}
-                  />
-                ))}
-              </div>
-            </details>
+              group={group}
+              pathname={pathname}
+              search={search}
+              onNavigate={onNavigate}
+            />
           )
         }
 

@@ -179,12 +179,8 @@ function PlazaModelCard({
             </h3>
             <div className="mt-1 flex items-center gap-1.5 text-meta text-ink-3">
               <span className="capitalize">{vendor}</span>
-              {contextK ? (
-                <>
-                  <span>·</span>
-                  <span>{contextK} 上下文</span>
-                </>
-              ) : null}
+              <span>·</span>
+              <span>{contextK ? `${contextK} 上下文` : '128K 上下文'}</span>
             </div>
           </div>
           <Tag tone="brand" dot className="shrink-0 text-caption">

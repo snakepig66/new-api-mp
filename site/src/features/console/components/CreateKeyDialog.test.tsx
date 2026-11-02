@@ -251,7 +251,7 @@ describe('CreateKeyDialog', () => {
       expect(claude).toContain(`ANTHROPIC_BASE_URL="${window.location.origin}"`)
       expect(claude).toContain('ANTHROPIC_AUTH_TOKEN="sk-new-key"')
       expect(claude).toContain('ANTHROPIC_MODEL="deepseek-flash"')
-      expect(screen.getByText('Claude Code 填根地址，不要加 /v1')).toBeTruthy()
+      expect(screen.getByText('填根地址，不要加 /v1')).toBeTruthy()
       expect(texts.some((text) => text.includes('API Key: sk-new-key'))).toBe(true)
     })
     expect(screen.queryByText('先充值才能调用')).toBeNull()

@@ -643,6 +643,7 @@ export interface AdminPoolModel {
   aliases: string[]
   verify_prompt: string
   status: string
+  enable_plaza?: boolean
 }
 
 export interface AdminPoolChannel {
@@ -686,6 +687,7 @@ export interface AdminPoolModelInput {
   aliases?: string[]
   verify_prompt?: string
   status?: string
+  enable_plaza?: boolean
 }
 
 export interface AdminPoolChannelInput {
