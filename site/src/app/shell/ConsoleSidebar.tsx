@@ -5,6 +5,7 @@ import { cn } from '@/lib/cn'
 
 export interface ConsoleNavItem {
   to: string
+  search?: Record<string, unknown>
   label: string
   exact?: boolean
   icon?: ReactNode
@@ -16,7 +17,16 @@ export interface ConsoleNavGroup {
   items: ConsoleNavItem[]
 }
 
-function isActive(pathname: string, item: ConsoleNavItem): boolean {
+function isActive(
+  pathname: string,
+  search: Record<string, unknown>,
+  item: ConsoleNavItem,
+): boolean {
+  if (item.search?.view) {
+    if (search.view !== item.search.view) return false
+  } else if (item.to === '/console/records' && search.view === 'sales') {
+    return false
+  }
   if (item.exact) return pathname === item.to || pathname === `${item.to}/`
   return pathname === item.to || pathname.startsWith(`${item.to}/`)
 }
@@ -218,12 +228,22 @@ export function ConsoleSidebar({
   groups: ConsoleNavGroup[]
   onNavigate?: () => void
 }) {
-  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const routerState = useRouterState({
+    select: (state) => ({
+      pathname: state.location.pathname,
+      search: (state.location.search as Record<string, unknown>) ?? {},
+    }),
+  })
+  const pathname = typeof routerState === 'string' ? routerState : (routerState?.pathname ?? '')
+  const search =
+    typeof routerState === 'object' && routerState && 'search' in routerState
+      ? (routerState.search as Record<string, unknown>)
+      : {}
 
   return (
     <nav className="flex flex-col gap-6" aria-label="控制台导航">
       {groups.map((group) => {
-        const isCurrentGroupActive = group.items.some((item) => isActive(pathname, item))
+        const isCurrentGroupActive = group.items.some((item) => isActive(pathname, search, item))
         if (group.collapsible) {
           return (
             <details
@@ -239,12 +259,13 @@ export function ConsoleSidebar({
               </summary>
               <div className="mt-2 flex flex-col gap-0.5">
                 {group.items.map((item) => {
-                  const active = isActive(pathname, item)
+                  const active = isActive(pathname, search, item)
                   const icon = item.icon ?? getConsoleNavIcon(item.to)
                   return (
                     <Link
-                      key={item.to}
+                      key={item.label + item.to}
                       to={item.to}
+                      search={item.search}
                       onClick={onNavigate}
                       aria-current={active ? 'page' : undefined}
                       className={cn(
@@ -281,12 +302,13 @@ export function ConsoleSidebar({
             </p>
             <div className="mt-1.5 flex flex-col gap-0.5">
               {group.items.map((item) => {
-                const active = isActive(pathname, item)
+                const active = isActive(pathname, search, item)
                 const icon = item.icon ?? getConsoleNavIcon(item.to)
                 return (
                   <Link
-                    key={item.to}
+                    key={item.label + item.to}
                     to={item.to}
+                    search={item.search}
                     onClick={onNavigate}
                     aria-current={active ? 'page' : undefined}
                     className={cn(

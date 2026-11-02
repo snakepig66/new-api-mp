@@ -10,7 +10,6 @@ import {
   Dialog,
   DropdownMenu,
   Empty,
-  Input,
   Multiplier,
   PageHeader,
   Pagination,
@@ -160,7 +159,6 @@ function MultiplierDialog({
   const queryClient = useQueryClient()
   const cooldown = useCooldown(listing.id)
   const [milli, setMilli] = useState(listing.multiplier_milli)
-  const [milliText, setMilliText] = useState((listing.multiplier_milli / 1000).toFixed(3))
   const [error, setError] = useState<string | null>(null)
   const mutation = useMutation({
     mutationFn: (next: number) => updateListingMultiplier(listing.id, next),
@@ -180,7 +178,6 @@ function MultiplierDialog({
   useEffect(() => {
     if (open) {
       setMilli(listing.multiplier_milli)
-      setMilliText((listing.multiplier_milli / 1000).toFixed(3))
       setError(null)
     }
   }, [open, listing.multiplier_milli])
@@ -231,9 +228,8 @@ function MultiplierDialog({
             disabled={locked}
             sliderClassName="w-full flex-1"
             className="w-full"
-            onChange={(next, text) => {
+            onChange={(next) => {
               setMilli(Math.round(next * 1000))
-              setMilliText(text)
             }}
           />
         </Field>
@@ -649,6 +645,14 @@ export function SellerListingsPage() {
             {page.actions.replaceKey}
           </Button>
         ) : null}
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={listing.status === 'banned'}
+          onClick={() => void navigate({ search: (prev) => ({ ...prev, edit: listing.id }) })}
+        >
+          {page.actions.edit}
+        </Button>
         <Link
           to="/console/listings/$id"
           params={{ id: String(listing.id) }}
@@ -838,7 +842,7 @@ export function SellerListingsPage() {
                               variant="secondary"
                               size="sm"
                               onClick={() =>
-                                void navigate({ search: { edit: listing.id } })
+                                void navigate({ search: (prev) => ({ ...prev, edit: listing.id }) })
                               }
                             >
                               {page.actions.edit}
@@ -965,7 +969,7 @@ export function SellerListingsPage() {
       {edit ? (
         <ListingEditDrawer
           listingId={edit}
-          onClose={() => void navigate({ search: { edit: undefined }, replace: true })}
+          onClose={() => void navigate({ search: (prev) => ({ ...prev, edit: undefined }), replace: true })}
         />
       ) : null}
     </>

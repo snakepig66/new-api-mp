@@ -380,8 +380,8 @@ export function LeaderboardPage() {
                 onClick={() => selectRange(value)}
                 className={
                   range === value
-                    ? 'rounded px-3 py-1.5 text-meta font-medium text-brand-ink'
-                    : 'rounded px-3 py-1.5 text-meta text-ink-2 transition-colors hover:text-ink'
+                    ? 'rounded-md bg-white/90 px-3 py-1.5 text-meta font-medium text-brand-ink shadow-2xs dark:bg-slate-800 dark:text-white'
+                    : 'rounded-md px-3 py-1.5 text-meta text-ink-2 transition-colors hover:text-ink'
                 }
               >
                 {value === '24h' ? page.range24h : page.range7d}

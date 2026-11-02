@@ -407,7 +407,7 @@ export function ListingEditDrawer({
   const [modelDrafts, setModelDrafts] = useState<Record<string, ModelDraft>>({})
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({})
   const [savingModel, setSavingModel] = useState<string | null>(null)
-  const [batchText, setBatchText] = useState('')
+  const [batchText, setBatchText] = useState('0.80')
   const [addOpen, setAddOpen] = useState(false)
   const [addDraft, setAddDraft] = useState<SellerModelConfig[]>([])
   const [upstreamData, setUpstreamData] = useState<ListingUpstreamModelsResult | null>(null)
@@ -1161,6 +1161,8 @@ export function ListingEditDrawer({
                         id="listing-edit-batch-multiplier"
                         aria-label={page.models.batch.multiplier}
                         className="mt-1"
+                        min={globalRange.min / 1000}
+                        max={globalRange.max / 1000}
                         value={batchText}
                         onChange={(_val, text) => setBatchText(text)}
                       />

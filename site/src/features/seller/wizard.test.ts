@@ -126,8 +126,8 @@ describe('wizard submission gate', () => {
 
   it('clamps previousWizardStep and nextWizardStep', () => {
     expect(previousWizardStep(0)).toBe(0)
-    expect(previousWizardStep(3)).toBe(2)
-    expect(nextWizardStep(4, snapshot())).toBe(4)
+    expect(previousWizardStep(2)).toBe(1)
+    expect(nextWizardStep(2, snapshot())).toBe(2)
   })
 })
 

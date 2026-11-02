@@ -4,6 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ToastProvider } from '@/ui'
 
+vi.mock('@tanstack/react-router', () => ({
+  Link: ({ children, to, className, ...props }: any) => (
+    <a href={to} className={className} {...props}>
+      {children}
+    </a>
+  ),
+}))
+
 import { CreateKeyDialog } from './CreateKeyDialog'
 
 const squareModels = [

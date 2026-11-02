@@ -14,6 +14,7 @@ import {
   TableRow,
 } from '@/ui'
 
+import { formatDateTime } from '@/lib/time'
 import type { ShareRecord } from './api'
 import {
   ChannelPillBadge,
@@ -156,8 +157,17 @@ export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
                 </TableCell>
 
                 {/* 8. 详情 */}
-                <TableCell className="text-center text-ink-3">
-                  {copy.dash}
+                <TableCell className="text-center">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onOpen(record.request_id)
+                    }}
+                    className="inline-flex items-center justify-center rounded-md px-2 py-1 text-meta font-medium text-brand hover:bg-brand/10 transition-colors"
+                  >
+                    查看
+                  </button>
                 </TableCell>
 
                 {/* 9. 时间 + 状态 */}
@@ -165,6 +175,7 @@ export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
                   <TimeAndStatusCell
                     createdAt={record.created_at}
                     status={record.status}
+                    isSeller
                   />
                 </TableCell>
               </TableRow>
@@ -210,7 +221,7 @@ function ShareRecordCard({
           </span>
         ) : (
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300">
-            消耗
+            成交
             <span className="sr-only">成功</span>
           </span>
         )}
@@ -259,7 +270,7 @@ function ShareRecordCard({
           platformFeeMicro={record.platform_fee_micro}
         />
         <span className="font-mono text-caption text-ink-3 tabular-nums">
-          {record.created_at.replace('T', ' ').substring(0, 19)}
+          {formatDateTime(record.created_at)}
         </span>
       </div>
     </button>

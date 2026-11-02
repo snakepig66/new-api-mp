@@ -226,7 +226,7 @@ function ConsoleOverviewPage() {
               {recent.data.items.map((record) => {
                 const row = toUsageRow(record)
                 return (
-                  <TableRow key={row.requestId} interactive>
+                  <TableRow key={row.requestId} interactive={false}>
                     <TableCell className="whitespace-nowrap tabular-nums text-meta text-ink-3">
                       {formatDateTime(row.createdAt)}
                     </TableCell>

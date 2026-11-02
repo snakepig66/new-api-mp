@@ -13,9 +13,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 
 import { copy } from '@/copy'
-import { formatMultiplier } from '@/lib/multiplier'
 import { formatDateTime } from '@/lib/time'
-import { Button, Input, SaveBar, useToast } from '@/ui'
+import { Button, SaveBar, useToast } from '@/ui'
 import { MultiplierSlider } from '@/features/seller/MultiplierSlider'
 
 import {
@@ -63,7 +62,7 @@ function allowedRange(
 export function ListingBatchBar({ listings, kindById, onClear }: ListingBatchBarProps) {
   const toast = useToast()
   const queryClient = useQueryClient()
-  const [milliText, setMilliText] = useState('')
+  const [milliText, setMilliText] = useState('0.80')
   const [rejected, setRejected] = useState<ModelChangeError[]>([])
   const bounds = useQuery(sellerMultiplierBoundsQuery())
 
@@ -137,6 +136,8 @@ export function ListingBatchBar({ listings, kindById, onClear }: ListingBatchBar
               id="batch-multiplier"
               aria-label={page.batch.multiplierLabel}
               disabled={busy}
+              min={range.min / 1000}
+              max={range.max / 1000}
               value={milliText}
               onChange={(_val, text) => {
                 setMilliText(text)

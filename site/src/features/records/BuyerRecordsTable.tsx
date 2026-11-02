@@ -1,4 +1,5 @@
 import type { UsageRecord } from '../console/types'
+import { formatDateTime } from '@/lib/time'
 import {
   Table,
   TableBody,
@@ -143,8 +144,17 @@ export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
                 </TableCell>
 
                 {/* 7. 详情 */}
-                <TableCell className="text-center text-ink-3">
-                  {copy.dash}
+                <TableCell className="text-center">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onOpen(record.request_id)
+                    }}
+                    className="inline-flex items-center justify-center rounded-md px-2 py-1 text-meta font-medium text-brand hover:bg-brand/10 transition-colors"
+                  >
+                    查看
+                  </button>
                 </TableCell>
 
                 {/* 8. 时间 + 状态 */}
@@ -241,7 +251,7 @@ function BuyerRecordCard({
       {/* Row 4: Cost + Time */}
       <div className="mt-3 flex items-center justify-between gap-2 border-t border-line/60 pt-2.5">
         <span className="font-mono text-caption text-ink-3 tabular-nums">
-          {record.created_at.replace('T', ' ').substring(0, 19)}
+          {formatDateTime(record.created_at)}
         </span>
         <CostPillBadge amountMicro={record.total_debit_micro} />
       </div>

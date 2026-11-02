@@ -97,12 +97,20 @@ export function getTotalLatencyColor(ms: number): {
   }
 }
 
-/** Header label with sort indicator "⇅" */
-export function TableSortHeader({ title, numeric = false }: { title: string; numeric?: boolean }) {
+/** Header label with optional sort indicator "⇅" */
+export function TableSortHeader({
+  title,
+  numeric = false,
+  sortable = false,
+}: {
+  title: string
+  numeric?: boolean
+  sortable?: boolean
+}) {
   return (
     <span className={cn('inline-flex items-center gap-1 select-none', numeric && 'justify-end')}>
-      <span>{title}</span>{' '}
-      <span className="text-[11px] text-ink-3/40 font-mono font-normal">⇅</span>
+      <span>{title}</span>
+      {sortable ? <span className="text-[11px] text-ink-3/40 font-mono font-normal">⇅</span> : null}
     </span>
   )
 }
@@ -221,7 +229,6 @@ export function TokensMetricCell({
   isInProgress?: boolean
 }) {
   const isZero = input === 0 && output === 0
-  const hasCache = cacheRead > 0 || cacheWrite > 0
 
   if (isInProgress || isZero) {
     return <span className="font-mono text-meta text-ink-3">-</span>
@@ -232,9 +239,10 @@ export function TokensMetricCell({
       <span className="font-mono text-meta font-medium tabular-nums text-ink leading-tight">
         {formatNum(input)} / {formatNum(output)}
       </span>
-      {cacheRead > 0 && (
+      {(cacheRead > 0 || cacheWrite > 0) && (
         <div className="flex items-center gap-1.5 text-[11px] text-ink-3 tabular-nums leading-tight">
-          <span>缓存命中 {formatNum(cacheRead)}</span>
+          {cacheRead > 0 && <span>缓存命中 {formatNum(cacheRead)}</span>}
+          {cacheWrite > 0 && <span>写入 {formatNum(cacheWrite)}</span>}
         </div>
       )}
     </div>
@@ -401,9 +409,11 @@ export function IncomePillBadge({
 export function TimeAndStatusCell({
   createdAt,
   status,
+  isSeller = false,
 }: {
   createdAt: string
   status: string
+  isSeller?: boolean
 }) {
   const isFailed = status === 'failed'
 
@@ -419,7 +429,7 @@ export function TimeAndStatusCell({
           </span>
         ) : (
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300">
-            消耗
+            {isSeller ? '成交' : '消耗'}
             <span className="sr-only">成功</span>
           </span>
         )}

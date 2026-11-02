@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 
 import { copy } from '@/copy'
 import { formatYuan } from '@/lib/money'
@@ -32,6 +32,13 @@ import { sellerErrorMessage } from '@/features/seller/errors'
 import { ShareRecordCards, ShareRecordsTable } from '@/features/seller/ShareRecordsTable'
 
 export const Route = createFileRoute('/seller/records')({
+  beforeLoad: ({ search }) => {
+    throw redirect({
+      to: '/console/records',
+      search: { ...search, view: 'sales' },
+      replace: true,
+    })
+  },
   validateSearch: (search: Record<string, unknown>): RecordsSearch => {
     const pageSize = Number(search.page_size)
     return {
@@ -234,12 +241,14 @@ function ShareRecordsPage() {
       <div className="mt-4 flex items-center gap-1.5 overflow-x-auto">
         <Link
           to="/console/records"
+          search={{ preset: '7d', page: 1, page_size: 20 }}
           className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-full px-4 text-body font-medium text-ink-2 transition-colors hover:bg-white/60 hover:text-ink"
         >
           我的调用（消费）
         </Link>
         <Link
           to="/seller/records"
+          search={{ preset: '7d', page: 1, page_size: 20 }}
           className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-full px-4 text-body font-medium bg-brand text-white shadow-xs"
         >
           渠道收益调用（分享）

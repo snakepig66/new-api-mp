@@ -187,8 +187,6 @@ export function ModelDetailPage() {
   const officialOnly =
     data.buyer_price_source === 'official' || data.listing_count === 0
   const officialInput = officialCurrent?.input_micro_per_mtok
-  const officialMicro = officialInput === undefined ? null : Number(officialInput)
-  const currentMicro = price ? Number(price.input_micro_per_mtok) : null
   const channels = data.channels ?? []
   const dimensions = [
     { key: 'input_micro_per_mtok' as const, label: page.dimensions.input },
@@ -251,9 +249,12 @@ export function ModelDetailPage() {
               <Tag>{page.flatPrice}</Tag>
             </div>
 
-            <details className="mt-8 border-t border-line pt-6">
-              <summary className="cursor-pointer list-none text-title font-semibold tracking-tight text-ink">
-                {page.sections.official}
+            <details className="group/official mt-8 border-t border-line pt-6" open>
+              <summary className="flex cursor-pointer select-none items-center justify-between text-title font-semibold tracking-tight text-ink">
+                <span>{page.sections.official}</span>
+                <span className="text-caption text-ink-3 transition-transform group-open/official:rotate-180">
+                  ▼
+                </span>
               </summary>
               <p className="mt-1 text-meta text-ink-3">{page.tierNote}</p>
 
@@ -290,11 +291,16 @@ export function ModelDetailPage() {
             </details>
           </section>
 
-          <details className="glass glass-lift rounded-lg p-6 sm:p-8">
-            <summary className="flex cursor-pointer list-none flex-wrap items-baseline justify-between gap-2">
-              <span className="text-h2 font-semibold tracking-tight text-ink">
-                {page.sections.channels}
-              </span>
+          <details className="group/channels glass glass-lift rounded-lg p-6 sm:p-8" open>
+            <summary className="flex cursor-pointer select-none flex-wrap items-baseline justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-h2 font-semibold tracking-tight text-ink">
+                  {page.sections.channels}
+                </span>
+                <span className="text-caption text-ink-3 transition-transform group-open/channels:rotate-180">
+                  ▼
+                </span>
+              </div>
               <span className="text-meta text-ink-3">
                 {page.channels.count(channels.length, data.listing_count)}
               </span>

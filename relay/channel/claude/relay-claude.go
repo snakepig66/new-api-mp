@@ -130,7 +130,25 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 				data = patchClaudeMessageDeltaUsageData(data, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo))
 			}
 		}
-		if info != nil && info.OriginModelName != "" {
+		if c != nil {
+			if _, ok := c.Get("mp_relay_session"); !ok {
+				if info != nil && info.OriginModelName != "" {
+					if claudeResponse.Message != nil {
+						claudeResponse.Message.Model = info.OriginModelName
+					}
+					if gjson.Get(data, "message.model").Exists() {
+						if patched, err := sjson.Set(data, "message.model", info.OriginModelName); err == nil {
+							data = patched
+						}
+					}
+					if gjson.Get(data, "model").Exists() {
+						if patched, err := sjson.Set(data, "model", info.OriginModelName); err == nil {
+							data = patched
+						}
+					}
+				}
+			}
+		} else if info != nil && info.OriginModelName != "" {
 			if claudeResponse.Message != nil {
 				claudeResponse.Message.Model = info.OriginModelName
 			}
@@ -431,7 +449,15 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 	case types.RelayFormatClaude:
-		if info != nil && info.OriginModelName != "" && gjson.GetBytes(data, "model").Exists() {
+		if c != nil {
+			if _, ok := c.Get("mp_relay_session"); !ok {
+				if info != nil && info.OriginModelName != "" && gjson.GetBytes(data, "model").Exists() {
+					if patched, err := sjson.SetBytes(data, "model", info.OriginModelName); err == nil {
+						data = patched
+					}
+				}
+			}
+		} else if info != nil && info.OriginModelName != "" && gjson.GetBytes(data, "model").Exists() {
 			if patched, err := sjson.SetBytes(data, "model", info.OriginModelName); err == nil {
 				data = patched
 			}

@@ -1,5 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 
@@ -407,7 +408,7 @@ export function CreateKeyDialog({
                           : !neverExpires &&
                             expiresAt &&
                             Math.abs(
-                              dateTimeInputToUnix(expiresAt) -
+                              (dateTimeInputToUnix(expiresAt) ?? 0) -
                                 (Math.floor(Date.now() / 1000) + preset.days * 86400),
                             ) < 300
                       return (
@@ -640,12 +641,12 @@ function CreatedKey({
             <div className="font-medium">{dialogCopy.balanceWarning.title}</div>
             <p className="mt-0.5">{dialogCopy.balanceWarning.body}</p>
           </div>
-          <a
-            href="/console/wallet"
+          <Link
+            to="/console/wallet"
             className="shrink-0 font-medium underline underline-offset-2"
           >
             {dialogCopy.balanceWarning.action}
-          </a>
+          </Link>
         </div>
       ) : null}
 

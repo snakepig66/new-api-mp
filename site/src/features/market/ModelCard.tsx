@@ -136,6 +136,7 @@ export function ModelCard({
   const inputDiscount = calculateDiscountPercent(inputOff, inputCur)
   const outputDiscount = calculateDiscountPercent(outputOff, outputCur)
   const cacheDiscount = calculateDiscountPercent(cacheOff, cacheCur)
+  const hasCache = cacheCur > 0 || cacheOff > 0
 
   const hasDiscountPricing = Boolean(
     inputDiscount !== null || outputDiscount !== null || cacheDiscount !== null,
@@ -232,8 +233,8 @@ export function ModelCard({
           {/* Capability badges */}
           <div className="flex shrink-0 items-center gap-1.5 text-ink-3" aria-label="模型能力">
             {/* Text badge */}
-            <span className="text-[12px] font-semibold text-ink-3 select-none" title="支持文本">
-              T
+            <span className="inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-surface text-ink-3 border border-line select-none" title="支持文本">
+              文本
             </span>
             {hasVision && (
               <svg
@@ -308,12 +309,13 @@ export function ModelCard({
                   <span className="font-semibold text-ink tabular-nums">
                     {formatCompactYuan(inputCur)}
                   </span>
+                  <span className="text-ink-3 text-caption">/ 1M</span>
                   {inputDiscount !== null && (
                     <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
                       <svg className="h-2.5 w-2.5" viewBox="0 0 16 16" fill="currentColor">
                         <path d="M2 2a1 1 0 0 1 1-1h4.586a1 1 0 0 1 .707.293l6.414 6.414a1 1 0 0 1 0 1.414l-4.586 4.586a1 1 0 0 1-1.414 0L2.293 8.293A1 1 0 0 1 2 7.586V2zm3.5 2a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z" />
                       </svg>
-                      {inputDiscount}% / 1M
+                      -{inputDiscount}%
                     </span>
                   )}
                 </div>
@@ -332,39 +334,43 @@ export function ModelCard({
                   <span className="font-semibold text-ink tabular-nums">
                     {formatCompactYuan(outputCur)}
                   </span>
+                  <span className="text-ink-3 text-caption">/ 1M</span>
                   {outputDiscount !== null && (
                     <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
                       <svg className="h-2.5 w-2.5" viewBox="0 0 16 16" fill="currentColor">
                         <path d="M2 2a1 1 0 0 1 1-1h4.586a1 1 0 0 1 .707.293l6.414 6.414a1 1 0 0 1 0 1.414l-4.586 4.586a1 1 0 0 1-1.414 0L2.293 8.293A1 1 0 0 1 2 7.586V2zm3.5 2a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z" />
                       </svg>
-                      {outputDiscount}% / 1M
+                      -{outputDiscount}%
                     </span>
                   )}
                 </div>
 
                 {/* Cache row */}
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-ink-3 shrink-0">缓存</span>
-                  {cacheOff > cacheCur && (
-                    <>
-                      <span className="line-through text-ink-3 tabular-nums text-caption">
-                        {formatCompactYuan(cacheOff)}
-                      </span>
-                      <span className="text-ink-3 text-caption">→</span>
-                    </>
-                  )}
-                  <span className="font-semibold text-ink tabular-nums">
-                    {formatCompactYuan(cacheCur)}
-                  </span>
-                  {cacheDiscount !== null && (
-                    <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
-                      <svg className="h-2.5 w-2.5" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M2 2a1 1 0 0 1 1-1h4.586a1 1 0 0 1 .707.293l6.414 6.414a1 1 0 0 1 0 1.414l-4.586 4.586a1 1 0 0 1-1.414 0L2.293 8.293A1 1 0 0 1 2 7.586V2zm3.5 2a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z" />
-                      </svg>
-                      {cacheDiscount}% / 1M
+                {hasCache ? (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-ink-3 shrink-0">缓存</span>
+                    {cacheOff > cacheCur && (
+                      <>
+                        <span className="line-through text-ink-3 tabular-nums text-caption">
+                          {formatCompactYuan(cacheOff)}
+                        </span>
+                        <span className="text-ink-3 text-caption">→</span>
+                      </>
+                    )}
+                    <span className="font-semibold text-ink tabular-nums">
+                      {formatCompactYuan(cacheCur)}
                     </span>
-                  )}
-                </div>
+                    <span className="text-ink-3 text-caption">/ 1M</span>
+                    {cacheDiscount !== null && (
+                      <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
+                        <svg className="h-2.5 w-2.5" viewBox="0 0 16 16" fill="currentColor">
+                          <path d="M2 2a1 1 0 0 1 1-1h4.586a1 1 0 0 1 .707.293l6.414 6.414a1 1 0 0 1 0 1.414l-4.586 4.586a1 1 0 0 1-1.414 0L2.293 8.293A1 1 0 0 1 2 7.586V2zm3.5 2a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z" />
+                        </svg>
+                        -{cacheDiscount}%
+                      </span>
+                    )}
+                  </div>
+                ) : null}
               </>
             ) : (
               <>
@@ -381,11 +387,13 @@ export function ModelCard({
                     <span className="text-ink-3 text-caption">/ 1M</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-ink-3">缓存</span>
-                  <span className="font-semibold text-ink tabular-nums">{formatCompactYuan(cacheCur)}</span>
-                  <span className="text-ink-3 text-caption">/ 1M</span>
-                </div>
+                {hasCache ? (
+                  <div className="flex items-center gap-1">
+                    <span className="text-ink-3">缓存</span>
+                    <span className="font-semibold text-ink tabular-nums">{formatCompactYuan(cacheCur)}</span>
+                    <span className="text-ink-3 text-caption">/ 1M</span>
+                  </div>
+                ) : null}
                 {isDynamicPricing ? (
                   <div className="pt-1">
                     <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">

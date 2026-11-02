@@ -37,13 +37,13 @@ func TestModelRewriteJSON(t *testing.T) {
 	assert.NotContains(t, got, `"model":"glm-5.3-oc"`)
 }
 
-func TestModelRewriteUnknownModelRewrittenToStandard(t *testing.T) {
+func TestModelRewriteUnknownModelUntouched(t *testing.T) {
 	c, rec := newRewriteTestContext(t)
 	installModelRewrite(c, "glm-5.3", "glm-5.3-oc")
 
 	_, err := c.Writer.Write([]byte(`{"model":"another-model"}`))
 	require.NoError(t, err)
-	assert.Equal(t, `{"model":"glm-5.3"}`, rec.Body.String())
+	assert.Equal(t, `{"model":"another-model"}`, rec.Body.String())
 }
 
 func TestModelRewriteSSEFramesAcrossWrites(t *testing.T) {

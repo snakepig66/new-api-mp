@@ -191,7 +191,7 @@ export function ModelsPage() {
   }, [rows])
 
   const hasFilters = vendor !== null || query.length > 0 || officialOnly || freeOnly
-  const hasSort = sort !== 'saving'
+  const hasSort = sort !== 'price'
 
   function patchSearch(patch: Partial<ModelsSearch>) {
     void navigate({

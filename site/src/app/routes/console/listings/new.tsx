@@ -56,7 +56,6 @@ import {
   canSubmit,
   CUSTOM_VENDOR_ID,
   DEFAULT_MULTIPLIER_MILLI,
-  formatMultiplierAsDiscount,
   maskApiKey,
   parseApiKeys,
   previousWizardStep,
@@ -977,7 +976,18 @@ export function NewListingPage() {
                 <div className="mt-3 space-y-2">
                   <div className="flex items-center justify-between text-meta text-ink-3">
                     <span>Key 连通性测试</span>
-                    {probingKeys ? <span className="text-caption text-ink-3">正在检测连通性…</span> : null}
+                    {keys.length > 0 ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={probingKeys || !validCustomURL(values.url)}
+                        loading={probingKeys}
+                        onClick={() => void probeAllKeys(true)}
+                      >
+                        检测全部 Key
+                      </Button>
+                    ) : null}
                   </div>
                   {keys.length > 0 ? (
                     <div className="divide-y divide-line/60 rounded-md border border-line bg-white/50">
@@ -1007,6 +1017,14 @@ export function NewListingPage() {
                               ) : (
                                 <span className="text-caption text-ink-3">等待检测</span>
                               )}
+                              <button
+                                type="button"
+                                className="text-caption text-brand hover:underline disabled:opacity-50"
+                                disabled={probingKeys || !validCustomURL(values.url)}
+                                onClick={() => void probeOneKey(k, true)}
+                              >
+                                重测
+                              </button>
                             </div>
                           </div>
                         )

@@ -97,7 +97,7 @@ describe('ModelCard', () => {
     expect(screen.getByText('¥0.2')).toBeDefined()
 
     // Discount badges: (1 - 0.14/1) * 100 = 86%
-    const badges = screen.getAllByText('86% / 1M')
+    const badges = screen.getAllByText('-86%')
     expect(badges.length).toBe(3)
 
     // Latency & Throughput footer

@@ -49,14 +49,14 @@ describe('BuyerRecordsTable', () => {
       .getAllByRole('columnheader')
       .map((cell) => cell.textContent?.replace(/\s+/g, ' ').trim())
     expect(headers).toEqual([
-      '模型 ⇅',
-      '卖家 ⇅',
-      '令牌 ⇅',
-      'TOKENS ⇅',
-      '耗时 ⇅',
-      '费用 ⇅',
-      '详情 ⇅',
-      '时间 ⇅',
+      '模型',
+      '卖家',
+      '令牌',
+      'TOKENS',
+      '耗时',
+      '费用',
+      '详情',
+      '时间',
     ])
   })
 
@@ -100,7 +100,8 @@ describe('BuyerRecordsTable', () => {
     const row = screen.getAllByRole('row')[1]
     expect(within(row).getByText('已删除')).toBeTruthy()
     expect(within(row).getByText('失败')).toBeTruthy()
-    expect(within(row).getAllByText('—').length).toBeGreaterThanOrEqual(2)
+    expect(within(row).getAllByText('—').length).toBeGreaterThanOrEqual(1)
+    expect(within(row).getByText('查看')).toBeTruthy()
     expect(within(row).queryByText('转换')).toBeNull()
   })
 

@@ -54,8 +54,13 @@ export interface WizardSnapshot {
 
 export const DEFAULT_MULTIPLIER_MILLI = 800
 
-/** Format multiplier (e.g. 800 -> "官方价 8 折", 500 -> "官方价 5 折", 810 -> "官方价 8.1 折"). */
+/** Format multiplier (e.g. 800 -> "官方价 8 折", 1000 -> "官方原价", 1200 -> "官方价 1.2x"). */
 export function formatMultiplierAsDiscount(milli: number): string {
+  if (milli === 1000) return '官方原价'
+  if (milli > 1000) {
+    const times = (milli / 1000).toFixed(2).replace(/\.?0+$/, '')
+    return `官方价 ${times}x`
+  }
   const discount = milli / 100
   const rounded = Math.round(discount * 100) / 100
   return `官方价 ${rounded} 折`

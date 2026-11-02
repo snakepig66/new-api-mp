@@ -44,15 +44,15 @@ describe('ShareRecordsTable', () => {
       .getAllByRole('columnheader')
       .map((cell) => cell.textContent?.replace(/\s+/g, ' ').trim())
     expect(headers).toEqual([
-      '模型 ⇅',
-      '渠道 ⇅',
-      '买家 ⇅',
-      'TOKENS ⇅',
-      '耗时 ⇅',
-      '费用 ⇅',
-      '收益 ⇅',
-      '详情 ⇅',
-      '时间 ⇅',
+      '模型',
+      '渠道',
+      '买家',
+      'TOKENS',
+      '耗时',
+      '费用',
+      '收益',
+      '详情',
+      '时间',
     ])
   })
 
@@ -74,7 +74,7 @@ describe('ShareRecordsTable', () => {
     expect(screen.getByText('0.80s')).toBeTruthy()
     expect(screen.getByText('¥0.0186')).toBeTruthy()
     expect(screen.getByText(/实付 ¥0\.02 · 平台费 ¥0\.0014/)).toBeTruthy()
-    expect(screen.getByText('消耗')).toBeTruthy()
+    expect(screen.getByText('成交')).toBeTruthy()
   })
 
   it('falls back to a dash for a missing channel group and key suffix', () => {
@@ -90,7 +90,8 @@ describe('ShareRecordsTable', () => {
     render(<ShareRecordsTable records={[plain]} onOpen={() => {}} />)
 
     const row = screen.getAllByRole('row')[1]
-    expect(within(row).getAllByText('—').length).toBeGreaterThanOrEqual(2)
+    expect(within(row).getAllByText('—').length).toBeGreaterThanOrEqual(1)
+    expect(within(row).getByText('查看')).toBeTruthy()
     expect(within(row).getByText('失败')).toBeTruthy()
     expect(within(row).queryByText(/···/)).toBeNull()
   })
@@ -118,7 +119,7 @@ describe('ShareRecordsTable', () => {
     expect(within(row).getByText('0.0s')).toBeTruthy()
     expect(within(row).getByText('¥ 0')).toBeTruthy()
     expect(within(row).getByText('¥0')).toBeTruthy()
-    expect(within(row).getByText('消耗')).toBeTruthy()
+    expect(within(row).getByText('成交')).toBeTruthy()
     expect(within(row).queryByText(/实付/)).toBeNull()
   })
 })

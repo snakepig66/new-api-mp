@@ -16,7 +16,7 @@ vi.mock('@tanstack/react-router', () => ({
     children: React.ReactNode
     className?: string
     onClick?: () => void
-    'aria-current'?: string
+    'aria-current'?: React.AriaAttributes['aria-current']
   }) => (
     <a href={to} className={className} onClick={onClick} aria-current={ariaCurrent}>
       {children}

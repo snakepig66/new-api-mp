@@ -39,7 +39,7 @@ export function consoleGroups({
       label: '更多',
       collapsible: true,
       items: [
-        ...(sellerActive ? [{ to: '/seller/records', label: '被调明细' }] : []),
+        ...(sellerActive ? [{ to: '/console/records', search: { view: 'sales' }, label: '被调明细' }] : []),
         { to: '/models', label: '模型知识库' },
         { to: '/docs', label: '帮助中心' },
         { to: '/console/account', label: nav.account },

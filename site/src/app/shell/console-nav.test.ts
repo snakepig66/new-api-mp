@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 
-import { copy } from '@/copy'
 import { consoleGroups } from './console-nav'
 
 function labels(groups: ReturnType<typeof consoleGroups>): string[] {
