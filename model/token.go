@@ -72,6 +72,9 @@ func MaskTokenKey(key string) string {
 	if len(key) <= 8 {
 		return key[:2] + "****" + key[len(key)-2:]
 	}
+	if (strings.HasPrefix(key, "sk_") || strings.HasPrefix(key, "sk-")) && len(key) > 11 {
+		return key[:7] + "**********" + key[len(key)-4:]
+	}
 	return key[:4] + "**********" + key[len(key)-4:]
 }
 
@@ -279,7 +282,7 @@ func GetTokenById(id int) (*Token, error) {
 	return &token, err
 }
 
-func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
+func getTokenByKeyExact(key string, fromDB bool) (token *Token, err error) {
 	if !fromDB && common.RedisEnabled {
 		// Try Redis first
 		token, err := cacheGetTokenByKey(key)
@@ -300,6 +303,43 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 		}
 	}
 	return token, nil
+}
+
+func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
+	if key == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	token, err = getTokenByKeyExact(key, fromDB)
+	if err == nil {
+		return token, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	// Fallback lookup: tolerate key prefix mismatches across sk_, sk-, or raw key
+	candidates := make([]string, 0, 2)
+	if strings.HasPrefix(key, "sk_") {
+		trimmed := strings.TrimPrefix(key, "sk_")
+		candidates = append(candidates, trimmed, "sk-"+trimmed)
+	} else if strings.HasPrefix(key, "sk-") {
+		trimmed := strings.TrimPrefix(key, "sk-")
+		candidates = append(candidates, "sk_"+trimmed, trimmed)
+	} else {
+		candidates = append(candidates, "sk_"+key, "sk-"+key)
+	}
+
+	for _, cand := range candidates {
+		if cand == "" || cand == key {
+			continue
+		}
+		fallbackToken, fallbackErr := getTokenByKeyExact(cand, fromDB)
+		if fallbackErr == nil {
+			return fallbackToken, nil
+		}
+	}
+
+	return nil, err
 }
 
 func (token *Token) Insert() error {

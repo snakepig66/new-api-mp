@@ -467,9 +467,17 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 		if strings.HasPrefix(key, "Bearer ") || strings.HasPrefix(key, "bearer ") {
 			key = strings.TrimSpace(key[7:])
 		}
-		key = strings.TrimPrefix(key, "sk-")
-		parts := strings.Split(key, "-")
-		key = parts[0]
+		if strings.HasPrefix(key, "sk-") {
+			trimmed := strings.TrimPrefix(key, "sk-")
+			parts := strings.Split(trimmed, "-")
+			key = parts[0]
+		} else if strings.HasPrefix(key, "sk_") {
+			parts := strings.Split(key, "-")
+			key = parts[0]
+		} else {
+			parts := strings.Split(key, "-")
+			key = parts[0]
+		}
 
 		token, err := model.GetTokenByKey(key, false)
 		if err != nil {
@@ -561,11 +569,15 @@ func TokenAuth() func(c *gin.Context) {
 			if strings.HasPrefix(key, "Bearer ") || strings.HasPrefix(key, "bearer ") {
 				key = strings.TrimSpace(key[7:])
 			}
-			key = strings.TrimPrefix(key, "sk-")
+		}
+		if strings.HasPrefix(key, "sk-") {
+			trimmed := strings.TrimPrefix(key, "sk-")
+			parts = strings.Split(trimmed, "-")
+			key = parts[0]
+		} else if strings.HasPrefix(key, "sk_") {
 			parts = strings.Split(key, "-")
 			key = parts[0]
 		} else {
-			key = strings.TrimPrefix(key, "sk-")
 			parts = strings.Split(key, "-")
 			key = parts[0]
 		}
