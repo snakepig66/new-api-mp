@@ -85,6 +85,7 @@ function PayoutAccountCard({ seller }: { seller: SellerIdentity }) {
   )
   const [name, setName] = useState(seller.progress.payout_name || '')
   const [alipayAccount, setAlipayAccount] = useState('')
+  const [wechatAccount, setWechatAccount] = useState('')
   const [qrCode, setQrCode] = useState('')
   const [validationError, setValidationError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -131,13 +132,19 @@ function PayoutAccountCard({ seller }: { seller: SellerIdentity }) {
       return
     }
     if (channel === 'wechat') {
-      if (!qrCode && !seller.progress.payout_has_qr_code) {
-        setValidationError('请上传微信收款码')
+      const trimmedAccount = wechatAccount.trim()
+      if (!qrCode && !seller.progress.payout_has_qr_code && !trimmedAccount) {
+        setValidationError('请上传微信收款码或输入微信手机号')
+        return
+      }
+      if (trimmedAccount && !/^1\d{10}$/.test(trimmedAccount)) {
+        setValidationError('请输入 11 位中国大陆手机号')
         return
       }
       mutation.mutate({
         payout_channel: 'wechat',
         payout_name: trimmedName,
+        payout_account: trimmedAccount || undefined,
         payout_qr_code: qrCode || undefined,
       })
     } else {
@@ -178,7 +185,14 @@ function PayoutAccountCard({ seller }: { seller: SellerIdentity }) {
             <span className="font-medium text-ink">收款人：{seller.progress.payout_name}</span>
           ) : null}
           {isWx ? (
-            <span className="text-brand-ink">✓ 微信收款码已保存</span>
+            <div className="flex items-center gap-3">
+              {seller.progress.payout_account_masked ? (
+                <span>账号：{seller.progress.payout_account_masked}</span>
+              ) : null}
+              {seller.progress.payout_has_qr_code ? (
+                <span className="text-brand-ink">✓ 微信收款码已保存</span>
+              ) : null}
+            </div>
           ) : seller.progress.payout_account_masked ? (
             <span>账号：{seller.progress.payout_account_masked}</span>
           ) : null}
@@ -258,10 +272,26 @@ function PayoutAccountCard({ seller }: { seller: SellerIdentity }) {
         </Field>
 
         {channel === 'wechat' ? (
-          <Field
-            label={page.accountCard.wechatQRLabel}
-            hint={page.accountCard.wechatQRHint}
-          >
+          <>
+            <Field
+              label={page.accountCard.wechatAccountLabel ?? '微信手机号'}
+              htmlFor="wechat-account"
+              hint={page.accountCard.wechatAccountHint ?? '打款转账到该微信绑定的手机号（选填）'}
+            >
+              <Input
+                id="wechat-account"
+                type="tel"
+                autoComplete="tel"
+                placeholder={page.accountCard.wechatAccountPlaceholder ?? '11 位中国大陆手机号'}
+                value={wechatAccount}
+                onChange={(e) => setWechatAccount(e.target.value)}
+              />
+            </Field>
+
+            <Field
+              label={page.accountCard.wechatQRLabel}
+              hint={page.accountCard.wechatQRHint}
+            >
             <input
               ref={fileInputRef}
               type="file"
@@ -315,6 +345,7 @@ function PayoutAccountCard({ seller }: { seller: SellerIdentity }) {
               </div>
             )}
           </Field>
+          </>
         ) : (
           <Field
             label={page.accountCard.alipayAccountLabel}

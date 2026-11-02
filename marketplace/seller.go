@@ -128,7 +128,7 @@ func (s Seller) progress() SellerProgress {
 		if info, err := ParsePayoutAccount(s.PayoutAccount); err == nil {
 			p.PayoutChannel = info.Channel
 			p.PayoutName = info.Name
-			if info.Channel == "alipay" {
+			if (info.Channel == "alipay" || info.Channel == "wechat") && info.Account != "" {
 				p.PayoutAccountMasked = maskPayoutAccount(info.Account)
 			}
 			p.PayoutHasQRCode = info.QRCode != ""
@@ -261,12 +261,16 @@ func OnboardSeller(db *gorm.DB, userID int64, in SellerOnboardingInput, now time
 		if payoutName != "" && !validRealName(payoutName) {
 			return Seller{}, SellerProgress{}, ErrSellerInvalidRealName
 		}
-		if payoutQRCode == "" {
+		if payoutAccount != "" && !validAlipayAccount(payoutAccount) {
+			return Seller{}, SellerProgress{}, ErrSellerInvalidPayoutAccount
+		}
+		if payoutQRCode == "" && payoutAccount == "" {
 			return Seller{}, SellerProgress{}, ErrSellerInvalidPayoutAccount
 		}
 		info := PayoutAccountInfo{
 			Channel: "wechat",
 			Name:    payoutName,
+			Account: payoutAccount,
 			QRCode:  payoutQRCode,
 		}
 		data, _ := json.Marshal(info)

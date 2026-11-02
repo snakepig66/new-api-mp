@@ -55,6 +55,15 @@ const ALL_TRANSACTIONS: WalletTransaction[] = [
     money: 5,
     created_at: '2026-10-24T07:00:00Z',
   },
+  {
+    id: 'topup:9',
+    kind: 'topup',
+    amount_micro: 20_000_000,
+    status: 'pending',
+    reference: 'trade-9',
+    money: 20,
+    created_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+  },
 ]
 
 let transactionUrls: string[] = []
@@ -155,7 +164,7 @@ describe('wallet unified transactions table', () => {
     renderPage()
     expect(await screen.findByText('trade-7')).toBeTruthy()
 
-    expect(document.querySelectorAll('tbody tr')).toHaveLength(4)
+    expect(document.querySelectorAll('tbody tr')).toHaveLength(5)
 
     const usageRow = screen.getByText('req-30').closest('tr')
     expect(usageRow?.textContent).toContain('消费')
@@ -176,8 +185,13 @@ describe('wallet unified transactions table', () => {
     expect(paidRow?.textContent).toContain('¥10.00')
     expect(paidRow?.textContent).toContain('已到账')
 
-    const pendingRow = screen.getByText('trade-8').closest('tr')
-    expect(pendingRow?.textContent).toContain('已关闭')
+    // Created > 30 minutes ago, pending -> closed
+    const closedRow = screen.getByText('trade-8').closest('tr')
+    expect(closedRow?.textContent).toContain('已关闭')
+
+    // Created within 30 minutes, pending -> un-paid
+    const pendingRow = screen.getByText('trade-9').closest('tr')
+    expect(pendingRow?.textContent).toContain('未支付')
   })
 
   it('filters the stream by the 全部 / 消费 / 充值 tabs', async () => {
@@ -200,9 +214,17 @@ describe('wallet unified transactions table', () => {
     await waitFor(() => expect(screen.queryByText('req-30')).toBeNull())
     expect(screen.getByText('trade-7')).toBeTruthy()
     expect(screen.getByText('trade-8')).toBeTruthy()
+    expect(screen.getByText('trade-9')).toBeTruthy()
     expect(screen.getAllByRole('tab', { name: '充值' })[0].getAttribute('aria-selected')).toBe(
       'true',
     )
+  })
+
+  it('renders unconfigured notice and no "暂未开放" when online topup is disabled', async () => {
+    renderPage()
+    expect(await screen.findByText('在线充值未配置，请联系管理员')).toBeTruthy()
+    expect(screen.queryByText('在线充值暂未开放')).toBeNull()
+    expect(screen.getByText('未配置')).toBeTruthy()
   })
 })
 
@@ -226,6 +248,18 @@ describe('wallet transaction labels', () => {
     })
     expect(walletStatusMeta('topup', 'pending')).toEqual({
       label: '未支付',
+      tone: 'neutral',
+    })
+    expect(walletStatusMeta('topup', 'pending', Date.now() - 5 * 60 * 1000)).toEqual({
+      label: '未支付',
+      tone: 'neutral',
+    })
+    expect(walletStatusMeta('topup', 'pending', Date.now() - 35 * 60 * 1000)).toEqual({
+      label: '已关闭',
+      tone: 'neutral',
+    })
+    expect(walletStatusMeta('topup', 'closed')).toEqual({
+      label: '已关闭',
       tone: 'neutral',
     })
     expect(walletStatusMeta('topup', 'failed')).toEqual({

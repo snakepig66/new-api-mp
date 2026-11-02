@@ -31,18 +31,36 @@ export function walletKindLabel(kind: string): string {
  * Status label + tone. Ledger kinds reuse ledgerStatusLabel; top-up kinds reuse
  * the top-up status copy (pending/success/failed/expired/unknown).
  */
-export function walletStatusMeta(kind: string, status: string): StatusMeta {
+export function walletStatusMeta(
+  kind: string,
+  status: string,
+  createdAt?: string | number | Date,
+): StatusMeta {
   if (kind === 'topup') {
     const labels = copy.pages.consoleWallet.topups.statuses as Record<string, string>
-    const label = labels[status] ?? labels.unknown
-    return { label, tone: topUpTone(status) }
+    let effectiveStatus = status
+    if (status === 'pending' && createdAt) {
+      const createdTime =
+        typeof createdAt === 'number'
+          ? createdAt * (createdAt < 1e11 ? 1000 : 1)
+          : new Date(createdAt).getTime()
+      if (!Number.isNaN(createdTime) && Date.now() - createdTime > 30 * 60 * 1000) {
+        effectiveStatus = 'closed'
+      }
+    }
+    const label = labels[effectiveStatus] ?? labels.unknown
+    return { label, tone: topUpTone(effectiveStatus) }
   }
   const label = ledgerStatusLabel(status)
   return { label, tone: ledgerTone(status) }
 }
 
-export function walletStatusLabel(kind: string, status: string): string {
-  return walletStatusMeta(kind, status).label
+export function walletStatusLabel(
+  kind: string,
+  status: string,
+  createdAt?: string | number | Date,
+): string {
+  return walletStatusMeta(kind, status, createdAt).label
 }
 
 /**
@@ -66,7 +84,7 @@ export function walletDescription(tx: WalletTransaction): string {
 
 function topUpTone(status: string): TagTone {
   if (status === 'success') return 'brand'
-  if (status === 'pending') return 'neutral'
+  if (status === 'pending' || status === 'closed') return 'neutral'
   return 'danger'
 }
 

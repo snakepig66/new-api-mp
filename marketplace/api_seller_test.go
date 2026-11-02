@@ -589,6 +589,35 @@ func TestSellerOnboardingWechatAndAlipay(t *testing.T) {
 	assert.Equal(t, "alipay", info.Channel)
 	assert.Equal(t, "王五", info.Name)
 	assert.Equal(t, "13912345678", info.Account)
+
+	// Bind WeChat with phone account instead of QR code
+	w = f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
+		"payout_channel": "wechat",
+		"payout_name":    "赵六",
+		"payout_account": "13800138000",
+	}, userID)
+	require.Equal(t, http.StatusOK, w.Code)
+	seller = onboardingSellerView(t, w)
+	progress = seller["progress"].(map[string]any)
+	assert.Equal(t, "done", progress["next_step"])
+	assert.Equal(t, "wechat", progress["payout_channel"])
+	assert.Equal(t, "赵六", progress["payout_name"])
+	assert.NotEmpty(t, progress["payout_account_masked"])
+
+	require.NoError(t, f.db.Where("user_id = ?", f.buyerID).Take(&row).Error)
+	info, err = ParsePayoutAccount(row.PayoutAccount)
+	require.NoError(t, err)
+	assert.Equal(t, "wechat", info.Channel)
+	assert.Equal(t, "赵六", info.Name)
+	assert.Equal(t, "13800138000", info.Account)
+
+	// Invalid WeChat phone account rejected
+	w = f.do(t, http.MethodPost, "/api/marketplace/seller/onboarding", map[string]any{
+		"payout_channel": "wechat",
+		"payout_name":    "赵六",
+		"payout_account": "invalid-phone",
+	}, userID)
+	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func onboardingSellerView(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
