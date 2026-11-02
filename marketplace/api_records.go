@@ -95,6 +95,7 @@ type usageRecord struct {
 	Endpoint      string `json:"endpoint"`       // 买方协议 (openai-chat / anthropic-messages / …)
 	Converted     bool   `json:"converted"`      // 协议转换
 	UpstreamModel string `json:"upstream_model"` // 上游返回的原始模型 id
+	Source        string `json:"source"`         // 来源: plaza | market
 
 	UsageEstimated bool      `json:"usage_estimated"`
 	Status         string    `json:"status"`
@@ -248,6 +249,12 @@ func newUsageRecord(r *Request, ctx recordRowContext) usageRecord {
 		Endpoint:          r.Endpoint,
 		Converted:         r.Converted,
 		UpstreamModel:     "",
+		Source: func() string {
+			if r.Source != "" {
+				return r.Source
+			}
+			return RequestSourceMarket
+		}(),
 		UsageEstimated:    r.UsageEstimated,
 		Status:            r.Status,
 		CreatedAt:         r.CreatedAt,
@@ -727,6 +734,7 @@ func listUsageRecords(c *gin.Context) {
 				activeItems = append(activeItems, usageRecord{
 					RequestID:        as.RequestID,
 					Model:            as.Model,
+					Source:           RequestSourceMarket,
 					SellerID:         sellerByListing[as.ListingID],
 					ChannelType:      "",
 					Tier:             "flat",
@@ -780,6 +788,7 @@ func getUsageRecord(c *gin.Context) {
 					usageRecord: usageRecord{
 						RequestID:        entry.RequestID,
 						Model:            entry.Model,
+						Source:           RequestSourceMarket,
 						SellerID:         l.SellerID,
 						ChannelType:      "",
 						Tier:             "flat",

@@ -11,10 +11,13 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 )
 
 var enabled bool
@@ -97,6 +100,40 @@ func Init(db *gorm.DB) error {
 	// Background jobs (T+7 maturity, canary promotion, patrol, calendar reload).
 	// The stop channel is never closed: the jobs exit with the process.
 	StartJobs(db, make(chan struct{}))
+
+	// Register hook to sync native Plaza requests into mp_requests
+	model.RegisterConsumeLogHook(func(c *gin.Context, log *model.Log, params model.RecordConsumeLogParams) {
+		if c == nil || c.GetString("mp_relay_session") != "" || log == nil || log.RequestId == "" {
+			return
+		}
+		rdb, _ := relayState()
+		if rdb == nil {
+			return
+		}
+		reqRow := Request{
+			RequestID:       log.RequestId,
+			BuyerUserID:     int64(log.UserId),
+			BuyerTokenID:    int64(log.TokenId),
+			SellerID:        0,
+			ListingID:       0,
+			ChannelID:       int64(log.ChannelId),
+			Model:           log.ModelName,
+			UpstreamModel:   "",
+			Source:          RequestSourcePlaza,
+			Tier:            "standard",
+			Status:          RequestSuccess,
+			InputTokens:     int64(log.PromptTokens),
+			OutputTokens:    int64(log.CompletionTokens),
+			TotalDebitMicro: int64(log.Quota),
+			TokenDebitMicro: int64(log.Quota),
+			LatencyMs:       int64(log.UseTime * 1000),
+			IsStream:        log.IsStream,
+			TokenGroup:      log.Group,
+			CreatedAt:       time.Unix(log.CreatedAt, 0),
+		}
+		_ = rdb.Create(&reqRow).Error
+	})
+
 	common.SysLog("marketplace enabled: migrations applied")
 	return nil
 }

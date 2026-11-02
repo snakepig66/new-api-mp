@@ -187,6 +187,8 @@ func TestApiRecordUsageList(t *testing.T) {
 
 	rec := findByRequestID(t, items, "req-a1")
 	assert.Equal(t, "deepseek-flash", rec["model"])
+	assert.Equal(t, "market", rec["source"])
+	assert.Equal(t, "", rec["upstream_model"], "buyer view must hide upstream model")
 	assert.Equal(t, int64(seller), apiNum(t, rec, "seller_id"), "§3.1: 买家能看到分享者编号")
 	assert.Equal(t, "official", rec["channel_type"], "官方渠道性质来自 listing 的 vendor")
 	assert.Equal(t, "peak", rec["tier"])
@@ -228,6 +230,46 @@ func TestApiRecordUsageList(t *testing.T) {
 	require.Len(t, items2, 1)
 	assert.Equal(t, "req-b1", items2[0].(map[string]any)["request_id"])
 	assert.NotContains(t, w2.Body.String(), "req-a1", "another buyer's record must not leak")
+}
+
+func TestApiRecordPlazaSourceAndHidesUpstreamModel(t *testing.T) {
+	f := newRecordFixture(t)
+	const buyer = int64(7005)
+
+	seedRequest(t, f.db, Request{
+		RequestID:     "req-plaza-1",
+		BuyerUserID:   buyer,
+		BuyerTokenID:  505,
+		Model:         "claude-3-7-sonnet-20250219",
+		UpstreamModel: "claude-3-7-sonnet-internal-id",
+		Source:        RequestSourcePlaza,
+		Tier:          "standard",
+		CreatedAt:     recordTestBase,
+	})
+
+	w := f.get(t, "/api/marketplace/records/usage", buyer)
+	require.Equal(t, http.StatusOK, w.Code)
+	body := decodeAPIBody(t, w)
+	require.Equal(t, true, body["success"])
+	items := apiPageItems(t, apiData(t, body))
+	require.Len(t, items, 1)
+
+	rec := items[0].(map[string]any)
+	assert.Equal(t, "req-plaza-1", rec["request_id"])
+	assert.Equal(t, "claude-3-7-sonnet-20250219", rec["model"])
+	assert.Equal(t, "plaza", rec["source"])
+	assert.Equal(t, "", rec["upstream_model"])
+	assert.NotContains(t, w.Body.String(), "claude-3-7-sonnet-internal-id")
+
+	// Detail endpoint check
+	wDetail := f.get(t, "/api/marketplace/records/usage/req-plaza-1", buyer)
+	require.Equal(t, http.StatusOK, wDetail.Code)
+	bodyDetail := decodeAPIBody(t, wDetail)
+	require.Equal(t, true, bodyDetail["success"])
+	detail := apiData(t, bodyDetail)
+	assert.Equal(t, "plaza", detail["source"])
+	assert.Equal(t, "", detail["upstream_model"])
+	assert.NotContains(t, wDetail.Body.String(), "claude-3-7-sonnet-internal-id")
 }
 
 // ---------------------------------------------------------------------------

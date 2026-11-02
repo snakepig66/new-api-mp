@@ -468,6 +468,11 @@ const (
 	RequestFailed  = "failed"
 )
 
+const (
+	RequestSourceMarket = "market"
+	RequestSourcePlaza  = "plaza"
+)
+
 // Request is the single marketplace record of one buyer request (§3.8):
 // retries and circuit-breaker events fold into RetryChain.
 type Request struct {
@@ -477,6 +482,7 @@ type Request struct {
 	BuyerTokenID int64  `gorm:"not null;index"`
 	SellerID     int64  `gorm:"not null;index"`
 	ListingID    int64  `gorm:"not null;index;index:idx_mp_requests_listing_created,priority:1"`
+	Source       string `gorm:"size:32;not null;default:'market'" json:"source"` // plaza | market
 	// P3 shadow identity: ChannelID mirrors ListingID (mp_seller_channels.id),
 	// KeyID is the mp_channel_keys row (0 until multi-key supply exists), and
 	// Endpoint is the buyer protocol the request was served on.
