@@ -20,7 +20,7 @@ const RULES: { match: RegExp; vendor: string }[] = [
   { match: /grok/i, vendor: 'grok' },
   { match: /mistral|mixtral|codestral|devstral/i, vendor: 'mistral' },
   { match: /llama/i, vendor: 'meta' },
-  { match: /hunyuan/i, vendor: 'hunyuan' },
+  { match: /hunyuan|^hy(?:\d+|-)|tencent/i, vendor: 'hunyuan' },
   { match: /ernie/i, vendor: 'wenxin' },
   { match: /^step/i, vendor: 'stepfun' },
   { match: /baichuan/i, vendor: 'baichuan' },

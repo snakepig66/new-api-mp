@@ -27,6 +27,7 @@ const VENDOR_LABELS: { match: RegExp; label: string }[] = [
   { match: /openai/i, label: 'OpenAI' },
   { match: /anthropic|claude/i, label: 'Anthropic' },
   { match: /google|gemini/i, label: 'Google' },
+  { match: /tencent|hunyuan/i, label: '腾讯' },
   { match: /moonshot|kimi/i, label: '月之暗面' },
   { match: /minimax/i, label: 'MiniMax' },
   { match: /baidu|ernie/i, label: '百度' },
@@ -59,6 +60,7 @@ const VENDOR_SHORT_LABELS: { match: RegExp; label: string }[] = [
   { match: /^deepseek/i, label: 'DeepSeek' },
   { match: /^zhipu/i, label: '智谱' },
   { match: /^aliyun-bailian|^qwen/i, label: '千问' },
+  { match: /^tencent|^hunyuan/i, label: '腾讯' },
   { match: /^moonshot|^kimi/i, label: 'Kimi' },
   { match: /^minimax/i, label: 'MiniMax' },
   { match: /^volcengine-ark|^doubao|^bytedance/i, label: '豆包' },
@@ -69,9 +71,42 @@ export function vendorShortLabel(vendor: string, lookup?: VendorLookup): string 
   return hit ? hit.label : vendorLabel(vendor, lookup)
 }
 
-/** Logo path from the catalogue; empty when the vendor has no shipped SVG. */
+const VENDOR_LOGOS: { match: RegExp; file: string }[] = [
+  { match: /deepseek/i, file: 'deepseek.svg' },
+  { match: /tencent|hunyuan/i, file: 'hunyuan.svg' },
+  { match: /qwen|alibaba|dashscope|aliyun/i, file: 'qwen.svg' },
+  { match: /zhipu|bigmodel|glm/i, file: 'zhipu.svg' },
+  { match: /moonshot|kimi/i, file: 'kimi.svg' },
+  { match: /minimax/i, file: 'minimax.svg' },
+  { match: /bytedance|doubao|volc/i, file: 'doubao.svg' },
+  { match: /openai/i, file: 'openai.svg' },
+  { match: /anthropic|claude/i, file: 'claude.svg' },
+  { match: /google|gemini/i, file: 'gemini.svg' },
+  { match: /baidu|ernie|wenxin/i, file: 'wenxin.svg' },
+  { match: /xai|grok/i, file: 'grok.svg' },
+  { match: /01ai|lingyi|^yi-/i, file: 'yi.svg' },
+  { match: /baichuan/i, file: 'baichuan.svg' },
+  { match: /stepfun|^step/i, file: 'stepfun.svg' },
+  { match: /spark|iflytek|xfyun/i, file: 'spark.svg' },
+  { match: /mistral/i, file: 'mistral.svg' },
+  { match: /meta|llama/i, file: 'meta.svg' },
+  { match: /cohere/i, file: 'cohere.svg' },
+  { match: /perplexity/i, file: 'perplexity.svg' },
+  { match: /nvidia/i, file: 'nvidia.svg' },
+  { match: /longcat/i, file: 'longcat.svg' },
+  { match: /muse/i, file: 'muse.svg' },
+]
+
+/** Logo path from the catalogue, falling back to shipped SVGs for known vendors. */
 export function vendorLogo(vendor: string, lookup?: VendorLookup): string {
-  return metaOf(vendor, lookup)?.logo_url?.trim() ?? ''
+  if (lookup) {
+    const meta = metaOf(vendor, lookup)
+    if (meta) {
+      return meta.logo_url?.trim() ?? ''
+    }
+  }
+  const hit = VENDOR_LOGOS.find((entry) => entry.match.test(vendor))
+  return hit ? `/vendors/${hit.file}` : ''
 }
 
 /** True when the catalogue classifies this vendor as an official channel. */

@@ -272,7 +272,7 @@ export function ModelPicker({
                             />
                             <span className="min-w-0">
                               <span className="block truncate text-meta text-ink">
-                                <ModelName model={model.model} size="sm" />
+                                <ModelName model={model.model} vendor={group.vendor} size="sm" />
                               </span>
                               {prices ? (
                                 <span className="block text-caption tabular-nums text-ink-3">

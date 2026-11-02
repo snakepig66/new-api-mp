@@ -366,8 +366,11 @@ func (usage *BillingUsage) canonicalGeminiUsage() *Usage {
 	} else if canonical.CompletionTokens <= 0 {
 		canonical.CompletionTokens = max(canonical.TotalTokens-canonical.PromptTokens, 0)
 	}
-	if canonical.PromptTokens > 0 && canonical.PromptTokensDetails.TextTokens == 0 && canonical.PromptTokensDetails.AudioTokens == 0 {
-		canonical.PromptTokensDetails.TextTokens = canonical.PromptTokens
+	if canonical.PromptTokens > 0 && canonical.PromptTokensDetails.TextTokens == 0 {
+		canonical.PromptTokensDetails.TextTokens = max(0, canonical.PromptTokens-canonical.PromptTokensDetails.AudioTokens-canonical.PromptTokensDetails.CachedTokens)
+	}
+	if canonical.CompletionTokens > 0 && canonical.CompletionTokenDetails.TextTokens == 0 {
+		canonical.CompletionTokenDetails.TextTokens = max(0, canonical.CompletionTokens-canonical.CompletionTokenDetails.AudioTokens)
 	}
 	return canonical
 }

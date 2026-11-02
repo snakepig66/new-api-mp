@@ -282,7 +282,7 @@ export function ChannelModelsEditor({
               return (
                 <li key={config.model} className="glass-inset p-3">
                   <div className="flex flex-wrap items-center gap-3">
-                    <span className="font-mono text-meta text-ink"><ModelName model={config.model} size="sm" /></span>
+                    <span className="font-mono text-meta text-ink"><ModelName model={config.model} vendor={poolRow?.vendor} size="sm" /></span>
                     {config.upstream_model && config.upstream_model !== config.model ? (
                       <span className="font-mono text-caption text-ink-3">← {config.upstream_model}</span>
                     ) : null}
@@ -420,7 +420,7 @@ function PoolPickerDialog({
                         )
                       }
                     />
-                    <span className="font-mono text-meta"><ModelName model={p.model} size="sm" /></span>
+                    <span className="font-mono text-meta"><ModelName model={p.model} vendor={p.vendor} size="sm" /></span>
                     <span className="ml-auto text-caption text-ink-3">{priceText(p.price)}</span>
                   </li>
                 )

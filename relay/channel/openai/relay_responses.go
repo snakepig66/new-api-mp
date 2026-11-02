@@ -93,7 +93,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 		if streamResponse.Response != nil {
 			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
-			if info != nil && info.OriginModelName != "" {
+			if info != nil && info.OriginModelName != "" && gjson.Get(data, "response.model").Exists() {
 				if patched, err := sjson.Set(data, "response.model", info.OriginModelName); err == nil {
 					data = patched
 				}

@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import {
   ArrowRight,
   ArrowLeft,
@@ -1772,6 +1773,8 @@ export function ChannelMutateDrawer({
     return () => window.cancelAnimationFrame(frame)
   }, [pendingErrorFocus, configurationSection, showProviderPicker])
 
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
+
   // Handle drawer close
   const handleOpenChange = useCallback<
     NonNullable<ComponentProps<typeof Sheet>['onOpenChange']>
@@ -1786,6 +1789,11 @@ export function ChannelMutateDrawer({
       ) {
         details.cancel()
         setChoosingProvider(false)
+        return
+      }
+      if (!v && form.formState.isDirty) {
+        details?.cancel?.()
+        setDiscardConfirmOpen(true)
         return
       }
       onOpenChange(v)
@@ -5159,6 +5167,20 @@ export function ChannelMutateDrawer({
           if (!v) handlePassthroughWarningAction(false)
         }}
         handleConfirm={() => handlePassthroughWarningAction(true)}
+      />
+      <ConfirmDialog
+        open={discardConfirmOpen}
+        onOpenChange={setDiscardConfirmOpen}
+        title={t('Unsaved Changes')}
+        desc={t('You have unsaved changes. Are you sure you want to discard them and close?')}
+        destructive
+        confirmText={t('Discard and Close')}
+        handleConfirm={() => {
+          setDiscardConfirmOpen(false)
+          onOpenChange(false)
+          form.reset(CHANNEL_FORM_DEFAULT_VALUES)
+          setClipboardConnectionInfo(null)
+        }}
       />
     </>
   )

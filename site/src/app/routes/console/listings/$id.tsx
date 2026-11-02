@@ -246,7 +246,7 @@ function SellerListingDetailPage() {
 
         <div className="mt-4 flex flex-wrap gap-1.5">
           {listing.models.map((model) => (
-            <Tag key={model}><ModelName model={model} size="sm" /></Tag>
+            <Tag key={model}><ModelName model={model} vendor={listing.vendor} size="sm" /></Tag>
           ))}
         </div>
       </section>
@@ -340,7 +340,7 @@ function SellerListingDetailPage() {
                   draft === '' || (Number.isFinite(parsed) && parsed >= 0.1 && parsed <= 1)
                 return (
                   <TableRow key={model}>
-                    <TableCell className="font-mono text-meta"><ModelName model={model} size="sm" /></TableCell>
+                    <TableCell className="font-mono text-meta"><ModelName model={model} vendor={listing.vendor} size="sm" /></TableCell>
                     <TableCell>
                       <Multiplier milli={currentMilli} />
                       {override ? (

@@ -445,14 +445,18 @@ func UpdateToken(c *gin.Context) {
 			return
 		}
 	}
+	quotaModified := false
 	if statusOnly != "" {
 		cleanToken.Status = token.Status
 	} else {
 		// If you add more fields, please also update token.Update()
 		cleanToken.Name = token.Name
 		cleanToken.ExpiredTime = token.ExpiredTime
-		cleanToken.RemainQuota = token.RemainQuota
-		cleanToken.UnlimitedQuota = token.UnlimitedQuota
+		quotaModified = token.RemainQuota != previous.RemainQuota || token.UnlimitedQuota != previous.UnlimitedQuota
+		if quotaModified {
+			cleanToken.RemainQuota = token.RemainQuota
+			cleanToken.UnlimitedQuota = token.UnlimitedQuota
+		}
 		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps
@@ -470,7 +474,7 @@ func UpdateToken(c *gin.Context) {
 			}
 		}
 	}
-	err = cleanToken.Update()
+	err = cleanToken.Update(quotaModified)
 	if err != nil {
 		common.ApiError(c, err)
 		return

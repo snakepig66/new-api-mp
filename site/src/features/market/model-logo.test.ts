@@ -70,6 +70,9 @@ describe('modelLogo & modelVendor', () => {
 
     // 14. hunyuan
     expect(modelLogo('hunyuan-standard')).toBe('/vendors/hunyuan.svg')
+    expect(modelLogo('hy3')).toBe('/vendors/hunyuan.svg')
+    expect(modelLogo('hy4-preview')).toBe('/vendors/hunyuan.svg')
+    expect(modelLogo('tencent-hunyuan')).toBe('/vendors/hunyuan.svg')
 
     // 15. wenxin (ernie)
     expect(modelLogo('ernie-4.0-8k')).toBe('/vendors/wenxin.svg')

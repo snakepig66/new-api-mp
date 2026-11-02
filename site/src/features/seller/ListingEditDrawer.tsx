@@ -1209,7 +1209,7 @@ export function ListingEditDrawer({
                           <ul className="mt-1 space-y-1">
                             {restoreResult.still_failing.map((item) => (
                               <li key={item.model} className="text-meta leading-5 text-ink-3">
-                                <span className="font-mono"><ModelName model={item.model} size="sm" /></span>
+                                <span className="font-mono"><ModelName model={item.model} vendor={listing.vendor} size="sm" /></span>
                                 {item.message ? `：${item.message}` : ''}
                               </li>
                             ))}
@@ -1289,7 +1289,7 @@ export function ListingEditDrawer({
                                 aria-label={page.models.enabledLabel(row.model)}
                               />
                               <span className="min-w-0 truncate font-mono text-meta font-medium text-ink">
-                                <ModelName model={row.model} size="sm" />
+                                <ModelName model={row.model} vendor={listing.vendor} size="sm" />
                               </span>
                               {row.auto_disabled ? (
                                 <Tag tone="danger" dot>

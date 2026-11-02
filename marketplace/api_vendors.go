@@ -56,14 +56,48 @@ func vendorLogoURL(slug string) string {
 		return "/vendors/deepseek.svg"
 	case "zhipu":
 		return "/vendors/zhipu.svg"
-	case "aliyun-bailian", "aliyun-bailian-coding-plan":
+	case "aliyun-bailian", "aliyun-bailian-coding-plan", "qwen", "alibaba", "dashscope":
 		return "/vendors/qwen.svg"
-	case "moonshot":
+	case "moonshot", "kimi":
 		return "/vendors/kimi.svg"
 	case "minimax":
 		return "/vendors/minimax.svg"
-	case "volcengine-ark", "volcengine-ark-coding-plan":
+	case "volcengine-ark", "volcengine-ark-coding-plan", "doubao", "bytedance":
 		return "/vendors/doubao.svg"
+	case "tencent", "hunyuan":
+		return "/vendors/hunyuan.svg"
+	case "openai":
+		return "/vendors/openai.svg"
+	case "anthropic", "claude":
+		return "/vendors/claude.svg"
+	case "google", "gemini":
+		return "/vendors/gemini.svg"
+	case "baidu", "wenxin", "ernie":
+		return "/vendors/wenxin.svg"
+	case "xai", "grok":
+		return "/vendors/grok.svg"
+	case "01ai", "yi", "lingyi":
+		return "/vendors/yi.svg"
+	case "baichuan":
+		return "/vendors/baichuan.svg"
+	case "stepfun", "step":
+		return "/vendors/stepfun.svg"
+	case "spark", "xfyun", "iflytek":
+		return "/vendors/spark.svg"
+	case "mistral":
+		return "/vendors/mistral.svg"
+	case "meta", "llama":
+		return "/vendors/meta.svg"
+	case "cohere":
+		return "/vendors/cohere.svg"
+	case "perplexity":
+		return "/vendors/perplexity.svg"
+	case "nvidia":
+		return "/vendors/nvidia.svg"
+	case "longcat":
+		return "/vendors/longcat.svg"
+	case "muse":
+		return "/vendors/muse.svg"
 	default:
 		return ""
 	}

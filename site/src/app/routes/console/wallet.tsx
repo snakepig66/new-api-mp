@@ -54,7 +54,7 @@ export const TOPUP_CONFIRM_POLL_INTERVAL_MS = 3_000
 export const TOPUP_CONFIRM_POLL_MAX_ATTEMPTS = 40
 
 export const Route = createFileRoute('/console/wallet')({
-  validateSearch: (search: Record<string, unknown>): { page: number; topup?: string } => {
+  validateSearch: (search: Record<string, unknown>): { page?: number; topup?: string } => {
     const parsed = Number(search.page)
     return {
       page: Number.isInteger(parsed) && parsed > 0 ? parsed : 1,

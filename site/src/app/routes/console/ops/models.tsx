@@ -74,6 +74,7 @@ const CAPABILITY_LABELS: Record<string, string> = {
 
 const PRESET_VENDORS: { value: string; label: string }[] = [
   { value: 'deepseek', label: 'DeepSeek' },
+  { value: 'tencent', label: '腾讯 (混元)' },
   { value: 'zhipu', label: '智谱 AI' },
   { value: 'qwen', label: '阿里云千问 (Qwen)' },
   { value: 'openai', label: 'OpenAI' },
@@ -610,6 +611,7 @@ function ModelsAndPricingPage() {
                               <div className="flex items-center gap-2">
                                 <ModelName
                                   model={row.name}
+                                  vendor={row.origin_vendor || group.vendor}
                                   size="md"
                                   className="font-semibold text-ink"
                                 />

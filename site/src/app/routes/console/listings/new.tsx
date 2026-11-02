@@ -1497,7 +1497,7 @@ export function NewListingPage() {
                         <TableCell className="font-mono text-meta">
                           {maskApiKey(cell.key)}
                         </TableCell>
-                        <TableCell className="font-mono text-meta"><ModelName model={cell.model} size="sm" /></TableCell>
+                        <TableCell className="font-mono text-meta"><ModelName model={cell.model} vendor={matchedVendor?.id} size="sm" /></TableCell>
                         <TableCell>{endpointLabel(cell.endpoint)}</TableCell>
                         <TableCell>
                           <Tag tone={cell.ok ? 'brand' : 'danger'} dot>

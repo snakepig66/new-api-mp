@@ -150,7 +150,8 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	if err != nil {
 		return err
 	}
-	logger.LogInfo(ctx, common.LogText("realtime streaming consume quota success, quota: %d", quota))
+	relayInfo.FinalPreConsumedQuota += quota
+	logger.LogInfo(ctx, common.LogText("realtime streaming consume quota success, quota: %d, accumulated: %d", quota, relayInfo.FinalPreConsumedQuota))
 	return nil
 }
 
@@ -307,7 +308,13 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 
 	useTimeSeconds := time.Now().Unix() - relayInfo.StartTime.Unix()
 	textInputTokens := usage.PromptTokensDetails.TextTokens
+	if textInputTokens == 0 && usage.PromptTokens > 0 {
+		textInputTokens = max(0, usage.PromptTokens-usage.PromptTokensDetails.AudioTokens-usage.PromptTokensDetails.CachedTokens)
+	}
 	textOutTokens := usage.CompletionTokenDetails.TextTokens
+	if textOutTokens == 0 && usage.CompletionTokens > 0 {
+		textOutTokens = max(0, usage.CompletionTokens-usage.CompletionTokenDetails.AudioTokens)
+	}
 
 	audioInputTokens := usage.PromptTokensDetails.AudioTokens
 	audioOutTokens := usage.CompletionTokenDetails.AudioTokens

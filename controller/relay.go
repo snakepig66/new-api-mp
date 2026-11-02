@@ -193,10 +193,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.PerformanceBusinessRejection = false
 		relayInfo.PerformanceOutputTokens = 0
 		relayInfo.RetryIndex = retryParam.GetRetry()
-		// MP-HOOK: once the first response bytes (or stream headers) reached the
-		// buyer, a marketplace request must not switch suppliers (§3.7). The
+		// once the first response bytes (or stream headers) reached the
+		// client, a request must not switch channels/suppliers. The
 		// previous attempt already committed the response; return its error.
-		if retryParam.GetRetry() > 0 && marketplace.IsRelayRequest(c) && c.Writer.Written() {
+		if retryParam.GetRetry() > 0 && c.Writer.Written() {
 			break
 		}
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
@@ -244,10 +244,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.LastError = newAPIError
 
 		decision := service.DecideRelayRetry(c, newAPIError, retryBudget-retryParam.GetRetry())
-		// MP-HOOK: a response already committed to the buyer must not be retried
-		// on another supplier (§3.7). Record the reason so the policy log is clear.
-		if decision.Action == "retry" && marketplace.IsRelayRequest(c) && c.Writer.Written() {
-			decision = service.PolicyDecision{Action: "stop", Reason: "marketplace_response_committed", Source: "marketplace"}
+		// a response already committed to the client must not be retried
+		// on another channel. Record the reason so the policy log is clear.
+		if decision.Action == "retry" && c.Writer.Written() {
+			decision = service.PolicyDecision{Action: "stop", Reason: "response_already_committed", Source: "gateway"}
 		}
 		// MP-HOOK: marketplace hop budget — at most 2 listing switches plus 1 in-place retry (§4.4 C, §3.7)
 		if decision.Action == "retry" && !marketplace.MayRetry(c, newAPIError) {

@@ -15,6 +15,7 @@ describe('vendor labels', () => {
     expect(vendorLabel('zhipu')).toBe('智谱')
     expect(vendorLabel('alibaba')).toBe('阿里云')
     expect(vendorLabel('anthropic')).toBe('Anthropic')
+    expect(vendorLabel('tencent')).toBe('腾讯')
   })
 
   it('falls back to the raw slug for unknown vendors', () => {
@@ -69,6 +70,10 @@ describe('vendor labels', () => {
     ])
     expect(vendorLogo('deepseek', lookup)).toBe('/vendors/deepseek.svg')
     expect(vendorLogo('acme-ai', lookup)).toBe('')
+    // Fallback when lookup is omitted
+    expect(vendorLogo('deepseek')).toBe('/vendors/deepseek.svg')
+    expect(vendorLogo('tencent')).toBe('/vendors/hunyuan.svg')
+    expect(vendorLogo('unknown-brand')).toBe('')
   })
 
   it('dedupes and sorts options for the pill row', () => {

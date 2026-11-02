@@ -207,7 +207,7 @@ export function ModelDetailPage() {
       <header>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <h1 className="text-h1 font-semibold leading-tight tracking-tight text-ink">
-            <ModelName model={data.model} />
+            <ModelName model={data.model} vendor={originVendor} />
           </h1>
           <Tag>{vendorLabel(originVendor, vendorMeta)}</Tag>
           {isOfficialVendor(originVendor, vendorMeta) ? (
