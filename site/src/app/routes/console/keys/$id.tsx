@@ -240,6 +240,9 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
             <h1 className="text-h2 font-semibold leading-tight tracking-tight text-ink">
               {token.name || shared.none}
             </h1>
+            <Tag tone={token.key_type === 'standard' ? 'brand' : 'neutral'}>
+              {token.key_type === 'standard' ? '普通密钥' : '共享密钥'}
+            </Tag>
             <Tag tone={status.tone} dot>
               {status.label}
             </Tag>

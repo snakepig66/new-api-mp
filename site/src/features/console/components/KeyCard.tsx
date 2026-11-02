@@ -201,13 +201,18 @@ export function KeyCard({ item }: { item: ConsoleKey }) {
           {/* Header: Name + Status Switch */}
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
-              <Link
-                to="/console/keys/$id"
-                params={{ id: String(token.id) }}
-                className="block truncate font-semibold text-title text-ink hover:text-brand-ink transition-colors"
-              >
-                {token.name || shared.none}
-              </Link>
+              <div className="flex items-center gap-2">
+                <Link
+                  to="/console/keys/$id"
+                  params={{ id: String(token.id) }}
+                  className="block truncate font-semibold text-title text-ink hover:text-brand-ink transition-colors"
+                >
+                  {token.name || shared.none}
+                </Link>
+                <Tag tone={token.key_type === 'standard' ? 'brand' : 'neutral'} className="text-caption shrink-0">
+                  {token.key_type === 'standard' ? '普通密钥' : '共享密钥'}
+                </Tag>
+              </div>
               {/* Subtitle: Status indicator + Group */}
               <div className="mt-1 flex items-center gap-1.5 text-meta text-ink-3">
                 <span
@@ -324,12 +329,21 @@ export function KeyCard({ item }: { item: ConsoleKey }) {
         {/* Footer: Tags on left, Edit & Delete & Extend on right */}
         <div className="mt-4 flex items-center justify-between gap-2 border-t border-line/60 pt-3">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <Tag tone="neutral" className="text-caption">
-              {pref?.model_scope === 'all'
-                ? page.createDialog.scope.all
-                : page.modelsUnit(pref?.models.length ?? 0)}
+            <Tag tone={token.key_type === 'standard' ? 'brand' : 'neutral'} className="text-caption">
+              {token.key_type === 'standard' ? '普通密钥' : '共享密钥'}
             </Tag>
-            {strategy ? (
+            {token.key_type === 'standard' ? (
+              <Tag tone="neutral" className="text-caption">
+                模型广场
+              </Tag>
+            ) : (
+              <Tag tone="neutral" className="text-caption">
+                {pref?.model_scope === 'all'
+                  ? page.createDialog.scope.all
+                  : page.modelsUnit(pref?.models.length ?? 0)}
+              </Tag>
+            )}
+            {token.key_type !== 'standard' && strategy ? (
               <Tag tone="brand" className="text-caption">
                 {strategyLabelMap[strategy]}
               </Tag>

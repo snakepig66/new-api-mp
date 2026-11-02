@@ -188,6 +188,32 @@ export const buyerTokensQuery = () =>
     staleTime: 30_000,
   })
 
+export interface PlazaModelTierPrices {
+  input_micro_per_mtok: number | string
+  output_micro_per_mtok: number | string
+  cache_read_micro_per_mtok?: number | string
+  cache_write_micro_per_mtok?: number | string
+}
+
+export interface PlazaModel {
+  model: string
+  aliases?: string[]
+  origin_vendor: string
+  vendor: string
+  capabilities?: string[]
+  context_length: number
+  status: string
+  enable_plaza: boolean
+  prices: PlazaModelTierPrices
+}
+
+export const plazaModelsQuery = () =>
+  queryOptions({
+    queryKey: ['plaza', 'models'],
+    queryFn: () => api.get<PlazaModel[]>('/plaza/models'),
+    staleTime: 30_000,
+  })
+
 /** POST /api/marketplace/key/models — 401/400/404 use the OpenAI error shape. */
 export function addModelToKey(tokenId: number, model: string): Promise<{ models: unknown[] }> {
   return api.post<{ models: unknown[] }>('/marketplace/key/models', {

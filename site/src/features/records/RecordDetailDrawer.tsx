@@ -114,6 +114,9 @@ export function RecordDetailContent({ detail, view }: RecordDetailContentProps) 
             <dt className="text-ink-3">{text.model}</dt>
             <dd className="mt-0.5 flex flex-wrap items-center gap-1">
               <Tag tone="neutral"><ModelName model={record.model} size="sm" /></Tag>
+              <Tag tone={buyer && buyerRecord.source === 'plaza' ? 'brand' : 'neutral'}>
+                {buyer && buyerRecord.source === 'plaza' ? '广场' : '市场'}
+              </Tag>
               {record.converted ? <Tag tone="warning">{text.converted}</Tag> : null}
               {!buyer && record.upstream_model && record.upstream_model !== record.model ? (
                 <span className="text-meta text-ink-2">

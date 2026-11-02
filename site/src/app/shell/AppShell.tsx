@@ -7,9 +7,10 @@ import { logout, useAuth } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { Button, Logo, buttonClasses } from '@/ui'
 
-type NavTo = '/' | '/models' | '/docs' | '/leaderboard' | '/share' | '/console'
+type NavTo = '/' | '/plaza' | '/models' | '/docs' | '/leaderboard' | '/share' | '/console'
 
 const navItems: { to: NavTo; label: string; exact?: boolean }[] = [
+  { to: '/plaza', label: copy.nav.plaza },
   { to: '/models', label: copy.nav.models },
   { to: '/docs', label: copy.nav.docs },
   { to: '/share', label: copy.nav.seller },

@@ -7,7 +7,7 @@ import { useForm } from 'react-hook-form'
 import { copy } from '@/copy'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { squareModelsQuery } from '@/features/market/api'
+import { plazaModelsQuery, squareModelsQuery } from '@/features/market/api'
 import { ModelPicker, type ModelSelection } from '@/features/market/ModelPicker'
 import { currentBaseUrl } from '@/features/market/url'
 import { Button, Dialog, Input, useToast } from '@/ui'
@@ -56,6 +56,7 @@ export interface CreateKeyDialogProps {
   onOpenDetail?: (tokenId: number) => void
   /** Square row action: start in selected scope with this model checked. */
   initialModel?: string
+  initialKeyType?: 'standard' | 'shared'
 }
 
 export function CreateKeyDialog({
@@ -64,6 +65,7 @@ export function CreateKeyDialog({
   onCreated,
   onOpenDetail,
   initialModel,
+  initialKeyType,
 }: CreateKeyDialogProps) {
   const toast = useToast()
   const queryClient = useQueryClient()
@@ -76,6 +78,9 @@ export function CreateKeyDialog({
   })
   const values = form.watch()
 
+  const [keyType, setKeyType] = useState<'standard' | 'shared'>(
+    initialKeyType ?? (initialModel ? 'shared' : 'standard'),
+  )
   const [name, setName] = useState('')
   const [spendCap, setSpendCap] = useState('')
   const [selection, setSelection] = useState<ModelSelection>({})
@@ -91,6 +96,7 @@ export function CreateKeyDialog({
 
   useEffect(() => {
     if (!open) return
+    setKeyType(initialKeyType ?? (initialModel ? 'shared' : 'standard'))
     form.reset(initialModel ? { ...defaultPref, modelScope: 'selected' } : defaultPref)
     setName('')
     setSpendCap('')
@@ -103,7 +109,7 @@ export function CreateKeyDialog({
     setSubmitting(false)
     setCreated(null)
     setCopied(false)
-  }, [form, open, initialModel])
+  }, [form, open, initialModel, initialKeyType])
 
   const scope = values.modelScope
   const selectedCount = Object.keys(selection).length
@@ -119,6 +125,11 @@ export function CreateKeyDialog({
     if (!id) return
     const item = keysQuery.data?.find((entry) => entry.token.id === id)
     if (!item) return
+    if (item.token.key_type) {
+      setKeyType(item.token.key_type)
+    } else {
+      setKeyType('shared')
+    }
     form.reset(prefToFormValues(item.pref))
     const nextSelection: ModelSelection = {}
     for (const model of item.pref?.models ?? []) {
@@ -150,7 +161,7 @@ export function CreateKeyDialog({
     const current = form.getValues()
 
     let modelsPayload: { model: string; price_cap_milli: number }[] = []
-    if (current.modelScope === 'selected') {
+    if (keyType === 'shared' && current.modelScope === 'selected') {
       const result = buildModelSelection(selection)
       if (!result.ok) {
         setError(dialogCopy.errors.modelsRequired)
@@ -177,9 +188,10 @@ export function CreateKeyDialog({
     setSubmitting(true)
     try {
       const result = await createKey({
+        key_type: keyType,
         name: name.trim(),
         strategy: current.strategy,
-        model_scope: current.modelScope,
+        model_scope: keyType === 'standard' ? 'all' : current.modelScope,
         spend_cap_micro: spendCap.trim() ? parseYuanToMicro(spendCap) : null,
         price_cap_milli: prefPayload.price_cap_milli,
         rpm: prefPayload.rpm,
@@ -190,7 +202,7 @@ export function CreateKeyDialog({
         official_only: prefPayload.official_only,
         expired_time: expiredTime,
         allow_ips: allowIps,
-        models: modelsPayload,
+        models: keyType === 'standard' ? [] : modelsPayload,
       })
       onCreated(result.id)
       void queryClient.invalidateQueries({ queryKey: ['console', 'keys'] })
@@ -307,6 +319,82 @@ export function CreateKeyDialog({
             </p>
           ) : null}
 
+          {/* 1. 密钥类型二选一大卡片 */}
+          <div>
+            <div className="text-body font-medium text-ink mb-2">
+              {dialogCopy.keyType?.label ?? '密钥类型'}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setKeyType('standard')}
+                className={cn(
+                  'relative flex flex-col items-start p-4 rounded-xl border text-left transition-all cursor-pointer',
+                  keyType === 'standard'
+                    ? 'border-brand bg-brand/5 ring-1 ring-brand/30 shadow-xs'
+                    : 'border-line bg-surface/50 hover:border-line-strong hover:bg-surface',
+                )}
+              >
+                <div className="flex items-center justify-between w-full">
+                  <span className="font-semibold text-title text-ink">
+                    {dialogCopy.keyType?.standardTitle ?? '普通密钥'}
+                  </span>
+                  <span
+                    className={cn(
+                      'h-4 w-4 rounded-full border flex items-center justify-center transition-colors',
+                      keyType === 'standard' ? 'border-brand bg-brand' : 'border-line-strong',
+                    )}
+                  >
+                    {keyType === 'standard' ? (
+                      <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                    ) : null}
+                  </span>
+                </div>
+                <div className="mt-1.5 inline-flex items-center px-2 py-0.5 rounded text-caption font-medium bg-brand/10 text-brand-ink">
+                  {dialogCopy.keyType?.standardSubtitle ?? '用平台模型，省心'}
+                </div>
+                <p className="mt-2 text-caption text-ink-3 leading-relaxed">
+                  {dialogCopy.keyType?.standardDesc ??
+                    '只能调用模型广场的模型，走平台自营渠道分发，稳定开箱即用。'}
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setKeyType('shared')}
+                className={cn(
+                  'relative flex flex-col items-start p-4 rounded-xl border text-left transition-all cursor-pointer',
+                  keyType === 'shared'
+                    ? 'border-brand bg-brand/5 ring-1 ring-brand/30 shadow-xs'
+                    : 'border-line bg-surface/50 hover:border-line-strong hover:bg-surface',
+                )}
+              >
+                <div className="flex items-center justify-between w-full">
+                  <span className="font-semibold text-title text-ink">
+                    {dialogCopy.keyType?.sharedTitle ?? '共享密钥'}
+                  </span>
+                  <span
+                    className={cn(
+                      'h-4 w-4 rounded-full border flex items-center justify-center transition-colors',
+                      keyType === 'shared' ? 'border-brand bg-brand' : 'border-line-strong',
+                    )}
+                  >
+                    {keyType === 'shared' ? (
+                      <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                    ) : null}
+                  </span>
+                </div>
+                <div className="mt-1.5 inline-flex items-center px-2 py-0.5 rounded text-caption font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                  {dialogCopy.keyType?.sharedSubtitle ?? '用市场模型，便宜'}
+                </div>
+                <p className="mt-2 text-caption text-ink-3 leading-relaxed">
+                  {dialogCopy.keyType?.sharedDesc ??
+                    '调用模型市场的卖家分享模型，可手动把模型加入此密钥，按需配置。'}
+                </p>
+              </button>
+            </div>
+          </div>
+
           <Field label={dialogCopy.nameLabel} htmlFor="create-key-name" hint={dialogCopy.nameHint}>
             <Input
               id="create-key-name"
@@ -318,26 +406,34 @@ export function CreateKeyDialog({
             />
           </Field>
 
-          <div>
-            <div className="text-body font-medium text-ink">{scopeCopy.label}</div>
-            <div className="mt-2 inline-flex glass-inset p-0.5">
-              <ScopeButton
-                active={scope === 'all'}
-                onClick={() => setScope('all')}
-                label={scopeCopy.all}
-              />
-              <ScopeButton
-                active={scope === 'selected'}
-                onClick={() => setScope('selected')}
-                label={scopeCopy.selected}
-              />
-            </div>
-            <p className="mt-1.5 text-meta leading-5 text-ink-3">{scopeCopy.hint}</p>
-          </div>
+          {keyType === 'shared' ? (
+            <>
+              <div>
+                <div className="text-body font-medium text-ink">{scopeCopy.label}</div>
+                <div className="mt-2 inline-flex glass-inset p-0.5">
+                  <ScopeButton
+                    active={scope === 'all'}
+                    onClick={() => setScope('all')}
+                    label={scopeCopy.all}
+                  />
+                  <ScopeButton
+                    active={scope === 'selected'}
+                    onClick={() => setScope('selected')}
+                    label={scopeCopy.selected}
+                  />
+                </div>
+                <p className="mt-1.5 text-meta leading-5 text-ink-3">{scopeCopy.hint}</p>
+              </div>
 
-          {scope === 'selected' ? (
-            <ModelPicker selection={selection} onChange={setSelection} idPrefix="create-key" />
-          ) : null}
+              {scope === 'selected' ? (
+                <ModelPicker selection={selection} onChange={setSelection} idPrefix="create-key" />
+              ) : null}
+            </>
+          ) : (
+            <div className="rounded-lg border border-line bg-surface/60 px-4 py-3 text-meta text-ink-3">
+              模型广场的自营模型已全部向普通密钥开放，调用时直接使用广场模型名即可。
+            </div>
+          )}
 
           <Field
             label={dialogCopy.spendLabel}
@@ -553,9 +649,17 @@ function CreatedKey({
   const toast = useToast()
   const [copiedConfig, setCopiedConfig] = useState<string | null>(null)
   const squareQuery = useQuery(squareModelsQuery())
+  const plazaQuery = useQuery(plazaModelsQuery())
   const marketModels = squareQuery.data ?? []
+  const plazaModels = plazaQuery.data ?? []
 
   const availableModels = useMemo(() => {
+    if (result.key_type === 'standard') {
+      if (plazaModels.length > 0) {
+        return plazaModels.map((m) => m.model)
+      }
+      return ['claude-3-5-sonnet', 'claude-3-7-sonnet', 'deepseek-chat', 'gpt-4o']
+    }
     if (result.model_scope === 'selected' && result.models.length > 0) {
       return result.models.map((m) => m.model)
     }
@@ -563,7 +667,7 @@ function CreatedKey({
       return marketModels.map((m) => m.model)
     }
     return ['claude-3-5-sonnet', 'claude-3-7-sonnet', 'deepseek-chat', 'gpt-4o']
-  }, [result.model_scope, result.models, marketModels])
+  }, [result.key_type, result.model_scope, result.models, plazaModels, marketModels])
 
   const recommendedModel = useMemo(() => {
     const claudeMatch = availableModels.find((m) => m.includes('claude-3-5-sonnet') || m.includes('claude'))
@@ -653,15 +757,23 @@ function CreatedKey({
 
       <div className="grid gap-2 text-meta text-ink-3 sm:grid-cols-2">
         <span>
-          {copy.pages.consoleKeys.columns.models}：
-          {result.model_scope === 'all'
-            ? scopeCopy.all
-            : page.modelsUnit(result.models.length)}
+          密钥类型：
+          {result.key_type === 'standard' ? '普通密钥（模型广场）' : '共享密钥（模型市场）'}
         </span>
         <span>
-          {copy.pages.consoleKeys.columns.strategy}：
-          {copy.pages.consoleKeys.strategy[result.strategy]}
+          {copy.pages.consoleKeys.columns.models}：
+          {result.key_type === 'standard'
+            ? '全部广场模型'
+            : result.model_scope === 'all'
+              ? scopeCopy.all
+              : page.modelsUnit(result.models.length)}
         </span>
+        {result.key_type !== 'standard' ? (
+          <span>
+            {copy.pages.consoleKeys.columns.strategy}：
+            {copy.pages.consoleKeys.strategy[result.strategy]}
+          </span>
+        ) : null}
       </div>
 
       <div>

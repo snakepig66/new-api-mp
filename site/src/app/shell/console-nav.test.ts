@@ -11,7 +11,7 @@ describe('console navigation', () => {
     const groups = consoleGroups({ sellerActive: false, isAdmin: false })
     expect(groups.map((group) => group.label)).toEqual(['我要用', '我要卖', '更多'])
     expect(labels(groups)).toContain('概览')
-    expect(labels(groups)).toContain('API Key')
+    expect(labels(groups)).toContain('API 密钥')
     expect(labels(groups)).toContain('使用记录')
     expect(labels(groups)).toContain('钱包')
     expect(labels(groups)).toContain('我的渠道')
@@ -34,6 +34,7 @@ describe('console navigation', () => {
       expect.arrayContaining([
         '运营看板',
         '团体工具',
+        '渠道管理',
         '模型目录',
         '发布审核',
       ]),

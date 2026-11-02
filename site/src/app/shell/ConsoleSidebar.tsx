@@ -9,6 +9,7 @@ export interface ConsoleNavItem {
   label: string
   exact?: boolean
   icon?: ReactNode
+  external?: boolean
 }
 
 export interface ConsoleNavGroup {
@@ -103,6 +104,17 @@ export function getConsoleNavIcon(to: string): ReactNode {
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="10" cy="6.5" r="3.5" />
           <path d="M3.5 16.5a6.5 6.5 0 0 1 13 0" />
+        </svg>
+      )
+
+    case '/ops-legacy':
+      // 渠道管理: Sliders / Server rack
+      return (
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="2.5" y="4" width="15" height="4.5" rx="1.5" />
+          <rect x="2.5" y="11.5" width="15" height="4.5" rx="1.5" />
+          <circle cx="6" cy="6.25" r="0.75" fill="currentColor" />
+          <circle cx="6" cy="13.75" r="0.75" fill="currentColor" />
         </svg>
       )
 
@@ -216,6 +228,62 @@ export function getConsoleNavIcon(to: string): ReactNode {
   }
 }
 
+function SidebarNavLink({
+  item,
+  active,
+  icon,
+  onNavigate,
+}: {
+  item: ConsoleNavItem
+  active: boolean
+  icon: ReactNode
+  onNavigate?: () => void
+}) {
+  const className = cn(
+    'group flex h-9 items-center gap-2.5 rounded-full px-3 text-body transition-[color,background-color]',
+    active
+      ? 'bg-brand/10 font-medium text-brand-ink'
+      : 'text-ink-2 hover:bg-white/60 hover:text-ink',
+  )
+
+  const content = (
+    <>
+      {icon ? (
+        <span
+          className={cn(
+            'grid h-4 w-4 place-items-center shrink-0 transition-colors',
+            active ? 'text-brand' : 'text-ink-3 group-hover:text-ink',
+          )}
+          aria-hidden="true"
+        >
+          {icon}
+        </span>
+      ) : null}
+      <span className="truncate">{item.label}</span>
+    </>
+  )
+
+  if (item.external || item.to.startsWith('/ops-legacy')) {
+    return (
+      <a href={item.to} onClick={onNavigate} className={className}>
+        {content}
+      </a>
+    )
+  }
+
+  return (
+    <Link
+      to={item.to}
+      search={item.search}
+      onClick={onNavigate}
+      aria-current={active ? 'page' : undefined}
+      className={className}
+    >
+      {content}
+    </Link>
+  )
+}
+
 /**
  * One grouped navigation for buyer, seller and operator views. The layout
  * decides which groups exist (seller/admin gating); this component only
@@ -258,38 +326,15 @@ export function ConsoleSidebar({
                 </span>
               </summary>
               <div className="mt-2 flex flex-col gap-0.5">
-                {group.items.map((item) => {
-                  const active = isActive(pathname, search, item)
-                  const icon = item.icon ?? getConsoleNavIcon(item.to)
-                  return (
-                    <Link
-                      key={item.label + item.to}
-                      to={item.to}
-                      search={item.search}
-                      onClick={onNavigate}
-                      aria-current={active ? 'page' : undefined}
-                      className={cn(
-                        'group flex h-9 items-center gap-2.5 rounded-full px-3 text-body transition-[color,background-color]',
-                        active
-                          ? 'bg-brand/10 font-medium text-brand-ink'
-                          : 'text-ink-2 hover:bg-white/60 hover:text-ink',
-                      )}
-                    >
-                      {icon ? (
-                        <span
-                          className={cn(
-                            'grid h-4 w-4 place-items-center shrink-0 transition-colors',
-                            active ? 'text-brand' : 'text-ink-3 group-hover:text-ink',
-                          )}
-                          aria-hidden="true"
-                        >
-                          {icon}
-                        </span>
-                      ) : null}
-                      <span className="truncate">{item.label}</span>
-                    </Link>
-                  )
-                })}
+                {group.items.map((item) => (
+                  <SidebarNavLink
+                    key={item.label + item.to}
+                    item={item}
+                    active={isActive(pathname, search, item)}
+                    icon={item.icon ?? getConsoleNavIcon(item.to)}
+                    onNavigate={onNavigate}
+                  />
+                ))}
               </div>
             </details>
           )
@@ -301,38 +346,15 @@ export function ConsoleSidebar({
               {group.label}
             </p>
             <div className="mt-1.5 flex flex-col gap-0.5">
-              {group.items.map((item) => {
-                const active = isActive(pathname, search, item)
-                const icon = item.icon ?? getConsoleNavIcon(item.to)
-                return (
-                  <Link
-                    key={item.label + item.to}
-                    to={item.to}
-                    search={item.search}
-                    onClick={onNavigate}
-                    aria-current={active ? 'page' : undefined}
-                    className={cn(
-                      'group flex h-9 items-center gap-2.5 rounded-full px-3 text-body transition-[color,background-color]',
-                      active
-                        ? 'bg-brand/10 font-medium text-brand-ink'
-                        : 'text-ink-2 hover:bg-white/60 hover:text-ink',
-                    )}
-                  >
-                    {icon ? (
-                      <span
-                        className={cn(
-                          'grid h-4 w-4 place-items-center shrink-0 transition-colors',
-                          active ? 'text-brand' : 'text-ink-3 group-hover:text-ink',
-                        )}
-                        aria-hidden="true"
-                      >
-                        {icon}
-                      </span>
-                    ) : null}
-                    <span className="truncate">{item.label}</span>
-                  </Link>
-                )
-              })}
+              {group.items.map((item) => (
+                <SidebarNavLink
+                  key={item.label + item.to}
+                  item={item}
+                  active={isActive(pathname, search, item)}
+                  icon={item.icon ?? getConsoleNavIcon(item.to)}
+                  onNavigate={onNavigate}
+                />
+              ))}
             </div>
           </section>
         )

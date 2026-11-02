@@ -119,10 +119,12 @@ export function TableSortHeader({
 export function ModelPillBadge({
   model,
   converted = false,
+  source,
   className,
 }: {
   model: string
   converted?: boolean
+  source?: 'plaza' | 'market' | string
   className?: string
 }) {
   return (
@@ -130,6 +132,18 @@ export function ModelPillBadge({
       <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface/90 px-2.5 py-1 text-meta font-medium text-ink shadow-2xs backdrop-blur-xs">
         <ModelName model={model} size="sm" />
       </span>
+      {source ? (
+        <span
+          className={cn(
+            'inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium border',
+            source === 'plaza'
+              ? 'bg-brand/10 text-brand-ink border-brand/20'
+              : 'bg-surface text-ink-3 border-line',
+          )}
+        >
+          {source === 'plaza' ? '广场' : '市场'}
+        </span>
+      ) : null}
       {converted && (
         <span
           className="inline-flex items-center text-ink-3 hover:text-ink transition-colors"

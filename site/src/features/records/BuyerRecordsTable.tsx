@@ -101,7 +101,7 @@ export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
               >
                 {/* 1. 模型 */}
                 <TableCell>
-                  <ModelPillBadge model={record.model} converted={record.converted} />
+                  <ModelPillBadge model={record.model} converted={record.converted} source={record.source} />
                 </TableCell>
 
                 {/* 2. 卖家 / 渠道 */}
@@ -194,7 +194,7 @@ function BuyerRecordCard({
     >
       {/* Top row: Model + Status */}
       <div className="flex items-center justify-between gap-2">
-        <ModelPillBadge model={record.model} converted={record.converted} />
+        <ModelPillBadge model={record.model} converted={record.converted} source={record.source} />
         {isFailed ? (
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300">
             失败

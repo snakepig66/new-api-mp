@@ -15,7 +15,8 @@ export const copy = {
     ariaMain: '主导航',
     ariaMobile: '移动端导航',
     home: '首页',
-    models: '模型广场',
+    plaza: '模型广场',
+    models: '模型市场',
     docs: '文档',
     leaderboard: '排行榜',
     seller: '分享额度',
@@ -330,8 +331,31 @@ console.log(resp.choices[0].message.content);`,
       },
     },
 
-    models: {
+    plaza: {
       title: '模型广场',
+      lead: '平台自营精选模型，开箱即用，稳定高可用，按官方模型定价统一结算。',
+      searchPlaceholder: '搜索模型名称或厂商',
+      searchAria: '按模型名称或厂商搜索',
+      allVendors: '全部',
+      vendorAria: '按厂商筛选',
+      copyModelName: '复制模型名',
+      copied: '已复制模型名',
+      callWithStandardKey: '用普通密钥调用',
+      columns: {
+        model: '模型',
+        vendor: '厂商',
+        price: '平台价格',
+        context: '上下文',
+        status: '状态',
+        actions: '操作',
+      },
+      perMillion: '元 / 1M tokens',
+      statusAvailable: '可用',
+      empty: '暂无上架模型',
+    },
+
+    models: {
+      title: '模型市场',
       lead: '官方价与市场最低价并排比较，统一价格结算。',
       leadSummary: (count: number, lowest: string | null) =>
         lowest
@@ -914,7 +938,7 @@ console.log(response.choices[0].message.content)
       nav: {
         aria: '控制台导航',
         overview: '概览',
-        keys: 'API Key',
+        keys: 'API 密钥',
         records: '使用记录',
         wallet: '钱包',
         account: '账号设置',
@@ -1052,6 +1076,15 @@ console.log(response.choices[0].message.content)
       createDialog: {
         title: '新建 API Key',
         description: '只有创建后这一次能看到完整 Key，请立即复制保存。',
+        keyType: {
+          label: '选择密钥类型',
+          standardTitle: '普通密钥',
+          standardSubtitle: '用平台模型，省心',
+          standardDesc: '只能调用模型广场的模型，走平台自营渠道分发，稳定开箱即用。',
+          sharedTitle: '共享密钥',
+          sharedSubtitle: '用市场模型，便宜',
+          sharedDesc: '调用模型市场卖家分享的模型，可手动把模型加入此密钥，按需配置。',
+        },
         nameLabel: 'Key 名称',
         namePlaceholder: '不填默认「Key 1」',
         nameHint: '可选，最多 50 个字，只有你能看到。',

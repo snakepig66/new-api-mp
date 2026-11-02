@@ -33,6 +33,7 @@ export interface TokenRecord {
   cross_group_retry: boolean
   allow_user_quota_query?: boolean
   auto_groups?: string[]
+  key_type?: 'standard' | 'shared'
 }
 
 export const TOKEN_STATUS_ENABLED = 1
@@ -137,6 +138,7 @@ export interface UsageRecord {
    * rewrote it. Empty or absent when the response carried no model.
    */
   upstream_model?: string
+  source?: 'plaza' | 'market'
   usage_estimated: boolean
   status: string
   created_at: string
@@ -237,6 +239,7 @@ export interface KeyPrefInput {
 
 /** One-shot POST /marketplace/key body (presets are expanded by the UI). */
 export interface CreateKeyInput {
+  key_type?: 'standard' | 'shared'
   /** Empty lets the backend assign "Key N". */
   name: string
   strategy: Strategy
@@ -260,6 +263,7 @@ export interface CreateKeyInput {
 export interface CreateKeyResult {
   id: number
   name: string
+  key_type?: 'standard' | 'shared'
   /** Returned exactly once by the create call. */
   key: string
   model_scope: ModelScope

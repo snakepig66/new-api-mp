@@ -195,6 +195,7 @@ describe('CreateKeyDialog', () => {
 
   it('refuses selected scope with no models', async () => {
     renderDialog()
+    fireEvent.click(screen.getByText('共享密钥'))
     fireEvent.click(await screen.findByRole('button', { name: '仅指定模型' }))
     fireEvent.click(screen.getByRole('button', { name: '创建 Key' }))
 

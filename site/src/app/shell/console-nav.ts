@@ -47,6 +47,7 @@ export function consoleGroups({
           ? [
               { to: '/console/ops/metrics', label: '运营看板' },
               { to: '/console/ops/tools', label: '团体工具' },
+              { to: '/ops-legacy', label: '渠道管理', external: true },
               { to: '/console/ops/models', label: '模型目录' },
               { to: '/console/ops/review', label: '发布审核' },
             ]

@@ -17,6 +17,7 @@ import { Route as DocsRouteImport } from './routes/docs'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as LeaderboardRouteImport } from './routes/leaderboard'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as PlazaRouteImport } from './routes/plaza'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as SellerRouteImport } from './routes/seller'
@@ -110,6 +111,11 @@ const LeaderboardRoute = LeaderboardRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PlazaRoute = PlazaRouteImport.update({
+  id: '/plaza',
+  path: '/plaza',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PrivacyRoute = PrivacyRouteImport.update({
@@ -394,6 +400,7 @@ export interface FileRoutesByFullPath {
   '/forgot-password': typeof ForgotPasswordRoute
   '/leaderboard': typeof LeaderboardRoute
   '/login': typeof LoginRoute
+  '/plaza': typeof PlazaRoute
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
   '/seller': typeof SellerRouteWithChildren
@@ -456,6 +463,7 @@ export interface FileRoutesByTo {
   '/forgot-password': typeof ForgotPasswordRoute
   '/leaderboard': typeof LeaderboardRoute
   '/login': typeof LoginRoute
+  '/plaza': typeof PlazaRoute
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
   '/share': typeof ShareRoute
@@ -514,6 +522,7 @@ export interface FileRoutesById {
   '/forgot-password': typeof ForgotPasswordRoute
   '/leaderboard': typeof LeaderboardRoute
   '/login': typeof LoginRoute
+  '/plaza': typeof PlazaRoute
   '/privacy': typeof PrivacyRoute
   '/register': typeof RegisterRoute
   '/seller': typeof SellerRouteWithChildren
@@ -580,6 +589,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/leaderboard'
     | '/login'
+    | '/plaza'
     | '/privacy'
     | '/register'
     | '/seller'
@@ -642,6 +652,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/leaderboard'
     | '/login'
+    | '/plaza'
     | '/privacy'
     | '/register'
     | '/share'
@@ -699,6 +710,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/leaderboard'
     | '/login'
+    | '/plaza'
     | '/privacy'
     | '/register'
     | '/seller'
@@ -764,6 +776,7 @@ export interface RootRouteChildren {
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   LeaderboardRoute: typeof LeaderboardRoute
   LoginRoute: typeof LoginRoute
+  PlazaRoute: typeof PlazaRoute
   PrivacyRoute: typeof PrivacyRoute
   RegisterRoute: typeof RegisterRoute
   SellerRoute: typeof SellerRouteWithChildren
@@ -831,6 +844,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/plaza': {
+      id: '/plaza'
+      path: '/plaza'
+      fullPath: '/plaza'
+      preLoaderRoute: typeof PlazaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/privacy': {
@@ -1397,6 +1417,7 @@ const rootRouteChildren: RootRouteChildren = {
   ForgotPasswordRoute: ForgotPasswordRoute,
   LeaderboardRoute: LeaderboardRoute,
   LoginRoute: LoginRoute,
+  PlazaRoute: PlazaRoute,
   PrivacyRoute: PrivacyRoute,
   RegisterRoute: RegisterRoute,
   SellerRoute: SellerRouteWithChildren,
