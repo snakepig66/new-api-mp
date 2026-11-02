@@ -292,60 +292,84 @@ function ReplaceKeyDialog({
 // ---------------------------------------------------------------------------
 
 const PRICE_DIMENSIONS: {
-  key: 'input_micro_per_mtok' | 'output_micro_per_mtok' | 'cache_read_micro_per_mtok'
+  key: 'input_micro_per_mtok' | 'output_micro_per_mtok' | 'cache_read_micro_per_mtok' | 'cache_write_micro_per_mtok'
   label: string
 }[] = [
   { key: 'input_micro_per_mtok', label: page.models.dimensions.input },
   { key: 'output_micro_per_mtok', label: page.models.dimensions.output },
   { key: 'cache_read_micro_per_mtok', label: '缓存命中' },
+  { key: 'cache_write_micro_per_mtok', label: '缓存写入' },
 ]
 
-function ModelPriceTable({ row, feePercent }: { row: SellerModelRow; feePercent: number }) {
+function ModelPriceTable({
+  row,
+  feePercent,
+  multiplierMilli,
+}: {
+  row: SellerModelRow
+  feePercent: number
+  multiplierMilli?: number
+}) {
   const officialPrices = row.official_prices.flat
   const buyerPrices = row.buyer_prices.flat
   if (officialPrices === undefined && buyerPrices === undefined) {
     return <p className="mt-3 text-meta text-ink-3">{page.models.noPrices}</p>
   }
+
+  const effectiveMilli = multiplierMilli ?? row.multiplier_milli
+
+  const activeDimensions = PRICE_DIMENSIONS.filter((dim) => {
+    if (dim.key === 'cache_read_micro_per_mtok') {
+      return Boolean(officialPrices?.cache_read_micro_per_mtok || buyerPrices?.cache_read_micro_per_mtok)
+    }
+    if (dim.key === 'cache_write_micro_per_mtok') {
+      return Boolean(officialPrices?.cache_write_micro_per_mtok || buyerPrices?.cache_write_micro_per_mtok)
+    }
+    return true
+  })
+
   return (
-    <div className="mt-3">
-      <Table minWidth={440} size="compact">
-        <TableHead>
-          <TableRow interactive={false}>
-            <TableHeaderCell>{page.models.priceColumns.dimension}</TableHeaderCell>
-            <TableHeaderCell numeric>{page.models.priceColumns.official}</TableHeaderCell>
-            <TableHeaderCell numeric>{page.models.priceColumns.buyer}</TableHeaderCell>
-            <TableHeaderCell numeric>{page.models.priceColumns.net}</TableHeaderCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {PRICE_DIMENSIONS.filter((dim) => {
-            if (dim.key === 'cache_read_micro_per_mtok') {
-              return Boolean(officialPrices?.cache_read_micro_per_mtok || buyerPrices?.cache_read_micro_per_mtok)
-            }
-            return true
-          }).map((dimension) => {
-            const official = officialPrices?.[dimension.key]
-            const buyer = buyerPrices?.[dimension.key]
-            // 到手价 = 买家价 × (1 - 平台费)。整数微元上取整，仅用于展示。
-            const net =
-              buyer !== undefined ? Math.round((buyer * (100 - feePercent)) / 100) : undefined
-            return (
-              <TableRow key={dimension.key} interactive={false}>
-                <TableCell className="text-meta">{dimension.label}</TableCell>
-                <TableCell numeric className="text-meta text-ink-3">
-                  {official === undefined ? '—' : formatYuan(official)}
-                </TableCell>
-                <TableCell numeric className="text-meta">
-                  {buyer === undefined ? '—' : formatYuan(buyer)}
-                </TableCell>
-                <TableCell numeric className="text-meta text-ink-2">
-                  {net === undefined ? '—' : formatYuan(net)}
-                </TableCell>
-              </TableRow>
-            )
-          })}
-        </TableBody>
-      </Table>
+    <div className="mt-3 overflow-hidden rounded-lg border border-line/60 bg-surface-1/40">
+      <div className="grid grid-cols-4 items-center bg-surface-2/60 px-3.5 py-2 text-caption font-medium text-ink-3 border-b border-line/40">
+        <div>{page.models.priceColumns.dimension}</div>
+        <div className="text-right">{page.models.priceColumns.official}</div>
+        <div className="text-right text-brand-ink">{page.models.priceColumns.buyer}</div>
+        <div className="text-right text-ink">{page.models.priceColumns.net}</div>
+      </div>
+      <div className="divide-y divide-line/30 text-meta">
+        {activeDimensions.map((dimension) => {
+          const official = officialPrices?.[dimension.key]
+          const buyer =
+            official !== undefined && effectiveMilli > 0
+              ? Math.round((official * effectiveMilli) / 1000)
+              : buyerPrices?.[dimension.key]
+          // 到手价 = 买家价 × (1 - 平台费)。整数微元上取整，仅用于展示。
+          const net =
+            buyer !== undefined ? Math.round((buyer * (100 - feePercent)) / 100) : undefined
+
+          return (
+            <div
+              key={dimension.key}
+              className="grid grid-cols-4 items-center px-3.5 py-2 hover:bg-surface-2/30 transition-colors"
+            >
+              <div className="font-medium text-ink">{dimension.label}</div>
+              <div className="text-right font-mono text-ink-3">
+                {official === undefined ? '—' : formatYuan(official)}
+              </div>
+              <div className="text-right font-mono font-medium text-brand-ink">
+                {buyer === undefined ? '—' : formatYuan(buyer)}
+              </div>
+              <div className="text-right font-mono font-medium text-ink-2">
+                {net === undefined ? '—' : formatYuan(net)}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <div className="flex items-center justify-between border-t border-line/30 bg-surface-2/30 px-3.5 py-1.5 text-caption text-ink-3">
+        <span>价格单位：元 / 1M tokens</span>
+        <span>{feePercent > 0 ? `到手价已扣除 ${feePercent}% 平台费` : '平台服务费 0%'}</span>
+      </div>
     </div>
   )
 }
@@ -887,7 +911,7 @@ export function ListingEditDrawer({
         onOpenChange={handleOpenChange}
         title={page.title}
         description={page.lead}
-        width="lg"
+        width="xl"
       >
         <div className="space-y-3" aria-busy="true" aria-live="polite">
           {Array.from({ length: 6 }, (_, index) => (
@@ -905,7 +929,7 @@ export function ListingEditDrawer({
         onOpenChange={handleOpenChange}
         title={page.title}
         description={page.lead}
-        width="lg"
+        width="xl"
       >
         <AsyncError
           title={page.loadError}
@@ -958,7 +982,7 @@ export function ListingEditDrawer({
         onOpenChange={handleOpenChange}
         title={page.title}
         description={`${vendorName(listing.vendor)} · #${listing.id}`}
-        width="lg"
+        width="xl"
         footer={
           <SaveBar
             dirty={anyDirty}
@@ -1249,6 +1273,10 @@ export function ListingEditDrawer({
                       const range = rowMultiplierRange(row)
                       const multiplierValid = rowMultiplierValid(row)
                       const dirty = rowDirty(row)
+                      const currentMultiplierMilli = draft?.multiplierText
+                        ? parseMilli(draft.multiplierText) ?? row.multiplier_milli
+                        : row.multiplier_milli
+
                       return (
                         <div key={row.model} className="glass-inset p-4">
                           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1258,7 +1286,7 @@ export function ListingEditDrawer({
                                 onCheckedChange={(next) => updateDraft(row, { enabled: next })}
                                 aria-label={page.models.enabledLabel(row.model)}
                               />
-                              <span className="min-w-0 truncate font-mono text-meta text-ink">
+                              <span className="min-w-0 truncate font-mono text-meta font-medium text-ink">
                                 <ModelName model={row.model} size="sm" />
                               </span>
                               {row.auto_disabled ? (
@@ -1281,17 +1309,9 @@ export function ListingEditDrawer({
                                 </span>
                               ) : null}
                             </div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <MultiplierSlider
-                                aria-label={page.models.multiplierLabel(row.model)}
-                                value={draft?.multiplierText ?? milliText(row.multiplier_milli)}
-                                onChange={(_val, text) =>
-                                  updateDraft(row, { multiplierText: text })
-                                }
-                                sliderClassName="w-20 sm:w-28"
-                              />
+                            <div className="flex items-center gap-2">
                               <Button
-                                variant="secondary"
+                                variant={dirty && multiplierValid ? 'primary' : 'secondary'}
                                 size="sm"
                                 aria-label={page.models.saveLabel(row.model)}
                                 disabled={!dirty || !multiplierValid}
@@ -1328,6 +1348,26 @@ export function ListingEditDrawer({
                               )}
                             </div>
                           </div>
+
+                          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line/60 bg-surface-2/40 px-3.5 py-2.5">
+                            <div className="flex items-center gap-2">
+                              <span className="text-meta font-medium text-ink">倍率设置</span>
+                              <span className="text-caption text-ink-3">（滑块 / 滚轮 0.01 精度调节）</span>
+                            </div>
+                            <MultiplierSlider
+                              aria-label={page.models.multiplierLabel(row.model)}
+                              value={draft?.multiplierText ?? milliText(row.multiplier_milli)}
+                              min={range.min / 1000}
+                              max={range.max / 1000}
+                              step={0.01}
+                              onChange={(_val, text) =>
+                                updateDraft(row, { multiplierText: text })
+                              }
+                              sliderClassName="w-28 sm:w-40"
+                              showDiscount
+                            />
+                          </div>
+
                           {row.verify_state === 'failed' && row.disabled_detail ? (
                             <p className="mt-2 text-meta text-danger">{row.disabled_detail}</p>
                           ) : null}
@@ -1380,7 +1420,11 @@ export function ListingEditDrawer({
                             </p>
                           ) : null}
 
-                          <ModelPriceTable row={row} feePercent={feePercent} />
+                          <ModelPriceTable
+                            row={row}
+                            feePercent={feePercent}
+                            multiplierMilli={currentMultiplierMilli}
+                          />
                         </div>
                       )
                     })}

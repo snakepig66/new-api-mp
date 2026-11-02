@@ -4,13 +4,15 @@ import type { ReactNode } from 'react'
 import { copy } from '@/copy'
 import { cn } from '@/lib/cn'
 
-export type DrawerWidth = 'sm' | 'md' | 'lg'
+export type DrawerWidth = 'sm' | 'md' | 'lg' | 'xl' | '2xl'
 
 const widthClass: Record<DrawerWidth, string> = {
   /* Full-bleed on phones; a fixed column once the viewport can hold it. */
   sm: 'sm:max-w-sm',
   md: 'sm:max-w-md',
   lg: 'sm:max-w-xl',
+  xl: 'sm:max-w-2xl',
+  '2xl': 'sm:max-w-3xl',
 }
 
 export interface DrawerProps {
