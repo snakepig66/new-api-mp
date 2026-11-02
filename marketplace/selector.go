@@ -936,6 +936,20 @@ func (s *Selector) Select(db *gorm.DB, in SelectInput) (Listing, error) {
 // eventually resolve it via CircuitBreaker.RecordSuccess/Record429/
 // ReleaseProbe (see RelaySession).
 func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, error) {
+	listing, tookProbe, err := s.selectWithProbe(db, in)
+	if errors.Is(err, ErrNoListingAvailable) && in.EndpointKind == relayconstant.EndpointAnthropicMessages {
+		// No listing speaks Anthropic natively: fall back to an OpenAI-chat
+		// listing. The relay converts the Claude request to chat completions and
+		// the response back, as native new-api channels do for the plaza, so
+		// Claude-protocol clients are not refused when only OpenAI supply exists.
+		fallback := in
+		fallback.EndpointKind = relayconstant.EndpointOpenAIChat
+		return s.selectWithProbe(db, fallback)
+	}
+	return listing, tookProbe, err
+}
+
+func (s *Selector) selectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, error) {
 	now := in.Now
 	if now.IsZero() {
 		now = time.Now()

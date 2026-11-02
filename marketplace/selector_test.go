@@ -714,10 +714,13 @@ func TestSelectEndpointKind(t *testing.T) {
 			require.NoError(t, err, "the legacy openai base covers %s", kind)
 			assert.Equal(t, l.ID, got.ID)
 		}
-		_, err := NewSelector().Select(db, SelectInput{
+		// With no Anthropic-native supply, messages fall back to the chat
+		// listing and the relay converts the protocol.
+		got, err := NewSelector().Select(db, SelectInput{
 			Model: "deepseek-flash", Now: now, EndpointKind: relayconstant.EndpointAnthropicMessages,
 		})
-		assert.ErrorIs(t, err, ErrNoListingAvailable)
+		require.NoError(t, err)
+		assert.Equal(t, l.ID, got.ID)
 	})
 
 	t.Run("a channel with no endpoint data stays selectable", func(t *testing.T) {
