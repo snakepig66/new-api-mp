@@ -6,7 +6,7 @@ import {
   createRoute,
   createRouter,
 } from '@tanstack/react-router'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ToastProvider } from '@/ui'
@@ -99,9 +99,17 @@ function jsonResponse(body: unknown): Response {
   })
 }
 
-const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+let deletedModels: string[] = []
+let currentToken = { ...token }
+
+const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input)
-  if (url === '/api/token/5') return jsonResponse({ success: true, data: token })
+  if (url === '/api/token/5') return jsonResponse({ success: true, data: currentToken })
+  if (url.startsWith('/api/marketplace/key/models') && init?.method === 'DELETE') {
+    const body = JSON.parse(String(init.body)) as { model: string }
+    deletedModels.push(body.model)
+    return jsonResponse({ success: true, data: { deleted: true } })
+  }
   if (url.startsWith('/api/marketplace/key/pref')) {
     return jsonResponse({ success: true, data: pref() })
   }
@@ -125,6 +133,8 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
 
 beforeEach(() => {
   officialOnly = true
+  deletedModels = []
+  currentToken = { ...token }
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
 })
@@ -184,5 +194,26 @@ describe('key detail official-only notice', () => {
 
     expect(await screen.findByText('official-key')).toBeTruthy()
     expect(screen.queryByText('当前设置下调不了的模型')).toBeNull()
+  })
+
+  it('renders added models list for shared key and allows direct deletion', async () => {
+    officialOnly = false
+    renderPage()
+
+    expect(await screen.findByText('已添加的模型 (2)')).toBeTruthy()
+    const deleteBtns = screen.getAllByRole('button', { name: '删除' })
+    expect(deleteBtns.length).toBe(2)
+
+    fireEvent.click(deleteBtns[0])
+    await waitFor(() => expect(deletedModels).toContain('glm-5.3'))
+  })
+
+  it('shows plaza-only notice for standard keys without model picker', async () => {
+    currentToken = { ...token, key_type: 'standard' } as typeof token
+    officialOnly = false
+    renderPage()
+
+    expect(await screen.findByText('普通密钥默认已开放模型广场的所有自营模型，开箱即用，走平台自营渠道分发，无需在此手动增删模型。')).toBeTruthy()
+    expect(screen.queryByText('已添加的模型')).toBeNull()
   })
 })

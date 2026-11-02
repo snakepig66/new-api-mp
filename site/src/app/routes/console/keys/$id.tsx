@@ -310,14 +310,23 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
 
       <KeyLimitsSection tokenId={tokenId} token={token} />
 
-      <OfficialOnlyModels pref={pref} />
-
-      <ModelsSection
-        tokenId={tokenId}
-        models={models}
-        modelScope={pref?.model_scope ?? 'selected'}
-        pref={pref}
-      />
+      {token.key_type === 'standard' ? (
+        <Section className="mt-9" title="可用模型" hint="普通密钥的模型范围">
+          <div className="rounded-lg border border-brand/30 bg-brand-soft/40 px-4 py-3 text-meta text-ink-2">
+            普通密钥默认已开放模型广场的所有自营模型，开箱即用，走平台自营渠道分发，无需在此手动增删模型。
+          </div>
+        </Section>
+      ) : (
+        <>
+          <OfficialOnlyModels pref={pref} />
+          <ModelsSection
+            tokenId={tokenId}
+            models={models}
+            modelScope={pref?.model_scope ?? 'selected'}
+            pref={pref}
+          />
+        </>
+      )}
 
       <Section className="mt-10" title={page.danger.title}>
         <div className="flex flex-col gap-3 rounded-md border border-danger/20 bg-danger/5 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
@@ -618,6 +627,22 @@ function ModelsSection({
     }
   }
 
+  async function handleRemoveDirect(modelName: string) {
+    try {
+      await removeKeyModel(tokenId, modelName)
+      toast.show({ title: `已移除模型 ${modelName}`, tone: 'success' })
+      const nextSelection = { ...selection }
+      delete nextSelection[modelName]
+      setSelection(nextSelection)
+      await refresh()
+    } catch (error) {
+      toast.show({
+        title: error instanceof ApiError ? error.message : '移除模型失败',
+        tone: 'error',
+      })
+    }
+  }
+
   return (
     <Section className="mt-9" title={page.models.title} hint={page.models.hint}>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -645,7 +670,40 @@ function ModelsSection({
         </Notice>
       ) : (
         <>
+          {models.length > 0 ? (
+            <div className="mt-4 overflow-hidden rounded-lg border border-line bg-surface">
+              <div className="border-b border-line bg-surface-raised px-4 py-2.5 text-meta font-medium text-ink">
+                已添加的模型 ({models.length})
+              </div>
+              <ul className="divide-y divide-line">
+                {models.map((m) => (
+                  <li key={m.model} className="flex items-center justify-between px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-meta font-medium text-ink">{m.model}</span>
+                      {m.price_cap_milli > 0 ? (
+                        <span className="text-caption text-ink-3">
+                          (倍率上限: {(m.price_cap_milli / 1000).toFixed(2)}x)
+                        </span>
+                      ) : null}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-danger hover:bg-danger/10 hover:text-danger cursor-pointer"
+                      onClick={() => void handleRemoveDirect(m.model)}
+                    >
+                      删除
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
           <div className="mt-4">
+            <div className="mb-2 text-meta font-medium text-ink">
+              {models.length > 0 ? '添加或调整模型：' : '选择要添加的模型：'}
+            </div>
             <ModelPicker
               selection={selection}
               onChange={setSelection}
