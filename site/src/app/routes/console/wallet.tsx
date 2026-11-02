@@ -44,7 +44,7 @@ import {
 } from '@/features/console/components/DataState'
 import { Notice } from '@/features/console/components/form'
 import { redeemCodeSchema } from '@/features/console/schemas'
-import { walletKindLabel } from '@/features/console/wallet-labels'
+import { walletKindLabel, walletStatusMeta } from '@/features/console/wallet-labels'
 import type { TagTone } from '@/ui'
 
 const PAGE_SIZE = 20
@@ -116,24 +116,7 @@ function flowStatusMeta(
     return { label: labels[status] ?? labels.unknown, tone }
   }
   if (kind === 'topup') {
-    const labels = copy.pages.consoleWallet.topups.statuses as Record<string, string>
-    let effectiveStatus = status
-    if (status === 'pending' && createdAt) {
-      const createdTime =
-        typeof createdAt === 'number'
-          ? createdAt * (createdAt < 1e11 ? 1000 : 1)
-          : new Date(createdAt).getTime()
-      if (!Number.isNaN(createdTime) && Date.now() - createdTime > 30 * 60 * 1000) {
-        effectiveStatus = 'closed'
-      }
-    }
-    const tone: TagTone =
-      effectiveStatus === 'success'
-        ? 'brand'
-        : effectiveStatus === 'pending'
-          ? 'neutral'
-          : 'neutral'
-    return { label: labels[effectiveStatus] ?? labels.unknown, tone }
+    return walletStatusMeta('topup', status, createdAt)
   }
   return { label: ledgerLabel(status), tone: ledgerTone(status) }
 }
@@ -547,7 +530,7 @@ function RechargePanel() {
             {methods.find((item) => item.type === method)?.name ?? methods[0]?.name}
           </Tag>
         ) : (
-          <Tag tone="neutral">{page.recharge.unavailable}</Tag>
+          <Tag tone="neutral">{page.recharge.unconfiguredTag ?? '未配置'}</Tag>
         )}
       </div>
 
