@@ -63,6 +63,9 @@ func Init() error {
 
 // GetLocalizer returns a localizer for the specified language
 func GetLocalizer(lang string) *i18n.Localizer {
+	if bundle == nil {
+		_ = Init()
+	}
 	lang = normalizeLang(lang)
 
 	mu.RLock()
