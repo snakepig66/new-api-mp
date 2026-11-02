@@ -17,7 +17,6 @@ package marketplace
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -26,6 +25,8 @@ import (
 	"unicode"
 
 	"gorm.io/gorm"
+
+	"github.com/QuantumNous/new-api/common"
 )
 
 // CurrentSellerAgreementVersion is the only 协议版本 the onboarding accepts
@@ -78,7 +79,7 @@ func ParsePayoutAccount(storedEncrypted string) (PayoutAccountInfo, error) {
 	plain = strings.TrimSpace(plain)
 	if strings.HasPrefix(plain, "{") {
 		var info PayoutAccountInfo
-		if err := json.Unmarshal([]byte(plain), &info); err == nil && info.Channel != "" {
+		if err := common.Unmarshal([]byte(plain), &info); err == nil && info.Channel != "" {
 			return info, nil
 		}
 	}
@@ -273,7 +274,7 @@ func OnboardSeller(db *gorm.DB, userID int64, in SellerOnboardingInput, now time
 			Account: payoutAccount,
 			QRCode:  payoutQRCode,
 		}
-		data, _ := json.Marshal(info)
+		data, _ := common.Marshal(info)
 		stored, err := encryptPayoutAccount(string(data))
 		if err != nil {
 			return Seller{}, SellerProgress{}, err
@@ -301,7 +302,7 @@ func OnboardSeller(db *gorm.DB, userID int64, in SellerOnboardingInput, now time
 					Name:    payoutName,
 					Account: payoutAccount,
 				}
-				data, _ := json.Marshal(info)
+				data, _ := common.Marshal(info)
 				stored, err = encryptPayoutAccount(string(data))
 			}
 			if err != nil {
@@ -476,7 +477,7 @@ func sellerRetryChain(chain string) string {
 		return ""
 	}
 	var hops []RelayHop
-	if err := json.Unmarshal([]byte(chain), &hops); err != nil {
+	if err := common.Unmarshal([]byte(chain), &hops); err != nil {
 		return "[]"
 	}
 	out := make([]sellerRetryHop, 0, len(hops))
@@ -488,7 +489,7 @@ func sellerRetryChain(chain string) string {
 			Detail: sellerRetryDetailRedaction.ReplaceAllString(h.Detail, "<redacted>"),
 		})
 	}
-	raw, err := json.Marshal(out)
+	raw, err := common.Marshal(out)
 	if err != nil {
 		return "[]"
 	}

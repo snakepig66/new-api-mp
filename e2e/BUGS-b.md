@@ -55,3 +55,18 @@
   1. 在 `marketplace/model_health.go` 中解析上游响应体消息，当 402 或 429 且包含 quota/insufficient/balance/余额等时归类为"上游余额不足"；
   2. 在 `marketplace/verify.go` 的 `modelCallFailureReason` 中对 402 显式返回"上游余额不足（HTTP 402）"，在 `SimplifyProbeFailureReason` 中增加 `deadline` 判定；
   3. 在 `site/src/app/routes/console/listings/new.tsx` 的 `simplifyProbeError` 中增加 `deadline` 判定并对 429 quota 转换为"上游余额不足"。补齐单元测试。
+
+---
+
+### BUG-004: marketplace/seller.go 违反项目规范直接调用 encoding/json
+
+- **所属模块**: `marketplace/seller.go`
+- **严重程度**: Low (违反 AGENTS.md 强制规范)
+- **复现步骤**:
+  代码审计 `marketplace/seller.go`，发现多处直接引用 `encoding/json` 的 `json.Marshal` 与 `json.Unmarshal`。
+- **预期结果**:
+  依照项目 `AGENTS.md` 规范，根模块内所有业务代码的 JSON 序列化与反序列化必须统一使用 `common.Marshal` / `common.Unmarshal`，不得直接调用 `encoding/json`。
+- **实际结果**:
+  `marketplace/seller.go` 引入了 `encoding/json` 并直接调用 `json.Marshal` / `json.Unmarshal` 处理收款账户信息与重试跳步信息。
+- **修复方案**:
+  替换为 `common.Marshal` 与 `common.Unmarshal`，移除 `encoding/json` 导入。
