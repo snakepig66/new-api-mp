@@ -12,6 +12,7 @@ export interface ConsoleNavItem {
 
 export interface ConsoleNavGroup {
   label: string
+  collapsible?: boolean
   items: ConsoleNavItem[]
 }
 
@@ -162,6 +163,35 @@ export function getConsoleNavIcon(to: string): ReactNode {
         </svg>
       )
 
+    case '/seller/records':
+      return (
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12.5 2.5H5.5a1.5 1.5 0 0 0-1.5 1.5v12a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5V6.5L12.5 2.5Z" />
+          <polyline points="12.5 2.5 12.5 6.5 16 6.5" />
+          <line x1="7" y1="10.5" x2="13" y2="10.5" />
+          <line x1="7" y1="13.5" x2="11" y2="13.5" />
+        </svg>
+      )
+
+    case '/models':
+      return (
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <ellipse cx="10" cy="5" rx="6.5" ry="2.5" />
+          <path d="M3.5 5v5c0 1.38 2.91 2.5 6.5 2.5s6.5-1.12 6.5-2.5V5" />
+          <path d="M3.5 10v5c0 1.38 2.91 2.5 6.5 2.5s6.5-1.12 6.5-2.5V10" />
+        </svg>
+      )
+
+    case '/docs':
+    case '/help':
+      return (
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="10" cy="10" r="7.5" />
+          <path d="M7.5 7.5a2.5 2.5 0 0 1 4.5 1.25c0 1.5-2 2-2 3" />
+          <circle cx="10" cy="14.5" r="0.75" fill="currentColor" />
+        </svg>
+      )
+
     case '/console/ops/trust-pool':
       // 信任池: Shield check
       return (
@@ -192,46 +222,99 @@ export function ConsoleSidebar({
 
   return (
     <nav className="flex flex-col gap-6" aria-label="控制台导航">
-      {groups.map((group) => (
-        <section key={group.label}>
-          <p className="px-3 text-caption font-medium uppercase tracking-[0.12em] text-ink-3">
-            {group.label}
-          </p>
-          <div className="mt-1.5 flex flex-col gap-0.5">
-            {group.items.map((item) => {
-              const active = isActive(pathname, item)
-              const icon = item.icon ?? getConsoleNavIcon(item.to)
-              return (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  onClick={onNavigate}
-                  aria-current={active ? 'page' : undefined}
-                  className={cn(
-                    'group flex h-9 items-center gap-2.5 rounded-full px-3 text-body transition-[color,background-color]',
-                    active
-                      ? 'bg-brand/10 font-medium text-brand-ink'
-                      : 'text-ink-2 hover:bg-white/60 hover:text-ink',
-                  )}
-                >
-                  {icon ? (
-                    <span
+      {groups.map((group) => {
+        const isCurrentGroupActive = group.items.some((item) => isActive(pathname, item))
+        if (group.collapsible) {
+          return (
+            <details
+              key={group.label}
+              className="group/details border-t border-line/60 pt-3"
+              open={isCurrentGroupActive}
+            >
+              <summary className="flex cursor-pointer select-none items-center justify-between px-3 text-caption font-medium uppercase tracking-[0.12em] text-ink-3 hover:text-ink">
+                <span>{group.label}</span>
+                <span className="text-caption text-ink-3 transition-transform group-open/details:rotate-180">
+                  ▼
+                </span>
+              </summary>
+              <div className="mt-2 flex flex-col gap-0.5">
+                {group.items.map((item) => {
+                  const active = isActive(pathname, item)
+                  const icon = item.icon ?? getConsoleNavIcon(item.to)
+                  return (
+                    <Link
+                      key={item.to}
+                      to={item.to}
+                      onClick={onNavigate}
+                      aria-current={active ? 'page' : undefined}
                       className={cn(
-                        'grid h-4 w-4 place-items-center shrink-0 transition-colors',
-                        active ? 'text-brand' : 'text-ink-3 group-hover:text-ink',
+                        'group flex h-9 items-center gap-2.5 rounded-full px-3 text-body transition-[color,background-color]',
+                        active
+                          ? 'bg-brand/10 font-medium text-brand-ink'
+                          : 'text-ink-2 hover:bg-white/60 hover:text-ink',
                       )}
-                      aria-hidden="true"
                     >
-                      {icon}
-                    </span>
-                  ) : null}
-                  <span className="truncate">{item.label}</span>
-                </Link>
-              )
-            })}
-          </div>
-        </section>
-      ))}
+                      {icon ? (
+                        <span
+                          className={cn(
+                            'grid h-4 w-4 place-items-center shrink-0 transition-colors',
+                            active ? 'text-brand' : 'text-ink-3 group-hover:text-ink',
+                          )}
+                          aria-hidden="true"
+                        >
+                          {icon}
+                        </span>
+                      ) : null}
+                      <span className="truncate">{item.label}</span>
+                    </Link>
+                  )
+                })}
+              </div>
+            </details>
+          )
+        }
+
+        return (
+          <section key={group.label}>
+            <p className="px-3 text-caption font-medium uppercase tracking-[0.12em] text-ink-3">
+              {group.label}
+            </p>
+            <div className="mt-1.5 flex flex-col gap-0.5">
+              {group.items.map((item) => {
+                const active = isActive(pathname, item)
+                const icon = item.icon ?? getConsoleNavIcon(item.to)
+                return (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    onClick={onNavigate}
+                    aria-current={active ? 'page' : undefined}
+                    className={cn(
+                      'group flex h-9 items-center gap-2.5 rounded-full px-3 text-body transition-[color,background-color]',
+                      active
+                        ? 'bg-brand/10 font-medium text-brand-ink'
+                        : 'text-ink-2 hover:bg-white/60 hover:text-ink',
+                    )}
+                  >
+                    {icon ? (
+                      <span
+                        className={cn(
+                          'grid h-4 w-4 place-items-center shrink-0 transition-colors',
+                          active ? 'text-brand' : 'text-ink-3 group-hover:text-ink',
+                        )}
+                        aria-hidden="true"
+                      >
+                        {icon}
+                      </span>
+                    ) : null}
+                    <span className="truncate">{item.label}</span>
+                  </Link>
+                )
+              })}
+            </div>
+          </section>
+        )
+      })}
     </nav>
   )
 }

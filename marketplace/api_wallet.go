@@ -494,11 +494,15 @@ func loadWalletTopUpRows(db *gorm.DB, userID int64, limit int) ([]walletTransact
 	items := make([]walletTransaction, 0, len(rows))
 	for i := range rows {
 		r := &rows[i]
+		status := r.Status
+		if status == common.TopUpStatusPending && time.Since(time.Unix(r.CreateTime, 0)) > 30*time.Minute {
+			status = "closed"
+		}
 		items = append(items, walletTransaction{
 			ID:          "topup:" + strconv.Itoa(r.Id),
 			Kind:        walletTxKindTopup,
 			AmountMicro: topUpAmountMicro(r.Amount),
-			Status:      r.Status,
+			Status:      status,
 			Reference:   r.TradeNo,
 			Money:       r.Money,
 			CreatedAt:   time.Unix(r.CreateTime, 0),
@@ -676,8 +680,8 @@ func walletCSVStatus(kind, status string) string {
 		case "success":
 			return "已到账"
 		case "pending":
-			return "待支付"
-		case "failed", "expired":
+			return "未支付"
+		case "failed", "expired", "closed":
 			return "已关闭"
 		}
 	case walletTxKindWithdrawal:

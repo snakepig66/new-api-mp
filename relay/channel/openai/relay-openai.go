@@ -16,6 +16,8 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/tokenkit"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 
 	"github.com/gin-gonic/gin"
 )
@@ -25,6 +27,12 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		return nil
 	}
 
+	if info != nil && info.OriginModelName != "" && gjson.Get(data, "model").Exists() {
+		if patched, err := sjson.Set(data, "model", info.OriginModelName); err == nil {
+			data = patched
+		}
+	}
+
 	if !forceFormat && !thinkToContent {
 		return helper.StringData(c, data)
 	}
@@ -32,6 +40,9 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 	var lastStreamResponse dto.ChatCompletionsStreamResponse
 	if err := common.UnmarshalJsonStr(data, &lastStreamResponse); err != nil {
 		return err
+	}
+	if info != nil && info.OriginModelName != "" {
+		lastStreamResponse.Model = info.OriginModelName
 	}
 
 	if !thinkToContent {
@@ -326,6 +337,9 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
+		if info.OriginModelName != "" {
+			simpleResponse.Model = info.OriginModelName
+		}
 		if usageModified {
 			var bodyMap map[string]any
 			err = common.Unmarshal(responseBody, &bodyMap)
@@ -333,6 +347,9 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 				return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 			}
 			bodyMap["usage"] = simpleResponse.Usage
+			if info.OriginModelName != "" {
+				bodyMap["model"] = info.OriginModelName
+			}
 			responseBody, _ = common.Marshal(bodyMap)
 		}
 		if forceFormat {
@@ -341,6 +358,11 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 				return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 			}
 		} else {
+			if info.OriginModelName != "" && gjson.GetBytes(responseBody, "model").Exists() {
+				if patched, err := sjson.SetBytes(responseBody, "model", info.OriginModelName); err == nil {
+					responseBody = patched
+				}
+			}
 			break
 		}
 	case types.RelayFormatClaude:

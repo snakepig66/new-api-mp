@@ -1,11 +1,12 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 
 import { copy } from '@/copy'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { squareModelsQuery } from '@/features/market/api'
 import { ModelPicker, type ModelSelection } from '@/features/market/ModelPicker'
 import { currentBaseUrl } from '@/features/market/url'
 import { Button, Dialog, Input, useToast } from '@/ui'
@@ -549,29 +550,51 @@ function CreatedKey({
 }) {
   const toast = useToast()
   const [copiedConfig, setCopiedConfig] = useState<string | null>(null)
+  const squareQuery = useQuery(squareModelsQuery())
+  const marketModels = squareQuery.data ?? []
+
+  const availableModels = useMemo(() => {
+    if (result.model_scope === 'selected' && result.models.length > 0) {
+      return result.models.map((m) => m.model)
+    }
+    if (marketModels.length > 0) {
+      return marketModels.map((m) => m.model)
+    }
+    return ['claude-3-5-sonnet', 'claude-3-7-sonnet', 'deepseek-chat', 'gpt-4o']
+  }, [result.model_scope, result.models, marketModels])
+
+  const recommendedModel = useMemo(() => {
+    const claudeMatch = availableModels.find((m) => m.includes('claude-3-5-sonnet') || m.includes('claude'))
+    return claudeMatch || availableModels[0] || 'claude-3-5-sonnet'
+  }, [availableModels])
+
+  const [activeModel, setActiveModel] = useState<string>(recommendedModel)
+
+  useEffect(() => {
+    if (recommendedModel && (!activeModel || !availableModels.includes(activeModel))) {
+      setActiveModel(recommendedModel)
+    }
+  }, [recommendedModel, availableModels, activeModel])
+
   const baseUrl = `${currentBaseUrl()}/v1`
   // The Anthropic SDK appends /v1/messages itself, so Claude Code's base URL
   // must be the origin rather than the OpenAI-style /v1 base.
   const claudeBaseUrl = currentBaseUrl()
-  const model =
-    result.model_scope === 'selected' && result.models.length > 0
-      ? result.models[0].model
-      : dialogCopy.allScopeModel
   const configs = [
     {
       key: 'claudeCode',
       label: dialogCopy.claudeCode,
-      text: claudeCodeConfig(claudeBaseUrl, result.key, model),
+      text: claudeCodeConfig(claudeBaseUrl, result.key, activeModel),
     },
     {
       key: 'cursor',
       label: dialogCopy.cursor,
-      text: openAIConfig(baseUrl, result.key, model),
+      text: openAIConfig(baseUrl, result.key, activeModel),
     },
     {
       key: 'cherryStudio',
       label: dialogCopy.cherryStudio,
-      text: cherryStudioConfig(baseUrl, result.key, model),
+      text: cherryStudioConfig(baseUrl, result.key, activeModel),
     },
   ]
 
@@ -640,8 +663,30 @@ function CreatedKey({
       </div>
 
       <div>
-        <div className="text-body font-medium text-ink">{dialogCopy.configsTitle}</div>
-        <p className="mt-0.5 text-meta text-ink-3">{dialogCopy.configsHint}</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="text-body font-medium text-ink">{dialogCopy.configsTitle}</div>
+            <p className="mt-0.5 text-meta text-ink-3">{dialogCopy.configsHint}</p>
+          </div>
+          <div className="flex items-center gap-1.5 text-meta">
+            <label htmlFor="config-model-select" className="text-ink-3">
+              推荐模型：
+            </label>
+            <select
+              id="config-model-select"
+              value={activeModel}
+              onChange={(e) => setActiveModel(e.target.value)}
+              className="rounded border border-line bg-white/70 px-2 py-1 font-mono text-meta text-ink focus:border-brand/60 focus:outline-none"
+            >
+              {availableModels.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
         <div className="mt-2 space-y-2">
           {configs.map((config) => (
             <div key={config.key} className="glass-inset">
@@ -658,6 +703,11 @@ function CreatedKey({
               <pre className="overflow-x-auto px-3 py-2 font-mono text-caption leading-5 text-ink">
                 {config.text}
               </pre>
+              {config.key === 'claudeCode' ? (
+                <p className="border-t border-line/60 px-3 py-1.5 text-caption text-ink-3">
+                  Claude Code 填根地址，不要加 /v1
+                </p>
+              ) : null}
             </div>
           ))}
         </div>

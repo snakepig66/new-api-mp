@@ -240,6 +240,39 @@ func probeModelCall(ctx context.Context, client *http.Client, baseURL, model, ap
 	return out.OK, out.PromptCache, out.LatencyMs, out.FailReason
 }
 
+// SimplifyProbeFailureReason formats raw verification failure reasons into
+// plain Chinese for seller-facing channel probing:
+// 401/403 -> "Key 无效或没权限"
+// 402/insufficient balance -> "上游余额不足"
+// timeout/DNS/connection refused -> "地址连不上"
+func SimplifyProbeFailureReason(reason string, code int) string {
+	lower := strings.ToLower(reason)
+	if code == http.StatusUnauthorized || code == http.StatusForbidden ||
+		strings.Contains(lower, "401") || strings.Contains(lower, "403") ||
+		strings.Contains(lower, "unauthorized") || strings.Contains(lower, "forbidden") ||
+		strings.Contains(lower, "无权") || strings.Contains(lower, "invalid_api_key") ||
+		strings.Contains(lower, "key invalid") {
+		return "Key 无效或没权限"
+	}
+	if code == http.StatusPaymentRequired ||
+		strings.Contains(lower, "402") || strings.Contains(lower, "balance") ||
+		strings.Contains(lower, "quota") || strings.Contains(lower, "insufficient") ||
+		strings.Contains(lower, "余额") || strings.Contains(lower, "欠费") {
+		return "上游余额不足"
+	}
+	if strings.Contains(lower, "timeout") || strings.Contains(lower, "timed out") ||
+		strings.Contains(lower, "超时") || strings.Contains(lower, "dns") ||
+		strings.Contains(lower, "no such host") || strings.Contains(lower, "connection") ||
+		strings.Contains(lower, "connect") || strings.Contains(lower, "refused") ||
+		strings.Contains(lower, "unreachable") || strings.Contains(lower, "连不上") {
+		return "地址连不上"
+	}
+	if reason != "" {
+		return reason
+	}
+	return "检测失败"
+}
+
 // modelCallFailureReason translates an upstream status into a seller-facing
 // reason (the body itself is never surfaced, §3.11).
 func modelCallFailureReason(code int) string {

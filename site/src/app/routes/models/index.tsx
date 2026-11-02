@@ -4,17 +4,20 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { copy } from '@/copy'
 import { squareModelsQuery, useSquareModelDetails } from '@/features/market/api'
+import { ModelCard } from '@/features/market/ModelCard'
 import { filterPickerModels } from '@/features/market/ModelPicker'
 import { ModelTable, originVendorOf } from '@/features/market/model-table'
 import { QueryError } from '@/features/market/query-error'
 import { VendorPills } from '@/features/market/VendorPills'
 import { toVendorLookup, vendorLogo, vendorOptions } from '@/features/market/vendors'
 import { vendorsQuery } from '@/features/seller/api'
+import { cn } from '@/lib/cn'
 import { formatYuan } from '@/lib/money'
 import { Button, Empty, Input, PageHeader, buttonClasses } from '@/ui'
 import type { SquareModel, SquareTierPrices } from '@/features/market/api'
 
 type SortKey = 'price' | 'success' | 'latency'
+type ViewMode = 'cards' | 'table'
 
 interface ModelsSearch {
   vendor?: string
@@ -22,6 +25,7 @@ interface ModelsSearch {
   sort?: SortKey
   official?: boolean
   free?: boolean
+  view?: ViewMode
 }
 
 const searchSchema = (search: Record<string, unknown>): ModelsSearch => {
@@ -31,12 +35,14 @@ const searchSchema = (search: Record<string, unknown>): ModelsSearch => {
     search.sort === 'price' || search.sort === 'success' || search.sort === 'latency'
       ? search.sort
       : undefined
+  const view = search.view === 'table' || search.view === 'cards' ? search.view : undefined
   return {
     ...(vendor ? { vendor } : {}),
     ...(q.trim() ? { q } : {}),
     ...(sort ? { sort } : {}),
     ...(search.official === true ? { official: true } : {}),
     ...(search.free === true ? { free: true } : {}),
+    ...(view ? { view } : {}),
   }
 }
 
@@ -46,13 +52,13 @@ export const Route = createFileRoute('/models/')({
 })
 
 /**
- * The square is contractually one row per standard model. Older payloads may
- * still repeat a model per channel, so collapse defensively and keep the row
- * with the most live supply.
+ * The square is contractually one row per standard model. Models with no
+ * channels or listings are hidden from the square.
  */
 function uniqueByModel(rows: SquareModel[]): SquareModel[] {
   const byModel = new Map<string, SquareModel>()
   for (const row of rows) {
+    if ((row.channel_count ?? 0) <= 0 || (row.listing_count ?? 0) <= 0) continue
     const current = byModel.get(row.model)
     if (!current || row.listing_count > current.listing_count) byModel.set(row.model, row)
   }
@@ -112,6 +118,7 @@ export function ModelsPage() {
   const sort = search.sort ?? 'price'
   const officialOnly = Boolean(search.official)
   const freeOnly = Boolean(search.free)
+  const view = search.view ?? 'cards'
 
   const models = useQuery(squareModelsQuery())
   const vendors = useQuery(vendorsQuery())
@@ -272,26 +279,72 @@ export function ModelsPage() {
           </div>
         </div>
 
-        <div className="relative w-full shrink-0 lg:w-[260px]">
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            aria-hidden="true"
-            className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-3"
-          >
-            <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.5" />
-            <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-          <Input
-            type="search"
-            value={searchInput}
-            onChange={(event) => updateSearch(event.target.value)}
-            placeholder={modelsCopy.searchPlaceholder}
-            aria-label={modelsCopy.searchAria}
-            className="h-10 rounded-full pl-10 text-body"
-          />
+        <div className="flex w-full flex-col gap-3 shrink-0 sm:flex-row sm:items-center lg:w-auto">
+          <div className="flex items-center rounded-full border border-line bg-surface p-1">
+            <button
+              type="button"
+              onClick={() => patchSearch({ view: undefined })}
+              className={cn(
+                'flex items-center gap-1.5 rounded-full px-3 py-1 text-meta font-medium transition-colors',
+                view === 'cards'
+                  ? 'bg-brand-soft text-brand-ink'
+                  : 'text-ink-3 hover:text-ink',
+              )}
+              title="卡片视图"
+              aria-label="卡片视图"
+              aria-pressed={view === 'cards'}
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect width="7" height="7" x="3" y="3" rx="1" />
+                <rect width="7" height="7" x="14" y="14" rx="1" />
+                <rect width="7" height="7" x="14" y="3" rx="1" />
+                <rect width="7" height="7" x="3" y="14" rx="1" />
+              </svg>
+              <span>卡片</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => patchSearch({ view: 'table' })}
+              className={cn(
+                'flex items-center gap-1.5 rounded-full px-3 py-1 text-meta font-medium transition-colors',
+                view === 'table'
+                  ? 'bg-brand-soft text-brand-ink'
+                  : 'text-ink-3 hover:text-ink',
+              )}
+              title="表格视图"
+              aria-label="表格视图"
+              aria-pressed={view === 'table'}
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="3" x2="21" y1="6" y2="6" />
+                <line x1="3" x2="21" y1="12" y2="12" />
+                <line x1="3" x2="21" y1="18" y2="18" />
+              </svg>
+              <span>表格</span>
+            </button>
+          </div>
+
+          <div className="relative w-full sm:w-[240px]">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              aria-hidden="true"
+              className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-3"
+            >
+              <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.5" />
+              <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            <Input
+              type="search"
+              value={searchInput}
+              onChange={(event) => updateSearch(event.target.value)}
+              placeholder={modelsCopy.searchPlaceholder}
+              aria-label={modelsCopy.searchAria}
+              className="h-10 rounded-full pl-10 text-body"
+            />
+          </div>
         </div>
       </div>
 
@@ -304,7 +357,33 @@ export function ModelsPage() {
             retrying={models.isFetching}
           />
         ) : models.isPending ? (
-          <ModelTable models={[]} loading skeletonRows={8} />
+          view === 'cards' ? (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {Array.from({ length: 8 }, (_, idx) => (
+                <div
+                  key={idx}
+                  className="flex flex-col justify-between rounded-2xl border border-line bg-surface p-5 h-64 animate-pulse"
+                  aria-hidden="true"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="h-5.5 w-5.5 rounded bg-line" />
+                      <div className="h-4 w-32 rounded bg-line" />
+                    </div>
+                    <div className="h-3 w-16 rounded bg-line" />
+                    <div className="mt-4 space-y-2">
+                      <div className="h-4 w-44 rounded bg-line" />
+                      <div className="h-4 w-40 rounded bg-line" />
+                      <div className="h-4 w-32 rounded bg-line" />
+                    </div>
+                  </div>
+                  <div className="h-3.5 w-full rounded bg-line" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <ModelTable models={[]} loading skeletonRows={8} />
+          )
         ) : rows.length === 0 ? (
           <Empty
             title={modelsCopy.empty.title}
@@ -339,14 +418,28 @@ export function ModelsPage() {
                 {modelsCopy.filteredCount(sorted.length, rows.length)}
               </p>
             ) : null}
-            <ModelTable
-              models={sorted}
-              details={details}
-              detailsLoading={detailsLoading}
-              vendorMeta={vendorMeta}
-              showAddToKey
-              minWidth={1080}
-            />
+            {view === 'cards' ? (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {sorted.map((model) => (
+                  <ModelCard
+                    key={model.model}
+                    model={model}
+                    detail={details.get(model.model)}
+                    vendorMeta={vendorMeta}
+                    showAddToKey
+                  />
+                ))}
+              </div>
+            ) : (
+              <ModelTable
+                models={sorted}
+                details={details}
+                detailsLoading={detailsLoading}
+                vendorMeta={vendorMeta}
+                showAddToKey
+                minWidth={1080}
+              />
+            )}
           </>
         )}
       </div>

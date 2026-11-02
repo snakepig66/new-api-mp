@@ -1173,6 +1173,19 @@ func convertClaudeMessagesStreamResponseChunkToOAIChat(_ context.Context, _ conv
 	return streamValuesFromAny(openAIResponse), usage, nil
 }
 
+func outwardResponseModel(info convmeta.Meta) string {
+	if info == nil {
+		return ""
+	}
+	if info.GetOriginModelName() != "" {
+		return info.GetOriginModelName()
+	}
+	if info.HasChannelMeta() {
+		return info.GetUpstreamModelName()
+	}
+	return ""
+}
+
 func convertGeminiChatResponseToOAIChat(_ context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
 	geminiResponse, err := asGeminiChatResponse(response)
 	if err != nil {
@@ -1180,8 +1193,8 @@ func convertGeminiChatResponseToOAIChat(_ context.Context, info convmeta.Meta, r
 	}
 	usage := UsageFromGeminiMetadata(geminiResponse.GetUsageMetadata(), fallbackPromptTokens(info))
 	openAIResponse := ResponseGeminiChat2OpenAI(fmt.Sprintf("chatcmpl-%s", kitutil.GetUUID()), kitutil.GetTimestamp(), geminiResponse)
-	if info != nil && info.HasChannelMeta() {
-		openAIResponse.Model = info.GetUpstreamModelName()
+	if m := outwardResponseModel(info); m != "" {
+		openAIResponse.Model = m
 	}
 	if usage != nil {
 		openAIResponse.Usage = *usage
@@ -1203,10 +1216,7 @@ func convertGeminiChatStreamResponseChunkToOAIChat(_ context.Context, info convm
 		return nil, nil, errors.New("Gemini chat to OAI chat stream state is required")
 	}
 	usage := UsageFromGeminiMetadata(geminiResponse.GetUsageMetadata(), fallbackPromptTokens(info))
-	model := ""
-	if info != nil && info.HasChannelMeta() {
-		model = info.GetUpstreamModelName()
-	}
+	model := outwardResponseModel(info)
 	responses, err := streamState.ConvertChunk(geminiResponse, model, usage)
 	if err != nil {
 		return nil, nil, err
@@ -1219,10 +1229,7 @@ func finalizeGeminiChatStreamResponseToOAIChat(_ context.Context, info convmeta.
 	if !ok || streamState == nil {
 		return nil, nil, errors.New("Gemini chat to OAI chat stream state is required")
 	}
-	model := ""
-	if info != nil && info.HasChannelMeta() {
-		model = info.GetUpstreamModelName()
-	}
+	model := outwardResponseModel(info)
 	responses, err := streamState.Finalize(model)
 	if err != nil {
 		return nil, nil, err
@@ -1240,8 +1247,8 @@ func convertGeminiChatStreamResponseToOAIChat(_ context.Context, info convmeta.M
 	if openAIResponse != nil {
 		openAIResponse.Id = fmt.Sprintf("chatcmpl-%s", kitutil.GetUUID())
 		openAIResponse.Created = kitutil.GetTimestamp()
-		if info != nil && info.HasChannelMeta() {
-			openAIResponse.Model = info.GetUpstreamModelName()
+		if m := outwardResponseModel(info); m != "" {
+			openAIResponse.Model = m
 		}
 		openAIResponse.Usage = usage
 	}

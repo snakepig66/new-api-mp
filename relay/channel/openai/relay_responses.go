@@ -38,6 +38,11 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 
 	info.ObserveResponseModel(responsesResponse.Model)
 	responseBody = rewriteSGLangResponsesCreatedAt(info, responseBody, "created_at", responsesResponse.CreatedAt)
+	if info != nil && info.OriginModelName != "" && gjson.GetBytes(responseBody, "model").Exists() {
+		if patched, err := sjson.SetBytes(responseBody, "model", info.OriginModelName); err == nil {
+			responseBody = patched
+		}
+	}
 
 	// 写入新的 response body
 	service.IOCopyBytesGracefully(c, resp, responseBody)
@@ -88,6 +93,16 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 		if streamResponse.Response != nil {
 			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
+			if info != nil && info.OriginModelName != "" {
+				if patched, err := sjson.Set(data, "response.model", info.OriginModelName); err == nil {
+					data = patched
+				}
+			}
+		}
+		if info != nil && info.OriginModelName != "" && gjson.Get(data, "model").Exists() {
+			if patched, err := sjson.Set(data, "model", info.OriginModelName); err == nil {
+				data = patched
+			}
 		}
 		accumulator.Observe(&streamResponse, common.StringToByteSlice(data))
 		if err := helper.ResponseChunkData(c, streamResponse, data); err != nil {

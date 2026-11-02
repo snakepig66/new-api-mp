@@ -55,6 +55,7 @@ import {
   canSubmit,
   CUSTOM_VENDOR_ID,
   DEFAULT_MULTIPLIER_MILLI,
+  formatMultiplierAsDiscount,
   maskApiKey,
   parseApiKeys,
   previousWizardStep,
@@ -232,19 +233,17 @@ function flattenHours(availability: WizardForm['availability']): FlatHours {
 
 function StepRail({
   step,
-  canFastTrack = false,
   onJump,
 }: {
   step: number
-  canFastTrack?: boolean
   onJump: (next: WizardStep) => void
 }) {
   return (
-    <ol className="mt-6 grid grid-cols-2 gap-3 glass p-4 sm:grid-cols-5">
+    <ol className="mt-6 grid grid-cols-1 gap-3 glass p-4 sm:grid-cols-3">
       {page.steps.map((title, index) => {
         const completed = index < step
         const active = index === step
-        const disabled = index > step && !(index === 4 && canFastTrack)
+        const disabled = index > step
         return (
           <li
             key={title}
@@ -458,6 +457,46 @@ function AvailabilityGroup({
   )
 }
 
+function simplifyProbeError(reason?: string): string {
+  if (!reason) return '检测未通过'
+  const lower = reason.toLowerCase()
+  if (
+    lower.includes('401') ||
+    lower.includes('403') ||
+    lower.includes('unauthorized') ||
+    lower.includes('forbidden') ||
+    lower.includes('key 无效') ||
+    lower.includes('无权')
+  ) {
+    return 'Key 无效或没权限'
+  }
+  if (
+    lower.includes('402') ||
+    lower.includes('balance') ||
+    lower.includes('quota') ||
+    lower.includes('insufficient') ||
+    lower.includes('余额') ||
+    lower.includes('欠费')
+  ) {
+    return '上游余额不足'
+  }
+  if (
+    lower.includes('timeout') ||
+    lower.includes('timed out') ||
+    lower.includes('超时') ||
+    lower.includes('connect') ||
+    lower.includes('connection') ||
+    lower.includes('dns') ||
+    lower.includes('no such host') ||
+    lower.includes('refused') ||
+    lower.includes('unreachable') ||
+    lower.includes('连不上')
+  ) {
+    return '地址连不上'
+  }
+  return reason
+}
+
 export function NewListingPage() {
   const toast = useToast()
   const navigate = useNavigate()
@@ -468,7 +507,7 @@ export function NewListingPage() {
   const [upstreamAliases, setUpstreamAliases] = useState<Record<string, string>>({})
   // P4: per-key weight (weighted_round_robin) keyed by the raw key text.
   const [weights, setWeights] = useState<Record<string, number>>({})
-  const [batchMultiplier, setBatchMultiplier] = useState('0.5')
+  const [batchMultiplier, setBatchMultiplier] = useState('0.8')
   const [batchApplied, setBatchApplied] = useState(false)
   const [recognition, setRecognition] = useState<ProbeResult | null>(null)
   const [recognizing, setRecognizing] = useState(false)
@@ -615,16 +654,15 @@ export function NewListingPage() {
   }, [upstreamOptions])
   const aliasFor = (model: string) => upstreamAliases[model] ?? suggestedAlias[model] ?? model
   const suggestedModels = useMemo(() => {
-    if (!probed) return matchedVendor?.models ?? []
     const union = new Set<string>()
     Object.values(keyProbes).forEach((probe) => {
-      for (const model of probe.verified_models ?? probe.models ?? []) union.add(model)
+      for (const model of probe.verified_models ?? []) union.add(model)
     })
-    if (recognition) {
-      for (const model of recognition.verified_models ?? recognition.models ?? []) union.add(model)
+    if (recognition?.verified_models) {
+      for (const model of recognition.verified_models) union.add(model)
     }
     return Array.from(union).sort()
-  }, [probed, keyProbes, recognition, matchedVendor])
+  }, [keyProbes, recognition])
   // Pool picks the upstream matcher did not suggest still count as available.
   const availableModels = useMemo(() => {
     const union = new Set(suggestedModels)
@@ -632,35 +670,43 @@ export function NewListingPage() {
     return Array.from(union).sort()
   }, [suggestedModels, values.models, poolIds])
 
-  // Keep the selection and multiplier map aligned with what the keys can
-  // actually call. When nothing is selected yet, preselect every available
-  // model so the common case needs no extra clicks.
+  // Only preselect models that have been detected as available (verified_models).
   useEffect(() => {
-    const available = new Set(suggestedModels)
-    const current = form.getValues('models') ?? []
-    const kept = current.filter((model) => available.has(model) || poolIds.has(model))
-    const next = kept.length > 0 ? kept : suggestedModels
-    if (next.length !== current.length || next.some((model, index) => current[index] !== model)) {
-      form.setValue('models', next, { shouldValidate: true })
-    }
-    setMultipliers((previous) => {
-      const updated = { ...previous }
-      for (const model of suggestedModels) {
-        if (!validModelMultiplier(updated[model])) {
-          updated[model] = DEFAULT_MULTIPLIER_MILLI
-        }
+    if (suggestedModels.length > 0) {
+      const current = form.getValues('models') ?? []
+      if (current.length === 0) {
+        form.setValue('models', suggestedModels, { shouldValidate: true })
+        setMultipliers((previous) => {
+          const updated = { ...previous }
+          for (const model of suggestedModels) {
+            if (!validModelMultiplier(updated[model])) {
+              updated[model] = DEFAULT_MULTIPLIER_MILLI
+            }
+          }
+          return updated
+        })
       }
-      return updated
-    })
-  }, [suggestedModels, poolIds, form])
+    }
+  }, [suggestedModels, form])
+
+  // Automatically probe all keys when a valid URL and API keys are entered.
+  useEffect(() => {
+    if (!validCustomURL(values.url) || !validApiKeys(keys)) return
+    const timer = setTimeout(() => {
+      void probeAllKeys()
+    }, PROBE_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [values.url, values.api_keys])
 
   const flatHours = flattenHours(values.availability)
   const headersValid = trust?.trust === 'unlisted' ? validRequestHeaders(values.headers) : true
+  const hasPassedKey = keys.some((k) => keyProbes[k]?.key_valid)
   const snapshot: WizardSnapshot = {
     url: values.url,
     vendorId: matchedVendor?.id ?? (isCustomAddress ? CUSTOM_VENDOR_ID : ''),
     customBaseURL: matchedVendor ? undefined : values.url.trim(),
     apiKeys: keys,
+    hasPassedKey,
     trust,
     probe: recognition,
     availableModels,
@@ -731,40 +777,25 @@ export function NewListingPage() {
     if (step === 0) {
       void form.trigger(['url', 'api_keys'])
       setStep(1)
-      void probeAllKeys()
+      void probeAllKeys(true)
       return
     }
     if (step === 1) {
-      void form.trigger('models')
+      void form.trigger(['models', 'concurrency', 'rpm', 'daily_cap_yuan', 'headers'])
       setStep(2)
-      return
-    }
-    if (step === 2) {
-      void form.trigger(['concurrency', 'rpm', 'daily_cap_yuan', 'availability'])
-      setStep(3)
-      return
-    }
-    if (step === 3) {
-      void form.trigger('headers')
-      setAdvancedOpen(false)
-      setStep(4)
       void probeAllKeys(true, values.models)
+      return
     }
-  }
-
-  function handleFastTrackVerify() {
-    if (!canLeaveStep(1, snapshot)) return
-    void form.trigger('models')
-    setStep(4)
-    void probeAllKeys(true, values.models)
   }
 
   function handleJump(next: WizardStep) {
-    if (next <= step || (next === 4 && step >= 1 && canLeaveStep(1, snapshot))) {
+    if (next <= step) {
       setStep(next)
-      if (next === 4) {
-        void probeAllKeys(true, values.models)
-      }
+    } else if (next === 1 && canLeaveStep(0, snapshot)) {
+      setStep(1)
+    } else if (next === 2 && canLeaveStep(0, snapshot) && canLeaveStep(1, snapshot)) {
+      setStep(2)
+      void probeAllKeys(true, values.models)
     }
   }
 
@@ -852,12 +883,17 @@ export function NewListingPage() {
     const callable = new Set(probe.verified_models ?? probe.models ?? [])
     return values.models.some((model) => callable.has(model) || poolIds.has(model))
   })
-  // The three fields a submission cannot go without: upstream address, at
-  // least one key, at least one model. Everything else has a default.
-  const requiredFilled =
-    (values.url.trim().length > 0 ? 1 : 0) +
-    (keys.length > 0 ? 1 : 0) +
-    (values.models.length > 0 ? 1 : 0)
+  const stepRequired = useMemo(() => {
+    if (step === 0) {
+      const filled = (validCustomURL(values.url) ? 1 : 0) + (hasPassedKey ? 1 : 0)
+      return { filled, total: 2, label: page.requiredCount(filled, 2) }
+    }
+    if (step === 1) {
+      const filled = values.models.length > 0 ? 1 : 0
+      return { filled, total: 1, label: page.requiredCount(filled, 1) }
+    }
+    return { filled: 1, total: 1, label: '全部就绪' }
+  }, [step, values.url, hasPassedKey, values.models])
 
   return (
     <>
@@ -866,15 +902,14 @@ export function NewListingPage() {
         lead={page.lead}
         actions={
           <span title={page.requiredHint}>
-            <Tag tone={requiredFilled === 3 ? 'brand' : 'neutral'} dot>
-              {page.requiredCount(requiredFilled)}
+            <Tag tone={stepRequired.filled === stepRequired.total ? 'brand' : 'neutral'} dot>
+              {stepRequired.label}
             </Tag>
           </span>
         }
       />
       <StepRail
         step={step}
-        canFastTrack={step >= 1 && canLeaveStep(1, snapshot)}
         onJump={handleJump}
       />
 
@@ -889,7 +924,7 @@ export function NewListingPage() {
             </h2>
             <p className="mt-1 text-meta leading-5 text-ink-3">{page.stepLead[step]}</p>
           </div>
-          <span className="tabular-nums text-meta text-ink-3">0{step + 1} / 05</span>
+          <span className="tabular-nums text-meta text-ink-3">0{step + 1} / 03</span>
         </header>
 
         <div className="pt-5">
@@ -938,11 +973,51 @@ export function NewListingPage() {
                     error={recognizeError}
                   />
                 </div>
-                {recognition && !recognition.key_valid && recognition.fail_reason ? (
-                  <p className="text-meta leading-5 text-danger" role="alert">
-                    检测未通过: {recognition.fail_reason}
-                  </p>
-                ) : null}
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center justify-between text-meta text-ink-3">
+                    <span>Key 连通性测试</span>
+                    {probingKeys ? <span className="text-caption text-ink-3">正在检测连通性…</span> : null}
+                  </div>
+                  {keys.length > 0 ? (
+                    <div className="divide-y divide-line/60 rounded-md border border-line bg-white/50">
+                      {keys.map((k) => {
+                        const probe = keyProbes[k]
+                        const isOk = probe?.key_valid
+                        const isProbing = probingKeys && !probe
+                        return (
+                          <div key={k} className="flex items-center justify-between px-3 py-2 text-meta">
+                            <span className="font-mono text-ink">{maskApiKey(k)}</span>
+                            <div className="flex items-center gap-2">
+                              {isProbing ? (
+                                <span className="text-caption text-ink-3">测试中…</span>
+                              ) : isOk ? (
+                                <span className="flex items-center gap-1 font-medium text-emerald-600">
+                                  <span aria-hidden="true">✓</span>
+                                  <span>连通正常</span>
+                                  {probe.latency_ms > 0 ? (
+                                    <span className="text-caption text-ink-3">({probe.latency_ms}ms)</span>
+                                  ) : null}
+                                </span>
+                              ) : probe ? (
+                                <span className="flex items-center gap-1 font-medium text-rose-600">
+                                  <span aria-hidden="true">✕</span>
+                                  <span>{simplifyProbeError(probe.fail_reason)}</span>
+                                </span>
+                              ) : (
+                                <span className="text-caption text-ink-3">等待检测</span>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-caption text-ink-3">粘贴 Key 后将自动向上游发送 max_tokens=1 探活请求测试连通性。</p>
+                  )}
+                  {!hasPassedKey && keys.length > 0 && !probingKeys ? (
+                    <p className="text-caption text-warn">至少一个 Key 通过连通性测试才能进入下一步。</p>
+                  ) : null}
+                </div>
                 {trust?.trust === 'blocked' ? (
                   <p className="text-meta leading-5 text-danger" role="alert">
                     {page.trust.blocked}
@@ -1044,7 +1119,7 @@ export function NewListingPage() {
           ) : null}
 
           {step === 1 ? (
-            <div className="space-y-5">
+            <div className="space-y-6">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <h3 className="text-body font-semibold text-ink">{page.models.title}</h3>
@@ -1054,7 +1129,7 @@ export function NewListingPage() {
                   <label className="flex items-center gap-2 text-meta text-ink-3">
                     {page.models.batchLabel}
                     <Input
-                      className="w-24"
+                      className="w-20"
                       inputMode="decimal"
                       value={batchMultiplier}
                       onChange={(event) => {
@@ -1063,6 +1138,9 @@ export function NewListingPage() {
                       }}
                     />
                   </label>
+                  <span className="rounded bg-brand-soft/80 px-2 py-1 text-meta font-medium text-brand-ink">
+                    {formatMultiplierAsDiscount(Math.round(Number(batchMultiplier || 0) * 1000))}
+                  </span>
                   <Button variant="secondary" size="sm" onClick={applyBatchMultiplier}>
                     {page.models.applyAll}
                   </Button>
@@ -1073,7 +1151,12 @@ export function NewListingPage() {
                   ) : null}
                 </div>
               </div>
-              <p className="text-meta text-ink-3">{page.models.batchHint}</p>
+
+              {values.models.length === 0 ? (
+                <div className="rounded-md border border-brand/20 bg-brand-soft/40 p-3 text-meta text-ink-2">
+                  从模型池里勾选你的 Key 能用的模型
+                </div>
+              ) : null}
 
               {probingKeys ? (
                 <div className="flex items-center gap-2" aria-busy="true" aria-live="polite">
@@ -1122,10 +1205,7 @@ export function NewListingPage() {
                   {page.models.partial}
                 </p>
               ) : null}
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-meta text-ink-3">
-                  {page.models.selected(values.models.length)}
-                </span>
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 <Button
                   variant="secondary"
                   size="sm"
@@ -1145,138 +1225,124 @@ export function NewListingPage() {
                   {form.formState.errors.models.message}
                 </p>
               ) : null}
-            </div>
-          ) : null}
 
-          {step === 2 ? (
-            <div className="max-w-3xl space-y-6">
-              <div>
-                <h3 className="text-body font-semibold text-ink">{page.limits.title}</h3>
-                <p className="mt-1 text-meta text-ink-3">{page.limits.lead}</p>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-3">
-                <Field
-                  label={page.limits.concurrency}
-                  htmlFor="listing-concurrency"
-                  hint={page.limits.concurrencyHint}
-                  error={form.formState.errors.concurrency?.message}
-                >
-                  <Input
-                    id="listing-concurrency"
-                    type="number"
-                    min={1}
-                    max={1000}
-                    {...form.register('concurrency', { valueAsNumber: true })}
-                  />
-                </Field>
-                <Field
-                  label={page.limits.rpm}
-                  htmlFor="listing-rpm"
-                  hint={page.limits.rpmHint}
-                  error={form.formState.errors.rpm?.message}
-                >
-                  <Input
-                    id="listing-rpm"
-                    type="number"
-                    min={0}
-                    max={1_000_000}
-                    {...form.register('rpm', { valueAsNumber: true })}
-                  />
-                </Field>
-                <Field
-                  label={page.limits.dailyCap}
-                  htmlFor="listing-daily-cap"
-                  hint={page.limits.dailyCapHint}
-                  error={form.formState.errors.daily_cap_yuan?.message}
-                >
-                  <Input
-                    id="listing-daily-cap"
-                    inputMode="decimal"
-                    {...form.register('daily_cap_yuan')}
-                  />
-                </Field>
-              </div>
-
-              <div className="border-t border-line pt-4">
-                <h3 className="text-body font-semibold text-ink">{page.limits.hoursTitle}</h3>
-                <p className="mt-1 text-meta text-ink-3">{page.limits.hoursLead}</p>
-                <div className="mt-3 grid gap-3">
-                  {DAY_KEYS.map((day) => (
-                    <AvailabilityGroup
-                      key={day}
-                      day={day}
-                      label={page.limits.dayTypes[day]}
-                      register={form.register}
-                      error={
-                        form.formState.errors.availability?.[day]?.secondEnd?.message ??
-                        form.formState.errors.availability?.[day]?.firstEnd?.message
-                      }
-                    />
-                  ))}
-                </div>
-                {!flatHours.any ? (
-                  <p className="mt-2 text-meta text-ink-3">{page.limits.noHours}</p>
-                ) : null}
-              </div>
-
-              {requiresPlanTerms ? (
-                <div className="rounded-md border border-brand/25 bg-brand-soft/40 px-4 py-3">
-                  <h3 className="text-meta font-medium text-ink">{page.plan.title}</h3>
-                  <p className="mt-1 text-meta leading-5 text-ink-2">{page.plan.windows}</p>
-                  {quotaWindowText ? (
-                    <p className="mt-1 text-meta leading-5 text-ink-2">{quotaWindowText}</p>
-                  ) : null}
-                  {matchedVendor?.terms_url ? (
-                    <a
-                      href={matchedVendor.terms_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="mt-1 inline-block text-meta text-brand-ink underline"
+              {/* Collapsed Advanced Section */}
+              <details
+                className="group border-t border-line pt-4"
+                open={advancedOpen}
+                onToggle={(e) => setAdvancedOpen((e.target as HTMLDetailsElement).open)}
+              >
+                <summary className="flex cursor-pointer select-none items-center justify-between text-meta font-medium text-ink hover:text-brand-ink">
+                  <span>高级选填（并发限制、限额、时段与请求头等）</span>
+                  <span className="text-caption text-ink-3 transition-transform group-open:rotate-180">▼</span>
+                </summary>
+                <div className="mt-4 space-y-6">
+                  <div>
+                    <h4 className="text-meta font-medium text-ink">{page.limits.title}</h4>
+                    <p className="mt-0.5 text-meta text-ink-3">{page.limits.lead}</p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <Field
+                      label={page.limits.concurrency}
+                      htmlFor="listing-concurrency"
+                      hint={page.limits.concurrencyHint}
+                      error={form.formState.errors.concurrency?.message}
                     >
-                      {page.plan.termsLink}
-                    </a>
-                  ) : null}
-                  <label className="mt-3 flex items-start gap-2 text-meta text-ink">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 h-4 w-4 shrink-0 accent-brand"
-                      {...form.register('plan_terms_accepted')}
-                    />
-                    <span>{page.plan.terms}</span>
-                  </label>
-                  <p className="mt-1 pl-6 text-meta leading-5 text-ink-3">
-                    {page.plan.termsHint}
-                  </p>
-                  {!values.plan_terms_accepted ? (
-                    <p className="mt-1 pl-6 text-meta text-warn" role="status">
-                      {page.plan.required}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+                      <Input
+                        id="listing-concurrency"
+                        type="number"
+                        min={1}
+                        max={1000}
+                        {...form.register('concurrency', { valueAsNumber: true })}
+                      />
+                    </Field>
+                    <Field
+                      label={page.limits.rpm}
+                      htmlFor="listing-rpm"
+                      hint={page.limits.rpmHint}
+                      error={form.formState.errors.rpm?.message}
+                    >
+                      <Input
+                        id="listing-rpm"
+                        type="number"
+                        min={0}
+                        max={1_000_000}
+                        {...form.register('rpm', { valueAsNumber: true })}
+                      />
+                    </Field>
+                    <Field
+                      label={page.limits.dailyCap}
+                      htmlFor="listing-daily-cap"
+                      hint={page.limits.dailyCapHint}
+                      error={form.formState.errors.daily_cap_yuan?.message}
+                    >
+                      <Input
+                        id="listing-daily-cap"
+                        inputMode="decimal"
+                        {...form.register('daily_cap_yuan')}
+                      />
+                    </Field>
+                  </div>
 
-          {step === 3 ? (
-            <div className="max-w-2xl space-y-5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-body font-semibold text-ink">{page.advanced.title}</h3>
-                  <p className="mt-1 text-meta text-ink-3">{page.advanced.lead}</p>
-                </div>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  aria-expanded={advancedOpen}
-                  onClick={() => setAdvancedOpen((open) => !open)}
-                >
-                  {advancedOpen ? page.advanced.collapse : page.advanced.expand}
-                </Button>
-              </div>
+                  <div className="border-t border-line pt-4">
+                    <h4 className="text-meta font-medium text-ink">{page.limits.hoursTitle}</h4>
+                    <p className="mt-1 text-meta text-ink-3">{page.limits.hoursLead}</p>
+                    <div className="mt-3 grid gap-3">
+                      {DAY_KEYS.map((day) => (
+                        <AvailabilityGroup
+                          key={day}
+                          day={day}
+                          label={page.limits.dayTypes[day]}
+                          register={form.register}
+                          error={
+                            form.formState.errors.availability?.[day]?.secondEnd?.message ??
+                            form.formState.errors.availability?.[day]?.firstEnd?.message
+                          }
+                        />
+                      ))}
+                    </div>
+                    {!flatHours.any ? (
+                      <p className="mt-2 text-meta text-ink-3">{page.limits.noHours}</p>
+                    ) : null}
+                  </div>
 
-              {advancedOpen ? (
-                <div className="space-y-6">
-                  <fieldset>
+                  {requiresPlanTerms ? (
+                    <div className="rounded-md border border-brand/25 bg-brand-soft/40 px-4 py-3">
+                      <h4 className="text-meta font-medium text-ink">{page.plan.title}</h4>
+                      <p className="mt-1 text-meta leading-5 text-ink-2">{page.plan.windows}</p>
+                      {quotaWindowText ? (
+                        <p className="mt-1 text-meta leading-5 text-ink-2">{quotaWindowText}</p>
+                      ) : null}
+                      {matchedVendor?.terms_url ? (
+                        <a
+                          href={matchedVendor.terms_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-1 inline-block text-meta text-brand-ink underline"
+                        >
+                          {page.plan.termsLink}
+                        </a>
+                      ) : null}
+                      <label className="mt-3 flex items-start gap-2 text-meta text-ink">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 shrink-0 accent-brand"
+                          {...form.register('plan_terms_accepted')}
+                        />
+                        <span>{page.plan.terms}</span>
+                      </label>
+                      <p className="mt-1 pl-6 text-meta leading-5 text-ink-3">
+                        {page.plan.termsHint}
+                      </p>
+                      {!values.plan_terms_accepted ? (
+                        <p className="mt-1 pl-6 text-meta text-warn" role="status">
+                          {page.plan.required}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  <fieldset className="border-t border-line pt-4">
                     <legend className="text-meta font-medium text-ink">
                       {page.advanced.keyPolicy}
                     </legend>
@@ -1373,11 +1439,11 @@ export function NewListingPage() {
                     </div>
                   </div>
                 </div>
-              ) : null}
+              </details>
             </div>
           ) : null}
 
-          {step === 4 ? (
+          {step === 2 ? (
             <div className="space-y-5">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
@@ -1503,7 +1569,9 @@ export function NewListingPage() {
 
         <footer className="mt-6 flex items-center justify-between gap-2 border-t border-line pt-4">
           <div className="text-meta text-ink-3">
-            {values.models.length > 0 ? page.models.selected(values.models.length) : null}
+            {step === 0 && !hasPassedKey && keys.length > 0 ? (
+              <span className="text-warn">需至少一个 Key 通过连通性测试</span>
+            ) : null}
           </div>
           <div className="flex items-center gap-2">
             {step > 0 ? (
@@ -1515,23 +1583,13 @@ export function NewListingPage() {
                 {page.actions.back}
               </Button>
             ) : null}
-            {step < 4 ? (
+            {step < 2 ? (
               <Button
-                variant={step === 1 ? 'secondary' : 'primary'}
+                variant="primary"
                 onClick={handleNext}
                 disabled={!canLeaveStep(step, snapshot) || probingKeys}
               >
                 {page.actions.next}
-              </Button>
-            ) : null}
-            {step === 1 ? (
-              <Button
-                type="button"
-                variant="primary"
-                onClick={handleFastTrackVerify}
-                disabled={!canLeaveStep(step, snapshot) || probingKeys}
-              >
-                直接验真上架
               </Button>
             ) : null}
           </div>

@@ -356,14 +356,14 @@ func ensureCustomChannel(db *gorm.DB, sellerID int64, rawURL string, models []st
 func probeCustomChannelKey(ctx context.Context, client *http.Client, db *gorm.DB, rawURL, apiKey string) (string, VerifyResult, []string) {
 	base, host, err := validateCustomBaseURL(rawURL)
 	if err != nil {
-		return "", VerifyResult{FailReason: err.Error()}, nil
+		return "", VerifyResult{FailReason: SimplifyProbeFailureReason(err.Error(), 0)}, nil
 	}
 	// The dry run may classify an unlisted/watch address (that is what the
 	// review queue needs) but a blocked address or a deny-rule match is refused
 	// before any network call.
 	if db != nil {
 		if _, _, terr := CheckTrustPoolDB(db, host, customBasePath(base), strings.TrimSpace(apiKey)); terr != nil {
-			return "", VerifyResult{FailReason: terr.Error()}, nil
+			return "", VerifyResult{FailReason: SimplifyProbeFailureReason(terr.Error(), 0)}, nil
 		}
 	}
 	res := VerifyChannelKey(ctx, client, Vendor{Protocols: VendorProtocols{OpenAI: base}}, apiKey)
@@ -392,14 +392,87 @@ func probeCustomChannelKey(ctx context.Context, client *http.Client, db *gorm.DB
 			sellable = append(sellable, m)
 		}
 	}
-	// /models is not required for probe: many upstreams (e.g. cloud gateways) only expose
-	// /chat/completions. When /models fails or returns empty, allow pool models to be selected
-	// and verify connectivity in the final step.
-	if len(res.Models) == 0 {
-		res.KeyValid = true
-		res.FailReason = ""
-		sellable = allPool
+
+	// Probe connectivity using a max_tokens=1 ping request instead of relying solely on /models.
+	candidatePings := make([]string, 0, 8)
+	if len(sellable) > 0 {
+		candidatePings = append(candidatePings, sellable...)
 	}
+	for _, m := range allPool {
+		if !containsString(candidatePings, m) {
+			candidatePings = append(candidatePings, m)
+			if len(candidatePings) >= 6 {
+				break
+			}
+		}
+	}
+	if len(candidatePings) == 0 {
+		candidatePings = []string{"deepseek-chat", "gpt-4o-mini", "gpt-3.5-turbo"}
+	}
+
+	verifiedModels := make([]string, 0)
+	var lastReason string
+	var lastStatus int
+	pingPassed := false
+
+	for _, cand := range candidatePings {
+		ok, _, lat, reason := probeModelCall(ctx, client, detected, cand, apiKey)
+		if !ok && strings.Contains(reason, "404") {
+			alt := strings.TrimSuffix(detected, "/") + "/v1"
+			if altOk, _, altLat, _ := probeModelCall(ctx, client, alt, cand, apiKey); altOk {
+				ok = true
+				lat = altLat
+				detected = alt
+			}
+		}
+		if ok {
+			pingPassed = true
+			if !containsString(verifiedModels, cand) {
+				verifiedModels = append(verifiedModels, cand)
+			}
+			if lat > 0 {
+				res.LatencyMs = lat
+			}
+		} else {
+			lastReason = reason
+			if strings.Contains(reason, "401") || strings.Contains(reason, "403") {
+				lastStatus = http.StatusUnauthorized
+				break
+			}
+			if strings.Contains(reason, "402") {
+				lastStatus = http.StatusPaymentRequired
+				break
+			}
+		}
+	}
+
+	if pingPassed {
+		res.KeyValid = true
+		res.OK = true
+		res.FailReason = ""
+		if len(sellable) > 0 && len(res.Models) > 0 {
+			var confirmed []string
+			for _, m := range sellable {
+				if containsString(verifiedModels, m) {
+					confirmed = append(confirmed, m)
+				}
+			}
+			if len(confirmed) > 0 {
+				sellable = confirmed
+			}
+		} else if len(verifiedModels) > 0 {
+			sellable = verifiedModels
+		}
+	} else if len(sellable) > 0 && res.KeyValid {
+		// /models responded with valid models
+		res.FailReason = ""
+	} else {
+		res.KeyValid = false
+		res.OK = false
+		res.FailReason = SimplifyProbeFailureReason(lastReason, lastStatus)
+		sellable = nil
+	}
+
 	return detected, res, sellable
 }
 

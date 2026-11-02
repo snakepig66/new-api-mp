@@ -88,7 +88,11 @@ function flowKindLabel(kind: WalletFlowRow['kind']): string {
 }
 
 /** Status label + tone for every flow kind, including seller payouts. */
-function flowStatusMeta(kind: WalletFlowRow['kind'], status: string): {
+function flowStatusMeta(
+  kind: WalletFlowRow['kind'],
+  status: string,
+  createdAt?: string | number | Date,
+): {
   label: string
   tone: TagTone
 } {
@@ -113,9 +117,23 @@ function flowStatusMeta(kind: WalletFlowRow['kind'], status: string): {
   }
   if (kind === 'topup') {
     const labels = copy.pages.consoleWallet.topups.statuses as Record<string, string>
+    let effectiveStatus = status
+    if (status === 'pending' && createdAt) {
+      const createdTime =
+        typeof createdAt === 'number'
+          ? createdAt * (createdAt < 1e11 ? 1000 : 1)
+          : new Date(createdAt).getTime()
+      if (!Number.isNaN(createdTime) && Date.now() - createdTime > 30 * 60 * 1000) {
+        effectiveStatus = 'closed'
+      }
+    }
     const tone: TagTone =
-      status === 'success' ? 'brand' : status === 'pending' ? 'neutral' : 'danger'
-    return { label: labels[status] ?? labels.unknown, tone }
+      effectiveStatus === 'success'
+        ? 'brand'
+        : effectiveStatus === 'pending'
+          ? 'neutral'
+          : 'neutral'
+    return { label: labels[effectiveStatus] ?? labels.unknown, tone }
   }
   return { label: ledgerLabel(status), tone: ledgerTone(status) }
 }
@@ -338,7 +356,7 @@ export function WalletPage() {
               </TableHead>
               <TableBody>
                 {transactions.data.items.map((entry) => {
-                  const status = flowStatusMeta(entry.kind, entry.status)
+                  const status = flowStatusMeta(entry.kind, entry.status, entry.created_at)
                   const description = flowDescription(entry)
                   return (
                     <TableRow key={entry.id}>

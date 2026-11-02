@@ -1245,12 +1245,17 @@ func verifySellerListing(c *gin.Context) {
 	switch listing.Status {
 	case ListingDraft:
 		// allowed
+	case ListingPaused:
+		if err := ResumeListing(db, id); err != nil {
+			common.ApiErrorStatus(c, http.StatusBadRequest, errors.New(err.Error()))
+			return
+		}
 	case ListingVerifying:
 		common.ApiErrorStatus(c, http.StatusConflict, errors.New("verification is already running"))
 		return
 	default:
 		common.ApiErrorStatus(c, http.StatusBadRequest,
-			errors.New("only a draft listing can be re-verified"))
+			errors.New("only a draft or paused listing can be re-verified"))
 		return
 	}
 	// Review-bypass guard. CreateListing parks a custom channel the trust pool
@@ -1336,6 +1341,13 @@ func resumeSellerListing(c *gin.Context) {
 		return
 	}
 	if err := ResumeSellerListing(db, id); err != nil {
+		if errors.Is(err, ErrVerificationRequired) {
+			if rErr := ResumeListing(db, id); rErr == nil {
+				go verifyListingAsync(db, id)
+				common.ApiSuccess(c, gin.H{"id": id, "status": ListingVerifying})
+				return
+			}
+		}
 		if errors.Is(err, ErrListingSystemPaused) {
 			common.ApiErrorStatus(c, http.StatusConflict, ErrListingSystemPaused)
 			return
@@ -1943,7 +1955,7 @@ func postSellerListingProbe(c *gin.Context) {
 				sellable = verifiedModels
 			} else {
 				keyRes.KeyValid = false
-				keyRes.FailReason = lastFailReason
+				keyRes.FailReason = SimplifyProbeFailureReason(lastFailReason, 0)
 			}
 		} else {
 			verifiedModels = sellable
@@ -1967,7 +1979,10 @@ func postSellerListingProbe(c *gin.Context) {
 		if len(req.Models) > 0 && len(verifiedModels) == 0 {
 			probeOK = false
 		}
-		failReason := stripKey(keyRes.FailReason, apiKey)
+		failReason := ""
+		if !probeOK {
+			failReason = SimplifyProbeFailureReason(stripKey(keyRes.FailReason, apiKey), 0)
+		}
 		if sellable == nil {
 			sellable = make([]string, 0)
 		}
@@ -2255,8 +2270,8 @@ func probeFailReason(detail string) string {
 }
 
 // listingPauseReason derives the paused listing's reason from the stored pause
-// reason first (plan quota / patrol / migration), then its most recent failed
-// probe, falling back to "manual" (卖家手动暂停).
+// reason first (plan quota / patrol / migration), then its most recent probe (if failed),
+// falling back to "manual" (卖家手动暂停).
 func listingPauseReason(listing Listing, probes []Probe) string {
 	if listing.Status != ListingPaused {
 		return ""
@@ -2264,9 +2279,10 @@ func listingPauseReason(listing Listing, probes []Probe) string {
 	if reason := strings.TrimSpace(listing.PauseReason); reason != "" {
 		return reason
 	}
-	for _, p := range probes {
-		if !p.OK {
-			if reason := probeFailReason(p.Detail); reason != "" {
+	if len(probes) > 0 {
+		// probes are ordered by id DESC; check the latest probe only.
+		if !probes[0].OK {
+			if reason := probeFailReason(probes[0].Detail); reason != "" {
 				return reason
 			}
 		}
@@ -2275,7 +2291,7 @@ func listingPauseReason(listing Listing, probes []Probe) string {
 }
 
 // listingPauseReasonForList derives the paused reason for the list response.
-// Unlike the detail path it queries the latest failed probe itself, because
+// Unlike the detail path it queries the latest probe itself, because
 // the list endpoint does not load probes.
 func listingPauseReasonForList(db *gorm.DB, listing Listing) string {
 	if listing.Status != ListingPaused {
@@ -2285,10 +2301,12 @@ func listingPauseReasonForList(db *gorm.DB, listing Listing) string {
 		return reason
 	}
 	var p Probe
-	if err := db.Where("listing_id = ? AND ok = ?", listing.ID, false).
+	if err := db.Where("listing_id = ?", listing.ID).
 		Order("id DESC").Take(&p).Error; err == nil {
-		if reason := probeFailReason(p.Detail); reason != "" {
-			return reason
+		if !p.OK {
+			if reason := probeFailReason(p.Detail); reason != "" {
+				return reason
+			}
 		}
 	}
 	return "manual"

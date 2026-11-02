@@ -177,7 +177,7 @@ describe('wallet unified transactions table', () => {
     expect(paidRow?.textContent).toContain('已到账')
 
     const pendingRow = screen.getByText('trade-8').closest('tr')
-    expect(pendingRow?.textContent).toContain('待支付')
+    expect(pendingRow?.textContent).toContain('已关闭')
   })
 
   it('filters the stream by the 全部 / 消费 / 充值 tabs', async () => {
@@ -225,7 +225,7 @@ describe('wallet transaction labels', () => {
       tone: 'brand',
     })
     expect(walletStatusMeta('topup', 'pending')).toEqual({
-      label: '待支付',
+      label: '未支付',
       tone: 'neutral',
     })
     expect(walletStatusMeta('topup', 'failed')).toEqual({

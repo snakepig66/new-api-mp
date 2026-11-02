@@ -339,6 +339,39 @@ func TestSellerPauseResume(t *testing.T) {
 	row, err = GetListing(f.db, listing.ID)
 	require.NoError(t, err)
 	assert.Equal(t, ListingLive, row.Status)
+
+	// Earlier failed probe followed by a passing probe: when paused, pause_reason
+	// must remain "manual", not the historical failure, and resume must succeed.
+	require.NoError(t, f.db.Create(&Probe{
+		ListingID: listing.ID,
+		Type:      ProbeTypeVerify,
+		OK:        false,
+		Detail:    `{"fail_reason":"vendor /models returned http 404"}`,
+	}).Error)
+	require.NoError(t, f.db.Create(&Probe{
+		ListingID: listing.ID,
+		Type:      ProbeTypeVerify,
+		OK:        true,
+		Detail:    `{"fail_reason":""}`,
+	}).Error)
+
+	w = f.do(t, http.MethodPost, "/api/marketplace/seller/listings/"+strconv.FormatInt(listing.ID, 10)+"/pause", nil, int(f.sellerID))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	w = f.do(t, http.MethodGet, "/api/marketplace/seller/listings", nil, int(f.sellerID))
+	require.Equal(t, http.StatusOK, w.Code)
+	var listResp struct {
+		Data []sellerListingView `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &listResp))
+	require.Len(t, listResp.Data, 1)
+	assert.Equal(t, "manual", listResp.Data[0].PauseReason)
+
+	w = f.do(t, http.MethodPost, "/api/marketplace/seller/listings/"+strconv.FormatInt(listing.ID, 10)+"/resume", nil, int(f.sellerID))
+	require.Equal(t, http.StatusOK, w.Code)
+	row, err = GetListing(f.db, listing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ListingLive, row.Status)
 }
 
 // TestSellerBalance covers the balance endpoint: available + pending from the

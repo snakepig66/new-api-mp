@@ -93,9 +93,8 @@ export function isListingResumable(status: string): boolean {
 }
 
 /**
- * A seller may only lift their own pause. Platform pauses (plan quota window,
- * patrol failure, migration) carry a reason/resume_at and are restored by the
- * jobs, so showing 「恢复」 for them would only produce a 409.
+ * A seller may lift a pause. Platform holds with a pending resume_at wait for
+ * their timer, and system migrations are restored by migration jobs.
  */
 export function isListingSellerResumable(listing: {
   status: string
@@ -103,13 +102,14 @@ export function isListingSellerResumable(listing: {
   resume_at?: string
 }): boolean {
   if (listing.status !== 'paused') return false
-  if (listing.pause_reason && listing.pause_reason !== 'manual') return false
-  return !listing.resume_at
+  if (listing.resume_at) return false
+  if (listing.pause_reason === 'migration') return false
+  return true
 }
 
-/** A draft listing is one whose verification has not passed (or failed). */
+/** A draft or paused listing can be re-verified. */
 export function isListingReverifiable(listing: { status: string }): boolean {
-  return listing.status === 'draft'
+  return listing.status === 'draft' || listing.status === 'paused'
 }
 
 export function isListingKeyReplaceable(_status: string): boolean {

@@ -71,6 +71,7 @@ export function HomePage() {
   // popularity proxy, so the strip is ordered by supply and then by model id.
   const top = useMemo(() => {
     return [...(models.data ?? [])]
+      .filter((m) => (m.channel_count ?? 0) > 0 && (m.listing_count ?? 0) > 0)
       .sort((a, b) => b.listing_count - a.listing_count || a.model.localeCompare(b.model))
       .slice(0, 6)
   }, [models.data])

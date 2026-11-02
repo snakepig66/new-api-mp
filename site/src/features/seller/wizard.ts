@@ -1,25 +1,24 @@
 /**
  * 新建渠道向导的步骤状态机（纯函数，方便单测）。
  *
- * 五步：地址与 Key → 模型 → 限制 → 高级 → 验真。页面用 react-hook-form
- * 保存字段，这里只决定「能否离开当前步 / 能否跳到某一步 / 能否提交」以及
- * 验真矩阵的计算。
+ * 三步：1 地址与 Key → 2 模型与价格 → 3 验真上架。
+ * 限制与高级合并在第 2 步底部的「高级选填」折叠区。
  */
 
 import type { ProbeResult, TrustPoolInfo } from './api'
 import { parseYuanToMicro } from './money-input'
 
-export const WIZARD_STEP_COUNT = 5
-export const WIZARD_LAST_STEP = 4
+export const WIZARD_STEP_COUNT = 3
+export const WIZARD_LAST_STEP = 2
 
 /** Stable step identifiers for navigation and tests. */
-export const WIZARD_STEP_IDS = ['url-key', 'models', 'limits', 'advanced', 'verify'] as const
+export const WIZARD_STEP_IDS = ['url-keys', 'models', 'verify'] as const
 export type WizardStepId = (typeof WIZARD_STEP_IDS)[number]
 
 /** Sentinel vendor id for a seller-defined custom upstream (custom_channel.go). */
 export const CUSTOM_VENDOR_ID = 'custom'
 
-export type WizardStep = 0 | 1 | 2 | 3 | 4
+export type WizardStep = 0 | 1 | 2
 
 export interface WizardSnapshot {
   /** Absolute https upstream address typed by the seller. */
@@ -30,6 +29,8 @@ export interface WizardSnapshot {
   customBaseURL?: string
   /** One key per line, already trimmed and de-duplicated. */
   apiKeys: string[]
+  /** True when at least one key passed connectivity check. */
+  hasPassedKey?: boolean
   /** Trust-pool recognition of the address (null before the first probe). */
   trust: TrustPoolInfo | null
   /** Probe of the first key (the recognition probe). */
@@ -51,12 +52,20 @@ export interface WizardSnapshot {
   planTermsAccepted?: boolean
 }
 
-export const DEFAULT_MULTIPLIER_MILLI = 500
+export const DEFAULT_MULTIPLIER_MILLI = 800
+
+/** Format multiplier (e.g. 800 -> "官方价 8 折", 500 -> "官方价 5 折"). */
+export function formatMultiplierAsDiscount(milli: number): string {
+  const discount = milli / 100
+  const formatted = Number.isInteger(discount) ? discount.toString() : discount.toFixed(1).replace(/\.0$/, '')
+  return `官方价 ${formatted} 折`
+}
 
 export const EMPTY_WIZARD_SNAPSHOT: WizardSnapshot = {
   url: '',
   vendorId: '',
   apiKeys: [],
+  hasPassedKey: false,
   trust: null,
   probe: null,
   availableModels: [],
@@ -150,15 +159,12 @@ export function canLeaveStep(step: WizardStep, snapshot: WizardSnapshot): boolea
       return (
         validCustomURL(snapshot.url) &&
         validApiKeys(snapshot.apiKeys) &&
-        snapshot.trust?.trust !== 'blocked'
+        snapshot.trust?.trust !== 'blocked' &&
+        Boolean(snapshot.hasPassedKey)
       )
     case 1:
-      return modelsValid(snapshot)
+      return modelsValid(snapshot) && limitsValid(snapshot) && snapshot.headersValid !== false
     case 2:
-      return limitsValid(snapshot)
-    case 3:
-      return snapshot.headersValid !== false
-    case 4:
       return canSubmit(snapshot)
   }
 }

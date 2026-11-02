@@ -29,10 +29,10 @@ const (
 )
 
 var (
-	// ErrPayoutBelowMinimum is returned when the requested amount is below ¥50.
+	// ErrPayoutBelowMinimum is returned when the requested amount is below ¥10.
 	ErrPayoutBelowMinimum = errors.New("marketplace: payout amount below minimum")
 	// ErrPayoutTooFrequent is returned when a non-rejected payout already exists
-	// inside the rolling 7-day window.
+	// inside the rolling 3-day window.
 	ErrPayoutTooFrequent = errors.New("marketplace: payout too frequent")
 	// ErrPayoutInsufficient is returned when the withdrawable balance is not
 	// enough to cover the requested amount.

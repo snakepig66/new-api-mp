@@ -3,8 +3,10 @@ import { copy } from '@/copy'
 import type { ConsoleNavGroup } from './ConsoleSidebar'
 
 /**
- * One grouped navigation for every console role. Seller and operator groups
- * are absent rather than disabled, so a buyer never sees a dead entry.
+ * One grouped navigation for every console role:
+ * 1. "我要用": 概览、API Key、使用记录、钱包
+ * 2. "我要卖": 我的渠道、收益与提现
+ * 3. "更多": 被调明细、模型知识库、帮助中心、账号，管理员可见运营看板、团体工具
  */
 export function consoleGroups({
   sellerActive,
@@ -15,49 +17,41 @@ export function consoleGroups({
 }): ConsoleNavGroup[] {
   const nav = copy.pages.console.nav
   const sellerNav = copy.pages.sellerCommon.nav
-  const shell = copy.consoleShell
 
   return [
     {
-      label: shell.groups.usage,
+      label: '我要用',
       items: [
         { to: '/console', label: nav.overview, exact: true },
         { to: '/console/keys', label: nav.keys },
         { to: '/console/records', label: nav.records },
+        { to: '/console/wallet', label: nav.wallet },
       ],
     },
     {
-      label: shell.groups.funds,
-      items: [{ to: '/console/wallet', label: nav.wallet }],
+      label: '我要卖',
+      items: [
+        { to: '/console/listings', label: sellerNav.listings },
+        { to: '/console/earnings', label: sellerNav.payouts },
+      ],
     },
-    ...(sellerActive
-      ? [
-          {
-            label: shell.groups.share,
-            items: [
-              { to: '/console/listings', label: sellerNav.listings },
-              { to: '/seller/records', label: '被调明细' },
-              { to: '/console/earnings', label: sellerNav.payouts },
-            ],
-          },
-        ]
-      : []),
     {
-      label: shell.groups.account,
-      items: [{ to: '/console/account', label: nav.account }],
+      label: '更多',
+      collapsible: true,
+      items: [
+        ...(sellerActive ? [{ to: '/seller/records', label: '被调明细' }] : []),
+        { to: '/models', label: '模型知识库' },
+        { to: '/docs', label: '帮助中心' },
+        { to: '/console/account', label: nav.account },
+        ...(isAdmin
+          ? [
+              { to: '/console/ops/metrics', label: '运营看板' },
+              { to: '/console/ops/tools', label: '团体工具' },
+              { to: '/console/ops/models', label: '模型目录' },
+              { to: '/console/ops/review', label: '发布审核' },
+            ]
+          : []),
+      ],
     },
-    ...(isAdmin
-      ? [
-          {
-            label: shell.groups.ops,
-            items: [
-              { to: '/console/ops/models', label: shell.ops.models },
-              { to: '/console/ops/review', label: shell.ops.review },
-              { to: '/console/ops/metrics', label: shell.ops.metrics },
-              { to: '/console/ops/tools', label: shell.ops.tools },
-            ],
-          },
-        ]
-      : []),
   ]
 }

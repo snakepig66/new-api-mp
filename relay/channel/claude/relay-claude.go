@@ -19,6 +19,8 @@ import (
 	"github.com/QuantumNous/new-api/setting/model_setting"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 func stopReasonClaude2OpenAI(reason string) string {
@@ -126,6 +128,21 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			// 解决 AWS Bedrock 等上游返回的 message_delta 缺少这些字段的问题
 			if !shouldSkipClaudeMessageDeltaUsagePatch(info) {
 				data = patchClaudeMessageDeltaUsageData(data, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo))
+			}
+		}
+		if info != nil && info.OriginModelName != "" {
+			if claudeResponse.Message != nil {
+				claudeResponse.Message.Model = info.OriginModelName
+			}
+			if gjson.Get(data, "message.model").Exists() {
+				if patched, err := sjson.Set(data, "message.model", info.OriginModelName); err == nil {
+					data = patched
+				}
+			}
+			if gjson.Get(data, "model").Exists() {
+				if patched, err := sjson.Set(data, "model", info.OriginModelName); err == nil {
+					data = patched
+				}
 			}
 		}
 		countClaudeStreamBillableTools(info, &claudeResponse)
@@ -414,6 +431,11 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 	case types.RelayFormatClaude:
+		if info != nil && info.OriginModelName != "" && gjson.GetBytes(data, "model").Exists() {
+			if patched, err := sjson.SetBytes(data, "model", info.OriginModelName); err == nil {
+				data = patched
+			}
+		}
 		responseData = data
 	case types.RelayFormatGemini:
 		{

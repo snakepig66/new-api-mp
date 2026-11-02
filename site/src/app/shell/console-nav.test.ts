@@ -8,42 +8,36 @@ function labels(groups: ReturnType<typeof consoleGroups>): string[] {
 }
 
 describe('console navigation', () => {
-  it('shows only usage, funds and account for a buyer', () => {
+  it('groups navigation into 我要用, 我要卖 and 更多', () => {
     const groups = consoleGroups({ sellerActive: false, isAdmin: false })
-    expect(groups.map((group) => group.label)).toEqual([
-      copy.consoleShell.groups.usage,
-      copy.consoleShell.groups.funds,
-      copy.consoleShell.groups.account,
-    ])
-    expect(labels(groups)).not.toContain(copy.pages.sellerCommon.nav.listings)
-    expect(labels(groups)).not.toContain(copy.consoleShell.ops.pricing)
+    expect(groups.map((group) => group.label)).toEqual(['我要用', '我要卖', '更多'])
+    expect(labels(groups)).toContain('概览')
+    expect(labels(groups)).toContain('API Key')
+    expect(labels(groups)).toContain('使用记录')
+    expect(labels(groups)).toContain('钱包')
+    expect(labels(groups)).toContain('我的渠道')
+    expect(labels(groups)).toContain('收益与提现')
+    expect(labels(groups)).toContain('模型知识库')
+    expect(labels(groups)).toContain('帮助中心')
+    expect(labels(groups)).toContain('账号设置')
+    expect(labels(groups)).not.toContain('运营看板')
+    expect(labels(groups)).not.toContain('团体工具')
   })
 
-  it('adds the share group only after onboarding', () => {
+  it('shows 被调明细 in 更多 for active sellers', () => {
     const groups = consoleGroups({ sellerActive: true, isAdmin: false })
-    expect(labels(groups)).toEqual(
-      expect.arrayContaining([
-        copy.pages.sellerCommon.nav.listings,
-        copy.pages.sellerCommon.nav.payouts,
-      ]),
-    )
-    expect(groups.map((group) => group.label)).toContain(copy.consoleShell.groups.share)
-    // 开通引导 stays out of the sidebar; it is reached from the overview card.
-    expect(labels(groups)).not.toContain(copy.pages.sellerCommon.nav.onboarding)
+    expect(labels(groups)).toContain('被调明细')
   })
 
-  it('adds the operator group only for admins', () => {
+  it('adds operator items in 更多 only for admins', () => {
     const groups = consoleGroups({ sellerActive: false, isAdmin: true })
-    expect(groups.map((group) => group.label)).toContain(copy.consoleShell.groups.ops)
     expect(labels(groups)).toEqual(
       expect.arrayContaining([
-        copy.consoleShell.ops.models,
-        copy.consoleShell.ops.review,
-        copy.consoleShell.ops.metrics,
-        copy.consoleShell.ops.tools,
+        '运营看板',
+        '团体工具',
+        '模型目录',
+        '发布审核',
       ]),
     )
-    expect(labels(groups)).not.toContain(copy.consoleShell.ops.pricing)
-    expect(labels(groups)).not.toContain(copy.consoleShell.ops.trustPool)
   })
 })

@@ -61,7 +61,7 @@ const squareItems = [
     },
     listing_count: 1,
     channel_count: 1,
-    official_available: true,
+    official_available: false,
     metrics: {
       status: 'degraded',
       success_rate_1h_milli: 800,
@@ -85,6 +85,24 @@ const squareItems = [
       flat: {
         input_micro_per_mtok: 3_000_000,
         output_micro_per_mtok: 12_000_000,
+        cache_read_micro_per_mtok: 0,
+        cache_write_micro_per_mtok: 0,
+      },
+    },
+    listing_count: 1,
+    channel_count: 1,
+    official_available: false,
+    buyer_price_source: 'market',
+    generated_at: '2030-01-01T00:00:00+08:00',
+  },
+  {
+    model: 'glm-zero-channel',
+    origin_vendor: 'zhipu',
+    vendor: 'zhipu',
+    prices: {
+      flat: {
+        input_micro_per_mtok: 1_000_000,
+        output_micro_per_mtok: 4_000_000,
         cache_read_micro_per_mtok: 0,
         cache_write_micro_per_mtok: 0,
       },
@@ -216,7 +234,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function renderPage(initialEntry = '/models') {
+function renderPage(initialEntry = '/models?view=table') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: 0 } },
   })
@@ -257,12 +275,14 @@ describe('models page', () => {
     expect(row?.textContent).toContain('出 ¥8.00')
   })
 
-  it('marks a model with no supply as official price', async () => {
+  it('hides models that have no channels from the square', async () => {
     renderPage()
-    await screen.findByText('glm-4-plus')
+    await screen.findByText('deepseek-chat')
 
-    const row = screen.getByText('glm-4-plus').closest('tr')
-    expect(row?.textContent).toContain('官方价')
+    // Models with channels are displayed
+    expect(screen.getByText('glm-4-plus')).toBeTruthy()
+    // Models without channels are hidden
+    expect(screen.queryByText('glm-zero-channel')).toBeNull()
   })
 
   it('filters by a vendor pill, syncs the URL, and shows the vendor model row', async () => {
@@ -275,7 +295,7 @@ describe('models page', () => {
       expect(screen.queryByText('deepseek-chat')).toBeNull()
     })
     expect(screen.getAllByText('glm-4-plus').length).toBeGreaterThan(0)
-    expect(router.state.location.search).toEqual({ vendor: 'zhipu' })
+    expect(router.state.location.search).toMatchObject({ vendor: 'zhipu' })
 
     // The duplicate per-vendor mini cards are gone; the table row is the
     // single source of truth for the filtered model.
@@ -336,5 +356,22 @@ describe('models page', () => {
       .map((link) => link.textContent)
     expect(names[0]).toBe('deepseek-chat')
     expect(names[1]).toBe('deepseek-r1')
+  })
+
+  it('renders cards view by default and allows toggling to table', async () => {
+    const { router } = renderPage('/models')
+    await screen.findByText('deepseek-chat')
+
+    // In cards view, vendor and pricing elements are rendered
+    expect(screen.getAllByText('DeepSeek').length).toBeGreaterThan(0)
+    expect(screen.getByText('glm-4-plus')).toBeTruthy()
+
+    // Toggle to table view
+    const tableBtn = screen.getByRole('button', { name: '表格视图' })
+    fireEvent.click(tableBtn)
+
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ view: 'table' })
+    })
   })
 })

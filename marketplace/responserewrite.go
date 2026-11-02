@@ -105,16 +105,10 @@ func (w *modelRewriteWriter) setUpstream(names ...string) {
 
 func (w *modelRewriteWriter) rewrite(data []byte) []byte {
 	out := data
-	if len(w.names) > 0 {
-		w.observeModel(out)
+	w.observeModel(out)
+	if w.standard != "" {
 		replacement := []byte(`"model":"` + w.standard + `"`)
-		for _, re := range w.names {
-			if re.Match(out) {
-				// Literal replacement: a '$' in the standard id must not be read as a
-				// capture-group expansion.
-				out = re.ReplaceAllLiteral(out, replacement)
-			}
-		}
+		out = modelValuePattern.ReplaceAllLiteral(out, replacement)
 	}
 	if bytes.Contains(out, []byte("system_fingerprint")) {
 		out = systemFingerprintPattern.ReplaceAllLiteral(out, nil)

@@ -803,7 +803,34 @@ func GoLive(db *gorm.DB, id int64) error {
 
 // PauseListing moves live/canary → paused.
 func PauseListing(db *gorm.DB, id int64) error {
-	return transitionListingFrom(db, id, []string{ListingLive, ListingCanary}, ListingPaused)
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var row Listing
+		if err := lockForUpdate(tx).Where("id = ?", id).First(&row).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrListingNotFound
+			}
+			return err
+		}
+		res := tx.Model(&Listing{}).
+			Where("id = ? AND status IN ?", id, []string{ListingLive, ListingCanary}).
+			Updates(map[string]any{
+				"status":          ListingPaused,
+				"pause_reason":    "manual",
+				"previous_status": row.Status,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return fmt.Errorf("%w: live|canary -> paused (current %s)", ErrInvalidTransition, row.Status)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	mirrorListingUpdateLogged(db, id)
+	return nil
 }
 
 // ResumeListing moves paused → draft. A pause (patrol failure, operator
@@ -866,7 +893,7 @@ func ResumeSellerListing(db *gorm.DB, id int64) error {
 		if row.Status != ListingPaused {
 			return fmt.Errorf("%w: %s -> live", ErrInvalidTransition, row.Status)
 		}
-		if strings.TrimSpace(row.PauseReason) != "" || row.ResumeAt != nil {
+		if (strings.TrimSpace(row.PauseReason) != "" && row.PauseReason != "manual") || row.ResumeAt != nil {
 			return ErrListingSystemPaused
 		}
 		// A seller pause never restores a listing whose last recorded
@@ -883,7 +910,7 @@ func ResumeSellerListing(db *gorm.DB, id int64) error {
 			return fmt.Errorf("%w: the latest verification failed", ErrVerificationRequired)
 		}
 		res := tx.Model(&Listing{}).
-			Where("id = ? AND status = ? AND (pause_reason IS NULL OR pause_reason = '')", id, ListingPaused).
+			Where("id = ? AND status = ? AND (pause_reason IS NULL OR pause_reason = '' OR pause_reason = 'manual')", id, ListingPaused).
 			Updates(map[string]any{
 				"status":          ListingLive,
 				"pause_reason":    "",

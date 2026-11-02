@@ -212,39 +212,34 @@ async function advance(steps: number) {
 
 async function reachVerify(url = 'https://api.deepseek.com', keys = 'sk-good-1234567890') {
   await fillAddressAndKeys(url, keys)
-  await advance(4)
-  await screen.findByRole('heading', { level: 2, name: '验真' })
+  await advance(2)
+  await screen.findByRole('heading', { level: 2, name: '验真上架' })
 }
 
-describe('new listing wizard: five steps', () => {
-  it('counts the three required fields as they are filled', async () => {
+describe('new listing wizard: three steps', () => {
+  it('counts required fields as they are filled', async () => {
     renderPage()
-    expect(await screen.findByText('必填 0/3')).toBeTruthy()
+    expect(await screen.findByText('必填 0/2')).toBeTruthy()
 
     const urlInput = await screen.findByLabelText('上游地址')
     fireEvent.change(urlInput, { target: { value: 'https://api.deepseek.com' } })
-    // Matching the address preselects the vendor's models, so two of three.
-    expect(await screen.findByText('必填 2/3')).toBeTruthy()
+    expect(await screen.findByText('必填 1/2')).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('上游 API Key'), {
       target: { value: 'sk-good-1234567890' },
     })
-    expect(await screen.findByText('必填 3/3', {}, { timeout: 4000 })).toBeTruthy()
+    expect(await screen.findByText('必填 2/2', {}, { timeout: 4000 })).toBeTruthy()
   })
 
-  it('walks forward through all five steps and back', async () => {
+  it('walks forward through all three steps and back', async () => {
     await fillAddressAndKeys('https://api.deepseek.com', 'sk-good-1234567890')
     await advance(1)
-    expect(await screen.findByRole('heading', { level: 2, name: '模型' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 2, name: '模型与价格' })).toBeTruthy()
     await advance(1)
-    expect(await screen.findByRole('heading', { level: 2, name: '限制' })).toBeTruthy()
-    await advance(1)
-    expect(await screen.findByRole('heading', { level: 2, name: '高级' })).toBeTruthy()
-    await advance(1)
-    expect(await screen.findByRole('heading', { level: 2, name: '验真' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 2, name: '验真上架' })).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: '上一步' }))
-    expect(await screen.findByRole('heading', { level: 2, name: '高级' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 2, name: '模型与价格' })).toBeTruthy()
   })
 
   it('fills a common address, probes it and shows the trust-pool badge', async () => {
@@ -284,9 +279,11 @@ describe('new listing wizard: five steps', () => {
     expect(screen.getByTestId('derived-deepseek-flash').textContent).toContain('0.30')
   })
 
-  it('collects limits and hours before the advanced step', async () => {
+  it('collects limits and hours inside the collapsed advanced section on step 1', async () => {
     await fillAddressAndKeys('https://api.deepseek.com', 'sk-good-1234567890')
-    await advance(2)
+    await advance(1)
+
+    fireEvent.click(screen.getByText('高级选填（并发限制、限额、时段与请求头等）'))
 
     const concurrency = screen.getByLabelText('并发数') as HTMLInputElement
     const rpm = screen.getByLabelText('RPM') as HTMLInputElement
@@ -303,26 +300,22 @@ describe('new listing wizard: five steps', () => {
     expect((weekday as HTMLInputElement).checked).toBe(true)
 
     await clickNext()
-    expect(await screen.findByRole('heading', { level: 2, name: '高级' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 2, name: '验真上架' })).toBeTruthy()
   })
 
   it('keeps advanced collapsed and locks headers for a listed address', async () => {
     await fillAddressAndKeys('https://api.deepseek.com', 'sk-good-1234567890')
-    await advance(3)
+    await advance(1)
 
-    expect(screen.queryByLabelText('请求头')).toBeNull()
-    const expand = screen.getByRole('button', { name: '展开高级设置' })
-    expect(expand.getAttribute('aria-expanded')).toBe('false')
-    fireEvent.click(expand)
-    expect(expand.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(screen.getByText('高级选填（并发限制、限额、时段与请求头等）'))
     expect(await screen.findByText('已收录地址不允许自定义请求头。')).toBeTruthy()
     expect(screen.queryByLabelText('请求头')).toBeNull()
   })
 
   it('unlocks request headers for an unlisted address', async () => {
     await fillAddressAndKeys('https://unlisted.example.com/v1', 'sk-good-1234567890')
-    await advance(3)
-    fireEvent.click(screen.getByRole('button', { name: '展开高级设置' }))
+    await advance(1)
+    fireEvent.click(screen.getByText('高级选填（并发限制、限额、时段与请求头等）'))
     expect(await screen.findByLabelText('请求头')).toBeTruthy()
   })
 })
@@ -331,7 +324,7 @@ describe('new listing wizard: verification', () => {
   it('shows key × model × endpoint results and publishes only passing models', async () => {
     await reachVerify('https://api.deepseek.com', 'sk-good-1234567890\nsk-bad-1234567890')
 
-    expect(await screen.findByRole('heading', { level: 2, name: '验真' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 2, name: '验真上架' })).toBeTruthy()
     await waitFor(() => expect(screen.getAllByText('通过').length).toBeGreaterThan(0))
     expect(screen.getAllByText('未通过').length).toBeGreaterThan(0)
     expect(screen.getAllByText('key rejected by upstream').length).toBeGreaterThan(0)
@@ -351,7 +344,10 @@ describe('new listing wizard: verification', () => {
   })
 
   it('keeps every selected model as a draft for each key', async () => {
-    await reachVerify('https://unlisted.example.com/v1', 'sk-bad-1234567890')
+    await reachVerify(
+      'https://unlisted.example.com/v1',
+      'sk-good-1234567890\nsk-bad-1234567890',
+    )
 
     fireEvent.click(await screen.findByRole('button', { name: '失败的保留为草稿' }))
     await waitFor(() => {
@@ -359,8 +355,12 @@ describe('new listing wizard: verification', () => {
         ([url, init]) =>
           String(url) === '/api/marketplace/seller/listings' && init?.method === 'POST',
       )
-      expect(calls).toHaveLength(1)
-      const body = JSON.parse(String(calls[0][1]?.body))
+      expect(calls.length).toBeGreaterThanOrEqual(1)
+      const badCall = calls.find(
+        (c) => JSON.parse(String(c[1]?.body)).api_key === 'sk-bad-1234567890',
+      )
+      expect(badCall).toBeTruthy()
+      const body = JSON.parse(String(badCall![1]?.body))
       expect(body.api_key).toBe('sk-bad-1234567890')
       expect(body.models).toEqual(['deepseek-flash', 'deepseek-v4-pro'])
       expect(body.custom_base_url).toBe('https://unlisted.example.com/v1')
@@ -377,8 +377,8 @@ describe('new listing wizard: verification', () => {
     expect(await screen.findByLabelText('第 1 个 Key 的权重')).toBeTruthy()
     expect(screen.getByLabelText('第 2 个 Key 的权重')).toBeTruthy()
 
-    await advance(4)
-    await screen.findByRole('heading', { level: 2, name: '验真' })
+    await advance(2)
+    await screen.findByRole('heading', { level: 2, name: '验真上架' })
 
     fireEvent.click(await screen.findByRole('button', { name: '失败的保留为草稿' }))
     await waitFor(() => {

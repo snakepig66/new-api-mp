@@ -115,7 +115,7 @@ export function RecordDetailContent({ detail, view }: RecordDetailContentProps) 
             <dd className="mt-0.5 flex flex-wrap items-center gap-1">
               <Tag tone="neutral"><ModelName model={record.model} size="sm" /></Tag>
               {record.converted ? <Tag tone="warning">{text.converted}</Tag> : null}
-              {record.upstream_model && record.upstream_model !== record.model ? (
+              {!buyer && record.upstream_model && record.upstream_model !== record.model ? (
                 <span className="text-meta text-ink-2">
                   → <span className="font-mono">{record.upstream_model}</span>
                 </span>

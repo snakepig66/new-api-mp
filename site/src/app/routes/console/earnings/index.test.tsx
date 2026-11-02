@@ -187,7 +187,7 @@ describe('seller earnings overview', () => {
     // 收入 stat card, plus the month-income/platform-fee line under the balances.
     expect(screen.getByText('¥15.60')).toBeTruthy()
     expect(screen.getByText('本月收入 ¥15.60 · 平台费（累计） ¥0.70')).toBeTruthy()
-    expect(screen.getByText('持有期内收入，T+7 后转可提现。')).toBeTruthy()
+    expect(screen.getByText('持有期内收入，T+3 后转可提现。')).toBeTruthy()
   })
 
   it('mounts both stacked charts as accessible images', async () => {
