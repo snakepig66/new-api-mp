@@ -819,7 +819,7 @@ function CreatedKey({
               </pre>
               {config.key === 'claudeCode' ? (
                 <p className="border-t border-line/60 px-3 py-1.5 text-caption text-ink-3">
-                  Claude Code 填根地址，不要加 /v1
+                  填根地址，不要加 /v1
                 </p>
               ) : null}
             </div>
