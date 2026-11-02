@@ -665,6 +665,11 @@ func BeginDistribute(c *gin.Context, modelName string) (channel *model.Channel, 
 		return nil, true, http.StatusServiceUnavailable, errPreviousResponseUnavailable
 	}
 	has, qerr := hasLiveListingForModel(db, modelName, endpointKind)
+	if qerr == nil && !has && endpointKind == relayconstant.EndpointAnthropicMessages {
+		// Claude-protocol requests may be served by an OpenAI-chat listing through
+		// protocol conversion (see Selector.SelectWithProbe).
+		has, qerr = hasLiveListingForModel(db, modelName, relayconstant.EndpointOpenAIChat)
+	}
 	if qerr != nil {
 		common.SysError(common.LogText("marketplace: query listings for model %s: %s", modelName, qerr.Error()))
 		return nil, true, http.StatusServiceUnavailable, errors.New("marketplace: failed to query listings")
