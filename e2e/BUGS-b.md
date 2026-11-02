@@ -87,3 +87,20 @@
   微信渠道仅展示了 `微信支付 (姓名)`，丢失了手机号和收款码信息，导致打款确认时无法核对打款手机号。
 - **修复方案**:
   在打款确认弹窗中为微信支付补充账号手机号与收款码提示。
+
+---
+
+### BUG-006: 自定义渠道挂单在已存在 custom channel slug 时绕过了出网信任池（Trust Pool）检查与管理员审核（pending_review）
+
+- **所属模块**: `marketplace/listing.go`
+- **严重程度**: High (安全与业务流程漏洞：导致未收录/观察名单的上游绕过管理员审核直接上架，甚至被封禁的上游地址在已存在 slug 时被继续挂单)
+- **复现步骤**:
+  1. 卖家通过新建渠道向导输入自定义上游地址，探活成功后后端自动预创建对应私有渠道（`custom-<seller_id>-<hash>`）。
+  2. 随后前端通过 `vendorForURL` 识别该自定义渠道，向 `POST /api/marketplace/seller/listings` 提交挂单时带上 `vendor_id: "custom-..."` 且 `custom_base_url` 为空。
+  3. `CreateListing` 仅在 `in.VendorID == ""` 且 `in.CustomBaseURL != ""` 时执行出网信任池检查（`CheckTrustPoolDB`）；当带入既有 custom channel slug 时跳过了信任判定。
+- **预期结果**:
+  只要属于自定义私有渠道（`isCustomChannelSlug(in.VendorID)`），即使挂单请求复用了已生成的 `vendor_id`，也必须针对其上游主机与 API Key 进行出网信任池校验；对未收录（unlisted）或观察中（watch）的上游必须将初始状态置为 `pending_review`（待管理员审核通过后方可验真接流），对已屏蔽（blocked）的上游必须拒绝挂单。
+- **实际结果**:
+  由于跳过了校验，`trust` 变量保持默认值 `TrustTrusted`，挂单被直接标记为 `draft` 并触发异步验真直接升级至 `canary` 接流，完全绕过了管理员人工审核流程，且存在违规或被封上游被二次挂单的风险。
+- **修复方案**:
+  在 `marketplace/listing.go` 中，当 `isCustomChannelSlug(in.VendorID)` 且 `in.CustomBaseURL == ""` 时，提取该自定义渠道绑定的上游地址，补充调用 `CheckTrustPoolDB`。若为 blocked 立即拦截报错；若为 watch/unlisted 将 `trust` 设定为相应状态，确保正确进入 `ListingPendingReview`。补齐单元测试 `TestCreateListingCustomChannelSlugPreservesTrustReview`。

@@ -428,6 +428,23 @@ func CreateListing(db *gorm.DB, in CreateListingInput) (Listing, error) {
 	if !ok {
 		return Listing{}, fmt.Errorf("%w: %q", ErrVendorNotWhitelisted, in.VendorID)
 	}
+	if isCustomChannelSlug(in.VendorID) && strings.TrimSpace(in.CustomBaseURL) == "" {
+		customBase := VendorOpenAIBase(vendor)
+		if customBase != "" {
+			base, host, err := validateCustomBaseURL(customBase)
+			if err != nil {
+				return Listing{}, err
+			}
+			t, _, terr := CheckTrustPoolDB(db, host, customBasePath(base), strings.TrimSpace(in.APIKey))
+			if terr != nil {
+				return Listing{}, terr
+			}
+			if t == TrustBlocked {
+				return Listing{}, fmt.Errorf("%w: host %q", ErrTrustPoolBlocked, host)
+			}
+			trust = t
+		}
+	}
 	vendor, err = in.validate(vendor)
 	if err != nil {
 		return Listing{}, err

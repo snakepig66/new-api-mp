@@ -894,6 +894,33 @@ func TestCreateListingUntrustedUpstreamsWaitForReview(t *testing.T) {
 	}
 }
 
+// TestCreateListingCustomChannelSlugPreservesTrustReview ensures that when a
+// seller creates a listing referencing an existing custom channel slug
+// (VendorID set, CustomBaseURL empty, as sent by the frontend wizard), the
+// trust check still executes and puts untrusted upstreams into pending_review.
+func TestCreateListingCustomChannelSlugPreservesTrustReview(t *testing.T) {
+	db := newListingTestDB(t)
+	l1, err := CreateListing(db, CreateListingInput{
+		SellerID:        10023,
+		APIKey:          uniqueTestKey("sk-first-key"),
+		CustomBaseURL:   "https://unlisted-slug.example.com",
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 500,
+	})
+	require.NoError(t, err)
+	require.Equal(t, ListingPendingReview, l1.Status)
+
+	l2, err := CreateListing(db, CreateListingInput{
+		SellerID:        10023,
+		APIKey:          uniqueTestKey("sk-second-key"),
+		VendorID:        l1.Vendor,
+		Models:          []string{"deepseek-flash"},
+		MultiplierMilli: 500,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, ListingPendingReview, l2.Status, "second listing referencing custom vendor slug must still enter pending_review")
+}
+
 // TestCreateListingTrustedCustomChannelAutoVerifies covers the trusted branch
 // end to end: the listing starts in draft and the ordinary verification may
 // promote it to canary.
