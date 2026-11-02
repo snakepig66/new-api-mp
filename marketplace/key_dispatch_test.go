@@ -248,10 +248,23 @@ func TestKeyDispatch_LegacyKeyMigration_BehaviorPreserved(t *testing.T) {
 	// 4. Run migration
 	require.NoError(t, marketplace.MigrateKeyTypes(h.db))
 
-	// Verify the token's KeyType was migrated to shared
+	// Legacy keys default to standard, never shared (an old rule flipped them
+	// to market-only on every boot).
 	var updatedToken model.Token
 	require.NoError(t, h.db.First(&updatedToken, legacyToken.Id).Error)
-	assert.Equal(t, model.KeyTypeShared, updatedToken.KeyType, "legacy token must be migrated to shared")
+	assert.Equal(t, model.KeyTypeStandard, updatedToken.KeyType, "legacy token must default to standard")
+
+	// Re-running the migration on a key the user made shared, or made
+	// standard, must leave it alone.
+	require.NoError(t, h.db.Model(&model.Token{}).Where("id = ?", legacyToken.Id).Update("key_type", model.KeyTypeShared).Error)
+	require.NoError(t, marketplace.MigrateKeyTypes(h.db))
+	require.NoError(t, h.db.First(&updatedToken, legacyToken.Id).Error)
+	assert.Equal(t, model.KeyTypeShared, updatedToken.KeyType, "migration must not change an explicit shared key")
+	require.NoError(t, h.db.Model(&model.Token{}).Where("id = ?", legacyToken.Id).Update("key_type", model.KeyTypeStandard).Error)
+	require.NoError(t, marketplace.MigrateKeyTypes(h.db))
+	require.NoError(t, h.db.First(&updatedToken, legacyToken.Id).Error)
+	assert.Equal(t, model.KeyTypeStandard, updatedToken.KeyType, "migration must not turn a standard key with prefs into shared")
+	require.NoError(t, h.db.Model(&model.Token{}).Where("id = ?", legacyToken.Id).Update("key_type", model.KeyTypeShared).Error)
 
 	// Verify catalogModel was expanded into mp_key_models for this key
 	allowed, err := marketplace.KeyPrefAllowsModel(h.db, int64(legacyToken.Id), catalogModel)

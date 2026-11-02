@@ -70,7 +70,7 @@ func Migrate(db *gorm.DB) error {
 	return nil
 }
 
-// MigrateKeyTypes migrates existing marketplace tokens to key_type = 'shared',
+// MigrateKeyTypes gives legacy tokens key_type = 'standard' (never shared),
 // and expands any model_scope = 'all' preferences to explicit mp_key_models rows.
 func MigrateKeyTypes(db *gorm.DB) error {
 	if db == nil {
@@ -79,8 +79,12 @@ func MigrateKeyTypes(db *gorm.DB) error {
 	if !db.Migrator().HasTable("tokens") || !db.Migrator().HasTable("mp_key_prefs") {
 		return nil
 	}
-	// 1. Mark existing tokens that have mp_key_prefs or mp_key_models as shared.
-	if err := db.Exec("UPDATE tokens SET key_type = 'shared' WHERE id IN (SELECT token_id FROM mp_key_prefs UNION SELECT token_id FROM mp_key_models)").Error; err != nil {
+	// 1. Legacy tokens with no key_type default to standard. This runs on every
+	// boot, so it must never turn an existing key into shared: an earlier rule
+	// that marked every token with mp_key_prefs as shared flipped all old keys
+	// back to market-only on each deploy and broke them. Shared is only ever
+	// chosen explicitly by the user when creating or editing a key.
+	if err := db.Exec("UPDATE tokens SET key_type = 'standard' WHERE key_type IS NULL OR key_type = ''").Error; err != nil {
 		return fmt.Errorf("migrate key types: %w", err)
 	}
 
