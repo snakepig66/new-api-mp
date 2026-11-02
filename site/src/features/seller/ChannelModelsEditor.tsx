@@ -8,7 +8,7 @@ import { Tag } from '@/ui/tag'
 import { formatYuan } from '@/lib/money'
 
 import type { PoolModelOption, PoolModelPrice, SellerModelConfig, UpstreamModelOption } from './api'
-import { formatMultiplierAsDiscount } from './wizard'
+import { MultiplierSlider } from './MultiplierSlider'
 
 /**
  * ChannelModelsEditor — the ShareLLM-style model picker shared by the new
@@ -286,21 +286,16 @@ export function ChannelModelsEditor({
                     {config.upstream_model && config.upstream_model !== config.model ? (
                       <span className="font-mono text-caption text-ink-3">← {config.upstream_model}</span>
                     ) : null}
-                    <div className="ml-auto flex items-center gap-2">
-                      <span className="rounded bg-brand-soft/80 px-2 py-0.5 text-meta font-medium text-brand-ink">
-                        {formatMultiplierAsDiscount(config.multiplier_milli)}
-                      </span>
+                    <div className="ml-auto flex flex-wrap items-center gap-2">
                       <label className="text-meta text-ink-3" htmlFor={`mult-${config.model}`}>
                         {editorText.multiplier}
                       </label>
-                      <Input
+                      <MultiplierSlider
                         id={`mult-${config.model}`}
-                        className="h-8 w-20"
-                        inputMode="decimal"
                         aria-label={`${config.model} ${editorText.multiplier}`}
-                        aria-invalid={invalid}
                         value={text}
-                        onChange={(event) => setMultiplier(config.model, event.target.value)}
+                        onChange={(_val, newText) => setMultiplier(config.model, newText)}
+                        sliderClassName="w-20 sm:w-28"
                       />
                       <Button variant="secondary" size="sm" onClick={() => removeModel(config.model)}>
                         {editorText.remove}

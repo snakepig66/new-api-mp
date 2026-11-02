@@ -49,6 +49,7 @@ import {
   type DuplicateKeyIssue,
 } from '@/features/seller/errors'
 import { parseYuanToMicro } from '@/features/seller/money-input'
+import { MultiplierSlider } from '@/features/seller/MultiplierSlider'
 import {
   buildVerificationMatrix,
   canLeaveStep,
@@ -1126,21 +1127,15 @@ export function NewListingPage() {
                   <p className="mt-1 text-meta text-ink-3">{page.models.lead}</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <label className="flex items-center gap-2 text-meta text-ink-3">
-                    {page.models.batchLabel}
-                    <Input
-                      className="w-20"
-                      inputMode="decimal"
-                      value={batchMultiplier}
-                      onChange={(event) => {
-                        setBatchMultiplier(event.target.value)
-                        setBatchApplied(false)
-                      }}
-                    />
-                  </label>
-                  <span className="rounded bg-brand-soft/80 px-2 py-1 text-meta font-medium text-brand-ink">
-                    {formatMultiplierAsDiscount(Math.round(Number(batchMultiplier || 0) * 1000))}
-                  </span>
+                  <span className="text-meta text-ink-3">{page.models.batchLabel}</span>
+                  <MultiplierSlider
+                    aria-label={page.models.batchLabel}
+                    value={batchMultiplier}
+                    onChange={(_val, text) => {
+                      setBatchMultiplier(text)
+                      setBatchApplied(false)
+                    }}
+                  />
                   <Button variant="secondary" size="sm" onClick={applyBatchMultiplier}>
                     {page.models.applyAll}
                   </Button>

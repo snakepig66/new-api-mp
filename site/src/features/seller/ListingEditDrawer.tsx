@@ -69,6 +69,7 @@ import {
   type SellerModelConfig,
 } from '@/features/seller/api'
 import { ChannelModelsEditor, editorText, validMultiplierMilli } from '@/features/seller/ChannelModelsEditor'
+import { MultiplierSlider } from '@/features/seller/MultiplierSlider'
 import { AsyncError, Field, Skeleton, notify } from '@/features/seller/components'
 import { probeFailReasonLabel, sellerErrorMessage } from '@/features/seller/errors'
 import { historyProbeLatencyMs, probeTypeLabel } from '@/features/seller/probe'
@@ -1125,20 +1126,19 @@ export function ListingEditDrawer({
               ) : (
                 <>
                   <div className="flex flex-wrap items-end gap-3 glass-inset px-3.5 py-3">
-                    <div className="w-32">
+                    <div>
                       <label
                         htmlFor="listing-edit-batch-multiplier"
                         className="block text-meta font-medium text-ink"
                       >
                         {page.models.batch.multiplier}
                       </label>
-                      <Input
+                      <MultiplierSlider
                         id="listing-edit-batch-multiplier"
-                        className="mt-1 h-9"
-                        inputMode="decimal"
-                        placeholder={page.models.batch.multiplierPlaceholder}
+                        aria-label={page.models.batch.multiplier}
+                        className="mt-1"
                         value={batchText}
-                        onChange={(event) => setBatchText(event.target.value)}
+                        onChange={(_val, text) => setBatchText(text)}
                       />
                     </div>
                     <Button
@@ -1281,18 +1281,15 @@ export function ListingEditDrawer({
                                 </span>
                               ) : null}
                             </div>
-                            <div className="flex items-center gap-2">
-                              <Input
+                            <div className="flex flex-wrap items-center gap-2">
+                              <MultiplierSlider
                                 aria-label={page.models.multiplierLabel(row.model)}
-                                className="h-9 w-24 text-right"
-                                inputMode="decimal"
-                                invalid={!multiplierValid}
                                 value={draft?.multiplierText ?? milliText(row.multiplier_milli)}
-                                onChange={(event) =>
-                                  updateDraft(row, { multiplierText: event.target.value })
+                                onChange={(_val, text) =>
+                                  updateDraft(row, { multiplierText: text })
                                 }
+                                sliderClassName="w-20 sm:w-28"
                               />
-                              <span className="text-meta text-ink-3">x</span>
                               <Button
                                 variant="secondary"
                                 size="sm"

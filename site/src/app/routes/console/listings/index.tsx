@@ -55,6 +55,7 @@ import { sellerErrorMessage } from '@/features/seller/errors'
 import { ListingBatchBar } from '@/features/seller/ListingBatchBar'
 import { ListingEditDrawer } from '@/features/seller/ListingEditDrawer'
 import { ListingHealthCard } from '@/features/seller/ListingHealthCard'
+import { MultiplierSlider } from '@/features/seller/MultiplierSlider'
 import {
   isListingKeyReplaceable,
   isListingPausable,
@@ -223,36 +224,18 @@ function MultiplierDialog({
           htmlFor="multiplier-input"
           hint={page.multiplierDialog.hint}
         >
-          <div className="flex items-center gap-3">
-            <input
-              id="multiplier-input"
-              type="range"
-              min={1}
-              max={1000}
-              step={1}
-              value={clamped}
-              disabled={locked}
-              onChange={(event) => {
-                const next = Number(event.target.value)
-                setMilli(next)
-                setMilliText((next / 1000).toFixed(3))
-              }}
-              className="h-1.5 w-full cursor-pointer accent-brand disabled:cursor-not-allowed"
-            />
-            <Input
-              aria-label={page.multiplierDialog.label}
-              className="w-24 shrink-0 text-right"
-              inputMode="decimal"
-              disabled={locked}
-              value={milliText}
-              onChange={(event) => {
-                const text = event.target.value
-                setMilliText(text)
-                const next = Number(text)
-                if (Number.isFinite(next)) setMilli(Math.round(next * 1000))
-              }}
-            />
-          </div>
+          <MultiplierSlider
+            id="multiplier-input"
+            aria-label={page.multiplierDialog.label}
+            value={clamped / 1000}
+            disabled={locked}
+            sliderClassName="w-full flex-1"
+            className="w-full"
+            onChange={(next, text) => {
+              setMilli(Math.round(next * 1000))
+              setMilliText(text)
+            }}
+          />
         </Field>
 
         {locked ? (

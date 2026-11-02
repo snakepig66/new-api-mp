@@ -16,6 +16,7 @@ import { copy } from '@/copy'
 import { formatMultiplier } from '@/lib/multiplier'
 import { formatDateTime } from '@/lib/time'
 import { Button, Input, SaveBar, useToast } from '@/ui'
+import { MultiplierSlider } from '@/features/seller/MultiplierSlider'
 
 import {
   batchListingModels,
@@ -132,23 +133,17 @@ export function ListingBatchBar({ listings, kindById, onClear }: ListingBatchBar
             <label htmlFor="batch-multiplier" className="text-meta text-ink-3">
               {page.batch.multiplierLabel}
             </label>
-            <Input
+            <MultiplierSlider
               id="batch-multiplier"
-              className="w-24"
-              inputMode="decimal"
+              aria-label={page.batch.multiplierLabel}
               disabled={busy}
               value={milliText}
-              onChange={(event) => {
-                setMilliText(event.target.value)
+              onChange={(_val, text) => {
+                setMilliText(text)
                 setRejected([])
               }}
+              sliderClassName="w-24 sm:w-32"
             />
-            <span className="text-caption text-ink-3">
-              {page.batch.multiplierHint(
-                formatMultiplier(range.min),
-                formatMultiplier(range.max),
-              )}
-            </span>
           </div>
           <Button
             variant="secondary"
