@@ -129,7 +129,7 @@ func AddListingModels(db *gorm.DB, listingID, sellerID int64, configs []sellerMo
 			continue
 		}
 		if _, ok := sellableModelPrice(db, name, now); !ok {
-			return nil, errors.New("模型 " + name + " 不在平台模型池或没有官方价格")
+			return nil, errors.New("模型 " + name + " 不在平台模型池或没有基准价格")
 		}
 		milli := mc.MultiplierMilli
 		if milli <= 0 {

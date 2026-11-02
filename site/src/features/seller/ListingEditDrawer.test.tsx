@@ -343,11 +343,11 @@ describe('ListingEditDrawer', () => {
     // 密钥区块
     expect(screen.getAllByRole('button', { name: '更换 Key' }).length).toBeGreaterThan(0)
 
-    // 模型与价格：平台费说明 + 官方价/买家价/到手价
-    expect(screen.getByText('到手价为买家价扣除 7% 平台费后的金额。')).toBeTruthy()
-    expect(screen.getByText('¥1.00')).toBeTruthy() // 官方输入价
+    // 模型与价格：平台费说明 + 基准价/买家价/预计实收
+    expect(screen.getByText('预计实收为买家价扣除 7% 平台费后的金额。')).toBeTruthy()
+    expect(screen.getByText('¥1.00')).toBeTruthy() // 基准输入价
     expect(screen.getByText('¥0.60')).toBeTruthy() // 买家输入价 600_000
-    expect(screen.getByText('¥1.116')).toBeTruthy() // 到手价 1_200_000 × 0.93
+    expect(screen.getByText('¥1.116')).toBeTruthy() // 预计实收 1_200_000 × 0.93
 
     // 限制区块：营业时段摘要
     expect(screen.getByText('09:00–12:00')).toBeTruthy()

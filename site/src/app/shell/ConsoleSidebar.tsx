@@ -2,7 +2,7 @@ import { Link, useRouterState } from '@tanstack/react-router'
 import { useEffect, useState, type ReactNode } from 'react'
 
 import { cn } from '@/lib/cn'
-import { getSession } from '@/lib/session'
+import { navigateToOpsLegacy } from '@/lib/ops-legacy'
 
 export interface ConsoleNavItem {
   to: string
@@ -265,15 +265,16 @@ function SidebarNavLink({
   )
 
   if (item.external || item.to.startsWith('/ops-legacy')) {
-    let href = item.to
-    if (item.to.startsWith('/ops-legacy')) {
-      const token = getSession()?.accessToken
-      if (token) {
-        href = `${item.to}${item.to.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
-      }
-    }
+    const isOpsLegacy = item.to.startsWith('/ops-legacy')
+    const handleClick = isOpsLegacy
+      ? (e: React.MouseEvent<HTMLAnchorElement>) => {
+          onNavigate?.()
+          void navigateToOpsLegacy(e)
+        }
+      : onNavigate
+
     return (
-      <a href={href} onClick={onNavigate} className={className}>
+      <a href={item.to} onClick={handleClick} className={className}>
         {content}
       </a>
     )

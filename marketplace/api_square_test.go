@@ -407,14 +407,8 @@ func TestApiSquareModelDetail(t *testing.T) {
 	assert.Equal(t, int64(300), apiNum(t, detail, "multiplier_min_milli"))
 	assert.Equal(t, int64(500), apiNum(t, detail, "multiplier_max_milli"))
 
-	official, ok := detail["official_prices"].(map[string]any)
-	require.True(t, ok, "official_prices must be an object, detail: %v", detail)
-	flatOfficial, ok := official[TierFlat].(map[string]any)
-	require.True(t, ok, "flat official price must be present")
-	assert.Equal(t, int64(1_000_000), apiNum(t, flatOfficial, "input_micro_per_mtok"))
-	assert.Equal(t, int64(4_000_000), apiNum(t, flatOfficial, "output_micro_per_mtok"))
-	assert.Equal(t, int64(1), apiNum(t, flatOfficial, "version"))
-	assert.Len(t, official, 1, "peak/off-peak are retired; only the flat tier")
+	_, hasOfficial := detail["official_prices"]
+	assert.False(t, hasOfficial, "official_prices must not be exposed on the public square detail")
 
 	// The detail view carries the same buyer prices as the list view.
 	prices, ok := detail["prices"].(map[string]any)

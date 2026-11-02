@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { SquareModel, SquareModelDetail } from './api'
+import type { SquareModel } from './api'
 import { formatCompactYuan, ModelCard } from './ModelCard'
 
 // Mock clipboard
@@ -38,7 +38,7 @@ describe('ModelCard', () => {
     expect(formatCompactYuan(0)).toBe('¥0')
   })
 
-  it('renders discount pricing with strikethrough official price and discount percentage badge', () => {
+  it('renders single price without strikethrough, discount badges or official comparison', () => {
     const model: SquareModel = {
       model: 'deepseek-v4.1-flash',
       origin_vendor: 'deepseek',
@@ -70,66 +70,49 @@ describe('ModelCard', () => {
       },
     }
 
-    const detail: SquareModelDetail = {
-      ...model,
-      multiplier_min_milli: 800,
-      multiplier_max_milli: 1000,
-      official_prices: {
-        flat: {
-          version: 1,
-          input_micro_per_mtok: 1_000_000,
-          output_micro_per_mtok: 4_000_000,
-          cache_read_micro_per_mtok: 200_000,
-          cache_write_micro_per_mtok: 0,
-        },
-      },
-      channels: [],
-    }
-
-    render(<ModelCard model={model} detail={detail} />)
+    render(<ModelCard model={model} />)
 
     expect(screen.getByText('deepseek-v4.1-flash')).toBeDefined()
     expect(screen.getByText('DeepSeek')).toBeDefined()
 
-    // Official prices strikethrough
-    expect(screen.getByText('¥1')).toBeDefined()
-    expect(screen.getByText('¥4')).toBeDefined()
-    expect(screen.getByText('¥0.2')).toBeDefined()
+    // Single price display
+    expect(screen.getByText('¥0.14')).toBeDefined()
+    expect(screen.getByText('¥0.56')).toBeDefined()
+    expect(screen.getByText('¥0.028')).toBeDefined()
 
-    // Discount badges: (1 - 0.14/1) * 100 = 86%
-    const badges = screen.getAllByText('-86%')
-    expect(badges.length).toBe(3)
+    // No strikethrough official prices or discount badges
+    expect(screen.queryByText('¥1')).toBeNull()
+    expect(screen.queryByText('¥4')).toBeNull()
+    expect(screen.queryByText(/-86%/)).toBeNull()
 
     // Latency & Throughput footer
     expect(screen.getByText(/延迟 1.18s · 吞吐 119.8t\/s/)).toBeDefined()
   })
 
-  it('renders dynamic pricing when no official benchmark exists', () => {
+  it('renders 暂未开售 when no listings exist', () => {
     const model: SquareModel = {
       model: 'deepseek-flash',
       origin_vendor: 'deepseek',
       vendor: 'deepseek',
       prices: {
         flat: {
-          input_micro_per_mtok: 958_904,
-          output_micro_per_mtok: 3_835_600,
-          cache_read_micro_per_mtok: 19_178,
+          input_micro_per_mtok: 1_000_000,
+          output_micro_per_mtok: 4_000_000,
+          cache_read_micro_per_mtok: 200_000,
           cache_write_micro_per_mtok: 0,
         },
       },
-      listing_count: 1,
-      channel_count: 1,
-      buyer_price_source: 'market',
+      listing_count: 0,
+      channel_count: 0,
+      buyer_price_source: 'official',
       generated_at: '2026-11-01T00:00:00Z',
     }
 
     render(<ModelCard model={model} />)
 
     expect(screen.getByText('deepseek-flash')).toBeDefined()
-    expect(screen.getByText('动态计费')).toBeDefined()
-    expect(screen.getByText('¥0.958904')).toBeDefined()
-    expect(screen.getByText('¥3.8356')).toBeDefined()
-    expect(screen.getByText('¥0.019178')).toBeDefined()
+    expect(screen.getByText('暂未开售')).toBeDefined()
+    expect(screen.queryByText('¥1')).toBeNull()
   })
 
   it('copies model name on copy button click', async () => {

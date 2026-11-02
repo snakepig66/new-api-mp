@@ -16,7 +16,6 @@ import {
 } from '@/ui'
 
 import type {
-  SquareChannel,
   SquareModel,
   SquareModelDetail,
   SquareMetrics,
@@ -28,7 +27,7 @@ import { vendorLabel, vendorLogo, type VendorLookup } from './vendors'
 
 export interface ModelTableProps {
   models: SquareModel[]
-  /** Detail enrichment for 官方价 and the expanded channel list. */
+  /** Detail enrichment for the expanded channel list. */
   details?: Map<string, SquareModelDetail>
   detailsLoading?: boolean
   /** Vendor catalogue metadata; enables display names and logos. */
@@ -66,14 +65,6 @@ function statusLevel(metrics: SquareMetrics | undefined): StatusLevel | 'unknown
   return metrics?.status ?? 'unknown'
 }
 
-/** Buyer price of one channel: official × coefficient × multiplier. */
-function channelInputPrice(officialInput: number | string | undefined, channel: SquareChannel): number | null {
-  const base = Number(officialInput)
-  if (!Number.isFinite(base) || base <= 0 || channel.min_multiplier_milli <= 0) return null
-  const coefficient = channel.coefficient_milli > 0 ? channel.coefficient_milli : 1000
-  return Math.round((base * coefficient * channel.min_multiplier_milli) / 1_000_000)
-}
-
 function skeletonCell(width = 'w-16') {
   return <div className={`h-3.5 animate-pulse rounded-sm bg-line ${width}`} />
 }
@@ -109,13 +100,11 @@ function ExpandedRow({
   model,
   detail,
   detailLoading,
-  officialInput,
   columns,
 }: {
   model: SquareModel
   detail?: SquareModelDetail
   detailLoading: boolean
-  officialInput: number | string | undefined
   columns: number
 }) {
   const t = copy.pages.models.expand
@@ -145,42 +134,35 @@ function ExpandedRow({
                       <th className="px-3 py-2 text-right font-normal">{t.success}</th>
                       <th className="px-3 py-2 text-right font-normal">{t.latency}</th>
                       <th className="px-3 py-2 text-right font-normal">{t.listings}</th>
-                      <th className="px-3 py-2 text-right font-normal">{t.channelPrice}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {detail.channels.map((channel) => {
-                      const price = channelInputPrice(officialInput, channel)
-                      return (
-                        <tr key={channel.channel_slug} className="border-t border-line">
-                          <td className="px-3 py-2">
-                            <div className="flex min-w-0 items-center gap-2">
-                              <span className="truncate text-ink">{channel.name || channel.channel_slug}</span>
-                              <Tag tone={channel.kind === 'official' ? 'brand' : 'neutral'}>
-                                {channel.kind === 'official'
-                                  ? t.officialTag
-                                  : channel.kind === 'plan'
-                                    ? t.planTag
-                                    : t.thirdPartyTag}
-                              </Tag>
-                              <StatusDot level={channel.metrics?.status ?? 'unknown'} />
-                            </div>
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums text-ink-2">
-                            {channel.metrics ? rateText(channel.metrics.success_rate_24h_milli) ?? t.noSample : t.noSample}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums text-ink-2">
-                            {latencyText(channel.metrics?.latency_ms) ?? t.noSample}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums text-ink-2">
-                            {channel.listing_count}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums text-ink">
-                            {price === null ? <Missing /> : `${formatYuan(price)}${copy.pages.models.perMillion}`}
-                          </td>
-                        </tr>
-                      )
-                    })}
+                    {detail.channels.map((channel) => (
+                      <tr key={channel.channel_slug} className="border-t border-line">
+                        <td className="px-3 py-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="truncate text-ink">{channel.name || channel.channel_slug}</span>
+                            <Tag tone={channel.kind === 'official' ? 'brand' : 'neutral'}>
+                              {channel.kind === 'official'
+                                ? t.officialTag
+                                : channel.kind === 'plan'
+                                  ? t.planTag
+                                  : t.thirdPartyTag}
+                            </Tag>
+                            <StatusDot level={channel.metrics?.status ?? 'unknown'} />
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-ink-2">
+                          {channel.metrics ? rateText(channel.metrics.success_rate_24h_milli) ?? t.noSample : t.noSample}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-ink-2">
+                          {latencyText(channel.metrics?.latency_ms) ?? t.noSample}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-ink-2">
+                          {channel.listing_count}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -364,7 +346,6 @@ export function ModelTable({
               const origin = originVendorOf(model)
               const row = currentPrices(model)
               const detail = details?.get(model.model)
-              const official = detail?.official_prices?.flat
               const metrics = model.metrics
               const isOpen = expanded === model.model
               const logo = modelLogo(model.model) || vendorLogo(origin, vendorMeta)
@@ -414,17 +395,16 @@ export function ModelTable({
                       </div>
                     </TableCell>
                     <TableCell numeric>
-                      {row ? (
+                      {model.buyer_price_source === 'official' || model.listing_count === 0 ? (
+                        <div className="leading-tight">
+                          <span className="text-meta text-ink-3">暂未开售</span>
+                        </div>
+                      ) : row ? (
                         <div className="leading-tight tabular-nums">
                           <div className="text-ink">{formatYuan(row.input_micro_per_mtok)}</div>
                           <div className="mt-0.5 text-meta text-ink-3">
                             {copy.pages.models.outputPrefix} {formatYuan(row.output_micro_per_mtok)}
                           </div>
-                          {model.buyer_price_source === 'official' || model.listing_count === 0 ? (
-                            <Tag tone="brand" className="mt-1">
-                              {copy.pages.models.officialPrice}
-                            </Tag>
-                          ) : null}
                         </div>
                       ) : (
                         <Missing />
@@ -463,7 +443,6 @@ export function ModelTable({
                       model={model}
                       detail={detail}
                       detailLoading={detailsLoading}
-                      officialInput={official?.input_micro_per_mtok}
                       columns={columnCount}
                     />
                   ) : null}

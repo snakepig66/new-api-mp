@@ -5,6 +5,7 @@
  * 限制与高级合并在第 2 步底部的「高级选填」折叠区。
  */
 
+import { formatYuan } from '@/lib/money'
 import type { ProbeResult, TrustPoolInfo } from './api'
 import { parseYuanToMicro } from './money-input'
 
@@ -54,11 +55,18 @@ export interface WizardSnapshot {
 
 export const DEFAULT_MULTIPLIER_MILLI = 800
 
-/** Format multiplier (e.g. 800 -> "官方价 8 折", 1000 -> "官方价 10 折", 500 -> "官方价 5 折"). */
+/** Format multiplier (e.g. 800 -> "0.80x", with base price -> "0.80x · ¥0.80/M"). */
+export function formatMultiplierText(milli: number, basePriceMicro?: number): string {
+  const mult = (milli / 1000).toFixed(2)
+  if (basePriceMicro !== undefined && Number.isFinite(basePriceMicro) && basePriceMicro > 0) {
+    const actualMicro = Math.round((basePriceMicro * milli) / 1000)
+    return `${mult}x · ${formatYuan(actualMicro)}/M`
+  }
+  return `${mult}x`
+}
+
 export function formatMultiplierAsDiscount(milli: number): string {
-  const discount = milli / 100
-  const rounded = Math.round(discount * 100) / 100
-  return `官方价 ${rounded} 折`
+  return formatMultiplierText(milli)
 }
 
 export const EMPTY_WIZARD_SNAPSHOT: WizardSnapshot = {

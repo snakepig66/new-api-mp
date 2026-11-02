@@ -288,7 +288,7 @@ function ReplaceKeyDialog({
 }
 
 // ---------------------------------------------------------------------------
-// 模型价格表：每个模型一张 计费项 的小表，官方价/买家价/到手价。
+// 模型价格表：每个模型一张 计费项 的小表，基准价/买家价/预计实收。
 // ---------------------------------------------------------------------------
 
 const PRICE_DIMENSIONS: {
@@ -343,7 +343,7 @@ function ModelPriceTable({
             official !== undefined && effectiveMilli > 0
               ? Math.round((official * effectiveMilli) / 1000)
               : buyerPrices?.[dimension.key]
-          // 到手价 = 买家价 × (1 - 平台费)。整数微元上取整，仅用于展示。
+          // 预计实收 = 买家价 × (1 - 平台费)。整数微元上取整，仅用于展示。
           const net =
             buyer !== undefined ? Math.round((buyer * (100 - feePercent)) / 100) : undefined
 
@@ -368,7 +368,7 @@ function ModelPriceTable({
       </div>
       <div className="flex items-center justify-between border-t border-line/30 bg-surface-2/30 px-3.5 py-1.5 text-caption text-ink-3">
         <span>价格单位：元 / 1M tokens</span>
-        <span>{feePercent > 0 ? `到手价已扣除 ${feePercent}% 平台费` : '平台服务费 0%'}</span>
+        <span>{feePercent > 0 ? `预计实收已扣除 ${feePercent}% 平台费` : '平台服务费 0%'}</span>
       </div>
     </div>
   )
@@ -1362,6 +1362,7 @@ export function ListingEditDrawer({
                               min={range.min / 1000}
                               max={range.max / 1000}
                               step={0.01}
+                              basePriceMicro={row.official_prices.flat?.input_micro_per_mtok}
                               onChange={(_val, text) =>
                                 updateDraft(row, { multiplierText: text })
                               }

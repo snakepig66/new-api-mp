@@ -132,10 +132,9 @@ type squareChannelView struct {
 // and the per-channel sellable qualifications (§5 阶段 5).
 type squareModelDetail struct {
 	squareModelEntry
-	MultiplierMinMilli int64                           `json:"multiplier_min_milli"`
-	MultiplierMaxMilli int64                           `json:"multiplier_max_milli"`
-	OfficialPrices     map[string]squareOfficialPrices `json:"official_prices"`
-	Channels           []squareChannelView             `json:"channels"`
+	MultiplierMinMilli int64               `json:"multiplier_min_milli"`
+	MultiplierMaxMilli int64               `json:"multiplier_max_milli"`
+	Channels           []squareChannelView `json:"channels"`
 }
 
 // squareChannelSupply is the live/canary listing aggregate of one channel
@@ -595,7 +594,6 @@ func getSquareModel(c *gin.Context) {
 		squareModelEntry:   entry,
 		MultiplierMinMilli: 1000,
 		MultiplierMaxMilli: 1000,
-		OfficialPrices:     make(map[string]squareOfficialPrices, 3),
 		Channels:           loadSquareChannels(db, model.Name, s),
 	}
 	now := time.Now()
@@ -608,24 +606,6 @@ func getSquareModel(c *gin.Context) {
 	if s != nil && s.count > 0 {
 		detail.MultiplierMinMilli = s.minMult
 		detail.MultiplierMaxMilli = s.maxMult
-	}
-	// 各时段官方价: raw price-book rows per tier, no flat fallback — a
-	// flat-only vendor shows its single flat row, not three copies of it.
-	origin := originVendorOf(model)
-	for _, tier := range []string{TierFlat} {
-		pb, err := priceAt(db, model.Name, origin, tier, entry.GeneratedAt)
-		if err != nil {
-			continue
-		}
-		detail.OfficialPrices[tier] = squareOfficialPrices{
-			squareTierPrices: squareTierPrices{
-				InputMicroPerMTok:      pb.InputMicroPerMTok,
-				OutputMicroPerMTok:     pb.OutputMicroPerMTok,
-				CacheReadMicroPerMTok:  pb.CacheReadMicroPerMTok,
-				CacheWriteMicroPerMTok: pb.CacheWriteMicroPerMTok,
-			},
-			Version: pb.Version,
-		}
 	}
 	common.ApiSuccess(c, detail)
 }
