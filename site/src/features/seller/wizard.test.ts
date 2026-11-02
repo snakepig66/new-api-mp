@@ -138,6 +138,12 @@ describe('wizard custom URL and headers', () => {
     expect(validCustomURL('  https://api.example.com  ')).toBe(true)
     expect(validCustomURL('https://api.example.com#frag')).toBe(false)
     expect(validCustomURL('https://')).toBe(false)
+    // loopback allows http
+    expect(validCustomURL('http://127.0.0.1:3202')).toBe(true)
+    expect(validCustomURL('http://localhost:3202')).toBe(true)
+    expect(validCustomURL('http://[::1]:3202')).toBe(true)
+    // non-loopback requires https
+    expect(validCustomURL('http://api.example.com')).toBe(false)
   })
 
   it('accepts key: value and key=value header lines', () => {

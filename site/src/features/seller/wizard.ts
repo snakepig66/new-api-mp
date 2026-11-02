@@ -107,11 +107,17 @@ export function validApiKeys(keys: readonly string[]): boolean {
  */
 export function validCustomURL(raw: string): boolean {
   const text = raw.trim()
-  if (!/^https:\/\/[a-zA-Z0-9][a-zA-Z0-9.-]*(:\d+)?(\/[^\s?#]*)?$/.test(text)) return false
+  if (!/^https?:\/\/(\[[a-fA-F0-9:]+\]|[a-zA-Z0-9][a-zA-Z0-9.-]*)(:\d+)?(\/[^\s?#]*)?$/.test(text)) return false
   try {
     const parsed = new URL(text)
+    const isLoopback =
+      parsed.hostname === 'localhost' ||
+      parsed.hostname === '127.0.0.1' ||
+      parsed.hostname === '[::1]' ||
+      parsed.hostname === '::1'
+    if (!isLoopback && parsed.protocol !== 'https:') return false
     return (
-      parsed.protocol === 'https:' &&
+      (parsed.protocol === 'https:' || (isLoopback && parsed.protocol === 'http:')) &&
       Boolean(parsed.hostname) &&
       !parsed.username &&
       !parsed.password &&
