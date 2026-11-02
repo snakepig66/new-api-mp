@@ -137,7 +137,10 @@ func CheckEgressHost(host string) error {
 	if host == "" {
 		return fmt.Errorf("%w: empty host", ErrEgressDenied)
 	}
-	if net.ParseIP(host) != nil {
+	if parsed := net.ParseIP(host); parsed != nil {
+		if parsed.IsLoopback() && strings.TrimSpace(os.Getenv(MPAllowLoopbackBaseURLEnv)) == "1" {
+			return nil
+		}
 		return fmt.Errorf("%w: ip literal %q is not a whitelisted domain", ErrEgressDenied, host)
 	}
 	egressMu.RLock()

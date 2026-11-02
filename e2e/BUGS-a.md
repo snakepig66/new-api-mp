@@ -36,3 +36,17 @@
 - **实际**: `ValidateEgressIP` 无条件阻断环回地址，导致开发环境下无法验真本地假上游。
 - **修复**: 在 `marketplace/egress.go` 的 `ValidateEgressIP` 中，当检测到环回地址且环境变量 `MP_ALLOW_LOOPBACK_BASE_URL=1` 时放行。补全单测覆盖。
 
+---
+
+## Bug 4: CheckEgressHost 在开启 MP_ALLOW_LOOPBACK_BASE_URL 时仍拦截环回 IP 导致中继转发失败
+
+- **严重程度**: 中
+- **复现步骤**:
+  1. 设置 `MP_ALLOW_LOOPBACK_BASE_URL=1` 以支持本地开发测试环回上游。
+  2. 卖家提交自定义渠道（如 `http://127.0.0.1:3201/v1`）审核通过并上线（live）。
+  3. 客户端通过密钥发起调用，中继经由 `EgressRelayHTTPClient` 拨号，底层 `dialCheckedPolicy` 执行 `CheckEgressHost("127.0.0.1")`。
+- **预期**: 当开启 `MP_ALLOW_LOOPBACK_BASE_URL=1` 时，`CheckEgressHost` 应允许环回 IP 访问以支持本地测试及中继。
+- **实际**: `CheckEgressHost` 无条件拒绝所有 IP 字面量（报错 `ip literal "127.0.0.1" is not a whitelisted domain`），导致即便验真通过，中继拨号时依然被拦截并返回 500/503。
+- **修复**: 在 `marketplace/egress.go` 的 `CheckEgressHost` 中，当解析为 IP 且满足 `parsed.IsLoopback() && os.Getenv(MPAllowLoopbackBaseURLEnv) == "1"` 时予以放行。在 `marketplace/egress_test.go` 中补充测试覆盖。
+
+
