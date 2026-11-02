@@ -210,6 +210,22 @@ func TestSetEgressDomains(t *testing.T) {
 	assert.ErrorIs(t, CheckEgressHost("www.deepseek.com"), ErrEgressDenied)
 }
 
+func TestEgressLoopbackAllowedWhenEnvSet(t *testing.T) {
+	preserveEgressDomains(t)
+	t.Setenv(MPAllowLoopbackBaseURLEnv, "1")
+
+	assert.NoError(t, CheckEgressHost("localhost"))
+	assert.NoError(t, CheckEgressHost("127.0.0.1"))
+	assert.NoError(t, CheckEgressHost("::1"))
+	assert.NoError(t, ValidateEgressIP(net.ParseIP("127.0.0.1")))
+	assert.NoError(t, ValidateEgressIP(net.ParseIP("::1")))
+
+	// Non-loopback private IPs and unlisted hosts must still be refused
+	assert.ErrorIs(t, ValidateEgressIP(net.ParseIP("192.168.1.1")), ErrEgressDenied)
+	assert.ErrorIs(t, ValidateEgressIP(net.ParseIP("10.0.0.1")), ErrEgressDenied)
+	assert.ErrorIs(t, CheckEgressHost("evil.com"), ErrEgressDenied)
+}
+
 func TestEgressHTTPClientRejectsLoopbackURL(t *testing.T) {
 	preserveEgressDomains(t)
 	SetEgressDomains([]string{"deepseek.com"})
