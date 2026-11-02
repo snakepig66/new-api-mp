@@ -52,7 +52,7 @@ export const copy = {
     browseModels: '浏览模型',
     becomeSeller: '了解分享额度',
     viewDocs: '查看接入文档',
-    backToModels: '返回模型广场',
+    backToModels: '返回模型市场',
     backHome: '返回首页',
     createKey: '创建 Key',
     retry: '重试',
@@ -512,7 +512,7 @@ console.log(resp.choices[0].message.content);`,
       empty: {
         title: '这个模型暂时没有报价',
         reason: (model: string) => `「${model}」当前没有可用的分享者渠道。`,
-        next: '回到模型广场看看其他模型，或分享你的额度。',
+        next: '回到模型市场看看其他模型，或分享你的额度。',
       },
       sections: {
         official: '价格明细',
@@ -808,7 +808,7 @@ console.log(response.choices[0].message.content)
         ],
         verifyTitle: '验真规则',
         verifyBody:
-          '验真由平台自动执行：用渠道配置发起一次最小请求，校验鉴权、模型是否存在、响应结构是否符合官方接口。验真不通过会给出具体原因，修改后可重新提交；未通过验真的渠道不会出现在模型广场。',
+          '验真由平台自动执行：用渠道配置发起一次最小请求，校验鉴权、模型是否存在、响应结构是否符合官方接口。验真不通过会给出具体原因，修改后可重新提交；未通过验真的渠道不会出现在模型市场。',
         patrolTitle: '巡检与暂停',
         patrolBody:
           '已上架渠道会持续巡检成功率和延迟。连续失败或超时的渠道会自动暂停，恢复稳定后自动重新上架；你也可以在分享者控制台手动暂停或下架，买家侧会立即停止分发。',
@@ -1939,7 +1939,7 @@ console.log(response.choices[0].message.content)
       done: {
         title: '已开通，可以分享渠道了',
         reason: '协议已生效，现在就能分享渠道。',
-        next: '先添加一个 Key，检测通过后就能出现在模型广场。',
+        next: '先添加一个 Key，检测通过后就能出现在模型市场。',
         overview: '查看概览',
         newListing: '去新建渠道',
       },
