@@ -22,7 +22,7 @@ export function ModelName({ model, vendor, size = 'md', className, ...props }: M
   const logo = modelLogo(model) || (vendor ? vendorLogo(vendor) : '')
   if (!logo) {
     return (
-      <span className={className} {...props}>
+      <span className={cn('whitespace-nowrap truncate', className)} title={model} {...props}>
         {model}
       </span>
     )
@@ -33,7 +33,8 @@ export function ModelName({ model, vendor, size = 'md', className, ...props }: M
 
   return (
     <span
-      className={cn('inline-flex items-center gap-1.5 align-middle', className)}
+      className={cn('inline-flex items-center gap-1.5 align-middle whitespace-nowrap min-w-0', className)}
+      title={model}
       {...props}
     >
       <img
@@ -44,7 +45,7 @@ export function ModelName({ model, vendor, size = 'md', className, ...props }: M
         height={iconSize}
         className={cn(iconClass, 'shrink-0 object-contain')}
       />
-      <span>{model}</span>
+      <span className="whitespace-nowrap truncate">{model}</span>
     </span>
   )
 }

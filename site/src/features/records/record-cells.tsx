@@ -128,14 +128,17 @@ export function ModelPillBadge({
   className?: string
 }) {
   return (
-    <div className={cn('inline-flex items-center gap-1.5', className)}>
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface/90 px-2.5 py-1 text-meta font-medium text-ink shadow-2xs backdrop-blur-xs">
-        <ModelName model={model} size="sm" />
+    <div className={cn('inline-flex items-center gap-1.5 whitespace-nowrap', className)}>
+      <span
+        className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface/90 px-2.5 py-1 text-meta font-medium text-ink shadow-2xs backdrop-blur-xs whitespace-nowrap"
+        title={model}
+      >
+        <ModelName model={model} size="sm" className="whitespace-nowrap" />
       </span>
       {source ? (
         <span
           className={cn(
-            'inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium border',
+            'inline-flex shrink-0 items-center px-1.5 py-0.5 rounded text-[11px] font-medium border whitespace-nowrap',
             source === 'plaza'
               ? 'bg-brand/10 text-brand-ink border-brand/20'
               : 'bg-surface text-ink-3 border-line',
@@ -146,7 +149,7 @@ export function ModelPillBadge({
       ) : null}
       {converted && (
         <span
-          className="inline-flex items-center text-ink-3 hover:text-ink transition-colors"
+          className="inline-flex shrink-0 items-center text-ink-3 hover:text-ink transition-colors whitespace-nowrap"
           title="模型转换"
         >
           {/* ⇄ icon */}
@@ -188,8 +191,8 @@ export function ChannelPillBadge({
 }) {
   if (isInProgress) {
     return (
-      <div className="inline-flex w-fit items-center">
-        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-caption font-medium border shadow-2xs bg-blue-50 text-brand border-brand/20 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/50">
+      <div className="inline-flex w-fit items-center whitespace-nowrap">
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-caption font-medium border shadow-2xs bg-blue-50 text-brand border-brand/20 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/50 whitespace-nowrap">
           进行中
         </span>
       </div>
@@ -198,11 +201,11 @@ export function ChannelPillBadge({
 
   const isBlue = variant === 'blue'
   return (
-    <div className="flex flex-col gap-0.5">
-      <div className="inline-flex w-fit items-center gap-1">
+    <div className="flex flex-col gap-0.5 whitespace-nowrap">
+      <div className="inline-flex w-fit items-center gap-1 whitespace-nowrap">
         <span
           className={cn(
-            'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-caption font-medium border shadow-2xs',
+            'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-caption font-medium border shadow-2xs whitespace-nowrap',
             isBlue
               ? 'bg-blue-50 text-brand border-brand/20 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/50'
               : 'bg-amber-50 text-amber-700 border-amber-200/80 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/50'
@@ -222,7 +225,10 @@ export function ChannelPillBadge({
         </span>
       </div>
       {subtext && (
-        <span className="text-caption text-ink-3 truncate max-w-[150px] leading-tight">
+        <span
+          className="text-caption text-ink-3 truncate max-w-[140px] leading-tight whitespace-nowrap block"
+          title={typeof subtext === 'string' ? subtext : undefined}
+        >
           {subtext}
         </span>
       )}
@@ -240,29 +246,31 @@ export function TokensMetricCell({
   cacheRead = 0,
   cacheWrite = 0,
   isInProgress = false,
+  className,
 }: {
   input: number
   output: number
   cacheRead?: number
   cacheWrite?: number
   isInProgress?: boolean
+  className?: string
 }) {
   const promptTotal = input + cacheRead + cacheWrite
   const isZero = promptTotal === 0 && output === 0
 
   if (isInProgress || isZero) {
-    return <span className="font-mono text-meta text-ink-3">-</span>
+    return <span className="font-mono text-meta text-ink-3 whitespace-nowrap">-</span>
   }
 
   return (
-    <div className="flex flex-col gap-0.5">
-      <span className="font-mono text-meta font-medium tabular-nums text-ink leading-tight">
+    <div className={cn('flex flex-col gap-0.5 whitespace-nowrap', className)}>
+      <span className="font-mono text-meta font-medium tabular-nums text-ink leading-tight whitespace-nowrap">
         {formatNum(promptTotal)} / {formatNum(output)}
       </span>
       {(cacheRead > 0 || cacheWrite > 0) && (
-        <div className="flex items-center gap-1.5 text-[11px] text-ink-3/70 font-mono tabular-nums leading-tight">
-          {cacheRead > 0 && <span>缓存命中 {formatNum(cacheRead)}</span>}
-          {cacheWrite > 0 && <span>写入 {formatNum(cacheWrite)}</span>}
+        <div className="flex items-center gap-1.5 text-[11px] text-ink-3/70 font-mono tabular-nums leading-tight whitespace-nowrap">
+          {cacheRead > 0 && <span className="whitespace-nowrap">缓存命中 {formatNum(cacheRead)}</span>}
+          {cacheWrite > 0 && <span className="whitespace-nowrap">写入 {formatNum(cacheWrite)}</span>}
         </div>
       )}
     </div>
@@ -275,25 +283,27 @@ export function TimingMetricCell({
   latencyMs,
   isStream,
   isInProgress = false,
+  className,
 }: {
   firstTokenMs: number
   latencyMs: number
   isStream: boolean
   isInProgress?: boolean
+  className?: string
 }) {
   if (isInProgress) {
     const durationText =
       formatDuration(latencyMs) === '—' ? '0.0s' : formatDuration(latencyMs)
     return (
-      <div className="flex items-stretch gap-2">
+      <div className={cn('flex items-stretch gap-2 whitespace-nowrap', className)}>
         <span
           aria-hidden="true"
           className="flex w-1 shrink-0 flex-col overflow-hidden rounded-full my-0.5 bg-amber-500"
         />
-        <div className="flex min-w-0 flex-col justify-center gap-0.5 text-xs leading-tight tabular-nums">
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-ink-3 shrink-0">耗时</span>
-            <span className="font-medium text-amber-600 dark:text-amber-400">
+        <div className="flex min-w-0 flex-col justify-center gap-0.5 text-xs leading-tight tabular-nums whitespace-nowrap">
+          <div className="flex items-baseline gap-1.5 whitespace-nowrap">
+            <span className="text-ink-3 shrink-0 whitespace-nowrap">耗时</span>
+            <span className="font-medium text-amber-600 dark:text-amber-400 whitespace-nowrap">
               {durationText}
             </span>
           </div>
@@ -314,7 +324,7 @@ export function TimingMetricCell({
   const totalTimeText = formatDuration(latencyMs)
 
   return (
-    <div className="flex items-stretch gap-2">
+    <div className={cn('flex items-stretch gap-2 whitespace-nowrap', className)}>
       {/* Dual-color vertical bar */}
       <span
         aria-hidden="true"
@@ -332,18 +342,18 @@ export function TimingMetricCell({
       </span>
 
       {/* Two-row text */}
-      <div className="flex min-w-0 flex-col justify-center gap-0.5 text-xs leading-tight tabular-nums">
+      <div className="flex min-w-0 flex-col justify-center gap-0.5 text-xs leading-tight tabular-nums whitespace-nowrap">
         {showFirstToken && (
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-ink-3 shrink-0">首字</span>
-            <span className={cn('font-medium', ftColors.text)}>
+          <div className="flex items-baseline gap-1.5 whitespace-nowrap">
+            <span className="text-ink-3 shrink-0 whitespace-nowrap">首字</span>
+            <span className={cn('font-medium whitespace-nowrap', ftColors.text)}>
               {firstTokenText}
             </span>
           </div>
         )}
-        <div className="flex items-baseline gap-1.5">
-          <span className="text-ink-3 shrink-0">耗时</span>
-          <span className={cn('font-medium', totalColors.text)}>
+        <div className="flex items-baseline gap-1.5 whitespace-nowrap">
+          <span className="text-ink-3 shrink-0 whitespace-nowrap">耗时</span>
+          <span className={cn('font-medium whitespace-nowrap', totalColors.text)}>
             {totalTimeText}
           </span>
         </div>
@@ -365,11 +375,11 @@ export function CostPillBadge({
   return (
     <div
       className={cn(
-        'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-line bg-surface/90 font-mono text-meta font-medium shadow-2xs tabular-nums text-ink backdrop-blur-xs',
+        'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-line bg-surface/90 font-mono text-meta font-medium shadow-2xs tabular-nums text-ink backdrop-blur-xs whitespace-nowrap',
         className
       )}
     >
-      <span>{display}</span>
+      <span className="whitespace-nowrap">{display}</span>
       {/* File/document icon */}
       <svg
         className="h-3.5 w-3.5 text-ink-3/70 shrink-0"
@@ -395,29 +405,31 @@ export function IncomePillBadge({
   sellerCreditMicro,
   buyerPaidMicro,
   platformFeeMicro,
+  className,
 }: {
   sellerCreditMicro: number | string
   buyerPaidMicro?: number | string
   platformFeeMicro?: number | string
+  className?: string
 }) {
   const isZero = !sellerCreditMicro || Number(sellerCreditMicro) === 0
   const formatted = formatYuan(sellerCreditMicro)
 
   return (
-    <div className="flex flex-col gap-0.5">
-      <div className="inline-flex w-fit items-center">
+    <div className={cn('flex flex-col gap-0.5 whitespace-nowrap', className)}>
+      <div className="inline-flex w-fit items-center whitespace-nowrap">
         {isZero ? (
-          <span className="font-mono font-medium text-meta tabular-nums text-emerald-600 dark:text-emerald-400">
+          <span className="font-mono font-medium text-meta tabular-nums text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
             ¥0
           </span>
         ) : (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-cyan-50 text-cyan-700 border border-cyan-200/80 dark:bg-cyan-950/40 dark:text-cyan-300 dark:border-cyan-800/50 font-mono font-medium text-meta tabular-nums shadow-2xs">
+          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-cyan-50 text-cyan-700 border border-cyan-200/80 dark:bg-cyan-950/40 dark:text-cyan-300 dark:border-cyan-800/50 font-mono font-medium text-meta tabular-nums shadow-2xs whitespace-nowrap">
             {formatted}
           </span>
         )}
       </div>
       {!isZero && buyerPaidMicro != null && platformFeeMicro != null && (
-        <span className="text-[11px] text-ink-3 tabular-nums truncate max-w-[180px]">
+        <span className="text-[11px] text-ink-3 tabular-nums truncate max-w-[180px] whitespace-nowrap block" title={`实付 ${formatYuan(buyerPaidMicro)} · 平台费 ${formatYuan(platformFeeMicro)}`}>
           实付 {formatYuan(buyerPaidMicro)} · 平台费 {formatYuan(platformFeeMicro)}
         </span>
       )}
@@ -430,25 +442,27 @@ export function TimeAndStatusCell({
   createdAt,
   status,
   isSeller = false,
+  className,
 }: {
   createdAt: string
   status: string
   isSeller?: boolean
+  className?: string
 }) {
   const isFailed = status === 'failed'
 
   return (
-    <div className="flex min-w-0 flex-col gap-1">
+    <div className={cn('flex min-w-0 flex-col gap-1 whitespace-nowrap', className)}>
       <span className="font-mono text-caption text-ink-2 tabular-nums whitespace-nowrap">
         {formatDateTime(createdAt)}
       </span>
-      <div className="inline-flex w-fit items-center">
+      <div className="inline-flex w-fit items-center whitespace-nowrap">
         {isFailed ? (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300">
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300 whitespace-nowrap">
             失败
           </span>
         ) : (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300">
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300 whitespace-nowrap">
             {isSeller ? '成交' : '消耗'}
             <span className="sr-only">成功</span>
           </span>

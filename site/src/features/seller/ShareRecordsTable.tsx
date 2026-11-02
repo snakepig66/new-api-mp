@@ -51,34 +51,34 @@ export type ShareRecordCardsProps = ShareRecordsTableProps
 export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
   return (
     <div className="hidden md:block">
-      <Table minWidth={1180}>
+      <Table minWidth={1260}>
         <TableHead>
           <TableRow>
-            <TableHeaderCell>
+            <TableHeaderCell className="w-[240px] min-w-[220px]">
               <TableSortHeader title={copy.colModel} />
             </TableHeaderCell>
-            <TableHeaderCell>
+            <TableHeaderCell className="w-[130px] min-w-[120px]">
               <TableSortHeader title={copy.colChannel} />
             </TableHeaderCell>
-            <TableHeaderCell>
+            <TableHeaderCell className="w-[90px] min-w-[80px]">
               <TableSortHeader title={copy.colBuyer} />
             </TableHeaderCell>
-            <TableHeaderCell>
+            <TableHeaderCell className="w-[190px] min-w-[180px]">
               <TableSortHeader title={copy.colTokens} />
             </TableHeaderCell>
-            <TableHeaderCell>
+            <TableHeaderCell className="w-[130px] min-w-[120px]">
               <TableSortHeader title={copy.colLatency} />
             </TableHeaderCell>
-            <TableHeaderCell>
+            <TableHeaderCell className="w-[110px] min-w-[100px]">
               <TableSortHeader title={copy.colCost} />
             </TableHeaderCell>
-            <TableHeaderCell>
+            <TableHeaderCell className="w-[160px] min-w-[150px]">
               <TableSortHeader title={copy.colIncome} />
             </TableHeaderCell>
-            <TableHeaderCell className="text-center">
+            <TableHeaderCell className="w-[72px] min-w-[72px] text-center">
               <TableSortHeader title={copy.colDetail} />
             </TableHeaderCell>
-            <TableHeaderCell>
+            <TableHeaderCell className="w-[160px] min-w-[150px]">
               <TableSortHeader title={copy.colTime} />
             </TableHeaderCell>
           </TableRow>
@@ -97,15 +97,16 @@ export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
               <TableRow
                 key={record.request_id}
                 interactive
+                className="h-[68px]"
                 onClick={() => onOpen(record.request_id)}
               >
                 {/* 1. 模型 */}
-                <TableCell>
+                <TableCell className="w-[240px] min-w-[220px] whitespace-nowrap">
                   <ModelPillBadge model={record.model} converted={record.converted} />
                 </TableCell>
 
                 {/* 2. 渠道 */}
-                <TableCell>
+                <TableCell className="w-[130px] min-w-[120px] whitespace-nowrap">
                   <ChannelPillBadge
                     id={record.listing_id}
                     subtext={channelSub || copy.dash}
@@ -115,14 +116,14 @@ export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
                 </TableCell>
 
                 {/* 3. 买家 */}
-                <TableCell>
-                  <span className="font-mono text-meta text-ink-2">
+                <TableCell className="w-[90px] min-w-[80px] whitespace-nowrap">
+                  <span className="font-mono text-meta text-ink-2 whitespace-nowrap">
                     #{record.buyer_code}
                   </span>
                 </TableCell>
 
                 {/* 4. TOKENS */}
-                <TableCell>
+                <TableCell className="w-[190px] min-w-[180px] whitespace-nowrap">
                   <TokensMetricCell
                     input={record.input_tokens}
                     output={record.output_tokens}
@@ -133,7 +134,7 @@ export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
                 </TableCell>
 
                 {/* 5. 耗时 */}
-                <TableCell>
+                <TableCell className="w-[130px] min-w-[120px] whitespace-nowrap">
                   <TimingMetricCell
                     firstTokenMs={record.first_token_ms}
                     latencyMs={record.latency_ms}
@@ -143,12 +144,12 @@ export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
                 </TableCell>
 
                 {/* 6. 费用 (买家实付) */}
-                <TableCell>
+                <TableCell className="w-[110px] min-w-[100px] whitespace-nowrap">
                   <CostPillBadge amountMicro={record.buyer_paid_micro} />
                 </TableCell>
 
                 {/* 7. 收益 (卖家所得) */}
-                <TableCell>
+                <TableCell className="w-[160px] min-w-[150px] whitespace-nowrap">
                   <IncomePillBadge
                     sellerCreditMicro={record.seller_credit_micro}
                     buyerPaidMicro={record.buyer_paid_micro}
@@ -157,21 +158,21 @@ export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
                 </TableCell>
 
                 {/* 8. 详情 */}
-                <TableCell className="text-center">
+                <TableCell className="w-[72px] min-w-[72px] text-center whitespace-nowrap">
                   <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation()
                       onOpen(record.request_id)
                     }}
-                    className="inline-flex items-center justify-center rounded-md px-2 py-1 text-meta font-medium text-brand hover:bg-brand/10 transition-colors"
+                    className="inline-flex items-center justify-center rounded-md px-2.5 py-1 text-meta font-medium text-brand hover:bg-brand/10 transition-colors whitespace-nowrap"
                   >
                     查看
                   </button>
                 </TableCell>
 
                 {/* 9. 时间 + 状态 */}
-                <TableCell>
+                <TableCell className="w-[160px] min-w-[150px] whitespace-nowrap">
                   <TimeAndStatusCell
                     createdAt={record.created_at}
                     status={record.status}
@@ -213,13 +214,15 @@ function ShareRecordCard({
     >
       {/* Top row: Model + Status */}
       <div className="flex items-center justify-between gap-2">
-        <ModelPillBadge model={record.model} converted={record.converted} />
+        <div className="min-w-0 flex-1">
+          <ModelPillBadge model={record.model} converted={record.converted} className="max-w-full" />
+        </div>
         {isFailed ? (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300">
+          <span className="inline-flex shrink-0 items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300 whitespace-nowrap">
             失败
           </span>
         ) : (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300">
+          <span className="inline-flex shrink-0 items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300 whitespace-nowrap">
             成交
             <span className="sr-only">成功</span>
           </span>
@@ -235,8 +238,8 @@ function ShareRecordCard({
           isInProgress={isInProgress}
         />
         <div className="text-right">
-          <span className="text-caption text-ink-3 block">买家</span>
-          <span className="font-mono text-meta text-ink-2">
+          <span className="text-caption text-ink-3 block whitespace-nowrap">买家</span>
+          <span className="font-mono text-meta text-ink-2 whitespace-nowrap">
             #{record.buyer_code}
           </span>
         </div>
@@ -257,6 +260,7 @@ function ShareRecordCard({
             cacheRead={record.cache_read_tokens}
             cacheWrite={record.cache_write_tokens}
             isInProgress={isInProgress}
+            className="items-end"
           />
         </div>
       </div>
@@ -268,7 +272,7 @@ function ShareRecordCard({
           buyerPaidMicro={record.buyer_paid_micro}
           platformFeeMicro={record.platform_fee_micro}
         />
-        <span className="font-mono text-caption text-ink-3 tabular-nums">
+        <span className="font-mono text-caption text-ink-3 tabular-nums whitespace-nowrap">
           {formatDateTime(record.created_at)}
         </span>
       </div>

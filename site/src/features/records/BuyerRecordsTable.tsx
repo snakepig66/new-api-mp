@@ -49,31 +49,31 @@ export type BuyerRecordCardsProps = BuyerRecordsTableProps
 export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
   return (
     <div className="hidden md:block">
-      <Table minWidth={1040}>
+      <Table minWidth={1180}>
         <TableHead>
           <TableRow>
-            <TableHeaderCell>
+            <TableHeaderCell className="w-[260px] min-w-[240px]">
               <TableSortHeader title={copy.colModel} />
             </TableHeaderCell>
-            <TableHeaderCell>
+            <TableHeaderCell className="w-[130px] min-w-[120px]">
               <TableSortHeader title={copy.colSeller} />
             </TableHeaderCell>
-            <TableHeaderCell>
+            <TableHeaderCell className="w-[130px] min-w-[110px]">
               <TableSortHeader title={copy.colToken} />
             </TableHeaderCell>
-            <TableHeaderCell>
+            <TableHeaderCell className="w-[190px] min-w-[180px]">
               <TableSortHeader title={copy.colTokens} />
             </TableHeaderCell>
-            <TableHeaderCell>
+            <TableHeaderCell className="w-[130px] min-w-[120px]">
               <TableSortHeader title={copy.colLatency} />
             </TableHeaderCell>
-            <TableHeaderCell>
+            <TableHeaderCell className="w-[110px] min-w-[100px]">
               <TableSortHeader title={copy.colCost} />
             </TableHeaderCell>
-            <TableHeaderCell className="text-center">
+            <TableHeaderCell className="w-[72px] min-w-[72px] text-center">
               <TableSortHeader title={copy.colDetail} />
             </TableHeaderCell>
-            <TableHeaderCell>
+            <TableHeaderCell className="w-[160px] min-w-[150px]">
               <TableSortHeader title={copy.colTime} />
             </TableHeaderCell>
           </TableRow>
@@ -82,13 +82,13 @@ export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
           {records.map((record) => {
             const isInProgress = record.status === 'in_progress'
             const tokenDisplay = isInProgress ? (
-              <span className="font-mono text-meta text-ink-3">-</span>
+              <span className="font-mono text-meta text-ink-3 whitespace-nowrap">-</span>
             ) : record.token_name ? (
-              <span className="font-mono text-meta text-ink-2 truncate max-w-[120px] block" title={record.token_name}>
+              <span className="font-mono text-meta text-ink-2 truncate max-w-[120px] block whitespace-nowrap" title={record.token_name}>
                 {record.token_name}
               </span>
             ) : (
-              <span className="text-caption text-ink-3">{copy.deletedToken}</span>
+              <span className="text-caption text-ink-3 whitespace-nowrap">{copy.deletedToken}</span>
             )
 
             const subtext = record.token_group || record.tier_label || ''
@@ -97,15 +97,16 @@ export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
               <TableRow
                 key={record.request_id}
                 interactive
+                className="h-[68px]"
                 onClick={() => onOpen(record.request_id)}
               >
                 {/* 1. 模型 */}
-                <TableCell>
+                <TableCell className="w-[260px] min-w-[240px] whitespace-nowrap">
                   <ModelPillBadge model={record.model} converted={record.converted} source={record.source} />
                 </TableCell>
 
                 {/* 2. 卖家 / 渠道 */}
-                <TableCell>
+                <TableCell className="w-[130px] min-w-[120px] whitespace-nowrap">
                   <ChannelPillBadge
                     id={record.seller_id}
                     subtext={subtext || copy.dash}
@@ -115,10 +116,10 @@ export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
                 </TableCell>
 
                 {/* 3. 令牌 */}
-                <TableCell>{tokenDisplay}</TableCell>
+                <TableCell className="w-[130px] min-w-[110px] whitespace-nowrap">{tokenDisplay}</TableCell>
 
                 {/* 4. TOKENS */}
-                <TableCell>
+                <TableCell className="w-[190px] min-w-[180px] whitespace-nowrap">
                   <TokensMetricCell
                     input={record.input_tokens}
                     output={record.output_tokens}
@@ -129,7 +130,7 @@ export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
                 </TableCell>
 
                 {/* 5. 耗时 */}
-                <TableCell>
+                <TableCell className="w-[130px] min-w-[120px] whitespace-nowrap">
                   <TimingMetricCell
                     firstTokenMs={record.first_token_ms}
                     latencyMs={record.latency_ms}
@@ -139,26 +140,26 @@ export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
                 </TableCell>
 
                 {/* 6. 费用 */}
-                <TableCell>
+                <TableCell className="w-[110px] min-w-[100px] whitespace-nowrap">
                   <CostPillBadge amountMicro={record.total_debit_micro} />
                 </TableCell>
 
                 {/* 7. 详情 */}
-                <TableCell className="text-center">
+                <TableCell className="w-[72px] min-w-[72px] text-center whitespace-nowrap">
                   <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation()
                       onOpen(record.request_id)
                     }}
-                    className="inline-flex items-center justify-center rounded-md px-2 py-1 text-meta font-medium text-brand hover:bg-brand/10 transition-colors"
+                    className="inline-flex items-center justify-center rounded-md px-2.5 py-1 text-meta font-medium text-brand hover:bg-brand/10 transition-colors whitespace-nowrap"
                   >
                     查看
                   </button>
                 </TableCell>
 
                 {/* 8. 时间 + 状态 */}
-                <TableCell>
+                <TableCell className="w-[160px] min-w-[150px] whitespace-nowrap">
                   <TimeAndStatusCell
                     createdAt={record.created_at}
                     status={record.status}
@@ -193,13 +194,15 @@ function BuyerRecordCard({
     >
       {/* Top row: Model + Status */}
       <div className="flex items-center justify-between gap-2">
-        <ModelPillBadge model={record.model} converted={record.converted} source={record.source} />
+        <div className="min-w-0 flex-1">
+          <ModelPillBadge model={record.model} converted={record.converted} source={record.source} className="max-w-full" />
+        </div>
         {isFailed ? (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300">
+          <span className="inline-flex shrink-0 items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300 whitespace-nowrap">
             失败
           </span>
         ) : (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300">
+          <span className="inline-flex shrink-0 items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300 whitespace-nowrap">
             消耗
             <span className="sr-only">成功</span>
           </span>
@@ -215,15 +218,15 @@ function BuyerRecordCard({
           isInProgress={isInProgress}
         />
         <div className="text-right">
-          <span className="text-caption text-ink-3 block">令牌</span>
+          <span className="text-caption text-ink-3 block whitespace-nowrap">令牌</span>
           {isInProgress ? (
-            <span className="font-mono text-meta text-ink-3">-</span>
+            <span className="font-mono text-meta text-ink-3 whitespace-nowrap">-</span>
           ) : record.token_name ? (
-            <span className="font-mono text-meta text-ink-2 truncate max-w-[120px] block">
+            <span className="font-mono text-meta text-ink-2 truncate max-w-[120px] block whitespace-nowrap" title={record.token_name}>
               {record.token_name}
             </span>
           ) : (
-            <span className="text-caption text-ink-3">{copy.deletedToken}</span>
+            <span className="text-caption text-ink-3 whitespace-nowrap">{copy.deletedToken}</span>
           )}
         </div>
       </div>
@@ -243,13 +246,14 @@ function BuyerRecordCard({
             cacheRead={record.cache_read_tokens}
             cacheWrite={record.cache_write_tokens}
             isInProgress={isInProgress}
+            className="items-end"
           />
         </div>
       </div>
 
       {/* Row 4: Cost + Time */}
       <div className="mt-3 flex items-center justify-between gap-2 border-t border-line/60 pt-2.5">
-        <span className="font-mono text-caption text-ink-3 tabular-nums">
+        <span className="font-mono text-caption text-ink-3 tabular-nums whitespace-nowrap">
           {formatDateTime(record.created_at)}
         </span>
         <CostPillBadge amountMicro={record.total_debit_micro} />
