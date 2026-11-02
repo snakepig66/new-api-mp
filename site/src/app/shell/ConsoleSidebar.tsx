@@ -2,6 +2,7 @@ import { Link, useRouterState } from '@tanstack/react-router'
 import { useEffect, useState, type ReactNode } from 'react'
 
 import { cn } from '@/lib/cn'
+import { getSession } from '@/lib/session'
 
 export interface ConsoleNavItem {
   to: string
@@ -264,8 +265,15 @@ function SidebarNavLink({
   )
 
   if (item.external || item.to.startsWith('/ops-legacy')) {
+    let href = item.to
+    if (item.to.startsWith('/ops-legacy')) {
+      const token = getSession()?.accessToken
+      if (token) {
+        href = `${item.to}${item.to.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
+      }
+    }
     return (
-      <a href={item.to} onClick={onNavigate} className={className}>
+      <a href={href} onClick={onNavigate} className={className}>
         {content}
       </a>
     )
