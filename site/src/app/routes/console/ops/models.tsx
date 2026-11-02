@@ -7,6 +7,7 @@ import { cn } from '@/lib/cn'
 import { formatYuan } from '@/lib/money'
 import {
   Button,
+  buttonClasses,
   Dialog,
   DropdownMenu,
   Empty,
@@ -125,6 +126,7 @@ interface UnifiedModelForm {
   aliases: string
   verify_prompt: string
   status: string
+  enable_plaza: boolean
   // Pricing
   input_yuan: string
   output_yuan: string
@@ -139,6 +141,7 @@ const emptyForm: UnifiedModelForm = {
   aliases: '',
   verify_prompt: '',
   status: 'active',
+  enable_plaza: true,
   input_yuan: '',
   output_yuan: '',
   cache_read_yuan: '',
@@ -313,10 +316,30 @@ function ModelsAndPricingPage() {
         aliases: model.aliases,
         verify_prompt: model.verify_prompt,
         status: model.status === 'active' ? 'retired' : 'active',
+        enable_plaza: model.enable_plaza !== false,
       }),
     onSuccess: () => {
       refresh()
       toast.show({ title: '模型状态已更新', tone: 'success' })
+    },
+    onError: (error) => toast.show({ title: adminErrorMessage(error), tone: 'error' }),
+  })
+
+  const togglePlaza = useMutation({
+    mutationFn: (model: AdminPoolModel) =>
+      putAdminPoolModel({
+        name: model.name,
+        origin_vendor: model.origin_vendor,
+        context_length: model.context_length,
+        capabilities: model.capabilities,
+        aliases: model.aliases,
+        verify_prompt: model.verify_prompt,
+        status: model.status,
+        enable_plaza: model.enable_plaza === false,
+      }),
+    onSuccess: () => {
+      refresh()
+      toast.show({ title: '广场上架状态已更新', tone: 'success' })
     },
     onError: (error) => toast.show({ title: adminErrorMessage(error), tone: 'error' }),
   })
@@ -343,6 +366,7 @@ function ModelsAndPricingPage() {
       aliases: model.aliases.join(', '),
       verify_prompt: model.verify_prompt,
       status: model.status || 'active',
+      enable_plaza: model.enable_plaza !== false,
       input_yuan: p ? String(Number(p.input_micro_per_mtok) / 1_000_000) : '',
       output_yuan: p ? String(Number(p.output_micro_per_mtok) / 1_000_000) : '',
       cache_read_yuan: p && p.cache_read_micro_per_mtok ? String(Number(p.cache_read_micro_per_mtok) / 1_000_000) : '',
@@ -398,6 +422,7 @@ function ModelsAndPricingPage() {
         aliases: splitList(form.aliases),
         verify_prompt: form.verify_prompt.trim(),
         status: form.status,
+        enable_plaza: form.enable_plaza,
       })
 
       // 2. Save price if specified
@@ -438,9 +463,18 @@ function ModelsAndPricingPage() {
         title="模型与定价"
         lead="集中管理标准在售模型池及其 Token 计费价格。配置后即时同步至模型广场与调用计费链路。"
         actions={
-          <Button size="sm" onClick={openCreate}>
-            + 添加模型与定价
-          </Button>
+          <div className="flex items-center gap-2">
+            <a
+              href="/ops-legacy"
+              className={buttonClasses('secondary', 'sm')}
+              title="前往 new-api 原生渠道管理页"
+            >
+              广场渠道管理
+            </a>
+            <Button size="sm" onClick={openCreate}>
+              + 添加模型与定价
+            </Button>
+          </div>
         }
       />
 
@@ -589,10 +623,11 @@ function ModelsAndPricingPage() {
                 <Table minWidth={760}>
                   <TableHead>
                     <TableRow interactive={false}>
-                      <TableHeaderCell className="w-[34%]">模型名称 / 能力</TableHeaderCell>
-                      <TableHeaderCell className="w-[12%] text-center">上下文</TableHeaderCell>
-                      <TableHeaderCell className="w-[32%]">Token 计费 (元/M tok)</TableHeaderCell>
+                      <TableHeaderCell className="w-[30%]">模型名称 / 能力</TableHeaderCell>
+                      <TableHeaderCell className="w-[10%] text-center">上下文</TableHeaderCell>
+                      <TableHeaderCell className="w-[28%]">Token 计费 (元/M tok)</TableHeaderCell>
                       <TableHeaderCell className="w-[10%]">状态</TableHeaderCell>
+                      <TableHeaderCell className="w-[10%] text-center">广场上架</TableHeaderCell>
                       <TableHeaderCell numeric className="w-[12%]">操作</TableHeaderCell>
                     </TableRow>
                   </TableHead>
@@ -710,6 +745,26 @@ function ModelsAndPricingPage() {
                                 )}
                               >
                                 {row.status === 'active' ? '在售' : '停用'}
+                              </span>
+                            </div>
+                          </TableCell>
+
+                          {/* 4.5 广场上架 Switch */}
+                          <TableCell className="text-center">
+                            <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
+                              <Switch
+                                checked={row.enable_plaza !== false}
+                                loading={togglePlaza.isPending && togglePlaza.variables?.name === row.name}
+                                onCheckedChange={() => togglePlaza.mutate(row)}
+                                aria-label={row.enable_plaza !== false ? '点击下架广场' : '点击上架广场'}
+                              />
+                              <span
+                                className={cn(
+                                  'text-caption font-medium',
+                                  row.enable_plaza !== false ? 'text-brand-ink' : 'text-ink-4',
+                                )}
+                              >
+                                {row.enable_plaza !== false ? '已上架' : '未上架'}
                               </span>
                             </div>
                           </TableCell>
@@ -879,6 +934,18 @@ function ModelsAndPricingPage() {
                   <option value="retired">已停用 (Retired)</option>
                 </Select>
               </Field>
+
+              <div className="flex items-center justify-between rounded-lg border border-line bg-surface/50 p-3 sm:col-span-2">
+                <div>
+                  <div className="text-meta font-medium text-ink">上架到模型广场</div>
+                  <div className="text-caption text-ink-3">开启后该模型可在模型广场展示并向普通密钥开放调用</div>
+                </div>
+                <Switch
+                  checked={form.enable_plaza}
+                  onCheckedChange={(val) => update('enable_plaza', val)}
+                  aria-label="上架到模型广场"
+                />
+              </div>
 
               <Field
                 label="模型别名 (逗号分隔)"
