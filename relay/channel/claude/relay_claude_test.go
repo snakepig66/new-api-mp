@@ -541,3 +541,21 @@ func TestClaudeResponsePassesInputTransformationsThrough(t *testing.T) {
 	require.Nil(t, HandleStreamResponseData(c, info, &ClaudeResponseInfo{Usage: &dto.Usage{}}, event))
 	assert.Contains(t, w.Body.String(), "data: "+event+"\n")
 }
+
+func TestClaudeResponseRewritesModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "requested-claude",
+		RelayFormat:     types.RelayFormatOpenAI,
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "claude-opus-5-5"},
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	body := `{"id":"msg_1","type":"message","role":"assistant","model":"upstream-internal-claude","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":1}}`
+	require.Nil(t, HandleClaudeResponseData(c, info, &ClaudeResponseInfo{Usage: &dto.Usage{}}, nil, []byte(body)))
+	var resp dto.OpenAITextResponse
+	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "requested-claude", resp.Model)
+}
