@@ -26,8 +26,10 @@ import {
 import { adminErrorMessage } from '@/features/admin/errors'
 import {
   adminOptionsQuery,
+  requestPolicyQuery,
   siteStatusQuery,
   updateOptions,
+  updateRequestPolicy,
   type OptionMap,
 } from '@/features/admin/settings-api'
 
@@ -156,10 +158,14 @@ function SettingsContent() {
   const queryClient = useQueryClient()
   const options = useQuery(adminOptionsQuery())
   const status = useQuery(siteStatusQuery())
+  const policy = useQuery(requestPolicyQuery())
   const quotaPerUnit = status.data ?? 500_000
 
   const [initial, setInitial] = useState<Initial | null>(null)
   const [forms, setForms] = useState<Initial | null>(null)
+  const retryInitial = policy.data?.RetryTimes ?? ''
+  const [retryDraft, setRetryDraft] = useState<string | null>(null)
+  const retryTimes = retryDraft ?? retryInitial
 
   useEffect(() => {
     if (!options.data || initial) return
@@ -179,6 +185,33 @@ function SettingsContent() {
 
   function update(scope: Scope, key: string, value: string) {
     setForms((current) => (current ? { ...current, [scope]: { ...current[scope], [key]: value } } : current))
+  }
+
+  const saveRetry = useMutation({
+    mutationFn: (value: string) => updateRequestPolicy({ RetryTimes: value }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: requestPolicyQuery().queryKey }),
+        // 渠道页顶部的「最大重试」徽章读的是 /channel/ops，保存后一并刷新。
+        queryClient.invalidateQueries({ queryKey: ['channel-ops'] }),
+      ])
+      setRetryDraft(null)
+      toast.show({ title: '重试设置已保存', tone: 'success' })
+    },
+    onError: (error) => toast.show({ title: adminErrorMessage(error), tone: 'error' }),
+  })
+
+  function handleSaveRetry() {
+    const raw = retryTimes.trim()
+    if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+      toast.show({ title: '最大重试次数必须是非负整数', tone: 'error' })
+      return
+    }
+    if (raw === retryInitial) {
+      toast.show({ title: '没有需要保存的修改' })
+      return
+    }
+    saveRetry.mutate(raw)
   }
 
   async function handleSave(scope: Scope) {
@@ -217,7 +250,7 @@ function SettingsContent() {
       : false
   }
 
-  if (options.isPending || status.isPending) {
+  if (options.isPending || status.isPending || policy.isPending) {
     return (
       <>
         <OpsTabNav tabs={tabs} ariaLabel="运营后台导航" />
@@ -536,6 +569,37 @@ function SettingsContent() {
               onChange={(v) => update('newUser', 'QuotaForInvitee', v)}
             />
           </div>
+        </Section>
+        <Section
+          title="渠道重试"
+          hint="请求失败后的渠道切换与重试策略"
+          action={
+            <button
+              type="button"
+              className="inline-flex h-9 items-center rounded-md bg-brand px-3.5 text-body font-medium text-white disabled:opacity-60"
+              disabled={saveRetry.isPending || policy.isError || retryTimes === retryInitial}
+              onClick={handleSaveRetry}
+            >
+              {saveRetry.isPending ? '保存中…' : '保存'}
+            </button>
+          }
+        >
+          {policy.isError ? (
+            <ErrorBlock error={policy.error} onRetry={() => void policy.refetch()} />
+          ) : (
+            <Field
+              label="最大重试次数"
+              htmlFor="set-retry-times"
+              hint="请求失败后最多再试几次，0 表示不重试；广场请求始终至少保留 2 次重试"
+            >
+              <TextInput
+                id="set-retry-times"
+                inputMode="numeric"
+                value={retryTimes}
+                onChange={(e) => setRetryDraft(e.target.value)}
+              />
+            </Field>
+          )}
         </Section>
       </div>
     </>

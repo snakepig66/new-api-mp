@@ -60,3 +60,21 @@ export const siteStatusQuery = () =>
     },
     staleTime: 5 * 60_000,
   })
+
+/**
+ * 请求策略（重试、自动禁用等）。与 /option/ 分开读写：后端按快照校验整组
+ * 策略，PATCH 只提交要改的键，成功后快照与运行时的全局值同步更新。
+ */
+export const requestPolicyQuery = () =>
+  queryOptions({
+    queryKey: ['admin', 'request-policy'],
+    queryFn: async (): Promise<OptionMap> => {
+      const raw = await api.get<{ options?: OptionMap }>('/option/request_policy')
+      return raw?.options ?? {}
+    },
+    staleTime: 30_000,
+  })
+
+export function updateRequestPolicy(options: OptionMap): Promise<unknown> {
+  return api.patch<unknown>('/option/request_policy', { options })
+}

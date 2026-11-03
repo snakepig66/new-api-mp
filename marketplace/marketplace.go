@@ -90,9 +90,11 @@ func Init(db *gorm.DB) error {
 		return fmt.Errorf("marketplace seed: %w", err)
 	}
 	// §4.5: the §3.7 retry semantics (最多换 2 家) need at least two upstream
-	// retries; only ever raise the global value (只升不降).
-	if common.RetryTimes < 2 {
-		common.RetryTimes = 2
+	// retries; only ever raise the global value (只升不降). The request-policy
+	// snapshot is rebuilt here because options were loaded before this point,
+	// so /api/channel/ops must not keep reporting the pre-floor value.
+	if err := model.EnsureMinimumRetryTimes(2); err != nil {
+		common.SysError(common.LogText("marketplace: retry floor: %s", err.Error()))
 	}
 	// Start the package-level relay singletons (Selector, holiday calendar)
 	// used by the §4.4 seam hooks.

@@ -256,3 +256,25 @@ func UpdateRequestPolicyOptions(values map[string]string) error {
 	requestPolicySnapshot.Store(snapshot)
 	return nil
 }
+
+// EnsureMinimumRetryTimes raises the runtime retry budget to at least minimum
+// and keeps the option map and request-policy snapshot in sync. It never
+// lowers an operator-configured value. Marketplace bootstrap calls this after
+// options are loaded, so /api/channel/ops reports the same retry count the
+// relay actually uses.
+func EnsureMinimumRetryTimes(minimum int) error {
+	if minimum < 0 {
+		return fmt.Errorf("retry floor must be non-negative")
+	}
+	if common.RetryTimes >= minimum {
+		return nil
+	}
+	common.RetryTimes = minimum
+	common.OptionMapRWMutex.Lock()
+	if common.OptionMap == nil {
+		common.OptionMap = make(map[string]string)
+	}
+	common.OptionMap["RetryTimes"] = strconv.Itoa(minimum)
+	common.OptionMapRWMutex.Unlock()
+	return refreshRequestPolicySnapshot()
+}

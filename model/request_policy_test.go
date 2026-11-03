@@ -120,3 +120,34 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestEnsureMinimumRetryTimesSyncsSnapshot(t *testing.T) {
+	previousRetry := common.RetryTimes
+	previousSnapshot := CurrentRequestPolicy()
+	common.OptionMapRWMutex.Lock()
+	previousOptions := maps.Clone(common.OptionMap)
+	if common.OptionMap == nil {
+		common.OptionMap = make(map[string]string)
+	}
+	common.OptionMap["RetryTimes"] = "0"
+	common.OptionMapRWMutex.Unlock()
+	common.RetryTimes = 0
+	require.NoError(t, refreshRequestPolicySnapshot())
+	t.Cleanup(func() {
+		common.RetryTimes = previousRetry
+		requestPolicySnapshot.Store(previousSnapshot)
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = previousOptions
+		common.OptionMapRWMutex.Unlock()
+	})
+
+	require.NoError(t, EnsureMinimumRetryTimes(2))
+	assert.Equal(t, 2, common.RetryTimes)
+	assert.Equal(t, 2, CurrentRequestPolicy().RetryTimes, "channel ops must report the raised value")
+	common.OptionMapRWMutex.RLock()
+	assert.Equal(t, "2", common.OptionMap["RetryTimes"])
+	common.OptionMapRWMutex.RUnlock()
+
+	require.NoError(t, EnsureMinimumRetryTimes(1))
+	assert.Equal(t, 2, common.RetryTimes, "never lowers an existing value")
+}
