@@ -103,7 +103,7 @@ export const copy = {
       ops: '运营',
     },
     ops: {
-      models: '模型与定价',
+      models: '模型池',
       pricing: '定价',
       review: '审核中心',
       metrics: '监控排查',

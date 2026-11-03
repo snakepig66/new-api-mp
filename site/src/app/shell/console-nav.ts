@@ -43,7 +43,8 @@ export function consoleGroups({
             items: [
               { to: '/console/ops/metrics', label: '运营看板' },
               { to: '/console/ops/channels', label: '广场渠道' },
-              { to: '/console/ops/models', label: '广场模型上架' },
+              { to: '/console/ops/models', label: '模型池' },
+              { to: '/console/ops/plaza', label: '广场上架' },
               { to: '/console/ops/review', label: '发布审核' },
               { to: '/console/ops/users', label: '用户与充值' },
               { to: '/console/ops/tools', label: '团体工具' },

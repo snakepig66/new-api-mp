@@ -72,7 +72,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function renderModels() {
+function renderPool() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: 0 } },
   })
@@ -85,42 +85,54 @@ function renderModels() {
   )
 }
 
-describe('admin models and plaza management', () => {
-  it('renders "广场渠道" entry linking to the native channels page', async () => {
-    renderModels()
+describe('admin model pool page', () => {
+  it('renders the 模型池 title and vendor group with base prices', async () => {
+    renderPool()
 
-    const channelLink = await screen.findByRole('link', { name: '广场渠道' })
-    expect(channelLink.getAttribute('href')).toBe('/console/ops/channels')
+    expect(await screen.findByRole('heading', { name: '模型池', level: 1 })).toBeTruthy()
+    await screen.findByText('deepseek-chat')
+    expect(screen.getByText('deepseek-chat')).toBeTruthy()
+    expect(screen.getByText('输入基价')).toBeTruthy()
+    expect(screen.getByText('输出基价')).toBeTruthy()
+    expect(screen.getByText('缓存命中基价')).toBeTruthy()
   })
 
-  it('renders "广场上架" column with toggle switch for enable_plaza', async () => {
-    renderModels()
+  it('does not render plaza listing, multiplier or capability columns', async () => {
+    renderPool()
 
-    expect(await screen.findByText('广场上架')).toBeTruthy()
-    expect(screen.getByText('已上架')).toBeTruthy()
-
-    const switchBtn = screen.getByRole('switch', { name: '点击下架广场' })
-    expect(switchBtn.getAttribute('aria-checked')).toBe('true')
-
-    fireEvent.click(switchBtn)
-    await waitFor(() => expect(putBodies.length).toBeGreaterThan(0))
-    expect(putBodies[0].enable_plaza).toBe(false)
+    await screen.findByText('deepseek-chat')
+    expect(screen.queryByRole('columnheader', { name: '广场上架' })).toBeNull()
+    expect(screen.queryByText('广场倍率')).toBeNull()
+    expect(screen.queryByText('广场渠道')).not.toBeNull()
+    expect(screen.queryByText('别名: deepseek-v3')).toBeNull()
+    expect(screen.queryByRole('switch')).toBeNull()
   })
 
-  it('shows and inline-edits the plaza multiplier', async () => {
-    renderModels()
+  it('shows only the base-price fields in the edit drawer and keeps other fields on submit', async () => {
+    renderPool()
 
-    const cell = await screen.findByRole('button', { name: '编辑广场倍率 deepseek-chat' })
-    expect(cell.textContent).toBe('1.50x')
+    const editButton = await screen.findByRole('button', { name: '编辑' })
+    fireEvent.click(editButton)
 
-    fireEvent.click(cell)
-    const input = screen.getByTestId('plaza-multiplier-input') as HTMLInputElement
-    expect(input.value).toBe('1.50')
+    expect(screen.getByLabelText('输入单价 (元 / 1M tokens)')).toBeTruthy()
+    expect(screen.getByLabelText('输出单价 (元 / 1M tokens)')).toBeTruthy()
+    expect(screen.queryByText('模型别名 (逗号分隔)')).toBeNull()
+    expect(screen.queryByText('功能能力 / 标签')).toBeNull()
+    expect(screen.queryByText('上下文窗口 (Tokens)')).toBeNull()
 
-    fireEvent.change(input, { target: { value: '2.00' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.change(screen.getByLabelText('输入单价 (元 / 1M tokens)'), {
+      target: { value: '3.00' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存模型' }))
+
     await waitFor(() => expect(putBodies.length).toBeGreaterThan(0))
-    expect(putBodies[0].plaza_multiplier_milli).toBe(2000)
-    expect(putBodies[0].name).toBe('deepseek-chat')
+    const body = putBodies[0]
+    expect(body.name).toBe('deepseek-chat')
+    expect(body.aliases).toEqual(['deepseek-v3'])
+    expect(body.capabilities).toEqual(['text'])
+    expect(body.context_length).toBe(65536)
+    expect(body.enable_plaza).toBe(true)
+    expect(body.plaza_multiplier_milli).toBe(1500)
+    expect(body.status).toBe('active')
   })
 })

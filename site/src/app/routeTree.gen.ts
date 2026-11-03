@@ -59,6 +59,7 @@ import { Route as ConsoleOpsIndexRouteImport } from './routes/console/ops/index'
 import { Route as ConsoleOpsChannelsRouteImport } from './routes/console/ops/channels'
 import { Route as ConsoleOpsMetricsRouteImport } from './routes/console/ops/metrics'
 import { Route as ConsoleOpsModelsRouteImport } from './routes/console/ops/models'
+import { Route as ConsoleOpsPlazaRouteImport } from './routes/console/ops/plaza'
 import { Route as ConsoleOpsPricingRouteImport } from './routes/console/ops/pricing'
 import { Route as ConsoleOpsReviewRouteImport } from './routes/console/ops/review'
 import { Route as ConsoleOpsRiskRouteImport } from './routes/console/ops/risk'
@@ -326,6 +327,11 @@ const ConsoleOpsModelsRoute = ConsoleOpsModelsRouteImport.update({
   path: '/models',
   getParentRoute: () => ConsoleOpsRoute,
 } as any)
+const ConsoleOpsPlazaRoute = ConsoleOpsPlazaRouteImport.update({
+  id: '/plaza',
+  path: '/plaza',
+  getParentRoute: () => ConsoleOpsRoute,
+} as any)
 const ConsoleOpsPricingRoute = ConsoleOpsPricingRouteImport.update({
   id: '/pricing',
   path: '/pricing',
@@ -456,6 +462,7 @@ export interface FileRoutesByFullPath {
   '/console/ops/channels': typeof ConsoleOpsChannelsRoute
   '/console/ops/metrics': typeof ConsoleOpsMetricsRoute
   '/console/ops/models': typeof ConsoleOpsModelsRoute
+  '/console/ops/plaza': typeof ConsoleOpsPlazaRoute
   '/console/ops/pricing': typeof ConsoleOpsPricingRouteWithChildren
   '/console/ops/review': typeof ConsoleOpsReviewRouteWithChildren
   '/console/ops/risk': typeof ConsoleOpsRiskRoute
@@ -518,6 +525,7 @@ export interface FileRoutesByTo {
   '/console/ops/channels': typeof ConsoleOpsChannelsRoute
   '/console/ops/metrics': typeof ConsoleOpsMetricsRoute
   '/console/ops/models': typeof ConsoleOpsModelsRoute
+  '/console/ops/plaza': typeof ConsoleOpsPlazaRoute
   '/console/ops/risk': typeof ConsoleOpsRiskRoute
   '/console/ops/settings': typeof ConsoleOpsSettingsRoute
   '/console/ops/trace': typeof ConsoleOpsTraceRoute
@@ -584,6 +592,7 @@ export interface FileRoutesById {
   '/console/ops/channels': typeof ConsoleOpsChannelsRoute
   '/console/ops/metrics': typeof ConsoleOpsMetricsRoute
   '/console/ops/models': typeof ConsoleOpsModelsRoute
+  '/console/ops/plaza': typeof ConsoleOpsPlazaRoute
   '/console/ops/pricing': typeof ConsoleOpsPricingRouteWithChildren
   '/console/ops/review': typeof ConsoleOpsReviewRouteWithChildren
   '/console/ops/risk': typeof ConsoleOpsRiskRoute
@@ -654,6 +663,7 @@ export interface FileRouteTypes {
     | '/console/ops/channels'
     | '/console/ops/metrics'
     | '/console/ops/models'
+    | '/console/ops/plaza'
     | '/console/ops/pricing'
     | '/console/ops/review'
     | '/console/ops/risk'
@@ -716,6 +726,7 @@ export interface FileRouteTypes {
     | '/console/ops/channels'
     | '/console/ops/metrics'
     | '/console/ops/models'
+    | '/console/ops/plaza'
     | '/console/ops/risk'
     | '/console/ops/settings'
     | '/console/ops/trace'
@@ -781,6 +792,7 @@ export interface FileRouteTypes {
     | '/console/ops/channels'
     | '/console/ops/metrics'
     | '/console/ops/models'
+    | '/console/ops/plaza'
     | '/console/ops/pricing'
     | '/console/ops/review'
     | '/console/ops/risk'
@@ -1176,6 +1188,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleOpsModelsRouteImport
       parentRoute: typeof ConsoleOpsRoute
     }
+    '/console/ops/plaza': {
+      id: '/console/ops/plaza'
+      path: '/plaza'
+      fullPath: '/console/ops/plaza'
+      preLoaderRoute: typeof ConsoleOpsPlazaRouteImport
+      parentRoute: typeof ConsoleOpsRoute
+    }
     '/console/ops/pricing': {
       id: '/console/ops/pricing'
       path: '/pricing'
@@ -1395,6 +1414,7 @@ interface ConsoleOpsRouteChildren {
   ConsoleOpsChannelsRoute: typeof ConsoleOpsChannelsRoute
   ConsoleOpsMetricsRoute: typeof ConsoleOpsMetricsRoute
   ConsoleOpsModelsRoute: typeof ConsoleOpsModelsRoute
+  ConsoleOpsPlazaRoute: typeof ConsoleOpsPlazaRoute
   ConsoleOpsPricingRoute: typeof ConsoleOpsPricingRouteWithChildren
   ConsoleOpsReviewRoute: typeof ConsoleOpsReviewRouteWithChildren
   ConsoleOpsRiskRoute: typeof ConsoleOpsRiskRoute
@@ -1410,6 +1430,7 @@ const ConsoleOpsRouteChildren: ConsoleOpsRouteChildren = {
   ConsoleOpsChannelsRoute: ConsoleOpsChannelsRoute,
   ConsoleOpsMetricsRoute: ConsoleOpsMetricsRoute,
   ConsoleOpsModelsRoute: ConsoleOpsModelsRoute,
+  ConsoleOpsPlazaRoute: ConsoleOpsPlazaRoute,
   ConsoleOpsPricingRoute: ConsoleOpsPricingRouteWithChildren,
   ConsoleOpsReviewRoute: ConsoleOpsReviewRouteWithChildren,
   ConsoleOpsRiskRoute: ConsoleOpsRiskRoute,

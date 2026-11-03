@@ -153,6 +153,17 @@ export function getConsoleNavIcon(to: string): ReactNode {
         </svg>
       )
 
+    case '/console/ops/plaza':
+      // 广场上架: Storefront / shelf
+      return (
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 8V4.5A1.5 1.5 0 0 1 4.5 3h11A1.5 1.5 0 0 1 17 4.5V8" />
+          <path d="M2.5 8h15l-1 2.5a2.5 2.5 0 0 1-4.5.4 2.5 2.5 0 0 1-4.4 0 2.5 2.5 0 0 1-4.6-.4L2.5 8Z" />
+          <path d="M4.5 11.5v5A1.5 1.5 0 0 0 6 18h8a1.5 1.5 0 0 0 1.5-1.5v-5" />
+          <path d="M8.5 18v-3.5h3V18" />
+        </svg>
+      )
+
     case '/console/ops/review':
       // 发布审核: Review check
       return (

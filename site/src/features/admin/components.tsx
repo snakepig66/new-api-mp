@@ -291,6 +291,7 @@ export function FilterTabs<T extends string>({
 
 export type OpsTabPath =
   | '/console/ops/models'
+  | '/console/ops/plaza'
   | '/console/ops/pricing'
   | '/console/ops/pricing/per-call'
   | '/console/ops/review'

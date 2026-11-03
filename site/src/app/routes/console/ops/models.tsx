@@ -3,25 +3,20 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 
 import { copy } from '@/copy'
-import { cn } from '@/lib/cn'
 import { formatYuan } from '@/lib/money'
 import {
   Button,
   buttonClasses,
   Dialog,
-  DropdownMenu,
   Empty,
   ModelName,
   PageHeader,
-  Segmented,
-  Switch,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeaderCell,
   TableRow,
-  Tag,
   useToast,
 } from '@/ui'
 
@@ -50,28 +45,16 @@ import { withLogoVersion } from '@/features/market/model-logo'
 import { vendorLabel, vendorLogo } from '@/features/market/vendors'
 
 export const Route = createFileRoute('/console/ops/models')({
-  component: ModelsAndPricingPage,
+  component: ModelPoolPage,
 })
 
 const page = copy.pages.adminPool
 
 const tabs: readonly OpsTabLink[] = [
-  { to: '/console/ops/models', label: '模型与定价' },
+  { to: '/console/ops/models', label: '模型池' },
+  { to: '/console/ops/plaza', label: '广场上架' },
   { to: '/console/ops/pricing/per-call', label: copy.pages.adminCommon.nav.perCallPrices },
 ]
-
-const CAPABILITY_LABELS: Record<string, string> = {
-  text: '文本',
-  vision: '视觉',
-  video: '视频',
-  chat: '文本',
-  tools: '工具',
-  cache: '缓存',
-  image: '图像',
-  embedding: '向量',
-  reasoning: '推理',
-  search: '搜索',
-}
 
 const PRESET_VENDORS: { value: string; label: string }[] = [
   { value: 'deepseek', label: 'DeepSeek' },
@@ -89,97 +72,37 @@ const PRESET_VENDORS: { value: string; label: string }[] = [
   { value: '01ai', label: '零一万物 (Yi)' },
 ]
 
-const STANDARD_CAPABILITIES: { key: string; label: string }[] = [
-  { key: 'text', label: '文本' },
-  { key: 'vision', label: '视觉' },
-  { key: 'video', label: '视频' },
-]
-
-type StatusFilter = 'all' | 'active' | 'retired' | 'unpriced'
-
-const statusFilterOptions = [
-  { value: 'all', label: '全部模型' },
-  { value: 'active', label: '仅在售' },
-  { value: 'retired', label: '已停用' },
-  { value: 'unpriced', label: '未配置定价' },
-]
-
-function splitList(value: string): string[] {
-  return value
-    .split(/[,，\n]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
-
-function parseNonNegativeInt(value: string): number | null {
-  if (!value.trim()) return 0
-  const parsed = Number(value)
-  if (!Number.isInteger(parsed) || parsed < 0) return null
-  return parsed
-}
-
-interface UnifiedModelForm {
+interface PoolModelForm {
   name: string
   origin_vendor: string
-  context_length: string
-  capabilities: string
-  aliases: string
-  verify_prompt: string
-  status: string
-  enable_plaza: boolean
-  plaza_multiplier: string
-  // Pricing
   input_yuan: string
   output_yuan: string
   cache_read_yuan: string
 }
 
-const emptyForm: UnifiedModelForm = {
+const emptyForm: PoolModelForm = {
   name: '',
   origin_vendor: '',
-  context_length: '',
-  capabilities: '',
-  aliases: '',
-  verify_prompt: '',
-  status: 'active',
-  enable_plaza: true,
-  plaza_multiplier: '1.00',
   input_yuan: '',
   output_yuan: '',
   cache_read_yuan: '',
 }
 
-function formatPlazaMultiplier(milli: number | undefined): string {
-  const safe = typeof milli === 'number' && milli > 0 ? milli : 1000
-  return (safe / 1000).toFixed(2)
-}
-
-function parsePlazaMultiplier(value: string): number | null {
-  if (!value.trim()) return null
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed < 0.001 || parsed > 100) return null
-  return Math.round(parsed * 1000)
-}
-
-function ModelsAndPricingPage() {
+function ModelPoolPage() {
   const toast = useToast()
   const queryClient = useQueryClient()
   const models = useQuery(adminPoolModelsQuery())
   const prices = useQuery(adminPricesQuery())
 
   const [search, setSearch] = useState('')
-  const [selectedVendor, setSelectedVendor] = useState('all')
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [editing, setEditing] = useState<string | null>(null)
-  const [form, setForm] = useState<UnifiedModelForm>(emptyForm)
-  const [errors, setErrors] = useState<Partial<Record<keyof UnifiedModelForm, string>>>({})
+  const [editing, setEditing] = useState<AdminPoolModel | null>(null)
+  const [form, setForm] = useState<PoolModelForm>(emptyForm)
+  const [errors, setErrors] = useState<Partial<Record<keyof PoolModelForm, string>>>({})
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<AdminPoolModel | null>(null)
   const [customVendorMode, setCustomVendorMode] = useState(false)
-  const [editingMultiplier, setEditingMultiplier] = useState<string | null>(null)
-  const [multiplierDraft, setMultiplierDraft] = useState('')
 
   // Map each model name to its latest flat price row
   const latestPriceMap = useMemo(() => {
@@ -193,24 +116,6 @@ function ModelsAndPricingPage() {
     return map
   }, [prices.data])
 
-  // Aggregate vendor metrics for vendor filter pills
-  const vendorList = useMemo(() => {
-    const list = models.data ?? []
-    const counts = new Map<string, number>()
-    for (const m of list) {
-      const v = m.origin_vendor?.trim() || 'custom'
-      counts.set(v, (counts.get(v) ?? 0) + 1)
-    }
-    return Array.from(counts.entries())
-      .map(([vendor, count]) => ({
-        vendor,
-        label: vendorLabel(vendor),
-        logo: vendorLogo(vendor),
-        count,
-      }))
-      .sort((a, b) => b.count - a.count)
-  }, [models.data])
-
   // Filtered rows
   const filteredRows = useMemo(() => {
     let list = models.data ?? []
@@ -219,24 +124,13 @@ function ModelsAndPricingPage() {
       list = list.filter(
         (m) =>
           m.name.toLowerCase().includes(q) ||
-          m.origin_vendor.toLowerCase().includes(q) ||
-          m.aliases.some((a) => a.toLowerCase().includes(q)),
+          m.origin_vendor.toLowerCase().includes(q),
       )
     }
-    if (selectedVendor !== 'all') {
-      list = list.filter((m) => (m.origin_vendor?.trim() || 'custom') === selectedVendor)
-    }
-    if (statusFilter === 'active') {
-      list = list.filter((m) => m.status === 'active')
-    } else if (statusFilter === 'retired') {
-      list = list.filter((m) => m.status === 'retired')
-    } else if (statusFilter === 'unpriced') {
-      list = list.filter((m) => !latestPriceMap.has(m.name))
-    }
     return list
-  }, [models.data, search, selectedVendor, statusFilter, latestPriceMap])
+  }, [models.data, search])
 
-  // Group filtered rows by vendor
+  // Group filtered rows by vendor, models sorted by name within a group
   const groupedByVendor = useMemo(() => {
     const groups = new Map<string, AdminPoolModel[]>()
     for (const m of filteredRows) {
@@ -249,7 +143,7 @@ function ModelsAndPricingPage() {
       vendor,
       label: vendorLabel(vendor),
       logo: vendorLogo(vendor),
-      rows: vendorRows,
+      rows: [...vendorRows].sort((a, b) => a.name.localeCompare(b.name)),
     }))
   }, [filteredRows])
 
@@ -268,45 +162,6 @@ function ModelsAndPricingPage() {
     return Array.from(map.entries()).map(([value, label]) => ({ value, label }))
   }, [models.data])
 
-  const selectedCaps = useMemo(() => {
-    const list = splitList(form.capabilities)
-    const set = new Set<string>()
-    for (const c of list) {
-      if (c === 'chat' || c === 'text') set.add('text')
-      else if (c === 'vision') set.add('vision')
-      else if (c === 'video') set.add('video')
-      else set.add(c)
-    }
-    return set
-  }, [form.capabilities])
-
-  const customCapsList = useMemo(() => {
-    const stdKeys = new Set(['text', 'vision', 'video', 'chat'])
-    return splitList(form.capabilities).filter((cap) => !stdKeys.has(cap))
-  }, [form.capabilities])
-
-  function toggleCap(key: string) {
-    const list = splitList(form.capabilities)
-    const normalized = list.map((c) => (c === 'chat' ? 'text' : c))
-    const next = new Set(normalized)
-    if (next.has(key)) {
-      next.delete(key)
-    } else {
-      next.add(key)
-    }
-    update('capabilities', Array.from(next).join(', '))
-  }
-
-  function handleCustomCapsChange(val: string) {
-    const list = splitList(form.capabilities)
-    const std = list
-      .map((c) => (c === 'chat' ? 'text' : c))
-      .filter((cap) => STANDARD_CAPABILITIES.some((c) => c.key === cap))
-    const custom = splitList(val)
-    const merged = Array.from(new Set([...std, ...custom]))
-    update('capabilities', merged.join(', '))
-  }
-
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: adminPoolModelsQuery().queryKey })
     void queryClient.invalidateQueries({ queryKey: adminPricesQuery().queryKey })
@@ -322,88 +177,6 @@ function ModelsAndPricingPage() {
     onError: (error) => toast.show({ title: adminErrorMessage(error), tone: 'error' }),
   })
 
-  const toggleStatus = useMutation({
-    mutationFn: (model: AdminPoolModel) =>
-      putAdminPoolModel({
-        name: model.name,
-        origin_vendor: model.origin_vendor,
-        context_length: model.context_length,
-        capabilities: model.capabilities,
-        aliases: model.aliases,
-        verify_prompt: model.verify_prompt,
-        status: model.status === 'active' ? 'retired' : 'active',
-        enable_plaza: model.enable_plaza !== false,
-        plaza_multiplier_milli: model.plaza_multiplier_milli,
-      }),
-    onSuccess: () => {
-      refresh()
-      toast.show({ title: '模型状态已更新', tone: 'success' })
-    },
-    onError: (error) => toast.show({ title: adminErrorMessage(error), tone: 'error' }),
-  })
-
-  const togglePlaza = useMutation({
-    mutationFn: (model: AdminPoolModel) =>
-      putAdminPoolModel({
-        name: model.name,
-        origin_vendor: model.origin_vendor,
-        context_length: model.context_length,
-        capabilities: model.capabilities,
-        aliases: model.aliases,
-        verify_prompt: model.verify_prompt,
-        status: model.status,
-        enable_plaza: model.enable_plaza === false,
-        plaza_multiplier_milli: model.plaza_multiplier_milli,
-      }),
-    onSuccess: () => {
-      refresh()
-      toast.show({ title: '广场上架状态已更新', tone: 'success' })
-    },
-    onError: (error) => toast.show({ title: adminErrorMessage(error), tone: 'error' }),
-  })
-
-  const setPlazaMultiplier = useMutation({
-    mutationFn: ({ model, milli }: { model: AdminPoolModel; milli: number }) =>
-      putAdminPoolModel({
-        name: model.name,
-        origin_vendor: model.origin_vendor,
-        context_length: model.context_length,
-        capabilities: model.capabilities,
-        aliases: model.aliases,
-        verify_prompt: model.verify_prompt,
-        status: model.status,
-        enable_plaza: model.enable_plaza !== false,
-        plaza_multiplier_milli: milli,
-      }),
-    onSuccess: () => {
-      refresh()
-      toast.show({ title: '广场倍率已更新', tone: 'success' })
-    },
-    onError: (error) => toast.show({ title: adminErrorMessage(error), tone: 'error' }),
-  })
-
-  function startEditMultiplier(row: AdminPoolModel) {
-    setEditingMultiplier(row.name)
-    setMultiplierDraft(formatPlazaMultiplier(row.plaza_multiplier_milli))
-  }
-
-  function cancelEditMultiplier() {
-    setEditingMultiplier(null)
-    setMultiplierDraft('')
-  }
-
-  function commitEditMultiplier(row: AdminPoolModel) {
-    const milli = parsePlazaMultiplier(multiplierDraft)
-    if (milli === null) {
-      toast.show({ title: '广场倍率需在 0.001 到 100 之间', tone: 'error' })
-      return
-    }
-    setEditingMultiplier(null)
-    setMultiplierDraft('')
-    if (milli === (row.plaza_multiplier_milli || 1000)) return
-    setPlazaMultiplier.mutate({ model: row, milli })
-  }
-
   function openCreate() {
     setEditing(null)
     setForm(emptyForm)
@@ -415,43 +188,35 @@ function ModelsAndPricingPage() {
 
   function openEdit(model: AdminPoolModel) {
     const p = latestPriceMap.get(model.name)
-    const isKnown = dialogVendorOptions.some((o) => o.value === model.origin_vendor)
-    setCustomVendorMode(Boolean(model.origin_vendor && !isKnown))
-    setEditing(model.name)
+    const known = dialogVendorOptions.some((o) => o.value === model.origin_vendor)
+    setCustomVendorMode(Boolean(model.origin_vendor && !known))
+    setEditing(model)
     setForm({
       name: model.name,
       origin_vendor: model.origin_vendor,
-      context_length: model.context_length ? String(model.context_length) : '',
-      capabilities: model.capabilities.join(', '),
-      aliases: model.aliases.join(', '),
-      verify_prompt: model.verify_prompt,
-      status: model.status || 'active',
-      enable_plaza: model.enable_plaza !== false,
-      plaza_multiplier: formatPlazaMultiplier(model.plaza_multiplier_milli),
       input_yuan: p ? String(Number(p.input_micro_per_mtok) / 1_000_000) : '',
       output_yuan: p ? String(Number(p.output_micro_per_mtok) / 1_000_000) : '',
-      cache_read_yuan: p && p.cache_read_micro_per_mtok ? String(Number(p.cache_read_micro_per_mtok) / 1_000_000) : '',
+      cache_read_yuan:
+        p && p.cache_read_micro_per_mtok ? String(Number(p.cache_read_micro_per_mtok) / 1_000_000) : '',
     })
     setErrors({})
     setSubmitError(null)
     setDialogOpen(true)
   }
 
-  function update<K extends keyof UnifiedModelForm>(key: K, value: UnifiedModelForm[K]) {
+  function update<K extends keyof PoolModelForm>(key: K, value: PoolModelForm[K]) {
     setForm((current) => ({ ...current, [key]: value }))
     setErrors((current) => ({ ...current, [key]: undefined }))
     setSubmitError(null)
   }
 
   async function handleSubmit() {
-    const next: Partial<Record<keyof UnifiedModelForm, string>> = {}
+    const next: Partial<Record<keyof PoolModelForm, string>> = {}
     const name = form.name.trim()
     const origin = form.origin_vendor.trim()
-    const context = parseNonNegativeInt(form.context_length)
 
     if (!name) next.name = '模型名称不能为空'
     else if (name.length > 128) next.name = '模型名称过长'
-    if (context === null) next.context_length = '上下文长度必须为非负整数'
 
     const hasInputPrice = form.input_yuan.trim().length > 0
     const hasOutputPrice = form.output_yuan.trim().length > 0
@@ -464,8 +229,6 @@ function ModelsAndPricingPage() {
       const val = Number(form.output_yuan)
       if (Number.isNaN(val) || val <= 0) next.output_yuan = '请输入大于 0 的数字'
     }
-    const plazaMilli = parsePlazaMultiplier(form.plaza_multiplier)
-    if (plazaMilli === null) next.plaza_multiplier = '广场倍率需在 0.001 到 100 之间'
 
     if (Object.keys(next).length > 0) {
       setErrors(next)
@@ -476,17 +239,19 @@ function ModelsAndPricingPage() {
     setSubmitError(null)
 
     try {
-      // 1. Save model attributes
+      // 1. Save model attributes, carrying over untouched fields from the
+      // edited model (or the original form defaults when creating).
+      const base = editing
       await putAdminPoolModel({
         name,
-        origin_vendor: origin,
-        context_length: context ?? 0,
-        capabilities: splitList(form.capabilities),
-        aliases: splitList(form.aliases),
-        verify_prompt: form.verify_prompt.trim(),
-        status: form.status,
-        enable_plaza: form.enable_plaza,
-        ...(plazaMilli !== null ? { plaza_multiplier_milli: plazaMilli } : {}),
+        origin_vendor: origin || base?.origin_vendor || '',
+        context_length: base?.context_length ?? 0,
+        capabilities: base?.capabilities ?? [],
+        aliases: base?.aliases ?? [],
+        verify_prompt: base?.verify_prompt ?? '',
+        status: base?.status ?? 'active',
+        enable_plaza: base ? base.enable_plaza !== false : true,
+        plaza_multiplier_milli: base?.plaza_multiplier_milli ?? 1000,
       })
 
       // 2. Save price if specified
@@ -497,7 +262,7 @@ function ModelsAndPricingPage() {
 
         await createAdminPrice({
           model: name,
-          vendor: origin || 'custom',
+          vendor: origin || base?.origin_vendor || 'custom',
           tier: 'flat',
           input_micro_per_mtok: inputMicro,
           output_micro_per_mtok: outputMicro,
@@ -509,7 +274,7 @@ function ModelsAndPricingPage() {
 
       refresh()
       toast.show({
-        title: editing ? '模型与定价修改成功' : '模型与定价创建成功',
+        title: editing ? '模型与基价修改成功' : '模型与基价创建成功',
         tone: 'success',
       })
       setDialogOpen(false)
@@ -524,127 +289,50 @@ function ModelsAndPricingPage() {
     <>
       <OpsTabNav tabs={tabs} ariaLabel="运营后台导航" />
       <PageHeader
-        title="模型与定价"
-        lead="集中管理标准在售模型池及其 Token 计费价格。配置后即时同步至模型广场与调用计费链路。"
+        title="模型池"
+        lead="各厂家模型的基价（元 / 1M tokens），广场价 = 基价 × 广场倍率"
         actions={
           <div className="flex items-center gap-2">
             <a href="/console/ops/channels" className={buttonClasses('secondary', 'sm')}>
               广场渠道
             </a>
             <Button size="sm" onClick={openCreate}>
-              + 添加模型与定价
+              + 添加模型
             </Button>
           </div>
         }
       />
 
       <div className="mt-6 space-y-6">
-        {/* 厂商药丸过滤栏 */}
-        {vendorList.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-2 border-b border-line pb-4">
-            <button
-              type="button"
-              onClick={() => setSelectedVendor('all')}
-              className={cn(
-                'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-caption font-medium transition-colors cursor-pointer',
-                selectedVendor === 'all'
-                  ? 'bg-brand text-white shadow-xs'
-                  : 'bg-card text-ink-2 ring-1 ring-inset ring-line hover:bg-brand-soft/50 hover:text-ink',
-              )}
-            >
-              <span>全部厂商</span>
-              <span
-                className={cn(
-                  'rounded-full px-1.5 py-0.2 text-[11px]',
-                  selectedVendor === 'all' ? 'bg-white/20 text-white' : 'bg-line text-ink-3',
-                )}
-              >
-                {models.data?.length ?? 0}
-              </span>
-            </button>
-            {vendorList.map((v) => {
-              const active = selectedVendor === v.vendor
-              return (
-                <button
-                  key={v.vendor}
-                  type="button"
-                  onClick={() => setSelectedVendor(v.vendor)}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-caption font-medium transition-colors cursor-pointer',
-                    active
-                      ? 'bg-brand text-white shadow-xs'
-                      : 'bg-card text-ink-2 ring-1 ring-inset ring-line hover:bg-brand-soft/50 hover:text-ink',
-                  )}
-                >
-                  {v.logo ? (
-                    <img
-                      src={withLogoVersion(v.logo)}
-                      alt=""
-                      className="h-3.5 w-3.5 object-contain"
-                      aria-hidden="true"
-                    />
-                  ) : null}
-                  <span>{v.label}</span>
-                  <span
-                    className={cn(
-                      'rounded-full px-1.5 py-0.2 text-[11px]',
-                      active ? 'bg-white/20 text-white' : 'bg-line text-ink-3',
-                    )}
-                  >
-                    {v.count}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-        ) : null}
-
-        {/* 搜索与快捷状态过滤条 */}
+        {/* 搜索条 */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="w-full sm:w-72">
-              <TextInput
-                placeholder="搜索模型名称、厂商、别名..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-            <Segmented
-              options={statusFilterOptions}
-              value={statusFilter}
-              onChange={(v) => setStatusFilter(v as StatusFilter)}
-              size="sm"
-              ariaLabel="模型状态筛选"
+          <div className="w-full sm:w-72">
+            <TextInput
+              placeholder="搜索模型 ID、厂商..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
             />
           </div>
           <div className="flex items-center gap-2 text-meta text-ink-3">
             <span>
               共 <strong className="font-medium text-ink">{filteredRows.length}</strong> 个模型
             </span>
-            <span>·</span>
-            <span>
-              已配置定价 <strong className="font-medium text-ink">{latestPriceMap.size}</strong>
-            </span>
           </div>
         </div>
 
         {/* 模型列表区块 */}
         {models.isPending || prices.isPending ? (
-          <TableSkeleton rows={8} columns={6} />
+          <TableSkeleton rows={8} columns={5} />
         ) : models.isError ? (
           <ErrorBlock error={models.error} onRetry={refresh} />
         ) : filteredRows.length === 0 ? (
           <Empty
             title="暂无模型"
-            reason={
-              search || selectedVendor !== 'all' || statusFilter !== 'all'
-                ? '没有匹配筛选条件的模型'
-                : '标准模型池当前为空'
-            }
-            next="点击右上角按钮添加模型及定价，或调整筛选条件"
+            reason={search ? '没有匹配筛选条件的模型' : '标准模型池当前为空'}
+            next="点击右上角按钮添加模型及基价，或调整搜索条件"
             action={
               <Button variant="secondary" size="sm" onClick={openCreate}>
-                + 添加模型与定价
+                + 添加模型
               </Button>
             }
           />
@@ -670,227 +358,60 @@ function ModelsAndPricingPage() {
                         {group.label.slice(0, 1)}
                       </span>
                     )}
-                    <h3 className="text-body font-semibold text-ink">
-                      {group.label}
-                    </h3>
+                    <h3 className="text-body font-semibold text-ink">{group.label}</h3>
                     <span className="rounded-full bg-line/80 px-2 py-0.5 text-caption font-medium text-ink-3">
                       {group.rows.length} 个模型
                     </span>
                   </div>
                 </div>
 
-                {/* 规范高密度数据表格 */}
-                <Table minWidth={840}>
+                <Table minWidth={720}>
                   <TableHead>
                     <TableRow interactive={false}>
-                      <TableHeaderCell className="w-[30%]">模型名称 / 能力</TableHeaderCell>
-                      <TableHeaderCell className="w-[10%] text-center">上下文</TableHeaderCell>
-                      <TableHeaderCell className="w-[28%]">Token 计费 (元/M tok)</TableHeaderCell>
-                      <TableHeaderCell className="w-[10%]">状态</TableHeaderCell>
-                      <TableHeaderCell className="w-[10%] text-center">广场上架</TableHeaderCell>
-                      <TableHeaderCell className="w-[10%] text-center">广场倍率</TableHeaderCell>
+                      <TableHeaderCell className="w-[34%]">模型 ID</TableHeaderCell>
+                      <TableHeaderCell className="w-[18%] text-right">输入基价</TableHeaderCell>
+                      <TableHeaderCell className="w-[18%] text-right">输出基价</TableHeaderCell>
+                      <TableHeaderCell className="w-[18%] text-right">缓存命中基价</TableHeaderCell>
                       <TableHeaderCell numeric className="w-[12%]">操作</TableHeaderCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {group.rows.map((row) => {
                       const p = latestPriceMap.get(row.name)
-                      const hasPrice = Boolean(p)
-                      const isThisToggling =
-                        toggleStatus.isPending && toggleStatus.variables?.name === row.name
-
                       return (
                         <TableRow key={row.name}>
-                          {/* 1. 模型名称 + 别名 + 能力标签 */}
                           <TableCell>
-                            <div className="flex flex-col gap-1.5 py-1">
-                              <div className="flex items-center gap-2">
-                                <ModelName
-                                  model={row.name}
-                                  vendor={row.origin_vendor || group.vendor}
-                                  size="md"
-                                  className="font-semibold text-ink"
-                                />
-                                {row.status !== 'active' ? (
-                                  <span className="rounded bg-line/60 px-1.5 py-0.5 text-[11px] text-ink-4">
-                                    已停用
-                                  </span>
-                                ) : null}
-                              </div>
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                {row.aliases.length > 0 ? (
-                                  <span className="text-caption text-ink-3">
-                                    别名: {row.aliases.join(', ')}
-                                  </span>
-                                ) : null}
-                                {row.capabilities && row.capabilities.length > 0 ? (
-                                  <div className="flex flex-wrap items-center gap-1">
-                                    {row.capabilities.map((cap) => (
-                                      <Tag
-                                        key={cap}
-                                        tone="neutral"
-                                        className="h-[18px] px-1.5 text-[11px] leading-none text-ink-3"
-                                      >
-                                        {CAPABILITY_LABELS[cap] ?? cap}
-                                      </Tag>
-                                    ))}
-                                  </div>
-                                ) : null}
-                              </div>
-                            </div>
+                            <ModelName
+                              model={row.name}
+                              vendor={row.origin_vendor || group.vendor}
+                              size="md"
+                              className="font-semibold text-ink"
+                            />
                           </TableCell>
-
-                          {/* 2. 上下文 */}
-                          <TableCell className="text-center">
-                            {row.context_length ? (
-                              <span className="inline-block rounded-md bg-line/50 px-2 py-0.5 font-mono text-caption font-medium text-ink-2">
-                                {Math.round(row.context_length / 1024)}k
-                              </span>
-                            ) : (
-                              <span className="text-ink-4">—</span>
-                            )}
+                          <TableCell className="text-right font-mono text-meta text-brand">
+                            {p ? formatYuan(p.input_micro_per_mtok) : '—'}
                           </TableCell>
-
-                          {/* 3. Token 复合计费 */}
-                          <TableCell>
-                            {hasPrice && p ? (
-                              <div className="flex flex-col gap-0.5 py-0.5">
-                                <div className="flex items-center gap-2 font-mono text-meta">
-                                  <span className="inline-flex items-center gap-1">
-                                    <span className="text-caption text-ink-3">输入</span>
-                                    <span className="font-semibold text-brand">
-                                      {formatYuan(p.input_micro_per_mtok)}
-                                    </span>
-                                  </span>
-                                  <span className="text-ink-4">/</span>
-                                  <span className="inline-flex items-center gap-1">
-                                    <span className="text-caption text-ink-3">输出</span>
-                                    <span className="font-semibold text-ink">
-                                      {formatYuan(p.output_micro_per_mtok)}
-                                    </span>
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-1.5 font-mono text-caption text-ink-3">
-                                  {p.cache_read_micro_per_mtok ? (
-                                    <span>
-                                      缓存命中{' '}
-                                      <span className="font-medium text-ink-2">
-                                        {formatYuan(p.cache_read_micro_per_mtok)}
-                                      </span>
-                                    </span>
-                                  ) : (
-                                    <span className="text-ink-4">无独立缓存价</span>
-                                  )}
-                                </div>
-                              </div>
-                            ) : (
-                              <Tag tone="warning" className="whitespace-nowrap">
-                                未配置定价
-                              </Tag>
-                            )}
+                          <TableCell className="text-right font-mono text-meta text-ink">
+                            {p ? formatYuan(p.output_micro_per_mtok) : '—'}
                           </TableCell>
-
-                          {/* 4. 状态 Switch */}
-                          <TableCell>
-                            <div className="flex items-center gap-2 whitespace-nowrap">
-                              <Switch
-                                checked={row.status === 'active'}
-                                loading={isThisToggling}
-                                onCheckedChange={() => toggleStatus.mutate(row)}
-                                aria-label={row.status === 'active' ? '点击停用' : '点击启用'}
-                              />
-                              <span
-                                className={cn(
-                                  'text-caption font-medium',
-                                  row.status === 'active' ? 'text-brand-ink' : 'text-ink-4',
-                                )}
-                              >
-                                {row.status === 'active' ? '在售' : '停用'}
-                              </span>
-                            </div>
+                          <TableCell className="text-right font-mono text-meta text-ink-2">
+                            {p && p.cache_read_micro_per_mtok
+                              ? formatYuan(p.cache_read_micro_per_mtok)
+                              : '—'}
                           </TableCell>
-
-                          {/* 4.5 广场上架 Switch */}
-                          <TableCell className="text-center">
-                            <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
-                              <Switch
-                                checked={row.enable_plaza !== false}
-                                loading={togglePlaza.isPending && togglePlaza.variables?.name === row.name}
-                                onCheckedChange={() => togglePlaza.mutate(row)}
-                                aria-label={row.enable_plaza !== false ? '点击下架广场' : '点击上架广场'}
-                              />
-                              <span
-                                className={cn(
-                                  'text-caption font-medium',
-                                  row.enable_plaza !== false ? 'text-brand-ink' : 'text-ink-4',
-                                )}
-                              >
-                                {row.enable_plaza !== false ? '已上架' : '未上架'}
-                              </span>
-                            </div>
-                          </TableCell>
-
-                          {/* 4.6 广场倍率（就地编辑） */}
-                          <TableCell className="text-center">
-                            {editingMultiplier === row.name ? (
-                              <input
-                                aria-label="广场倍率"
-                                data-testid="plaza-multiplier-input"
-                                className="w-16 rounded-md border border-line bg-card px-1.5 py-0.5 text-center font-mono text-meta text-ink focus:border-brand focus:outline-none"
-                                value={multiplierDraft}
-                                inputMode="decimal"
-                                autoFocus
-                                onChange={(e) => setMultiplierDraft(e.target.value)}
-                                onBlur={() => commitEditMultiplier(row)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') commitEditMultiplier(row)
-                                  else if (e.key === 'Escape') cancelEditMultiplier()
-                                }}
-                              />
-                            ) : (
-                              <button
-                                type="button"
-                                aria-label={`编辑广场倍率 ${row.name}`}
-                                className="cursor-pointer rounded-md px-2 py-0.5 font-mono text-meta font-medium text-ink-2 hover:bg-brand-soft/50 hover:text-brand-ink"
-                                onClick={() => startEditMultiplier(row)}
-                              >
-                                {formatPlazaMultiplier(row.plaza_multiplier_milli)}x
-                              </button>
-                            )}
-                          </TableCell>
-
-                          {/* 5. 精简操作列 */}
                           <TableCell numeric>
                             <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                onClick={() => openEdit(row)}
-                              >
+                              <Button variant="secondary" size="sm" onClick={() => openEdit(row)}>
                                 编辑
                               </Button>
-                              <DropdownMenu
-                                align="end"
-                                menuLabel="更多操作"
-                                trigger={
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    aria-label="更多操作"
-                                    className="px-2 font-mono text-base text-ink-3 hover:text-ink"
-                                  >
-                                    ⋯
-                                  </Button>
-                                }
-                                items={[
-                                  {
-                                    key: 'delete',
-                                    label: '删除模型',
-                                    danger: true,
-                                    onSelect: () => setDeleteTarget(row),
-                                  },
-                                ]}
-                              />
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setDeleteTarget(row)}
+                                className="text-danger hover:bg-danger/10"
+                              >
+                                删除
+                              </Button>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -904,7 +425,7 @@ function ModelsAndPricingPage() {
         )}
       </div>
 
-      {/* 一体化新增 / 编辑模型与定价弹窗 */}
+      {/* 新增 / 编辑模型与基价弹窗 */}
       <Dialog
         open={dialogOpen}
         onOpenChange={(open) => {
@@ -913,8 +434,8 @@ function ModelsAndPricingPage() {
             setSubmitError(null)
           }
         }}
-        title={editing ? `编辑模型与定价：${editing}` : '添加模型与定价'}
-        description="配置标准在售模型的基本属性以及全局基准 Token 价格。保存后将自动应用至模型广场。"
+        title={editing ? `编辑模型：${editing.name}` : '添加模型'}
+        description="维护模型所属厂家与每 1M tokens 的基价。别名、能力、上下文、倍率与上架状态保持不变。"
         className="max-h-[calc(100vh-3rem)] max-w-2xl overflow-y-auto"
         footer={
           <>
@@ -926,24 +447,23 @@ function ModelsAndPricingPage() {
               取消
             </Button>
             <Button loading={isSubmitting} onClick={handleSubmit}>
-              {isSubmitting ? '正在保存...' : '保存模型与定价'}
+              {isSubmitting ? '正在保存...' : '保存模型'}
             </Button>
           </>
         }
       >
         <div className="space-y-6">
-          {/* Section 1: 基础属性 */}
           <div>
-            <h4 className="text-meta font-semibold text-ink">1. 模型基本信息</h4>
+            <h4 className="text-meta font-semibold text-ink">模型基本信息</h4>
             <div className="mt-3 grid gap-4 sm:grid-cols-2">
               <Field
                 label="模型唯一标识 (ID)"
-                htmlFor="unified-name"
+                htmlFor="pool-name"
                 error={errors.name}
                 hint="例如 deepseek-chat 或 gpt-4o"
               >
                 <TextInput
-                  id="unified-name"
+                  id="pool-name"
                   value={form.name}
                   disabled={editing !== null}
                   placeholder="deepseek-chat"
@@ -954,11 +474,11 @@ function ModelsAndPricingPage() {
 
               <Field
                 label="厂商标识 (Vendor)"
-                htmlFor="unified-vendor"
-                hint="选择或自定义厂商，用于渲染品牌矢量图标与分类"
+                htmlFor="pool-vendor"
+                hint="选择或自定义厂商，用于分组与品牌图标"
               >
                 <Select
-                  id="unified-vendor"
+                  id="pool-vendor"
                   value={
                     customVendorMode
                       ? '__custom__'
@@ -998,121 +518,13 @@ function ModelsAndPricingPage() {
                   </div>
                 )}
               </Field>
-
-              <Field
-                label="上下文窗口 (Tokens)"
-                htmlFor="unified-context"
-                error={errors.context_length}
-              >
-                <TextInput
-                  id="unified-context"
-                  value={form.context_length}
-                  placeholder="65536"
-                  inputMode="numeric"
-                  invalid={Boolean(errors.context_length)}
-                  onChange={(e) => update('context_length', e.target.value)}
-                />
-              </Field>
-
-              <Field label="模型状态" htmlFor="unified-status">
-                <Select
-                  id="unified-status"
-                  value={form.status}
-                  onChange={(e) => update('status', e.target.value)}
-                >
-                  <option value="active">正常在售 (Active)</option>
-                  <option value="retired">已停用 (Retired)</option>
-                </Select>
-              </Field>
-
-              <div className="flex items-center justify-between rounded-lg border border-line bg-surface/50 p-3 sm:col-span-2">
-                <div>
-                  <div className="text-meta font-medium text-ink">上架到模型广场</div>
-                  <div className="text-caption text-ink-3">开启后该模型可在模型广场展示并向普通密钥开放调用</div>
-                </div>
-                <Switch
-                  checked={form.enable_plaza}
-                  onCheckedChange={(val) => update('enable_plaza', val)}
-                  aria-label="上架到模型广场"
-                />
-              </div>
-
-              <Field
-                label="广场倍率 (x)"
-                htmlFor="unified-plaza-multiplier"
-                error={errors.plaza_multiplier}
-                hint="广场价格 = 模型池基价 × 广场倍率，范围 0.001–100"
-              >
-                <TextInput
-                  id="unified-plaza-multiplier"
-                  value={form.plaza_multiplier}
-                  placeholder="1.00"
-                  inputMode="decimal"
-                  invalid={Boolean(errors.plaza_multiplier)}
-                  onChange={(e) => update('plaza_multiplier', e.target.value)}
-                />
-              </Field>
-
-              <Field
-                label="模型别名 (逗号分隔)"
-                htmlFor="unified-aliases"
-                className="sm:col-span-2"
-              >
-                <TextInput
-                  id="unified-aliases"
-                  value={form.aliases}
-                  placeholder="deepseek-v3, deepseek"
-                  onChange={(e) => update('aliases', e.target.value)}
-                />
-              </Field>
-
-              <Field
-                label="功能能力 / 标签"
-                htmlFor="unified-caps"
-                className="sm:col-span-2"
-                hint="勾选模型具备的特性（文本、视觉、视频），支持多选"
-              >
-                <div className="grid grid-cols-3 gap-2.5">
-                  {STANDARD_CAPABILITIES.map((cap) => {
-                    const checked = selectedCaps.has(cap.key)
-                    return (
-                      <label
-                        key={cap.key}
-                        className={cn(
-                          'flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-meta transition-all cursor-pointer select-none',
-                          checked
-                            ? 'border-brand bg-brand-soft/40 text-brand-ink font-medium shadow-2xs'
-                            : 'border-line bg-card/60 text-ink-2 hover:border-line-hover hover:bg-surface',
-                        )}
-                      >
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 rounded border-line text-brand accent-brand cursor-pointer"
-                          checked={checked}
-                          onChange={() => toggleCap(cap.key)}
-                        />
-                        <span className="truncate">{cap.label}</span>
-                      </label>
-                    )
-                  })}
-                </div>
-                <div className="mt-2.5">
-                  <TextInput
-                    id="unified-caps-custom"
-                    placeholder="其他自定义能力（可选，逗号分隔，例如 audio, search）"
-                    value={customCapsList.join(', ')}
-                    onChange={(e) => handleCustomCapsChange(e.target.value)}
-                  />
-                </div>
-              </Field>
             </div>
           </div>
 
           <hr className="border-line" />
 
-          {/* Section 2: 定价策略 */}
           <div>
-            <h4 className="text-meta font-semibold text-ink">2. Token 计费价格（每 1M tokens）</h4>
+            <h4 className="text-meta font-semibold text-ink">基价（每 1M tokens）</h4>
             <p className="mt-1 text-caption text-ink-3">
               填入输入与输出每 1,000,000 tokens 的人民币价格。留空表示沿用历史版本或暂不设定。
             </p>
@@ -1120,11 +532,11 @@ function ModelsAndPricingPage() {
             <div className="mt-3 grid gap-4 sm:grid-cols-2">
               <Field
                 label="输入单价 (元 / 1M tokens)"
-                htmlFor="unified-input-price"
+                htmlFor="pool-input-price"
                 error={errors.input_yuan}
               >
                 <TextInput
-                  id="unified-input-price"
+                  id="pool-input-price"
                   value={form.input_yuan}
                   placeholder="2.00"
                   inputMode="decimal"
@@ -1135,11 +547,11 @@ function ModelsAndPricingPage() {
 
               <Field
                 label="输出单价 (元 / 1M tokens)"
-                htmlFor="unified-output-price"
+                htmlFor="pool-output-price"
                 error={errors.output_yuan}
               >
                 <TextInput
-                  id="unified-output-price"
+                  id="pool-output-price"
                   value={form.output_yuan}
                   placeholder="8.00"
                   inputMode="decimal"
@@ -1150,12 +562,12 @@ function ModelsAndPricingPage() {
 
               <Field
                 label="缓存命中单价 (元 / 1M tokens，可选)"
-                htmlFor="unified-cache-read"
+                htmlFor="pool-cache-read"
                 className="sm:col-span-2"
                 hint="仅当模型支持上下文缓存且命中时享受优惠价时填写；若不支持或无优惠可留空"
               >
                 <TextInput
-                  id="unified-cache-read"
+                  id="pool-cache-read"
                   value={form.cache_read_yuan}
                   placeholder="0.50（留空表示无独立缓存命中价格）"
                   inputMode="decimal"

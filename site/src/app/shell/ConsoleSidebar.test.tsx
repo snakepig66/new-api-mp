@@ -78,6 +78,7 @@ describe('ConsoleSidebar', () => {
       '/console/earnings',
       '/console/account',
       '/console/ops/models',
+      '/console/ops/plaza',
       '/console/ops/review',
       '/console/ops/metrics',
       '/console/ops/tools',
