@@ -93,7 +93,7 @@ const emptyForm: PoolModelForm = {
   input_yuan: '',
   output_yuan: '',
   cache_read_yuan: '',
-  context_k: '',
+  context_k: '1000',
 }
 
 function ModelPoolPage() {
@@ -542,7 +542,7 @@ function ModelPoolPage() {
                 label="上下文长度 (K tokens)"
                 htmlFor="pool-context"
                 error={errors.context_k}
-                hint="例如 128 表示 128K，1000 表示 1M；留空表示未知"
+                hint="默认 1000（即 1M）；128 表示 128K"
               >
                 <TextInput
                   id="pool-context"
