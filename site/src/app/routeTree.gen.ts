@@ -61,6 +61,7 @@ import { Route as ConsoleOpsMetricsRouteImport } from './routes/console/ops/metr
 import { Route as ConsoleOpsModelsRouteImport } from './routes/console/ops/models'
 import { Route as ConsoleOpsPlazaRouteImport } from './routes/console/ops/plaza'
 import { Route as ConsoleOpsPricingRouteImport } from './routes/console/ops/pricing'
+import { Route as ConsoleOpsRequestPoliciesRouteImport } from './routes/console/ops/request-policies'
 import { Route as ConsoleOpsReviewRouteImport } from './routes/console/ops/review'
 import { Route as ConsoleOpsRiskRouteImport } from './routes/console/ops/risk'
 import { Route as ConsoleOpsSettingsRouteImport } from './routes/console/ops/settings'
@@ -337,6 +338,12 @@ const ConsoleOpsPricingRoute = ConsoleOpsPricingRouteImport.update({
   path: '/pricing',
   getParentRoute: () => ConsoleOpsRoute,
 } as any)
+const ConsoleOpsRequestPoliciesRoute =
+  ConsoleOpsRequestPoliciesRouteImport.update({
+    id: '/request-policies',
+    path: '/request-policies',
+    getParentRoute: () => ConsoleOpsRoute,
+  } as any)
 const ConsoleOpsReviewRoute = ConsoleOpsReviewRouteImport.update({
   id: '/review',
   path: '/review',
@@ -464,6 +471,7 @@ export interface FileRoutesByFullPath {
   '/console/ops/models': typeof ConsoleOpsModelsRoute
   '/console/ops/plaza': typeof ConsoleOpsPlazaRoute
   '/console/ops/pricing': typeof ConsoleOpsPricingRouteWithChildren
+  '/console/ops/request-policies': typeof ConsoleOpsRequestPoliciesRoute
   '/console/ops/review': typeof ConsoleOpsReviewRouteWithChildren
   '/console/ops/risk': typeof ConsoleOpsRiskRoute
   '/console/ops/settings': typeof ConsoleOpsSettingsRoute
@@ -526,6 +534,7 @@ export interface FileRoutesByTo {
   '/console/ops/metrics': typeof ConsoleOpsMetricsRoute
   '/console/ops/models': typeof ConsoleOpsModelsRoute
   '/console/ops/plaza': typeof ConsoleOpsPlazaRoute
+  '/console/ops/request-policies': typeof ConsoleOpsRequestPoliciesRoute
   '/console/ops/risk': typeof ConsoleOpsRiskRoute
   '/console/ops/settings': typeof ConsoleOpsSettingsRoute
   '/console/ops/trace': typeof ConsoleOpsTraceRoute
@@ -594,6 +603,7 @@ export interface FileRoutesById {
   '/console/ops/models': typeof ConsoleOpsModelsRoute
   '/console/ops/plaza': typeof ConsoleOpsPlazaRoute
   '/console/ops/pricing': typeof ConsoleOpsPricingRouteWithChildren
+  '/console/ops/request-policies': typeof ConsoleOpsRequestPoliciesRoute
   '/console/ops/review': typeof ConsoleOpsReviewRouteWithChildren
   '/console/ops/risk': typeof ConsoleOpsRiskRoute
   '/console/ops/settings': typeof ConsoleOpsSettingsRoute
@@ -665,6 +675,7 @@ export interface FileRouteTypes {
     | '/console/ops/models'
     | '/console/ops/plaza'
     | '/console/ops/pricing'
+    | '/console/ops/request-policies'
     | '/console/ops/review'
     | '/console/ops/risk'
     | '/console/ops/settings'
@@ -727,6 +738,7 @@ export interface FileRouteTypes {
     | '/console/ops/metrics'
     | '/console/ops/models'
     | '/console/ops/plaza'
+    | '/console/ops/request-policies'
     | '/console/ops/risk'
     | '/console/ops/settings'
     | '/console/ops/trace'
@@ -794,6 +806,7 @@ export interface FileRouteTypes {
     | '/console/ops/models'
     | '/console/ops/plaza'
     | '/console/ops/pricing'
+    | '/console/ops/request-policies'
     | '/console/ops/review'
     | '/console/ops/risk'
     | '/console/ops/settings'
@@ -1202,6 +1215,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleOpsPricingRouteImport
       parentRoute: typeof ConsoleOpsRoute
     }
+    '/console/ops/request-policies': {
+      id: '/console/ops/request-policies'
+      path: '/request-policies'
+      fullPath: '/console/ops/request-policies'
+      preLoaderRoute: typeof ConsoleOpsRequestPoliciesRouteImport
+      parentRoute: typeof ConsoleOpsRoute
+    }
     '/console/ops/review': {
       id: '/console/ops/review'
       path: '/review'
@@ -1416,6 +1436,7 @@ interface ConsoleOpsRouteChildren {
   ConsoleOpsModelsRoute: typeof ConsoleOpsModelsRoute
   ConsoleOpsPlazaRoute: typeof ConsoleOpsPlazaRoute
   ConsoleOpsPricingRoute: typeof ConsoleOpsPricingRouteWithChildren
+  ConsoleOpsRequestPoliciesRoute: typeof ConsoleOpsRequestPoliciesRoute
   ConsoleOpsReviewRoute: typeof ConsoleOpsReviewRouteWithChildren
   ConsoleOpsRiskRoute: typeof ConsoleOpsRiskRoute
   ConsoleOpsSettingsRoute: typeof ConsoleOpsSettingsRoute
@@ -1432,6 +1453,7 @@ const ConsoleOpsRouteChildren: ConsoleOpsRouteChildren = {
   ConsoleOpsModelsRoute: ConsoleOpsModelsRoute,
   ConsoleOpsPlazaRoute: ConsoleOpsPlazaRoute,
   ConsoleOpsPricingRoute: ConsoleOpsPricingRouteWithChildren,
+  ConsoleOpsRequestPoliciesRoute: ConsoleOpsRequestPoliciesRoute,
   ConsoleOpsReviewRoute: ConsoleOpsReviewRouteWithChildren,
   ConsoleOpsRiskRoute: ConsoleOpsRiskRoute,
   ConsoleOpsSettingsRoute: ConsoleOpsSettingsRoute,

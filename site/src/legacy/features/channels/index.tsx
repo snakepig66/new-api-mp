@@ -63,7 +63,7 @@ export function Channels() {
               className='shrink-0 cursor-pointer'
               aria-label={t('Retry Settings')}
               render={
-                <Link to='/console/ops/settings' />
+                <Link to='/console/ops/request-policies' />
               }
             />
           }

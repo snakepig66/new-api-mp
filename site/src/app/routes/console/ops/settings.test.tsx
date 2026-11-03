@@ -41,7 +41,6 @@ const options = [
 ]
 
 let putBodies: Record<string, unknown>[] = []
-let patchBodies: Record<string, unknown>[] = []
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -52,13 +51,6 @@ function jsonResponse(body: unknown): Response {
 
 const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input)
-  if (url.includes('/api/option/request_policy')) {
-    if (init?.method === 'PATCH') {
-      const body = JSON.parse(String(init.body)) as Record<string, unknown>
-      patchBodies.push(body)
-    }
-    return jsonResponse({ success: true, data: { options: { RetryTimes: '2' } } })
-  }
   if (url.includes('/api/option/') && init?.method === 'PUT') {
     const body = JSON.parse(String(init.body)) as Record<string, unknown>
     putBodies.push(body)
@@ -73,7 +65,6 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
 
 beforeEach(() => {
   putBodies = []
-  patchBodies = []
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
 })
@@ -132,19 +123,5 @@ describe('ops settings page', () => {
 
     await waitFor(() => expect(putBodies.length).toBe(1))
     expect(putBodies[0]).toEqual({ key: 'QuotaForInvitee', value: '2500000' })
-  })
-
-  it('saves retry times through the request policy endpoint', async () => {
-    renderSettings()
-
-    const retry = (await screen.findByLabelText('最大重试次数')) as HTMLInputElement
-    expect(retry.value).toBe('2')
-    fireEvent.change(retry, { target: { value: '3' } })
-    const retrySection = screen.getByRole('heading', { name: '渠道重试' }).closest('section')
-    const saveButton = retrySection?.querySelector('button') as HTMLButtonElement
-    fireEvent.click(saveButton)
-
-    await waitFor(() => expect(patchBodies.length).toBe(1))
-    expect(patchBodies[0]).toEqual({ options: { RetryTimes: '3' } })
   })
 })
