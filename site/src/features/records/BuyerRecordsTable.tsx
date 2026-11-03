@@ -134,6 +134,7 @@ export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
                   <TimingMetricCell
                     firstTokenMs={record.first_token_ms}
                     latencyMs={record.latency_ms}
+                    outputTokens={record.output_tokens}
                     isStream={record.is_stream}
                     isInProgress={isInProgress}
                   />
@@ -236,6 +237,7 @@ function BuyerRecordCard({
         <TimingMetricCell
           firstTokenMs={record.first_token_ms}
           latencyMs={record.latency_ms}
+          outputTokens={record.output_tokens}
           isStream={record.is_stream}
           isInProgress={isInProgress}
         />

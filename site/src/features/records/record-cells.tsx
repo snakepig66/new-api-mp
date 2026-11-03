@@ -5,6 +5,8 @@ import { formatDateTime } from '@/lib/time'
 import { ModelName } from '@/ui/model-name'
 import { cn } from '@/lib/cn'
 
+import { getFirstTokenColor, getTotalLatencyColor } from './latency-colors'
+
 /** Formats a number with standard commas (e.g. 294,938). */
 export function formatNum(n: number | undefined | null): string {
   if (n == null) return '0'
@@ -29,72 +31,6 @@ export function formatDuration(ms: number): string {
   const minutes = Math.floor(totalSeconds / 60)
   const remainderSeconds = Math.round(totalSeconds % 60)
   return `${minutes}m ${remainderSeconds}s`
-}
-
-/** Status color thresholds for first token latency:
- * < 1s: emerald
- * 1s - 3s: amber
- * > 3s: rose
- */
-export function getFirstTokenColor(ms: number): {
-  text: string
-  bar: string
-} {
-  if (ms <= 0) {
-    return {
-      text: 'text-ink-3',
-      bar: 'bg-slate-300 dark:bg-slate-700',
-    }
-  }
-  if (ms < 1000) {
-    return {
-      text: 'text-emerald-600 dark:text-emerald-400',
-      bar: 'bg-emerald-500',
-    }
-  }
-  if (ms <= 3000) {
-    return {
-      text: 'text-amber-600 dark:text-amber-400',
-      bar: 'bg-amber-500',
-    }
-  }
-  return {
-    text: 'text-rose-600 dark:text-rose-400',
-    bar: 'bg-rose-500',
-  }
-}
-
-/** Status color thresholds for total latency:
- * < 3s: emerald
- * 3s - 10s: amber
- * > 10s: rose
- */
-export function getTotalLatencyColor(ms: number): {
-  text: string
-  bar: string
-} {
-  if (ms <= 0) {
-    return {
-      text: 'text-ink-3',
-      bar: 'bg-slate-300 dark:bg-slate-700',
-    }
-  }
-  if (ms < 3000) {
-    return {
-      text: 'text-emerald-600 dark:text-emerald-400',
-      bar: 'bg-emerald-500',
-    }
-  }
-  if (ms <= 10000) {
-    return {
-      text: 'text-amber-600 dark:text-amber-400',
-      bar: 'bg-amber-500',
-    }
-  }
-  return {
-    text: 'text-rose-600 dark:text-rose-400',
-    bar: 'bg-rose-500',
-  }
 }
 
 /** Header label with optional sort indicator "⇅" */
@@ -281,12 +217,15 @@ export function TokensMetricCell({
 export function TimingMetricCell({
   firstTokenMs,
   latencyMs,
+  outputTokens = 0,
   isStream,
   isInProgress = false,
   className,
 }: {
   firstTokenMs: number
   latencyMs: number
+  /** Output tokens; used for throughput-based total-duration coloring. */
+  outputTokens?: number
   isStream: boolean
   isInProgress?: boolean
   className?: string
@@ -298,12 +237,12 @@ export function TimingMetricCell({
       <div className={cn('flex items-stretch gap-2 whitespace-nowrap', className)}>
         <span
           aria-hidden="true"
-          className="flex w-1 shrink-0 flex-col overflow-hidden rounded-full my-0.5 bg-amber-500"
+          className="flex w-1 shrink-0 flex-col overflow-hidden rounded-full my-0.5 bg-warn"
         />
         <div className="flex min-w-0 flex-col justify-center gap-0.5 text-xs leading-tight tabular-nums whitespace-nowrap">
           <div className="flex items-baseline gap-1.5 whitespace-nowrap">
             <span className="text-ink-3 shrink-0 whitespace-nowrap">耗时</span>
-            <span className="font-medium text-amber-600 dark:text-amber-400 whitespace-nowrap">
+            <span className="font-medium text-warn whitespace-nowrap">
               {durationText}
             </span>
           </div>
@@ -314,7 +253,7 @@ export function TimingMetricCell({
 
   const showFirstToken = isStream
   const ftColors = getFirstTokenColor(firstTokenMs)
-  const totalColors = getTotalLatencyColor(latencyMs)
+  const totalColors = getTotalLatencyColor(latencyMs, outputTokens)
 
   const firstTokenText =
     !showFirstToken || firstTokenMs <= 0

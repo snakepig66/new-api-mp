@@ -138,6 +138,7 @@ export function ShareRecordsTable({ records, onOpen }: ShareRecordsTableProps) {
                   <TimingMetricCell
                     firstTokenMs={record.first_token_ms}
                     latencyMs={record.latency_ms}
+                    outputTokens={record.output_tokens}
                     isStream={record.is_stream}
                     isInProgress={isInProgress}
                   />
@@ -250,6 +251,7 @@ function ShareRecordCard({
         <TimingMetricCell
           firstTokenMs={record.first_token_ms}
           latencyMs={record.latency_ms}
+          outputTokens={record.output_tokens}
           isStream={record.is_stream}
           isInProgress={isInProgress}
         />

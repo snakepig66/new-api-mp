@@ -14,6 +14,8 @@ import { usageRecordCostQuery } from '@/features/console/api'
 import { CopyButton } from '@/features/market/copy-button'
 import { shareRecordQuery, type ShareRecordDetail } from '@/features/seller/api'
 
+import { getFirstTokenColor, getTotalLatencyColor } from './latency-colors'
+
 const text = copy.pages.records.detail
 
 /** Who is looking: decides token vs channel fields and the money wording. */
@@ -154,11 +156,18 @@ export function RecordDetailContent({ detail, view }: RecordDetailContentProps) 
             <dt className="text-ink-3">{text.latency}</dt>
             <dd className="mt-0.5 tabular-nums text-meta text-ink">
               <span className="text-ink-3">{text.firstToken} </span>
-              <span className={firstTokenClass(record.first_token_ms)}>
+              <span className={getFirstTokenColor(record.first_token_ms).text}>
                 {formatLatency(record.first_token_ms)}
               </span>
               <span className="text-ink-3"> · {text.totalLatency} </span>
-              {formatLatency(record.latency_ms)}
+              <span
+                className={
+                  getTotalLatencyColor(record.latency_ms, record.output_tokens)
+                    .text
+                }
+              >
+                {formatLatency(record.latency_ms)}
+              </span>
             </dd>
           </div>
         </dl>
@@ -292,14 +301,6 @@ export function formatLatency(ms: number | undefined): string {
   if (ms === undefined || ms <= 0) return text.dash
   const seconds = ms / 1000
   return seconds < 1 ? `${seconds.toFixed(2)}s` : `${seconds.toFixed(1)}s`
-}
-
-/** 首字耗时: green < 1s, yellow 1–3s, red > 3s; unrecorded stays muted. */
-function firstTokenClass(ms: number): string {
-  if (ms <= 0) return 'text-ink-3'
-  if (ms < 1000) return 'text-ok'
-  if (ms <= 3000) return 'text-warn'
-  return 'text-danger'
 }
 
 // ---------------------------------------------------------------------------
