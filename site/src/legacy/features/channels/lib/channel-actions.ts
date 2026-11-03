@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { QueryClient } from '@tanstack/react-query'
-import i18next from 'i18next'
+import i18next from '@/legacy/i18n'
 import { toast } from 'sonner'
 
 import { handleServerError } from '@/legacy/lib/handle-server-error'

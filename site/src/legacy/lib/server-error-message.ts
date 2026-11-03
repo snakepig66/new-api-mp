@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { isCancelledError } from '@tanstack/react-query'
 import { isCancel } from 'axios'
-import i18next from 'i18next'
+import i18next from '@/legacy/i18n'
 
 export const safeServerErrorMessage = Symbol('safeServerErrorMessage')
 

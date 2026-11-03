@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { getRouteApi } from '@tanstack/react-router'
+import { useLegacyChannelsNavigate, useLegacyChannelsSearch } from '@/legacy/lib/legacy-route'
 import type {
   ColumnFiltersState,
   OnChangeFn,
@@ -81,7 +81,6 @@ import { useChannelsColumns } from './channels-columns'
 import { useChannels } from './channels-provider'
 import { DataTableBulkActions } from './data-table-bulk-actions'
 
-const route = getRouteApi('/_authenticated/channels/')
 const CHANNELS_COLUMN_VISIBILITY_STORAGE_KEY = 'channels:column-visibility'
 const CHANNELS_COLUMN_SIZING_STORAGE_KEY = 'channels:column-sizing'
 const CHANNELS_VIEW_MODE_STORAGE_KEY = 'channels:view-mode'
@@ -117,6 +116,9 @@ export function ChannelsTable() {
 
   const idSort = sorting[0]?.id === 'id'
 
+  const search = useLegacyChannelsSearch()
+  const navigateToChannels = useLegacyChannelsNavigate()
+
   // URL state management
   const {
     globalFilter,
@@ -127,8 +129,8 @@ export function ChannelsTable() {
     onPaginationChange,
     ensurePageInRange,
   } = useTableUrlState({
-    search: route.useSearch(),
-    navigate: route.useNavigate(),
+    search,
+    navigate: navigateToChannels,
     pagination: {
       defaultPage: 1,
       defaultPageSize: isMobile ? 10 : DEFAULT_PAGE_SIZE,

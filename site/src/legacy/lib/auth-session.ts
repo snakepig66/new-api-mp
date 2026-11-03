@@ -18,7 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { QueryClient } from '@tanstack/react-query'
 import axios from 'axios'
-import { t } from 'i18next'
+import { legacyI18n as i18n } from '@/legacy/i18n'
+
+import { getSession, refreshAccessToken } from '@/lib/session'
+import { syncLegacyAuthFromSite } from '@/legacy/lib/session-bridge'
 
 import { publishAuthSessionEvent } from '@/legacy/lib/auth-session-sync'
 import { hasSessionHint } from '@/legacy/lib/session-hint'
@@ -182,6 +185,12 @@ export function applyAuthRotation(value: unknown): void {
     },
     false
   )
+  syncLegacyAuthFromSite(useAuthStore.getState().auth, {
+    accessToken: value.access_token,
+    accessExpiresAt: value.access_expires_at,
+    sid: value.session.sid,
+    user: getSession()?.user ?? null,
+  })
 }
 
 export function clearAuthentication(
@@ -411,7 +420,7 @@ export function getCommonHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   }
-  const accessToken = useAuthStore.getState().auth.accessToken
+  const accessToken = getSession()?.accessToken
   if (accessToken) {
     headers.Authorization = `Bearer ${accessToken}`
   }
@@ -419,15 +428,17 @@ export function getCommonHeaders(): Record<string, string> {
 }
 
 export async function getFreshAuthHeaders(): Promise<Record<string, string>> {
-  const auth = useAuthStore.getState().auth
+  const site = getSession()
   const refreshBefore = Math.floor(Date.now() / 1000) + 60
   if (
-    auth.accessToken &&
-    auth.accessExpiresAt &&
-    auth.accessExpiresAt > refreshBefore
+    site?.accessToken &&
+    site.accessExpiresAt &&
+    site.accessExpiresAt > refreshBefore
   ) {
     return getCommonHeaders()
   }
+  if (site?.accessToken) await refreshAccessToken()
+  if (getSession()?.accessToken) return getCommonHeaders()
 
   const outcome = await refreshAuthentication()
   if (outcome.kind === 'authenticated') {
@@ -444,7 +455,7 @@ export async function getFreshAuthHeaders(): Promise<Record<string, string>> {
   }
 
   if (outcome.kind === 'transient_error') {
-    throw new Error(t('Request failed'), { cause: outcome.error })
+    throw new Error(i18n.t('Request failed'), { cause: outcome.error })
   }
-  throw new Error(t('Session expired!'))
+  throw new Error(i18n.t('Session expired!'))
 }

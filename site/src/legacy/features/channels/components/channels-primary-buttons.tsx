@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
-import { getRouteApi } from '@tanstack/react-router'
+import { useLegacyChannelsNavigate } from '@/legacy/lib/legacy-route'
 import {
   Plus,
   MoreHorizontal,
@@ -69,11 +69,10 @@ import type { ChannelSortBy } from '../types'
 import { ChannelSortControl } from './channel-priority-controls'
 import { useChannels } from './channels-provider'
 
-const route = getRouteApi('/_authenticated/channels/')
 
 export function ChannelsPrimaryButtons() {
   const { t } = useTranslation()
-  const navigate = route.useNavigate()
+  const navigate = useLegacyChannelsNavigate()
   const {
     setOpen,
     setCurrentRow,
@@ -150,7 +149,7 @@ export function ChannelsPrimaryButtons() {
           desc={sorting[0]?.desc ?? true}
           onChange={(field, desc) => {
             setSorting([{ id: field, desc }])
-            void navigate({
+            navigate({
               search: (previous) => ({ ...previous, page: 1 }),
               replace: true,
             })

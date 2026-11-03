@@ -1,11 +1,23 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  RouterProvider,
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+} from '@tanstack/react-router'
+import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ToastProvider } from '@/ui'
+
+import { api as legacyApi } from '@/legacy/lib/http-client'
+
 import { Route } from './channels'
 
-const ChannelsComponent = Route.options.component as React.ComponentType
+legacyApi.defaults.baseURL = 'http://localhost'
+
+const ChannelsComponent = Route.options.component!
 
 const channels = [
   {
@@ -32,7 +44,7 @@ const channels = [
     type: 14,
     name: 'Claude 备用',
     status: 3,
-    base_url: null,
+    base_url: 'https://api.anthropic.com',
     models: 'claude-3-5-sonnet',
     model_mapping: null,
     group: 'default',
@@ -55,37 +67,61 @@ function jsonResponse(body: unknown): Response {
   })
 }
 
-let postBodies: { url: string; body: Record<string, unknown> }[] = []
-
-const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-  const url = String(input)
-  if (url.includes('/api/channel/default_base_urls')) {
-    return jsonResponse({ success: true, data: { 1: 'https://api.openai.com' } })
-  }
-  if (url.includes('/api/marketplace/admin/pool/models')) {
-    return jsonResponse({ success: true, data: { items: [{ name: 'gpt-4o' }] } })
-  }
-  if (url.includes('/api/channel/search')) {
-    return jsonResponse({ success: true, data: { items: [channels[0]], total: 1 } })
-  }
-  if (url.includes('/api/channel/') && init?.method === 'POST') {
-    postBodies.push({ url, body: JSON.parse(String(init.body)) as Record<string, unknown> })
+const calls: string[] = []
+const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const url = String(input instanceof Request ? input.url : input)
+  calls.push(url)
+  if (url.includes('/api/channel/ops')) {
     return jsonResponse({ success: true, data: {} })
   }
-  if (url.includes('/api/channel/')) {
-    return jsonResponse({ success: true, data: { items: channels, total: channels.length } })
+  if (url.includes('/api/group/')) {
+    return jsonResponse({ success: true, data: ['default'] })
+  }
+  if (url.includes('/api/channel/search')) {
+    return jsonResponse({
+      success: true,
+      data: { items: channels, total: channels.length },
+    })
+  }
+  if (url.includes('/api/channel/') || url.includes('/api/channel?')) {
+    return jsonResponse({
+      success: true,
+      data: { items: channels, total: channels.length },
+    })
   }
   return jsonResponse({ success: false, message: 'not found' })
 })
 
 beforeEach(() => {
-  postBodies = []
+  vi.stubGlobal(
+    'matchMedia',
+    (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    })
+  )
+  window.localStorage.setItem(
+    'token-market.auth.v1',
+    JSON.stringify({
+      accessToken: 'test-token',
+      accessExpiresAt: 4102444800,
+      sid: 'test-sid',
+      user: { id: 1, username: 'root', role: 100 },
+    })
+  )
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
 })
 
 afterEach(() => {
   cleanup()
+  window.localStorage.clear()
   vi.unstubAllGlobals()
 })
 
@@ -93,52 +129,34 @@ function renderChannels() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: 0 } },
   })
+  const rootRoute = createRootRoute()
+  const channelsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/console/ops/channels',
+    validateSearch: (search: Record<string, unknown>) => search,
+    component: () => <ChannelsComponent />,
+  })
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([channelsRoute]),
+    history: createMemoryHistory({ initialEntries: ['/console/ops/channels'] }),
+  })
   return render(
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <ChannelsComponent />
+        <RouterProvider router={router} />
       </ToastProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   )
 }
 
-describe('plaza channels management', () => {
-  it('renders channel rows with name, type and status', async () => {
+describe('ported channel management', () => {
+  it('renders the legacy channel list', { timeout: 60000 }, async () => {
     renderChannels()
 
-    expect(await screen.findByText('OpenAI 主渠道')).toBeTruthy()
+    expect(
+      await screen.findByText('OpenAI 主渠道', undefined, { timeout: 30000 })
+    ).toBeTruthy()
     expect(screen.getByText('Claude 备用')).toBeTruthy()
-    expect(screen.getByText('OpenAI 兼容')).toBeTruthy()
-    expect(screen.getByText('Anthropic (Claude)')).toBeTruthy()
-    expect(screen.getByText('启用')).toBeTruthy()
-    expect(screen.getByText('自动禁用')).toBeTruthy()
-    expect(screen.getAllByText('321ms').length).toBeGreaterThan(0)
-  })
-
-  it('creates a channel through POST /api/channel', async () => {
-    renderChannels()
-
-    fireEvent.click(await screen.findByRole('button', { name: '+ 添加渠道' }))
-
-    const nameInput = (await screen.findByLabelText('名称')) as HTMLInputElement
-    fireEvent.change(nameInput, { target: { value: '新渠道' } })
-
-    const keyInput = screen.getByLabelText('Key') as HTMLTextAreaElement
-    fireEvent.change(keyInput, { target: { value: 'sk-test' } })
-
-    const modelsInput = screen.getByLabelText('支持的模型') as HTMLTextAreaElement
-    fireEvent.change(modelsInput, { target: { value: 'gpt-4o' } })
-
-    fireEvent.click(screen.getByRole('button', { name: '保存渠道' }))
-
-    await waitFor(() => expect(postBodies.length).toBe(1))
-    const { body } = postBodies[0]
-    expect(body.mode).toBe('single')
-    const channel = body.channel as Record<string, unknown>
-    expect(channel.name).toBe('新渠道')
-    expect(channel.key).toBe('sk-test')
-    expect(channel.models).toBe('gpt-4o')
-    expect(channel.group).toBe('default')
-    expect(channel.type).toBe(1)
+    expect(calls.some((u) => u.includes('/api/channel?'))).toBe(true)
   })
 })

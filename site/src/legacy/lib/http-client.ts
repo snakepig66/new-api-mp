@@ -17,19 +17,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import axios, { type AxiosRequestConfig } from 'axios'
-import { t } from 'i18next'
+import { legacyI18n as i18n } from '@/legacy/i18n'
 
-import {
-  applyAuthRotation,
-  clearAuthentication,
-  getFreshAuthHeaders,
-  refreshAuthentication,
-} from '@/legacy/lib/auth-session'
+import { applyAuthRotation, clearAuthentication } from '@/legacy/lib/auth-session'
 import { handleServerError } from '@/legacy/lib/handle-server-error'
 import {
   getServerErrorMessage,
   safeServerErrorMessage,
 } from '@/legacy/lib/server-error-message'
+import {
+  getSession,
+  refreshAccessToken,
+} from '@/lib/session'
 import { useAuthStore } from '@/legacy/stores/auth-store'
 
 declare module 'axios' {
@@ -49,6 +48,7 @@ export type ApiRequestConfig = AxiosRequestConfig
 export const api = axios.create({
   baseURL: '',
   withCredentials: true,
+  adapter: 'fetch',
   headers: {
     // no-store forbids storage; no-cache also revalidates any older cached response.
     'Cache-Control': 'no-cache, no-store',
@@ -62,7 +62,7 @@ api.get = ((url: string, config: ApiRequestConfig = {}) => {
   if (config.disableDuplicate) return originalGet(url, config)
 
   const params = config.params ? JSON.stringify(config.params) : '{}'
-  const sessionSID = useAuthStore.getState().auth.session?.sid || 'anonymous'
+  const sessionSID = getSession()?.sid || useAuthStore.getState().auth.session?.sid || 'anonymous'
   const key = `${sessionSID}:${url}?${params}`
   const existingRequest = inFlightGet.get(key)
   if (existingRequest) return existingRequest
@@ -75,11 +75,8 @@ api.get = ((url: string, config: ApiRequestConfig = {}) => {
 }) as typeof api.get
 
 function redirectToSignIn(): void {
-  if (
-    typeof window !== 'undefined' &&
-    window.location.pathname !== '/sign-in'
-  ) {
-    window.location.replace('/sign-in')
+  if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+    window.location.replace('/login')
   }
 }
 
@@ -99,9 +96,9 @@ api.interceptors.response.use(
     if (status === 401) {
       if (config && !config.skipAuthRefresh && !config.authRetry) {
         config.authRetry = true
-        const outcome = await refreshAuthentication()
-        if (outcome.kind === 'authenticated') {
-          const token = useAuthStore.getState().auth.accessToken
+        const renewed = await refreshAccessToken()
+        if (renewed) {
+          const token = getSession()?.accessToken
           if (token) {
             config.headers = {
               ...config.headers,
@@ -111,21 +108,19 @@ api.interceptors.response.use(
           return api.request(config)
         }
 
-        if (outcome.kind === 'anonymous' || outcome.kind === 'out_of_sync') {
-          if (!skipErrorHandler) {
-            handleServerError({
-              message: t('Session expired!'),
-              [safeServerErrorMessage]: true,
-              cause: error,
-            })
-          }
-          redirectToSignIn()
+        if (!skipErrorHandler) {
+          handleServerError({
+            message: i18n.t('Session expired!'),
+            [safeServerErrorMessage]: true,
+            cause: error,
+          })
         }
+        redirectToSignIn()
       } else if (config?.authRetry) {
         clearAuthentication(false)
         if (!skipErrorHandler) {
           handleServerError({
-            message: t('Session expired!'),
+            message: i18n.t('Session expired!'),
             [safeServerErrorMessage]: true,
             cause: error,
           })
@@ -133,7 +128,7 @@ api.interceptors.response.use(
         redirectToSignIn()
       } else if (!skipErrorHandler) {
         handleServerError({
-          message: t('Session expired!'),
+          message: i18n.t('Session expired!'),
           [safeServerErrorMessage]: true,
           cause: error,
         })
@@ -148,17 +143,14 @@ api.interceptors.request.use(async (config) => {
   if (config.singleUseAuthorization || config.headers.has('X-Security-Proof')) {
     // Refresh before spending a proof/flow, never by replaying its request.
     config.skipAuthRefresh = true
-    try {
-      const headers = await getFreshAuthHeaders()
-      for (const [name, value] of Object.entries(headers)) {
-        config.headers.set(name, value)
-      }
-    } catch (error) {
-      throw axios.AxiosError.from(error, undefined, config)
+    await refreshAccessToken()
+    const freshToken = getSession()?.accessToken
+    if (freshToken) {
+      config.headers.set('Authorization', `Bearer ${freshToken}`)
     }
     return config
   }
-  const accessToken = useAuthStore.getState().auth.accessToken
+  const accessToken = getSession()?.accessToken
   if (accessToken) {
     config.headers.Authorization = `Bearer ${accessToken}`
   }
