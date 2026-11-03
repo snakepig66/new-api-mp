@@ -596,7 +596,7 @@ export function ChannelsTable() {
                         size='icon'
                         onClick={() => setSensitiveVisible(!sensitiveVisible)}
                         aria-label={sensitiveVisible ? t('Hide') : t('Show')}
-                        className='text-muted-foreground hover:text-foreground size-8'
+                        className='border-border text-foreground/80 hover:bg-accent hover:text-foreground size-8'
                       />
                     }
                   >
@@ -619,7 +619,7 @@ export function ChannelsTable() {
                         onClick={() => void refetch()}
                         aria-label={t('Refresh')}
                         aria-busy={isFetching}
-                        className='text-muted-foreground hover:text-foreground size-8'
+                        className='border-border text-foreground/80 hover:bg-accent hover:text-foreground size-8'
                       />
                     }
                   >

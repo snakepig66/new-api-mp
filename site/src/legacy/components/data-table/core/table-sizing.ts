@@ -19,14 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 import type { Table as TanstackTable } from '@tanstack/react-table'
 import type * as React from 'react'
 
-import { isContentSizedColumn } from './content-sized-columns'
-
 export function getTableSizeStyle<TData>(
   table: TanstackTable<TData>
 ): React.CSSProperties {
+  // Include every column, including content-sized ones such as `actions`.
+  // Excluding them let the flexible layout shrink the data columns until the
+  // right-pinned actions column covered interactive cells like weight inputs.
   const width = table
     .getVisibleLeafColumns()
-    .filter((column) => !isContentSizedColumn(column.id))
     .reduce((total, column) => total + column.getSize(), 0)
 
   return {

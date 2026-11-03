@@ -110,8 +110,8 @@ export function ChannelsPrimaryButtons() {
       <div className='flex flex-wrap items-center gap-2'>
         <div ref={setPriorityActionContainer} className='empty:hidden' />
         {/* Desktop: Toggle switches visible */}
-        <div className='bg-muted/40 hidden h-8 shrink-0 items-center gap-2.5 rounded-lg border px-2.5 sm:flex'>
-          <div className='text-muted-foreground has-data-checked:text-foreground flex items-center gap-2'>
+        <div className='bg-muted/40 border-border hidden h-8 shrink-0 items-center gap-2.5 rounded-lg border px-2.5 sm:flex'>
+          <div className='text-foreground/80 has-data-checked:text-foreground flex items-center gap-2'>
             <Label
               htmlFor='channel-batch-mode'
               className='cursor-pointer gap-1.5 text-xs whitespace-nowrap'
@@ -127,7 +127,7 @@ export function ChannelsPrimaryButtons() {
             />
           </div>
           <Separator orientation='vertical' className='my-2' />
-          <div className='text-muted-foreground has-data-checked:text-foreground flex items-center gap-2'>
+          <div className='text-foreground/80 has-data-checked:text-foreground flex items-center gap-2'>
             <Label
               htmlFor='tag-mode'
               className='cursor-pointer gap-1.5 text-xs whitespace-nowrap'

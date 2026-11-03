@@ -2,7 +2,6 @@ import { Link, useRouterState } from '@tanstack/react-router'
 import { useEffect, useState, type ReactNode } from 'react'
 
 import { cn } from '@/lib/cn'
-import { navigateToOpsLegacy } from '@/lib/ops-legacy'
 
 export interface ConsoleNavItem {
   to: string
@@ -108,14 +107,39 @@ export function getConsoleNavIcon(to: string): ReactNode {
         </svg>
       )
 
-    case '/ops-legacy':
-      // 渠道管理: Sliders / Server rack
+    case '/console/ops/channels':
+      // 广场渠道: Sliders / Server rack
       return (
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
           <rect x="2.5" y="4" width="15" height="4.5" rx="1.5" />
           <rect x="2.5" y="11.5" width="15" height="4.5" rx="1.5" />
           <circle cx="6" cy="6.25" r="0.75" fill="currentColor" />
           <circle cx="6" cy="13.75" r="0.75" fill="currentColor" />
+        </svg>
+      )
+
+    case '/console/ops/users':
+      // 用户与充值: User avatar
+      return (
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="10" cy="6.5" r="3.5" />
+          <path d="M3.5 16.5a6.5 6.5 0 0 1 13 0" />
+        </svg>
+      )
+
+    case '/console/ops/settings':
+      // 系统设置: Gear
+      return (
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="10" cy="10" r="2.5" />
+          <path d="M10 2.5v2" />
+          <path d="M10 15.5v2" />
+          <path d="M2.5 10h2" />
+          <path d="M15.5 10h2" />
+          <path d="m4.7 4.7 1.4 1.4" />
+          <path d="m13.9 13.9 1.4 1.4" />
+          <path d="m15.3 4.7-1.4 1.4" />
+          <path d="m6.1 13.9-1.4 1.4" />
         </svg>
       )
 
@@ -264,17 +288,9 @@ function SidebarNavLink({
     </>
   )
 
-  if (item.external || item.to.startsWith('/ops-legacy')) {
-    const isOpsLegacy = item.to.startsWith('/ops-legacy')
-    const handleClick = isOpsLegacy
-      ? (e: React.MouseEvent<HTMLAnchorElement>) => {
-          onNavigate?.()
-          void navigateToOpsLegacy(e)
-        }
-      : onNavigate
-
+  if (item.external) {
     return (
-      <a href={item.to} onClick={handleClick} className={className}>
+      <a href={item.to} onClick={onNavigate} className={className}>
         {content}
       </a>
     )

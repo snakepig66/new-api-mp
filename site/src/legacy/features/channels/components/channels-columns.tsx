@@ -1159,7 +1159,8 @@ export function useChannelsColumns(
         header: t('Priority'),
         meta: { mobileHidden: true },
         cell: ({ row }) => <PriorityCell channel={row.original} />,
-        size: 100,
+        size: 110,
+        minSize: 100,
       },
 
       // Weight column
@@ -1168,7 +1169,8 @@ export function useChannelsColumns(
         header: t('Weight'),
         meta: { mobileHidden: true },
         cell: ({ row }) => <WeightCell channel={row.original} />,
-        size: 90,
+        size: 110,
+        minSize: 96,
         enableSorting: false,
       },
 
@@ -1263,6 +1265,7 @@ export function useChannelsColumns(
 
           return <DataTableRowActions row={row} />
         },
+        size: 96,
         enableSorting: false,
         enableHiding: false,
         meta: { pinned: 'right' as const },

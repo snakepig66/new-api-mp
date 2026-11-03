@@ -23,14 +23,20 @@ describe('console navigation', () => {
     expect(labels(groups)).not.toContain('团体工具')
   })
 
-  it('shows 被调明细 in 更多 for active sellers', () => {
+  it('shows 被调明细 in 我要卖 for active sellers', () => {
     const groups = consoleGroups({ sellerActive: true, isAdmin: false })
-    expect(labels(groups)).toContain('被调明细')
+    const sell = groups.find((group) => group.label === '我要卖')
+    expect(sell?.items.map((item) => item.label)).toContain('被调明细')
   })
 
-  it('adds operator items in 更多 only for admins', () => {
+  it('gives admins a 运营 group and hides buyer-facing help links', () => {
     const groups = consoleGroups({ sellerActive: false, isAdmin: true })
-    expect(labels(groups)).toEqual(
+    expect(groups.map((group) => group.label)).toEqual(['我要用', '我要卖', '运营', '更多'])
+    expect(labels(groups)).not.toContain('模型知识库')
+    expect(labels(groups)).not.toContain('帮助中心')
+    expect(labels(groups)).toContain('账号设置')
+    const ops = groups.find((group) => group.label === '运营')
+    expect(ops?.items.map((item) => item.label)).toEqual(
       expect.arrayContaining([
         '运营看板',
         '团体工具',

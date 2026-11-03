@@ -33,27 +33,37 @@ export function consoleGroups({
       items: [
         { to: '/console/listings', label: sellerNav.listings },
         { to: '/console/earnings', label: sellerNav.payouts },
+        ...(sellerActive ? [{ to: '/console/records', search: { view: 'sales' }, label: '被调明细' }] : []),
       ],
     },
-    {
-      label: '更多',
-      collapsible: true,
-      items: [
-        ...(sellerActive ? [{ to: '/console/records', search: { view: 'sales' }, label: '被调明细' }] : []),
-        { to: '/models', label: '模型知识库' },
-        { to: '/docs', label: '帮助中心' },
-        { to: '/console/account', label: nav.account },
-        ...(isAdmin
-          ? [
+    ...(isAdmin
+      ? [
+          {
+            label: '运营',
+            items: [
               { to: '/console/ops/metrics', label: '运营看板' },
-              { to: '/console/ops/tools', label: '团体工具' },
               { to: '/console/ops/channels', label: '广场渠道' },
               { to: '/console/ops/models', label: '广场模型上架' },
               { to: '/console/ops/review', label: '发布审核' },
               { to: '/console/ops/users', label: '用户与充值' },
+              { to: '/console/ops/tools', label: '团体工具' },
               { to: '/console/ops/settings', label: '系统设置' },
-            ]
-          : []),
+            ],
+          },
+        ]
+      : []),
+    {
+      label: '更多',
+      collapsible: true,
+      items: [
+        { to: '/console/account', label: nav.account },
+        // 面向买家/卖家的入口；管理员不需要。
+        ...(isAdmin
+          ? []
+          : [
+              { to: '/models', label: '模型知识库' },
+              { to: '/docs', label: '帮助中心' },
+            ]),
       ],
     },
   ]
