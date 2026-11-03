@@ -301,6 +301,7 @@ export type OpsTabPath =
   | '/console/ops/tools'
   | '/console/ops/tools/reversal'
   | '/console/ops/tools/risk'
+  | '/console/ops/settings'
 
 export interface OpsTabLink {
   to: OpsTabPath

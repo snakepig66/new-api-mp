@@ -86,11 +86,11 @@ function renderModels() {
 }
 
 describe('admin models and plaza management', () => {
-  it('renders "广场渠道管理" entry linking to /ops-legacy', async () => {
+  it('renders "广场渠道" entry linking to the native channels page', async () => {
     renderModels()
 
-    const channelLink = await screen.findByRole('link', { name: '广场渠道管理' })
-    expect(channelLink.getAttribute('href')).toBe('/ops-legacy')
+    const channelLink = await screen.findByRole('link', { name: '广场渠道' })
+    expect(channelLink.getAttribute('href')).toBe('/console/ops/channels')
   })
 
   it('renders "广场上架" column with toggle switch for enable_plaza', async () => {

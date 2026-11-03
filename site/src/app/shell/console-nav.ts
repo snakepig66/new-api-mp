@@ -47,9 +47,11 @@ export function consoleGroups({
           ? [
               { to: '/console/ops/metrics', label: '运营看板' },
               { to: '/console/ops/tools', label: '团体工具' },
-              { to: '/ops-legacy', label: '广场渠道管理', external: true },
+              { to: '/console/ops/channels', label: '广场渠道' },
               { to: '/console/ops/models', label: '广场模型上架' },
               { to: '/console/ops/review', label: '发布审核' },
+              { to: '/console/ops/users', label: '用户与充值' },
+              { to: '/console/ops/settings', label: '系统设置' },
             ]
           : []),
       ],

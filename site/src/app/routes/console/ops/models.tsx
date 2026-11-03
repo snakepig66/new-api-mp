@@ -5,7 +5,6 @@ import { useMemo, useState } from 'react'
 import { copy } from '@/copy'
 import { cn } from '@/lib/cn'
 import { formatYuan } from '@/lib/money'
-import { navigateToOpsLegacy } from '@/lib/ops-legacy'
 import {
   Button,
   buttonClasses,
@@ -529,13 +528,8 @@ function ModelsAndPricingPage() {
         lead="集中管理标准在售模型池及其 Token 计费价格。配置后即时同步至模型广场与调用计费链路。"
         actions={
           <div className="flex items-center gap-2">
-            <a
-              href="/ops-legacy"
-              onClick={navigateToOpsLegacy}
-              className={buttonClasses('secondary', 'sm')}
-              title="前往 new-api 原生渠道管理页"
-            >
-              广场渠道管理
+            <a href="/console/ops/channels" className={buttonClasses('secondary', 'sm')}>
+              广场渠道
             </a>
             <Button size="sm" onClick={openCreate}>
               + 添加模型与定价
