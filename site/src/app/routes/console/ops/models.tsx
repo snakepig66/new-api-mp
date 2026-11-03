@@ -44,6 +44,12 @@ import { defaultEffectiveAt, shanghaiDateTimeToRfc3339 } from '@/features/admin/
 import { withLogoVersion } from '@/features/market/model-logo'
 import { vendorLabel, vendorLogo } from '@/features/market/vendors'
 
+function formatContext(tokens?: number): string {
+  if (!tokens) return '—'
+  if (tokens >= 1_000_000) return `${+(tokens / 1_000_000).toFixed(1)}M`
+  return `${Math.round(tokens / 1000)}K`
+}
+
 export const Route = createFileRoute('/console/ops/models')({
   component: ModelPoolPage,
 })
@@ -78,6 +84,7 @@ interface PoolModelForm {
   input_yuan: string
   output_yuan: string
   cache_read_yuan: string
+  context_k: string
 }
 
 const emptyForm: PoolModelForm = {
@@ -86,6 +93,7 @@ const emptyForm: PoolModelForm = {
   input_yuan: '',
   output_yuan: '',
   cache_read_yuan: '',
+  context_k: '',
 }
 
 function ModelPoolPage() {
@@ -198,6 +206,7 @@ function ModelPoolPage() {
       output_yuan: p ? String(Number(p.output_micro_per_mtok) / 1_000_000) : '',
       cache_read_yuan:
         p && p.cache_read_micro_per_mtok ? String(Number(p.cache_read_micro_per_mtok) / 1_000_000) : '',
+      context_k: model.context_length ? String(model.context_length / 1000) : '',
     })
     setErrors({})
     setSubmitError(null)
@@ -230,6 +239,12 @@ function ModelPoolPage() {
       if (Number.isNaN(val) || val <= 0) next.output_yuan = '请输入大于 0 的数字'
     }
 
+    const contextRaw = form.context_k.trim()
+    if (contextRaw) {
+      const val = Number(contextRaw)
+      if (Number.isNaN(val) || val <= 0) next.context_k = '请输入大于 0 的数字'
+    }
+
     if (Object.keys(next).length > 0) {
       setErrors(next)
       return
@@ -245,7 +260,7 @@ function ModelPoolPage() {
       await putAdminPoolModel({
         name,
         origin_vendor: origin || base?.origin_vendor || '',
-        context_length: base?.context_length ?? 0,
+        context_length: contextRaw ? Math.round(Number(contextRaw) * 1000) : 0,
         capabilities: base?.capabilities ?? [],
         aliases: base?.aliases ?? [],
         verify_prompt: base?.verify_prompt ?? '',
@@ -368,10 +383,11 @@ function ModelPoolPage() {
                 <Table minWidth={720}>
                   <TableHead>
                     <TableRow interactive={false}>
-                      <TableHeaderCell className="w-[34%]">模型 ID</TableHeaderCell>
-                      <TableHeaderCell className="w-[18%] text-right">输入基价</TableHeaderCell>
-                      <TableHeaderCell className="w-[18%] text-right">输出基价</TableHeaderCell>
-                      <TableHeaderCell className="w-[18%] text-right">缓存命中基价</TableHeaderCell>
+                      <TableHeaderCell className="w-[30%]">模型 ID</TableHeaderCell>
+                      <TableHeaderCell className="w-[10%] text-right">上下文</TableHeaderCell>
+                      <TableHeaderCell className="w-[16%] text-right">输入基价</TableHeaderCell>
+                      <TableHeaderCell className="w-[16%] text-right">输出基价</TableHeaderCell>
+                      <TableHeaderCell className="w-[16%] text-right">缓存命中基价</TableHeaderCell>
                       <TableHeaderCell numeric className="w-[12%]">操作</TableHeaderCell>
                     </TableRow>
                   </TableHead>
@@ -387,6 +403,9 @@ function ModelPoolPage() {
                               size="md"
                               className="font-semibold text-ink"
                             />
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-meta text-ink-2">
+                            {formatContext(row.context_length)}
                           </TableCell>
                           <TableCell className="text-right font-mono text-meta text-brand">
                             {p ? formatYuan(p.input_micro_per_mtok) : '—'}
@@ -517,6 +536,22 @@ function ModelPoolPage() {
                     />
                   </div>
                 )}
+              </Field>
+
+              <Field
+                label="上下文长度 (K tokens)"
+                htmlFor="pool-context"
+                error={errors.context_k}
+                hint="例如 128 表示 128K，1000 表示 1M；留空表示未知"
+              >
+                <TextInput
+                  id="pool-context"
+                  value={form.context_k}
+                  placeholder="128"
+                  inputMode="decimal"
+                  invalid={Boolean(errors.context_k)}
+                  onChange={(e) => update('context_k', e.target.value)}
+                />
               </Field>
             </div>
           </div>
