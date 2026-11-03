@@ -131,7 +131,7 @@ function writeCachedStatus(status: StatusData | null): void {
  * Owns both side effects of a successful read — syncing the system-config store
  * and writing the localStorage snapshot — so consumers never repeat either one.
  */
-async function fetchStatus(): Promise<StatusData | null> {
+export async function fetchStatus(): Promise<StatusData | null> {
   const status = (await getStatus()) as StatusData | null
 
   if (status) {

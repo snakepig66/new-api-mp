@@ -88,7 +88,7 @@ function DialogContent({
             }
           >
             <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
-            <span className='sr-only'>Close</span>
+            <span className='sr-only'>关闭</span>
           </DialogPrimitive.Close>
         )}
       </DialogPrimitive.Popup>

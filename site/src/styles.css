@@ -1,4 +1,7 @@
 @import 'tailwindcss';
+@import './legacy/styles/tw-animate.css';
+@import './legacy/styles/shadcn-tailwind.css';
+@import './legacy/styles/legacy.css';
 @import '@fontsource-variable/inter';
 @import '@fontsource-variable/jetbrains-mono';
 
@@ -470,6 +473,17 @@
 
 :root {
   --radius: 0.75rem;
+  /* new-api legacy console (channels) tokens */
+  --table-row: var(--background);
+  --table-header: color-mix(in oklch, var(--foreground) 3%, var(--background));
+  --table-header-hover: color-mix(in oklch, var(--foreground) 5%, var(--background));
+  --table-disabled: color-mix(in oklch, var(--foreground) 3%, var(--background));
+  --table-disabled-hover: color-mix(in oklch, var(--foreground) 4.5%, var(--background));
+  --table-disabled-border: color-mix(in oklch, var(--foreground) 16%, var(--background));
+  --dialog-inset-top: max(1rem, env(safe-area-inset-top, 0px));
+  --dialog-inset-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  --dialog-available-height: calc(100dvh - var(--dialog-inset-top) - var(--dialog-inset-bottom));
+  --dialog-viewport-center: calc((100dvh + var(--dialog-inset-top) - var(--dialog-inset-bottom)) / 2);
   --app-header-height: 3rem;
   --background: #ffffff;
   --foreground: #0f1115;
@@ -481,7 +495,7 @@
   --primary-foreground: #ffffff;
   --secondary: #f1f4fa;
   --secondary-foreground: #2f4bd8;
-  --muted: #f5f7fb;
+  --muted: #edf1fa;
   --muted-foreground: #767d8c;
   --accent: #eef1ff;
   --accent-foreground: #0f1115;
