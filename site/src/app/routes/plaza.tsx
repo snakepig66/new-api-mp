@@ -14,7 +14,6 @@ import {
 } from '@/features/market/ModelCardParts'
 import { modelLogo } from '@/features/market/model-logo'
 import { vendorLabel, vendorLogo } from '@/features/market/vendors'
-import { AddToStandardKeyMenu } from '@/features/plaza/AddToStandardKeyMenu'
 import { cn } from '@/lib/cn'
 import { Empty, Input, PageHeader } from '@/ui'
 
@@ -194,10 +193,6 @@ export function PlazaModelCard({ item }: { item: PlazaModel }) {
             metrics={item.metrics}
             contextLength={item.context_length}
           />
-
-          <div className="shrink-0 ml-2">
-            <AddToStandardKeyMenu model={item.model} />
-          </div>
         </div>
       </div>
     </div>

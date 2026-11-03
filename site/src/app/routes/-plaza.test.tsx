@@ -6,7 +6,7 @@ import {
   createRoute,
   createRouter,
 } from '@tanstack/react-router'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { clearSession } from '@/lib/session'
@@ -179,15 +179,9 @@ describe('PlazaPage', () => {
     expect(screen.getByText('deepseek-chat')).toBeTruthy()
   })
 
-  it('sends a logged-out 加入 Key click to login', async () => {
-    const router = renderPlaza()
+  it('does not offer 加入 Key on plaza cards', async () => {
+    renderPlaza()
     await screen.findByText('deepseek-chat')
-    const buttons = screen.getAllByRole('button', { name: '加入 Key' })
-    expect(buttons).toHaveLength(2)
-    fireEvent.click(buttons[0])
-    await waitFor(() => {
-      expect(router.state.location.pathname).toBe('/login')
-    })
-    expect(router.state.location.search).toEqual({ redirect: '/plaza' })
+    expect(screen.queryByRole('button', { name: '加入 Key' })).toBeNull()
   })
 })
