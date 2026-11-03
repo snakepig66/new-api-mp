@@ -1572,32 +1572,34 @@ func flexArrayString(f flexJSON) (string, error) {
 // --- views -----------------------------------------------------------------
 
 type adminPoolModelView struct {
-	ID            int64     `json:"id"`
-	Name          string    `json:"name"`
-	OriginVendor  string    `json:"origin_vendor"`
-	ContextLength int       `json:"context_length"`
-	Capabilities  []string  `json:"capabilities"`
-	Aliases       []string  `json:"aliases"`
-	VerifyPrompt  string    `json:"verify_prompt"`
-	Status        string    `json:"status"`
-	EnablePlaza   bool      `json:"enable_plaza"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID                   int64     `json:"id"`
+	Name                 string    `json:"name"`
+	OriginVendor         string    `json:"origin_vendor"`
+	ContextLength        int       `json:"context_length"`
+	Capabilities         []string  `json:"capabilities"`
+	Aliases              []string  `json:"aliases"`
+	VerifyPrompt         string    `json:"verify_prompt"`
+	Status               string    `json:"status"`
+	EnablePlaza          bool      `json:"enable_plaza"`
+	PlazaMultiplierMilli int64     `json:"plaza_multiplier_milli"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 func toAdminPoolModelView(row ModelPool) adminPoolModelView {
 	return adminPoolModelView{
-		ID:            row.ID,
-		Name:          row.Name,
-		OriginVendor:  row.OriginVendor,
-		ContextLength: row.ContextLength,
-		Capabilities:  parseStringList(row.Capabilities),
-		Aliases:       parseStringList(row.Aliases),
-		VerifyPrompt:  row.VerifyPrompt,
-		Status:        row.Status,
-		EnablePlaza:   row.EnablePlaza,
-		CreatedAt:     row.CreatedAt,
-		UpdatedAt:     row.UpdatedAt,
+		ID:                   row.ID,
+		Name:                 row.Name,
+		OriginVendor:         row.OriginVendor,
+		ContextLength:        row.ContextLength,
+		Capabilities:         parseStringList(row.Capabilities),
+		Aliases:              parseStringList(row.Aliases),
+		VerifyPrompt:         row.VerifyPrompt,
+		Status:               row.Status,
+		EnablePlaza:          row.EnablePlaza,
+		PlazaMultiplierMilli: plazaMultiplier(row),
+		CreatedAt:            row.CreatedAt,
+		UpdatedAt:            row.UpdatedAt,
 	}
 }
 
@@ -1689,14 +1691,15 @@ func toAdminPoolChannelModelView(row ChannelModel) adminPoolChannelModelView {
 // the other fields are optional, and omitted optional fields are preserved on
 // update.
 type adminPoolModelRequest struct {
-	Name          string   `json:"name"`
-	OriginVendor  string   `json:"origin_vendor"`
-	ContextLength *int     `json:"context_length"`
-	Capabilities  flexJSON `json:"capabilities"`
-	Aliases       flexJSON `json:"aliases"`
-	VerifyPrompt  *string  `json:"verify_prompt"`
-	Status        string   `json:"status"`
-	EnablePlaza   *bool    `json:"enable_plaza"`
+	Name                 string   `json:"name"`
+	OriginVendor         string   `json:"origin_vendor"`
+	ContextLength        *int     `json:"context_length"`
+	Capabilities         flexJSON `json:"capabilities"`
+	Aliases              flexJSON `json:"aliases"`
+	VerifyPrompt         *string  `json:"verify_prompt"`
+	Status               string   `json:"status"`
+	EnablePlaza          *bool    `json:"enable_plaza"`
+	PlazaMultiplierMilli *int64   `json:"plaza_multiplier_milli"`
 }
 
 // adminPoolListModels serves GET /admin/pool/models.
@@ -1783,6 +1786,15 @@ func adminPoolPutModel(c *gin.Context) {
 	} else if !found {
 		row.EnablePlaza = true
 	}
+	if req.PlazaMultiplierMilli != nil {
+		if *req.PlazaMultiplierMilli < 1 || *req.PlazaMultiplierMilli > MaxMultiplierMilli {
+			common.ApiErrorStatus(c, http.StatusBadRequest, ErrModelPoolPlazaMultiplier)
+			return
+		}
+		row.PlazaMultiplierMilli = *req.PlazaMultiplierMilli
+	} else if !found {
+		row.PlazaMultiplierMilli = 1000
+	}
 	if status != "" {
 		row.Status = status
 	}
@@ -1798,14 +1810,15 @@ func adminPoolPutModel(c *gin.Context) {
 
 	if found {
 		updates := map[string]any{
-			"origin_vendor":  row.OriginVendor,
-			"context_length": row.ContextLength,
-			"capabilities":   row.Capabilities,
-			"aliases":        row.Aliases,
-			"verify_prompt":  row.VerifyPrompt,
-			"status":         row.Status,
-			"enable_plaza":   row.EnablePlaza,
-			"updated_at":     time.Now(),
+			"origin_vendor":          row.OriginVendor,
+			"context_length":         row.ContextLength,
+			"capabilities":           row.Capabilities,
+			"aliases":                row.Aliases,
+			"verify_prompt":          row.VerifyPrompt,
+			"status":                 row.Status,
+			"enable_plaza":           row.EnablePlaza,
+			"plaza_multiplier_milli": row.PlazaMultiplierMilli,
+			"updated_at":             time.Now(),
 		}
 		if err := db.Model(&ModelPool{}).Where("id = ?", row.ID).Updates(updates).Error; err != nil {
 			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to save model"))

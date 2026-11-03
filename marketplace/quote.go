@@ -9,6 +9,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// MaxMultiplierMilli is the largest multiplier the plaza multiplier and the
+// quote path accept: 100000 = 100x. A plaza model above this would charge more
+// than 100 times its base price in one request.
+const MaxMultiplierMilli int64 = 100000
+
 // QuoteInput is one request's usage snapshot for unified pricing (§3.2/§3.7).
 // At is the pricing instant — the pre-freeze moment — and decides both the
 // peak/off-peak tier and the price-book versions for the whole request,
@@ -23,7 +28,7 @@ type QuoteInput struct {
 	// CoefficientMilli is the channel-model price coefficient (1000 = official
 	// price). <= 0 is treated as 1000.
 	CoefficientMilli int64
-	MultiplierMilli  int64 // 倍率千分值, must be 1..1000 (§3.2)
+	MultiplierMilli  int64 // 倍率千分值, must be 1..MaxMultiplierMilli
 	// ModelMultiplierMilli is the per-model multiplier override (P4). When > 0
 	// it replaces MultiplierMilli for this quote; 0 falls back to the listing
 	// multiplier.
@@ -63,6 +68,16 @@ type QuoteResult struct {
 // with ErrNoPrice — the caller strips unpriceable tools before relaying
 // (§3.4); a zero count is ignored entirely.
 func Quote(db *gorm.DB, cal *Calendar, in QuoteInput) (QuoteResult, error) {
+	// Two call shapes share this function: market/listing quotes pass both
+	// multiplier and override and stay in 1..1000 (§3.2); the plaza quote
+	// passes its price multiplier (up to 100x) as the override only, so a
+	// ModelMultiplierMilli limit applies there.
+	if in.ModelMultiplierMilli > 0 && in.MultiplierMilli == 0 {
+		if in.ModelMultiplierMilli < 1 || in.ModelMultiplierMilli > MaxMultiplierMilli {
+			return QuoteResult{}, fmt.Errorf("marketplace: multiplier milli %d out of range 1..%d", in.ModelMultiplierMilli, MaxMultiplierMilli)
+		}
+		return quoteWithMultiplier(db, cal, in, in.ModelMultiplierMilli)
+	}
 	multiplier := in.MultiplierMilli
 	if in.ModelMultiplierMilli > 0 {
 		multiplier = in.ModelMultiplierMilli
@@ -70,6 +85,13 @@ func Quote(db *gorm.DB, cal *Calendar, in QuoteInput) (QuoteResult, error) {
 	if multiplier < 1 || multiplier > 1000 {
 		return QuoteResult{}, fmt.Errorf("marketplace: multiplier milli %d out of range 1..1000", multiplier)
 	}
+	return quoteWithMultiplier(db, cal, in, multiplier)
+}
+
+// quoteWithMultiplier applies one already-validated multiplier. It is the body
+// of Quote, split out so the plaza quote can pass a multiplier above 1000
+// without loosening the listing path's 1..1000 bound.
+func quoteWithMultiplier(db *gorm.DB, cal *Calendar, in QuoteInput, multiplier int64) (QuoteResult, error) {
 	if in.InputTokens < 0 || in.OutputTokens < 0 || in.CacheReadTokens < 0 || in.CacheWriteTokens < 0 ||
 		in.SearchCount < 0 || in.FetchCount < 0 {
 		return QuoteResult{}, fmt.Errorf("%w: quote input counts must be non-negative", ErrMoneyNegative)

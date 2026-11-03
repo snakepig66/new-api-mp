@@ -50,15 +50,15 @@ func listPlazaModels(c *gin.Context) {
 		if !served[row.Name] {
 			continue
 		}
+		// The price book is the plaza's only price source: the displayed price
+		// is base × plaza multiplier, the same function the ratios sync uses.
+		tierPrices, err := plazaQuote(db, cal, row, now)
+		if err != nil || !plazaPriceable(tierPrices) {
+			continue
+		}
 		vendor := row.OriginVendor
 		if vendor == "" {
 			vendor = originVendorOf(row)
-		}
-		// The price book is the plaza's only price source: a model without a
-		// covering price is not listed.
-		tierPrices, err := quoteTierPrices(db, cal, row.Name, vendor, vendor, 1000, 1000, now)
-		if err != nil || !plazaPriceable(tierPrices) {
-			continue
 		}
 
 		items = append(items, PlazaModel{

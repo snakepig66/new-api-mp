@@ -27,15 +27,32 @@ import (
 // is shown verbatim in the admin console.
 var ErrPlazaPriceRequired = errors.New("请先配置模型池基价再上架广场")
 
-// quoteOneMillionTokens returns quoteTierPrices' overall debit at
-// multiplier 1000 (official price), which is the 微元/百万 tokens base price
-// the plaza charges at.
-func plazaBasePrices(db *gorm.DB, cal *Calendar, row ModelPool, at time.Time) (squareTierPrices, error) {
+// plazaMultiplier returns the model's plaza multiplier in thousandths. A
+// stored value <= 0 (legacy rows migrated before the column existed, or a
+// hand-edited row) is treated as 1000 so the price stays at the base price.
+func plazaMultiplier(row ModelPool) int64 {
+	if row.PlazaMultiplierMilli <= 0 {
+		return 1000
+	}
+	return row.PlazaMultiplierMilli
+}
+
+// plazaQuote is the single plaza price: the model pool base price (official
+// price book at multiplier and coefficient 1000) multiplied by the model's
+// plaza multiplier. The displayed price and the synced new-api ratios both
+// come from here, so the buyer's view and the actual debit cannot drift.
+func plazaQuote(db *gorm.DB, cal *Calendar, row ModelPool, at time.Time) (squareTierPrices, error) {
 	vendor := row.OriginVendor
 	if vendor == "" {
 		vendor = originVendorOf(row)
 	}
-	return quoteTierPrices(db, cal, row.Name, vendor, vendor, 1000, 1000, at)
+	return quoteTierPrices(db, cal, row.Name, vendor, vendor, plazaMultiplier(row), 1000, at)
+}
+
+// plazaBasePrices returns the plaza price of one model (base × plaza
+// multiplier).
+func plazaBasePrices(db *gorm.DB, cal *Calendar, row ModelPool, at time.Time) (squareTierPrices, error) {
+	return plazaQuote(db, cal, row, at)
 }
 
 // plazaModelRatio converts the input base price (微元/百万 tokens) into a

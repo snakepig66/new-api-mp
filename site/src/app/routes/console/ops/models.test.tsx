@@ -18,6 +18,7 @@ const poolModels = [
     verify_prompt: 'hi',
     status: 'active',
     enable_plaza: true,
+    plaza_multiplier_milli: 1500,
   },
 ]
 
@@ -104,5 +105,22 @@ describe('admin models and plaza management', () => {
     fireEvent.click(switchBtn)
     await waitFor(() => expect(putBodies.length).toBeGreaterThan(0))
     expect(putBodies[0].enable_plaza).toBe(false)
+  })
+
+  it('shows and inline-edits the plaza multiplier', async () => {
+    renderModels()
+
+    const cell = await screen.findByRole('button', { name: '编辑广场倍率 deepseek-chat' })
+    expect(cell.textContent).toBe('1.50x')
+
+    fireEvent.click(cell)
+    const input = screen.getByTestId('plaza-multiplier-input') as HTMLInputElement
+    expect(input.value).toBe('1.50')
+
+    fireEvent.change(input, { target: { value: '2.00' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(putBodies.length).toBeGreaterThan(0))
+    expect(putBodies[0].plaza_multiplier_milli).toBe(2000)
+    expect(putBodies[0].name).toBe('deepseek-chat')
   })
 })

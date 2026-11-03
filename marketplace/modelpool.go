@@ -47,6 +47,10 @@ type ModelPool struct {
 	VerifyPrompt  string `gorm:"type:text;not null;default:''" json:"verify_prompt"`
 	Status        string `gorm:"size:32;not null;default:'active'" json:"status"` // active / retired
 	EnablePlaza   bool   `gorm:"not null;default:false" json:"enable_plaza"`
+	// PlazaMultiplierMilli is the plaza multiplier in thousandths (1000 =
+	// 1.00x). The plaza price is the model pool base price times this value.
+	// <= 0 is treated as 1000 so legacy rows behave as before.
+	PlazaMultiplierMilli int64 `gorm:"not null;default:1000" json:"plaza_multiplier_milli"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -145,6 +149,7 @@ var (
 	ErrModelPoolStatusInvalid       = errors.New("status must be active or retired")
 	ErrModelPoolInUse               = errors.New("model is referenced by an active seller channel")
 	ErrModelPoolNotFound            = errors.New("model not found")
+	ErrModelPoolPlazaMultiplier     = errors.New("广场倍率需在 0.001 到 100 之间")
 	ErrChannelPoolSlugRequired      = errors.New("channel slug is required")
 	ErrChannelPoolKindInvalid       = errors.New("kind must be official, plan or third_party")
 	ErrChannelPoolKeyPatternInvalid = errors.New("key_pattern is not a valid regular expression")

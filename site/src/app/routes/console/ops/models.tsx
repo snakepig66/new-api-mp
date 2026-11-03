@@ -128,6 +128,7 @@ interface UnifiedModelForm {
   verify_prompt: string
   status: string
   enable_plaza: boolean
+  plaza_multiplier: string
   // Pricing
   input_yuan: string
   output_yuan: string
@@ -143,9 +144,22 @@ const emptyForm: UnifiedModelForm = {
   verify_prompt: '',
   status: 'active',
   enable_plaza: true,
+  plaza_multiplier: '1.00',
   input_yuan: '',
   output_yuan: '',
   cache_read_yuan: '',
+}
+
+function formatPlazaMultiplier(milli: number | undefined): string {
+  const safe = typeof milli === 'number' && milli > 0 ? milli : 1000
+  return (safe / 1000).toFixed(2)
+}
+
+function parsePlazaMultiplier(value: string): number | null {
+  if (!value.trim()) return null
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0.001 || parsed > 100) return null
+  return Math.round(parsed * 1000)
 }
 
 function ModelsAndPricingPage() {
@@ -165,6 +179,8 @@ function ModelsAndPricingPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<AdminPoolModel | null>(null)
   const [customVendorMode, setCustomVendorMode] = useState(false)
+  const [editingMultiplier, setEditingMultiplier] = useState<string | null>(null)
+  const [multiplierDraft, setMultiplierDraft] = useState('')
 
   // Map each model name to its latest flat price row
   const latestPriceMap = useMemo(() => {
@@ -318,6 +334,7 @@ function ModelsAndPricingPage() {
         verify_prompt: model.verify_prompt,
         status: model.status === 'active' ? 'retired' : 'active',
         enable_plaza: model.enable_plaza !== false,
+        plaza_multiplier_milli: model.plaza_multiplier_milli,
       }),
     onSuccess: () => {
       refresh()
@@ -337,6 +354,7 @@ function ModelsAndPricingPage() {
         verify_prompt: model.verify_prompt,
         status: model.status,
         enable_plaza: model.enable_plaza === false,
+        plaza_multiplier_milli: model.plaza_multiplier_milli,
       }),
     onSuccess: () => {
       refresh()
@@ -344,6 +362,48 @@ function ModelsAndPricingPage() {
     },
     onError: (error) => toast.show({ title: adminErrorMessage(error), tone: 'error' }),
   })
+
+  const setPlazaMultiplier = useMutation({
+    mutationFn: ({ model, milli }: { model: AdminPoolModel; milli: number }) =>
+      putAdminPoolModel({
+        name: model.name,
+        origin_vendor: model.origin_vendor,
+        context_length: model.context_length,
+        capabilities: model.capabilities,
+        aliases: model.aliases,
+        verify_prompt: model.verify_prompt,
+        status: model.status,
+        enable_plaza: model.enable_plaza !== false,
+        plaza_multiplier_milli: milli,
+      }),
+    onSuccess: () => {
+      refresh()
+      toast.show({ title: '广场倍率已更新', tone: 'success' })
+    },
+    onError: (error) => toast.show({ title: adminErrorMessage(error), tone: 'error' }),
+  })
+
+  function startEditMultiplier(row: AdminPoolModel) {
+    setEditingMultiplier(row.name)
+    setMultiplierDraft(formatPlazaMultiplier(row.plaza_multiplier_milli))
+  }
+
+  function cancelEditMultiplier() {
+    setEditingMultiplier(null)
+    setMultiplierDraft('')
+  }
+
+  function commitEditMultiplier(row: AdminPoolModel) {
+    const milli = parsePlazaMultiplier(multiplierDraft)
+    if (milli === null) {
+      toast.show({ title: '广场倍率需在 0.001 到 100 之间', tone: 'error' })
+      return
+    }
+    setEditingMultiplier(null)
+    setMultiplierDraft('')
+    if (milli === (row.plaza_multiplier_milli || 1000)) return
+    setPlazaMultiplier.mutate({ model: row, milli })
+  }
 
   function openCreate() {
     setEditing(null)
@@ -368,6 +428,7 @@ function ModelsAndPricingPage() {
       verify_prompt: model.verify_prompt,
       status: model.status || 'active',
       enable_plaza: model.enable_plaza !== false,
+      plaza_multiplier: formatPlazaMultiplier(model.plaza_multiplier_milli),
       input_yuan: p ? String(Number(p.input_micro_per_mtok) / 1_000_000) : '',
       output_yuan: p ? String(Number(p.output_micro_per_mtok) / 1_000_000) : '',
       cache_read_yuan: p && p.cache_read_micro_per_mtok ? String(Number(p.cache_read_micro_per_mtok) / 1_000_000) : '',
@@ -404,6 +465,8 @@ function ModelsAndPricingPage() {
       const val = Number(form.output_yuan)
       if (Number.isNaN(val) || val <= 0) next.output_yuan = '请输入大于 0 的数字'
     }
+    const plazaMilli = parsePlazaMultiplier(form.plaza_multiplier)
+    if (plazaMilli === null) next.plaza_multiplier = '广场倍率需在 0.001 到 100 之间'
 
     if (Object.keys(next).length > 0) {
       setErrors(next)
@@ -424,6 +487,7 @@ function ModelsAndPricingPage() {
         verify_prompt: form.verify_prompt.trim(),
         status: form.status,
         enable_plaza: form.enable_plaza,
+        ...(plazaMilli !== null ? { plaza_multiplier_milli: plazaMilli } : {}),
       })
 
       // 2. Save price if specified
@@ -572,7 +636,7 @@ function ModelsAndPricingPage() {
 
         {/* 模型列表区块 */}
         {models.isPending || prices.isPending ? (
-          <TableSkeleton rows={8} columns={5} />
+          <TableSkeleton rows={8} columns={6} />
         ) : models.isError ? (
           <ErrorBlock error={models.error} onRetry={refresh} />
         ) : filteredRows.length === 0 ? (
@@ -622,7 +686,7 @@ function ModelsAndPricingPage() {
                 </div>
 
                 {/* 规范高密度数据表格 */}
-                <Table minWidth={760}>
+                <Table minWidth={840}>
                   <TableHead>
                     <TableRow interactive={false}>
                       <TableHeaderCell className="w-[30%]">模型名称 / 能力</TableHeaderCell>
@@ -630,6 +694,7 @@ function ModelsAndPricingPage() {
                       <TableHeaderCell className="w-[28%]">Token 计费 (元/M tok)</TableHeaderCell>
                       <TableHeaderCell className="w-[10%]">状态</TableHeaderCell>
                       <TableHeaderCell className="w-[10%] text-center">广场上架</TableHeaderCell>
+                      <TableHeaderCell className="w-[10%] text-center">广场倍率</TableHeaderCell>
                       <TableHeaderCell numeric className="w-[12%]">操作</TableHeaderCell>
                     </TableRow>
                   </TableHead>
@@ -769,6 +834,35 @@ function ModelsAndPricingPage() {
                                 {row.enable_plaza !== false ? '已上架' : '未上架'}
                               </span>
                             </div>
+                          </TableCell>
+
+                          {/* 4.6 广场倍率（就地编辑） */}
+                          <TableCell className="text-center">
+                            {editingMultiplier === row.name ? (
+                              <input
+                                aria-label="广场倍率"
+                                data-testid="plaza-multiplier-input"
+                                className="w-16 rounded-md border border-line bg-card px-1.5 py-0.5 text-center font-mono text-meta text-ink focus:border-brand focus:outline-none"
+                                value={multiplierDraft}
+                                inputMode="decimal"
+                                autoFocus
+                                onChange={(e) => setMultiplierDraft(e.target.value)}
+                                onBlur={() => commitEditMultiplier(row)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') commitEditMultiplier(row)
+                                  else if (e.key === 'Escape') cancelEditMultiplier()
+                                }}
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                aria-label={`编辑广场倍率 ${row.name}`}
+                                className="cursor-pointer rounded-md px-2 py-0.5 font-mono text-meta font-medium text-ink-2 hover:bg-brand-soft/50 hover:text-brand-ink"
+                                onClick={() => startEditMultiplier(row)}
+                              >
+                                {formatPlazaMultiplier(row.plaza_multiplier_milli)}x
+                              </button>
+                            )}
                           </TableCell>
 
                           {/* 5. 精简操作列 */}
@@ -948,6 +1042,22 @@ function ModelsAndPricingPage() {
                   aria-label="上架到模型广场"
                 />
               </div>
+
+              <Field
+                label="广场倍率 (x)"
+                htmlFor="unified-plaza-multiplier"
+                error={errors.plaza_multiplier}
+                hint="广场价格 = 模型池基价 × 广场倍率，范围 0.001–100"
+              >
+                <TextInput
+                  id="unified-plaza-multiplier"
+                  value={form.plaza_multiplier}
+                  placeholder="1.00"
+                  inputMode="decimal"
+                  invalid={Boolean(errors.plaza_multiplier)}
+                  onChange={(e) => update('plaza_multiplier', e.target.value)}
+                />
+              </Field>
 
               <Field
                 label="模型别名 (逗号分隔)"

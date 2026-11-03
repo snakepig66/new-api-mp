@@ -644,6 +644,7 @@ export interface AdminPoolModel {
   verify_prompt: string
   status: string
   enable_plaza?: boolean
+  plaza_multiplier_milli?: number
 }
 
 export interface AdminPoolChannel {
@@ -688,6 +689,7 @@ export interface AdminPoolModelInput {
   verify_prompt?: string
   status?: string
   enable_plaza?: boolean
+  plaza_multiplier_milli?: number
 }
 
 export interface AdminPoolChannelInput {
@@ -756,6 +758,7 @@ function bool(value: unknown): boolean {
 export function normalizeAdminPoolModel(raw: unknown): AdminPoolModel {
   const row = record(raw)
   const enablePlazaRaw = pick(row, 'enable_plaza', 'EnablePlaza')
+  const plazaMultiplierRaw = pick(row, 'plaza_multiplier_milli', 'PlazaMultiplierMilli')
   return {
     id: int(pick(row, 'id', 'ID')),
     name: text(pick(row, 'name', 'Name')),
@@ -766,6 +769,7 @@ export function normalizeAdminPoolModel(raw: unknown): AdminPoolModel {
     verify_prompt: text(pick(row, 'verify_prompt', 'VerifyPrompt')),
     status: text(pick(row, 'status', 'Status')),
     ...(enablePlazaRaw !== undefined ? { enable_plaza: bool(enablePlazaRaw) } : {}),
+    ...(plazaMultiplierRaw !== undefined ? { plaza_multiplier_milli: int(plazaMultiplierRaw) } : {}),
   }
 }
 

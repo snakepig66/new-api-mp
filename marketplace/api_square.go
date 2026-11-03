@@ -409,12 +409,12 @@ func quoteTierPrices(db *gorm.DB, cal *Calendar, model, vendor, originVendor str
 	var out squareTierPrices
 	quoteDim := func(setTokens func(*QuoteInput)) (int64, error) {
 		in := QuoteInput{
-			Model:            model,
-			Vendor:           vendor,
-			OriginVendor:     originVendor,
-			CoefficientMilli: coefficientMilli,
-			MultiplierMilli:  multMilli,
-			At:               at,
+			Model:                model,
+			Vendor:               vendor,
+			OriginVendor:         originVendor,
+			CoefficientMilli:     coefficientMilli,
+			ModelMultiplierMilli: multMilli,
+			At:                   at,
 		}
 		setTokens(&in)
 		q, err := Quote(db, cal, in)
