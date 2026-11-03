@@ -108,11 +108,18 @@ func setPlazaTestPrice(t *testing.T, db *gorm.DB, modelName string, input, outpu
 
 func TestPlazaModelRatioConversionMatchesKnownPrices(t *testing.T) {
 	old := common.QuotaPerUnit
-	common.QuotaPerUnit = 7_000_000
 	t.Cleanup(func() { common.QuotaPerUnit = old })
 
-	assert.InDelta(t, 0.07142857142857142, plazaModelRatio(1_000_000), 1e-15, "deepseek-v4.1-flash ¥1.0/M")
-	assert.InDelta(t, 0.5714285714285714, plazaModelRatio(8_000_000), 1e-15, "glm-5.3 ¥8/M")
+	// Production: QUOTA_PER_UNIT=1000000, 1 quota = 1 微元.
+	common.QuotaPerUnit = 1_000_000
+	assert.InDelta(t, 1.0, plazaModelRatio(1_000_000), 1e-12, "deepseek-v4.1-flash ¥1.0/M")
+	assert.InDelta(t, 8.0, plazaModelRatio(8_000_000), 1e-12, "glm-5.3 ¥8/M")
+	// Upstream default: ¥1 = 500000 quota.
+	common.QuotaPerUnit = 500_000
+	assert.InDelta(t, 0.5, plazaModelRatio(1_000_000), 1e-12)
+	// Round trip: quota debited for 1M input tokens equals price × QuotaPerUnit.
+	common.QuotaPerUnit = 1_000_000
+	assert.InDelta(t, 1.2*common.QuotaPerUnit, plazaModelRatio(1_200_000)*1e6, 1e-6, "hy3 ¥1.2/M")
 }
 
 func TestSyncPlazaModelRatiosWritesEnabledPlazaPrices(t *testing.T) {

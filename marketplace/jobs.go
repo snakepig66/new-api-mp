@@ -95,6 +95,14 @@ func StartJobs(db *gorm.DB, stop <-chan struct{}) {
 			}
 		}
 	})
+	// 广场 ratios follow the price book's current tier (peak/offpeak) and any
+	// newly effective price version. The sync writes only when a ratio changed.
+	go runJobLoop("sync-plaza-ratios", time.Minute, stop, func() {
+		_, cal := relayState()
+		if err := SyncPlazaModelRatios(db, cal); err != nil {
+			common.SysError(common.LogText("marketplace: sync-plaza-ratios job: %s", err.Error()))
+		}
+	})
 	// MODEL-CHANNEL-POOL §4: restore plan-channel listings whose quota window
 	// has reset. The job only touches plan_quota_exhausted pauses; other pause
 	// reasons and bans are left alone.

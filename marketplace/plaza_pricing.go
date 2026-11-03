@@ -39,16 +39,17 @@ func plazaBasePrices(db *gorm.DB, cal *Calendar, row ModelPool, at time.Time) (s
 }
 
 // plazaModelRatio converts the input base price (微元/百万 tokens) into a
-// new-api ModelRatio. new-api bills one input token as
-// ModelRatio × QuotaPerUnit / 500000 quota, which the marketplace treats as
-// 微元 1:1 (billing.go). Solving for the per-million-token price:
+// new-api ModelRatio. new-api debits ModelRatio quota per input token (group
+// ratio 1), and one yuan is QuotaPerUnit quota (the wallet credits
+// amount × QuotaPerUnit on recharge, see topUpAmountMicro). So
 //
-//	ModelRatio = inputMicro / 1e6 × 500000 / QuotaPerUnit
+//	quota per 1M tokens = ModelRatio × 1e6 = inputMicro / 1e6 × QuotaPerUnit
+//	ModelRatio          = inputMicro / 1e6 × QuotaPerUnit / 1e6
 //
-// With the default QuotaPerUnit (500000) this is inputMicro / 1e6, so
-// ¥1.0/M (1_000_000 micro) → 1.0 and ¥8/M (8_000_000 micro) → 8.
+// With the deployment's QUOTA_PER_UNIT=1000000 (1 quota = 1 微元) this is
+// inputMicro / 1e6: ¥1.0/M → 1.0, ¥8/M → 8.
 func plazaModelRatio(inputMicroPerMTok int64) float64 {
-	return float64(inputMicroPerMTok) / 1_000_000 * 500_000 / common.QuotaPerUnit
+	return float64(inputMicroPerMTok) / 1_000_000 * common.QuotaPerUnit / 1_000_000
 }
 
 // plazaRatioSet is the new-api ratio tuple one plaza model is charged with.
@@ -127,7 +128,44 @@ func SyncPlazaModelRatios(db *gorm.DB, cal *Calendar) error {
 		targets[row.Name] = set
 	}
 
+	if plazaRatiosUpToDate(targets, candidates) {
+		return nil
+	}
 	return model.UpdateModelPricingOptions(plazaRatioOptions(targets, candidates))
+}
+
+// plazaRatiosUpToDate reports whether the live ratio maps already hold exactly
+// the target tuples (and no override for an unpriced plaza model), so the
+// minute job does not rewrite the options table when nothing changed.
+func plazaRatiosUpToDate(targets map[string]plazaRatioSet, plazaModels []string) bool {
+	modelRatio := ratio_setting.GetModelRatioCopy()
+	completionRatio := ratio_setting.GetCompletionRatioCopy()
+	cacheRatio := ratio_setting.GetCacheRatioCopy()
+	billingMode := billing_setting.GetBillingModeCopy()
+	billingExpr := billing_setting.GetBillingExprCopy()
+	same := func(a, b float64) bool { return math.Abs(a-b) <= 1e-12*math.Max(1, math.Abs(b)) }
+	for _, name := range plazaModels {
+		set, ok := targets[name]
+		if !ok {
+			if _, has := modelRatio[name]; has {
+				return false
+			}
+			continue
+		}
+		mr, ok1 := modelRatio[name]
+		cr, ok2 := completionRatio[name]
+		ca, ok3 := cacheRatio[name]
+		if !ok1 || !ok2 || !ok3 || !same(mr, set.ModelRatio) || !same(cr, set.CompletionRatio) || !same(ca, set.CacheRatio) {
+			return false
+		}
+		if mode, has := billingMode[name]; has && mode != billing_setting.BillingModeRatio {
+			return false
+		}
+		if _, has := billingExpr[name]; has {
+			return false
+		}
+	}
+	return true
 }
 
 // plazaRatioOptions builds the option-map overrides that overlay the plaza
