@@ -1057,11 +1057,12 @@ func TestAdminPoolModelsAPI(t *testing.T) {
 	assert.Contains(t, first, "aliases")
 	assert.IsType(t, []any{}, first["capabilities"], "arrays are parsed for the console")
 
-	// Create a new model.
+	// Create a new model. It has no price book entry, so it must not be put on
+	// the plaza (enable_plaza defaults to true, which the price gate rejects).
 	w = f.do(t, http.MethodPut, path, map[string]any{
 		"name": "pool-test-model", "origin_vendor": "custom",
 		"context_length": 4096, "capabilities": []string{"text"},
-		"aliases": []string{"pool-test-alias"},
+		"aliases": []string{"pool-test-alias"}, "enable_plaza": false,
 	}, f.adminID)
 	require.Equal(t, http.StatusOK, w.Code)
 	row := decodeAdminBody(t, w)["data"].(map[string]any)

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -28,6 +29,15 @@ func TestPlazaModelsListAndFiltering(t *testing.T) {
 		relayDB, defaultCalendar = oldDB, oldCal
 		relayStateMu.Unlock()
 	})
+
+	// The price book is the plaza's only price source, so the listable model
+	// needs a covering price; an unpriced model is hidden.
+	require.NoError(t, db.Create(&PriceBook{
+		Model: "plaza-model-1", Vendor: "deepseek", Tier: TierFlat, Version: 1,
+		InputMicroPerMTok: 1_000_000, OutputMicroPerMTok: 4_000_000,
+		CacheReadMicroPerMTok: 20_000, CacheWriteMicroPerMTok: 0,
+		EffectiveAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}).Error)
 
 	// Add test models to mp_models
 	m1 := ModelPool{Name: "plaza-model-1", OriginVendor: "deepseek", Status: PoolStatusActive, EnablePlaza: true}

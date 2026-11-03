@@ -127,6 +127,10 @@ func newMPHarness(t *testing.T, buyerQuota int) *mpHarness {
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	require.NoError(t, model.InitLogDB())
+	// Production loads the options table into common.OptionMap before
+	// marketplace.Init runs; the startup plaza-ratio sync persists through that
+	// map, so mirror the startup order here.
+	model.InitOptionMap()
 
 	t.Setenv("MP_ENABLED", "true")
 	t.Setenv("MP_KEY_SECRET", "relay-integration-test-secret")

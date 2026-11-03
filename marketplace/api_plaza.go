@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -55,19 +54,11 @@ func listPlazaModels(c *gin.Context) {
 		if vendor == "" {
 			vendor = originVendorOf(row)
 		}
-		// Calculate prices via Quote
+		// The price book is the plaza's only price source: a model without a
+		// covering price is not listed.
 		tierPrices, err := quoteTierPrices(db, cal, row.Name, vendor, vendor, 1000, 1000, now)
-		if err != nil || (tierPrices.InputMicroPerMTok == 0 && tierPrices.OutputMicroPerMTok == 0) {
-			// Fallback to ratio_setting if price book doesn't have it
-			modelRatio, _, _ := ratio_setting.GetModelRatio(row.Name)
-			completionRatio := ratio_setting.GetCompletionRatio(row.Name)
-			baseMicro := int64(modelRatio * 1_000_000)
-			tierPrices = squareTierPrices{
-				InputMicroPerMTok:      baseMicro,
-				OutputMicroPerMTok:     int64(float64(baseMicro) * completionRatio),
-				CacheReadMicroPerMTok:  baseMicro / 2,
-				CacheWriteMicroPerMTok: baseMicro,
-			}
+		if err != nil || !plazaPriceable(tierPrices) {
+			continue
 		}
 
 		items = append(items, PlazaModel{

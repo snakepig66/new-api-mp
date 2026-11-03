@@ -40,6 +40,15 @@ func jsonScanBytes(value any) []byte {
 	}
 }
 
+// InitCommonColumns (re)computes the dialect-specific column identifiers used
+// in raw SQL (reserved-word columns such as "group" and "key"). It is
+// idempotent and must run after the main/log database types are set; startup
+// calls it from InitDB and InitLogDB, and tests call it after pointing the
+// process at a test dialect.
+func InitCommonColumns() {
+	initCol()
+}
+
 func initCol() {
 	// init common column names
 	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {

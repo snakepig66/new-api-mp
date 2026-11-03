@@ -97,6 +97,11 @@ func Init(db *gorm.DB) error {
 	// Start the package-level relay singletons (Selector, holiday calendar)
 	// used by the §4.4 seam hooks.
 	initRelayState(db)
+	// 广场价目 is the plaza's only price source: rewrite new-api's ratio maps
+	// from the price book at startup so display and debit agree (§3.7).
+	if err := SyncPlazaModelRatios(db, defaultCalendar); err != nil {
+		common.SysError(common.LogText("marketplace: sync plaza ratios: %s", err.Error()))
+	}
 	// Background jobs (T+7 maturity, canary promotion, patrol, calendar reload).
 	// The stop channel is never closed: the jobs exit with the process.
 	StartJobs(db, make(chan struct{}))
@@ -113,33 +118,63 @@ func Init(db *gorm.DB) error {
 		cacheRead, cacheWrite := plazaLogCacheTokens(log.Other)
 		input := max(int64(log.PromptTokens)-cacheRead-cacheWrite, 0)
 		reqRow := Request{
-			RequestID:       log.RequestId,
-			BuyerUserID:     int64(log.UserId),
-			BuyerTokenID:    int64(log.TokenId),
-			SellerID:        0,
-			ListingID:       0,
-			ChannelID:       int64(log.ChannelId),
-			Model:           log.ModelName,
-			UpstreamModel:   "",
-			Source:          RequestSourcePlaza,
-			Tier:            "standard",
-			Status:          RequestSuccess,
+			RequestID:        log.RequestId,
+			BuyerUserID:      int64(log.UserId),
+			BuyerTokenID:     int64(log.TokenId),
+			SellerID:         0,
+			ListingID:        0,
+			ChannelID:        int64(log.ChannelId),
+			Model:            log.ModelName,
+			UpstreamModel:    "",
+			Source:           RequestSourcePlaza,
+			Tier:             "standard",
+			Status:           RequestSuccess,
 			InputTokens:      input,
 			OutputTokens:     int64(log.CompletionTokens),
 			CacheReadTokens:  cacheRead,
 			CacheWriteTokens: cacheWrite,
-			TotalDebitMicro: int64(log.Quota),
-			TokenDebitMicro: int64(log.Quota),
-			LatencyMs:       int64(log.UseTime * 1000),
-			IsStream:        log.IsStream,
-			TokenGroup:      log.Group,
-			CreatedAt:       time.Unix(log.CreatedAt, 0),
+			TotalDebitMicro:  int64(log.Quota),
+			TokenDebitMicro:  int64(log.Quota),
+			LatencyMs:        int64(log.UseTime * 1000),
+			FirstTokenMs:     plazaLogFirstTokenMs(log),
+			IsStream:         log.IsStream,
+			TokenGroup:       log.Group,
+			CreatedAt:        time.Unix(log.CreatedAt, 0),
 		}
 		_ = rdb.Create(&reqRow).Error
 	})
 
 	common.SysLog("marketplace enabled: migrations applied")
 	return nil
+}
+
+// plazaLogFirstTokenMs reads the first-response latency new-api stores as
+// "frt" (milliseconds) in a consume log's Other JSON. It is only meaningful
+// for streamed requests; a non-streaming request keeps 0, matching the
+// marketplace convention for mp_requests.first_token_ms.
+func plazaLogFirstTokenMs(log *model.Log) int64 {
+	if log == nil || !log.IsStream || log.Other == "" {
+		return 0
+	}
+	var m map[string]any
+	if err := common.UnmarshalJsonStr(log.Other, &m); err != nil {
+		return 0
+	}
+	switch v := m["frt"].(type) {
+	case float64:
+		if v > 0 {
+			return int64(v)
+		}
+	case int64:
+		if v > 0 {
+			return v
+		}
+	case int:
+		if v > 0 {
+			return int64(v)
+		}
+	}
+	return 0
 }
 
 // plazaLogCacheTokens reads the cache counters new-api stores in a consume

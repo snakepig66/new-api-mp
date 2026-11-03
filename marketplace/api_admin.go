@@ -275,6 +275,9 @@ func adminPostPrice(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to create price row"))
 		return
 	}
+	// A plaza model's debit mirrors the price book: re-sync its new-api ratios
+	// before the new version becomes visible to the plaza page.
+	syncPlazaModelRatiosFor(db, row.Model)
 	common.ApiSuccess(c, row)
 }
 
@@ -1786,6 +1789,12 @@ func adminPoolPutModel(c *gin.Context) {
 	if row.Status == "" {
 		row.Status = PoolStatusActive
 	}
+	if row.Status == PoolStatusActive && row.EnablePlaza {
+		if err := ensurePlazaPriceable(db, row); err != nil {
+			common.ApiErrorStatus(c, http.StatusBadRequest, err)
+			return
+		}
+	}
 
 	if found {
 		updates := map[string]any{
@@ -1807,6 +1816,8 @@ func adminPoolPutModel(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New("failed to save model"))
 		return
 	}
+	// Keep the plaza's new-api ratios in step with the pool status / toggle.
+	syncPlazaModelRatiosFor(db, row.Name)
 	common.ApiSuccess(c, toAdminPoolModelView(row))
 }
 
