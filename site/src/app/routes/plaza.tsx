@@ -3,24 +3,29 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 
 import { copy } from '@/copy'
-import { CreateKeyDialog } from '@/features/console/components/CreateKeyDialog'
 import { plazaModelsQuery, type PlazaModel } from '@/features/market/api'
-import { formatCompactYuan } from '@/features/market/ModelCard'
-import { writeClipboard } from '@/lib/clipboard'
+import {
+  CapabilityBadges,
+  CopyModelButton,
+  LatencyThroughput,
+  ModelLogoMark,
+  PriceRows,
+  SlaBar,
+} from '@/features/market/ModelCardParts'
+import { modelLogo } from '@/features/market/model-logo'
+import { vendorLabel, vendorLogo } from '@/features/market/vendors'
+import { AddToStandardKeyMenu } from '@/features/plaza/AddToStandardKeyMenu'
 import { cn } from '@/lib/cn'
-import { Button, Empty, Input, ModelName, PageHeader, Tag, useToast } from '@/ui'
+import { Empty, Input, PageHeader } from '@/ui'
 
 export const Route = createFileRoute('/plaza')({
   component: PlazaPage,
 })
 
 export function PlazaPage() {
-  const toast = useToast()
   const plazaQuery = useQuery(plazaModelsQuery())
   const [search, setSearch] = useState('')
   const [selectedVendor, setSelectedVendor] = useState('all')
-  const [createKeyOpen, setCreateKeyOpen] = useState(false)
-  const [copiedModel, setCopiedModel] = useState<string | null>(null)
 
   const models = plazaQuery.data ?? []
 
@@ -49,17 +54,6 @@ export function PlazaPage() {
       return true
     })
   }, [models, search, selectedVendor])
-
-  async function handleCopyModel(modelName: string) {
-    const ok = await writeClipboard(modelName)
-    if (ok) {
-      setCopiedModel(modelName)
-      setTimeout(() => setCopiedModel(null), 2000)
-      toast.show({ title: '已复制模型名', tone: 'success' })
-    } else {
-      toast.show({ title: '复制失败', tone: 'error' })
-    }
-  }
 
   return (
     <div className="container mx-auto max-w-6xl px-4 py-8">
@@ -130,97 +124,82 @@ export function PlazaPage() {
       ) : (
         <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {filtered.map((model) => (
-            <PlazaModelCard
-              key={model.model}
-              item={model}
-              onCopy={handleCopyModel}
-              isCopied={copiedModel === model.model}
-              onCallWithKey={() => setCreateKeyOpen(true)}
-            />
+            <PlazaModelCard key={model.model} item={model} />
           ))}
         </div>
       )}
-
-      <CreateKeyDialog
-        open={createKeyOpen}
-        onOpenChange={setCreateKeyOpen}
-        initialKeyType="standard"
-        onCreated={() => {}}
-      />
     </div>
   )
 }
 
-function PlazaModelCard({
-  item,
-  onCopy,
-  isCopied,
-  onCallWithKey,
-}: {
-  item: PlazaModel
-  onCopy: (name: string) => void
-  isCopied: boolean
-  onCallWithKey: (name: string) => void
-}) {
-  const vendor = item.origin_vendor || item.vendor || '平台'
-  const inputPrice = formatCompactYuan(item.prices?.input_micro_per_mtok)
-  const outputPrice = formatCompactYuan(item.prices?.output_micro_per_mtok)
-  const contextK =
-    item.context_length > 0 ? `${Math.round(item.context_length / 1024)}K` : null
+/** Discount percentage of the plaza price over the base price, or null. */
+function discountPercent(item: PlazaModel): number | null {
+  const base = Number(item.base_prices?.input_micro_per_mtok ?? 0)
+  const price = Number(item.prices?.input_micro_per_mtok ?? 0)
+  if (!(base > 0) || !(price > 0) || price >= base) return null
+  return Math.round((1 - price / base) * 100)
+}
+
+export function PlazaModelCard({ item }: { item: PlazaModel }) {
+  const origin = item.origin_vendor || item.vendor || ''
+  const logo = modelLogo(item.model) || vendorLogo(origin)
+  const discount = discountPercent(item)
 
   return (
-    <article className="flex flex-col justify-between rounded-xl border border-line bg-surface p-5 shadow-xs transition-all hover:border-line-strong hover:shadow-sm">
-      <div className="space-y-3.5">
-        {/* Header: Name + Vendor Tag + Status */}
+    <div className="group relative flex flex-col justify-between rounded-2xl border border-line bg-surface p-5 transition-all hover:border-brand/40 hover:shadow-md hover:-translate-y-0.5">
+      <div>
+        {/* Header: Logo, Model Name, Copy Icon, Capabilities */}
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <h3 className="truncate font-semibold text-title text-ink">
-              <ModelName model={item.model} size="md" />
-            </h3>
-            <div className="mt-1 flex items-center gap-1.5 text-meta text-ink-3">
-              <span className="capitalize">{vendor}</span>
-              <span>·</span>
-              <span>{contextK ? `${contextK} 上下文` : '128K 上下文'}</span>
-            </div>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <ModelLogoMark model={item.model} logo={logo} />
+            <span
+              className="truncate text-[15px] font-semibold text-ink transition-colors group-hover:text-brand-ink"
+              title={item.model}
+            >
+              {item.model}
+            </span>
+            <CopyModelButton model={item.model} />
           </div>
-          <Tag tone="brand" dot className="shrink-0 text-caption">
-            {copy.pages.plaza.statusAvailable}
-          </Tag>
+          <CapabilityBadges model={item.model} capabilities={item.capabilities} />
         </div>
 
-        {/* Price display: 元 / 1M tokens */}
-        <div className="rounded-lg border border-line bg-bg/80 px-3.5 py-2.5">
-          <div className="text-caption text-ink-3">价格 (元 / 1M tokens)</div>
-          <div className="mt-1 flex items-center justify-between text-meta">
-            <span className="text-ink-2">
-              输入 <span className="font-semibold text-ink tabular-nums">{inputPrice}</span>
-            </span>
-            <span className="text-ink-2">
-              输出 <span className="font-semibold text-ink tabular-nums">{outputPrice}</span>
-            </span>
-          </div>
+        {/* Subtitle: Vendor */}
+        <p className="mt-1 text-caption text-ink-3">{vendorLabel(origin)}</p>
+
+        {/* Pricing Rows */}
+        <div className="mt-4">
+          {item.prices ? (
+            <>
+              <PriceRows prices={item.prices} basePrices={discount ? item.base_prices : undefined} />
+              {discount ? (
+                <div className="mt-2">
+                  <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    省 {discount}%
+                  </span>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-meta text-ink-3">{copy.common.none}</p>
+          )}
         </div>
       </div>
 
-      {/* Footer Actions: 复制模型名 / 用普通密钥调用 */}
-      <div className="mt-4 flex items-center gap-2 border-t border-line/60 pt-3">
-        <Button
-          variant="secondary"
-          size="sm"
-          className="flex-1"
-          onClick={() => onCopy(item.model)}
-        >
-          {isCopied ? copy.pages.plaza.copied : copy.pages.plaza.copyModelName}
-        </Button>
-        <Button
-          variant="primary"
-          size="sm"
-          className="flex-1"
-          onClick={() => onCallWithKey(item.model)}
-        >
-          {copy.pages.plaza.callWithStandardKey}
-        </Button>
+      {/* Card Bottom: SLA / Metrics & Footer */}
+      <div className="mt-5 pt-3 border-t border-line/60 space-y-2">
+        <SlaBar model={item.model} metrics={item.metrics} />
+
+        <div className="flex items-center justify-between text-caption text-ink-3">
+          <LatencyThroughput
+            metrics={item.metrics}
+            contextLength={item.context_length}
+          />
+
+          <div className="shrink-0 ml-2">
+            <AddToStandardKeyMenu model={item.model} />
+          </div>
+        </div>
       </div>
-    </article>
+    </div>
   )
 }

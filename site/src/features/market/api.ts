@@ -202,6 +202,10 @@ export interface PlazaModel {
   status: string
   enable_plaza: boolean
   prices: PlazaModelTierPrices
+  /** Model pool base (official) price before the plaza multiplier, when priced. */
+  base_prices?: PlazaModelTierPrices
+  /** 1h/24h/7d reliability; absent when the model has no request history. */
+  metrics?: SquareMetrics
 }
 
 export const plazaModelsQuery = () =>

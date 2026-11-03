@@ -83,6 +83,10 @@ func TestPlazaModelsListAndFiltering(t *testing.T) {
 		if it.Model == "plaza-model-1" {
 			found1 = true
 			assert.True(t, it.EnablePlaza)
+			// Base price equals the flat price book (multiplier 1).
+			require.NotNil(t, it.BasePrices)
+			assert.EqualValues(t, 1_000_000, it.BasePrices.InputMicroPerMTok)
+			assert.EqualValues(t, 4_000_000, it.BasePrices.OutputMicroPerMTok)
 		}
 		if it.Model == "plaza-model-2" {
 			found2 = true

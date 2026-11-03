@@ -335,6 +335,15 @@ export async function deleteKey(tokenId: number): Promise<void> {
   await api.delete<{ success: boolean }>(`/token/${tokenId}`)
 }
 
+/**
+ * PUT /token/ — writes the whole token row back through new-api's own update
+ * endpoint. Callers pass the complete `TokenRecord` so name, expiry, quota,
+ * group and every other field are preserved; only the edited fields differ.
+ */
+export async function updateToken(token: TokenRecord): Promise<void> {
+  await api.put<{ success: boolean }>('/token/', token)
+}
+
 export async function setTokenStatus(tokenId: number, status: number): Promise<void> {
   await api.put<{ success: boolean }>('/token/?status_only=1', {
     id: tokenId,

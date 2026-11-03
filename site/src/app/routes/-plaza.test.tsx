@@ -1,7 +1,15 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import {
+  RouterProvider,
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+} from '@tanstack/react-router'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { clearSession } from '@/lib/session'
 import { ToastProvider } from '@/ui'
 import { PlazaPage } from './plaza'
 
@@ -14,6 +22,12 @@ const plazaItems = [
     prices: {
       input_micro_per_mtok: 21_000_000,
       output_micro_per_mtok: 105_000_000,
+      cache_read_micro_per_mtok: 0,
+      cache_write_micro_per_mtok: 0,
+    },
+    base_prices: {
+      input_micro_per_mtok: 30_000_000,
+      output_micro_per_mtok: 150_000_000,
       cache_read_micro_per_mtok: 0,
       cache_write_micro_per_mtok: 0,
     },
@@ -30,7 +44,13 @@ const plazaItems = [
     prices: {
       input_micro_per_mtok: 1_000_000,
       output_micro_per_mtok: 2_000_000,
-      cache_read_micro_per_mtok: 0,
+      cache_read_micro_per_mtok: 500_000,
+      cache_write_micro_per_mtok: 0,
+    },
+    base_prices: {
+      input_micro_per_mtok: 1_000_000,
+      output_micro_per_mtok: 2_000_000,
+      cache_read_micro_per_mtok: 500_000,
       cache_write_micro_per_mtok: 0,
     },
     capabilities: ['text'],
@@ -58,6 +78,9 @@ const fetchMock = vi.fn((input: RequestInfo | URL) => {
   if (url.includes('/api/marketplace/keys') || url.includes('/marketplace/key')) {
     return Promise.resolve(jsonResponse([]))
   }
+  if (url.includes('/api/token/')) {
+    return Promise.resolve(jsonResponse({ success: true, data: { page: 1, page_size: 100, total: 0, items: [] } }))
+  }
   if (url.includes('/api/user/ip') || url.includes('/user/ip')) {
     return Promise.resolve(jsonResponse({ ip: '127.0.0.1' }))
   }
@@ -67,10 +90,12 @@ const fetchMock = vi.fn((input: RequestInfo | URL) => {
 beforeEach(() => {
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
+  clearSession()
 })
 
 afterEach(() => {
   cleanup()
+  clearSession()
   vi.unstubAllGlobals()
 })
 
@@ -78,31 +103,62 @@ function renderPlaza() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: 0 } },
   })
-  return render(
+  const rootRoute = createRootRoute()
+  const plazaRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/plaza',
+    component: PlazaPage,
+  })
+  const loginRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/login',
+    validateSearch: (search: Record<string, unknown>) => ({
+      redirect: typeof search.redirect === 'string' ? search.redirect : undefined,
+    }),
+    component: () => null,
+  })
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([plazaRoute, loginRoute]),
+    history: createMemoryHistory({ initialEntries: ['/plaza'] }),
+  })
+  render(
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <PlazaPage />
+        <RouterProvider router={router} />
       </ToastProvider>
     </QueryClientProvider>,
   )
+  return router
 }
 
 describe('PlazaPage', () => {
-  it('renders plaza models with prices and vendor badges', async () => {
+  it('renders plaza cards with base and plaza prices', async () => {
     renderPlaza()
 
     expect(await screen.findByText('claude-3-7-sonnet-20250219')).toBeTruthy()
     expect(screen.getByText('deepseek-chat')).toBeTruthy()
 
-    // Prices formatted in compact yuan
+    expect(screen.getByText('¥30')).toBeTruthy()
+    expect(screen.getByText('¥150')).toBeTruthy()
     expect(screen.getByText('¥21')).toBeTruthy()
     expect(screen.getByText('¥105')).toBeTruthy()
     expect(screen.getByText('¥1')).toBeTruthy()
     expect(screen.getByText('¥2')).toBeTruthy()
 
-    // Action buttons
-    expect(screen.getAllByRole('button', { name: '复制模型名' })).toHaveLength(2)
-    expect(screen.getAllByRole('button', { name: '用普通密钥调用' })).toHaveLength(2)
+    expect(screen.getByText('省 30%')).toBeTruthy()
+  })
+
+  it('hides the discount badge when the plaza price is not below base', async () => {
+    renderPlaza()
+    await screen.findByText('deepseek-chat')
+    const badges = screen.queryAllByText(/省 /)
+    expect(badges).toHaveLength(1)
+  })
+
+  it('does not render a cache row when there is no cache price', async () => {
+    renderPlaza()
+    await screen.findByText('claude-3-7-sonnet-20250219')
+    expect(screen.getAllByText('缓存')).toHaveLength(1)
   })
 
   it('filters models by vendor and search query', async () => {
@@ -110,30 +166,28 @@ describe('PlazaPage', () => {
 
     await screen.findByText('claude-3-7-sonnet-20250219')
 
-    // Filter by vendor
     fireEvent.click(screen.getByRole('button', { name: 'anthropic' }))
     expect(screen.queryByText('deepseek-chat')).toBeNull()
     expect(screen.getByText('claude-3-7-sonnet-20250219')).toBeTruthy()
 
-    // Reset vendor filter
     fireEvent.click(screen.getByRole('button', { name: '全部' }))
     expect(screen.getByText('deepseek-chat')).toBeTruthy()
 
-    // Search query
     const searchInput = screen.getByPlaceholderText('搜索模型名称或厂商')
     fireEvent.change(searchInput, { target: { value: 'deepseek' } })
     expect(screen.queryByText('claude-3-7-sonnet-20250219')).toBeNull()
     expect(screen.getByText('deepseek-chat')).toBeTruthy()
   })
 
-  it('opens CreateKeyDialog with standard key when clicking "用普通密钥调用"', async () => {
-    renderPlaza()
-
-    await screen.findByText('claude-3-7-sonnet-20250219')
-    const buttons = screen.getAllByRole('button', { name: '用普通密钥调用' })
+  it('sends a logged-out 加入 Key click to login', async () => {
+    const router = renderPlaza()
+    await screen.findByText('deepseek-chat')
+    const buttons = screen.getAllByRole('button', { name: '加入 Key' })
+    expect(buttons).toHaveLength(2)
     fireEvent.click(buttons[0])
-
-    expect(await screen.findByText('新建 API Key')).toBeTruthy()
-    expect(screen.getByText('普通密钥')).toBeTruthy()
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/login')
+    })
+    expect(router.state.location.search).toEqual({ redirect: '/plaza' })
   })
 })

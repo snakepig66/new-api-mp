@@ -19,6 +19,10 @@ type PlazaModel struct {
 	Status        string           `json:"status"` // active / retired
 	EnablePlaza   bool             `json:"enable_plaza"`
 	Prices        squareTierPrices `json:"prices"`
+	// BasePrices is the model pool base (official) price before the plaza
+	// multiplier, shown struck through next to Prices. It is omitted when the
+	// base cannot be priced.
+	BasePrices *squareTierPrices `json:"base_prices,omitempty"`
 }
 
 func RegisterPlazaRoutes(g *gin.RouterGroup) {
@@ -61,6 +65,11 @@ func listPlazaModels(c *gin.Context) {
 			vendor = originVendorOf(row)
 		}
 
+		var basePrices *squareTierPrices
+		if base, err := quoteTierPrices(db, cal, row.Name, vendor, vendor, 1000, 1000, now); err == nil && plazaPriceable(base) {
+			basePrices = &base
+		}
+
 		items = append(items, PlazaModel{
 			Model:         row.Name,
 			Aliases:       parseStringList(row.Aliases),
@@ -71,6 +80,7 @@ func listPlazaModels(c *gin.Context) {
 			Status:        row.Status,
 			EnablePlaza:   row.EnablePlaza,
 			Prices:        tierPrices,
+			BasePrices:    basePrices,
 		})
 	}
 
