@@ -50,6 +50,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"golang.org/x/net/idna"
 	"golang.org/x/net/publicsuffix"
@@ -393,56 +394,81 @@ func probeCustomChannelKey(ctx context.Context, client *http.Client, db *gorm.DB
 		}
 	}
 
-	// Probe connectivity using a max_tokens=1 ping request instead of relying solely on /models.
-	candidatePings := make([]string, 0, 8)
-	if len(sellable) > 0 {
-		candidatePings = append(candidatePings, sellable...)
-	}
+	// Probe connectivity with max_tokens=1 pings instead of relying on /models:
+	// many upstreams (天翼云 etc.) do not expose /models. Every pool model is
+	// tried (models /models listed first), in parallel, so a key that serves
+	// only one model late in the pool still passes.
+	candidatePings := make([]string, 0, len(allPool)+len(sellable))
+	candidatePings = append(candidatePings, sellable...)
 	for _, m := range allPool {
 		if !containsString(candidatePings, m) {
 			candidatePings = append(candidatePings, m)
-			if len(candidatePings) >= 6 {
-				break
-			}
 		}
 	}
 	if len(candidatePings) == 0 {
 		candidatePings = []string{"deepseek-chat", "gpt-4o-mini", "gpt-3.5-turbo"}
 	}
 
+	type pingResult struct {
+		ok     bool
+		lat    int64
+		base   string
+		reason string
+	}
+	results := make([]pingResult, len(candidatePings))
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	for i, cand := range candidatePings {
+		wg.Add(1)
+		go func(i int, cand string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			ok, _, lat, reason := probeModelCall(ctx, client, detected, cand, apiKey)
+			base := detected
+			if !ok && strings.Contains(reason, "404") {
+				alt := strings.TrimSuffix(detected, "/") + "/v1"
+				if altOk, _, altLat, _ := probeModelCall(ctx, client, alt, cand, apiKey); altOk {
+					ok, lat, base = true, altLat, alt
+				}
+			}
+			results[i] = pingResult{ok: ok, lat: lat, base: base, reason: reason}
+		}(i, cand)
+	}
+	wg.Wait()
+
 	verifiedModels := make([]string, 0)
 	var lastReason string
 	var lastStatus int
 	pingPassed := false
-
-	for _, cand := range candidatePings {
-		ok, _, lat, reason := probeModelCall(ctx, client, detected, cand, apiKey)
-		if !ok && strings.Contains(reason, "404") {
-			alt := strings.TrimSuffix(detected, "/") + "/v1"
-			if altOk, _, altLat, _ := probeModelCall(ctx, client, alt, cand, apiKey); altOk {
-				ok = true
-				lat = altLat
-				detected = alt
-			}
-		}
-		if ok {
+	baseSet := false
+	for i, r := range results {
+		if r.ok {
 			pingPassed = true
-			if !containsString(verifiedModels, cand) {
-				verifiedModels = append(verifiedModels, cand)
+			if !baseSet {
+				detected = r.base
+				baseSet = true
 			}
-			if lat > 0 {
-				res.LatencyMs = lat
+			if !containsString(verifiedModels, candidatePings[i]) {
+				verifiedModels = append(verifiedModels, candidatePings[i])
 			}
-		} else {
-			lastReason = reason
-			if strings.Contains(reason, "401") || strings.Contains(reason, "403") {
-				lastStatus = http.StatusUnauthorized
-				break
+			if r.lat > 0 && res.LatencyMs == 0 {
+				res.LatencyMs = r.lat
 			}
-			if strings.Contains(reason, "402") || strings.Contains(reason, "余额不足") {
-				lastStatus = http.StatusPaymentRequired
-				break
-			}
+			continue
+		}
+		if lastStatus != 0 {
+			continue
+		}
+		if r.reason != "" {
+			lastReason = r.reason
+		}
+		if strings.Contains(r.reason, "401") || strings.Contains(r.reason, "403") {
+			lastStatus = http.StatusUnauthorized
+			lastReason = r.reason
+		} else if strings.Contains(r.reason, "402") || strings.Contains(r.reason, "余额不足") {
+			lastStatus = http.StatusPaymentRequired
+			lastReason = r.reason
 		}
 	}
 

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -184,6 +185,7 @@ func TestCreateListingWithCustomBaseURL(t *testing.T) {
 func fakeCustomUpstream(t *testing.T, key string, models ...string) *httptest.Server {
 	t.Helper()
 	seen := map[string]bool{}
+	var seenMu sync.Mutex
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+key {
@@ -204,7 +206,9 @@ func fakeCustomUpstream(t *testing.T, key string, models ...string) *httptest.Se
 		}
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		seenMu.Lock()
 		seen[fmt.Sprint(body["model"])] = true
+		seenMu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"model":   body["model"],
