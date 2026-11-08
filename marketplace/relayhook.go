@@ -1488,14 +1488,14 @@ func PrepareBilling(c *gin.Context, info *relaycommon.RelayInfo, estimateFn func
 		if errors.Is(aerr, ErrInsufficientBalance) {
 			// H3: the balance cannot cover even the estimated input → 402
 			// instead of letting the request through with a zero output cap.
-			return types.NewOpenAIError(ErrInsufficientBalance, types.ErrorCodeInsufficientUserQuota, http.StatusPaymentRequired, types.ErrOptionWithSkipRetry())
+			return types.NewOpenAIError(ErrInsufficientBalancePublic, types.ErrorCodeInsufficientUserQuota, http.StatusPaymentRequired, types.ErrOptionWithSkipRetry())
 		}
 		if aerr != nil {
 			common.SysError(common.LogText("marketplace: affordable max output: %s", aerr.Error()))
-			return types.NewError(errors.New("marketplace: no covering price for this request"), types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest), types.ErrOptionWithSkipRetry())
+			return types.NewError(errors.New("no covering price for this request"), types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest), types.ErrOptionWithSkipRetry())
 		}
 		if maxOut <= 0 {
-			return types.NewOpenAIError(ErrInsufficientBalance, types.ErrorCodeInsufficientUserQuota, http.StatusPaymentRequired, types.ErrOptionWithSkipRetry())
+			return types.NewOpenAIError(ErrInsufficientBalancePublic, types.ErrorCodeInsufficientUserQuota, http.StatusPaymentRequired, types.ErrOptionWithSkipRetry())
 		}
 		// H3: write the affordable cap into the outbound request, so the
 		// upstream cannot produce more output than the buyer's balance covers.
@@ -1522,20 +1522,30 @@ func PrepareBilling(c *gin.Context, info *relaycommon.RelayInfo, estimateFn func
 		// A model disabled after selection is not a pricing error: return a
 		// retryable no-supplier response instead of charging the base multiplier.
 		if errors.Is(qerr, ErrModelDisabled) {
-			return types.NewError(errors.New("marketplace: model is disabled on this listing"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
+			return types.NewError(errors.New("model is disabled on this listing"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 		}
 		common.SysError(common.LogText("marketplace: pre-freeze quote: %s", qerr.Error()))
-		return types.NewError(errors.New("marketplace: no covering price for this request"), types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest), types.ErrOptionWithSkipRetry())
+		return types.NewError(errors.New("no covering price for this request"), types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest), types.ErrOptionWithSkipRetry())
 	}
 	session, qerr := NewBillingSessionWithPolicy(db, int64(s.buyerUserID), quote.TotalDebit,
 		!channelAllowsGift(db, listing.Vendor))
 	if errors.Is(qerr, ErrInsufficientBalance) {
 		// §10-3 暂定 402, OpenAI 错误格式, 语义为余额不足.
-		return types.NewOpenAIError(ErrInsufficientBalance, types.ErrorCodeInsufficientUserQuota, http.StatusPaymentRequired, types.ErrOptionWithSkipRetry())
+		return types.NewOpenAIError(ErrInsufficientBalancePublic, types.ErrorCodeInsufficientUserQuota, http.StatusPaymentRequired, types.ErrOptionWithSkipRetry())
 	}
 	if qerr != nil {
 		common.SysError(common.LogText("marketplace: open billing session: %s", qerr.Error()))
 		return types.NewError(qerr, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
+	}
+	// P1: attach the mp key so tokens.remain_quota mirrors the freeze —
+	// this is what makes the per-key spend cap (花费上限) actually stop calls.
+	if terr := session.AttachToken(info.TokenId, info.TokenKey, info.TokenUnlimited, info.IsPlayground); terr != nil {
+		session.Refund(nil)
+		if errors.Is(terr, ErrTokenQuotaExceeded) {
+			return types.NewError(terr, types.ErrorCodePreConsumeTokenQuotaFailed, types.ErrOptionWithStatusCode(http.StatusForbidden), types.ErrOptionWithSkipRetry())
+		}
+		common.SysError(common.LogText("marketplace: attach token: %s", terr.Error()))
+		return types.NewError(terr, types.ErrorCodePreConsumeTokenQuotaFailed, types.ErrOptionWithStatusCode(http.StatusForbidden), types.ErrOptionWithSkipRetry())
 	}
 	info.Billing = session
 
@@ -1836,9 +1846,9 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 			selector.Breaker.ReleaseProbe(next.ID)
 		}
 		if errors.Is(err, ErrModelDisabled) {
-			return nil, types.NewError(errors.New("marketplace: model is disabled on this listing"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
+			return nil, types.NewError(errors.New("model is disabled on this listing"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 		}
-		return nil, types.NewError(errors.New("marketplace: no covering price for this request"), types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest), types.ErrOptionWithSkipRetry())
+		return nil, types.NewError(errors.New("no covering price for this request"), types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest), types.ErrOptionWithSkipRetry())
 	}
 	// §3.7: adjust the existing freeze by the difference instead of refunding
 	// everything and freezing again. The billing session spans the whole retry
@@ -1861,7 +1871,7 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 					selector.Breaker.ReleaseProbe(next.ID)
 				}
 				if errors.Is(rerr, ErrInsufficientBalance) {
-					return nil, types.NewOpenAIError(ErrInsufficientBalance, types.ErrorCodeInsufficientUserQuota, http.StatusPaymentRequired, types.ErrOptionWithSkipRetry())
+					return nil, types.NewOpenAIError(ErrInsufficientBalancePublic, types.ErrorCodeInsufficientUserQuota, http.StatusPaymentRequired, types.ErrOptionWithSkipRetry())
 				}
 				common.SysError(common.LogText("marketplace: re-freeze reserve: %s", rerr.Error()))
 				return nil, types.NewError(rerr, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
@@ -1881,7 +1891,7 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 			if tookProbe {
 				selector.Breaker.ReleaseProbe(next.ID)
 			}
-			return nil, types.NewOpenAIError(ErrInsufficientBalance, types.ErrorCodeInsufficientUserQuota, http.StatusPaymentRequired, types.ErrOptionWithSkipRetry())
+			return nil, types.NewOpenAIError(ErrInsufficientBalancePublic, types.ErrorCodeInsufficientUserQuota, http.StatusPaymentRequired, types.ErrOptionWithSkipRetry())
 		}
 		if err != nil {
 			common.SysError(common.LogText("marketplace: re-freeze session: %s", err.Error()))
@@ -1890,6 +1900,17 @@ func ReselectChannel(c *gin.Context, info *relaycommon.RelayInfo, setupFn func(*
 				selector.Breaker.ReleaseProbe(next.ID)
 			}
 			return nil, types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
+		}
+		// P1: fresh session on a retry hop needs the mp key attached too, or
+		// the spend cap would not be mirrored onto tokens.remain_quota.
+		if terr := session.AttachToken(info.TokenId, info.TokenKey, info.TokenUnlimited, info.IsPlayground); terr != nil {
+			session.Refund(nil)
+			s.releaseSlot()
+			if tookProbe {
+				selector.Breaker.ReleaseProbe(next.ID)
+			}
+			common.SysError(common.LogText("marketplace: attach token: %s", terr.Error()))
+			return nil, types.NewError(terr, types.ErrorCodePreConsumeTokenQuotaFailed, types.ErrOptionWithStatusCode(http.StatusForbidden), types.ErrOptionWithSkipRetry())
 		}
 	}
 	info.Billing = session

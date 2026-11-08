@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -133,15 +134,37 @@ func memoryRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark s
 	}
 }
 
-// writeRateLimited rejects the request with 429 and a Retry-After hint so
-// clients can back off instead of treating the rejection as a fatal error.
-// The in-memory limiter cannot report the remaining window, so callers
-// without a TTL pass the full window duration as a conservative upper bound.
+// writeRateLimited rejects the request with 429, a Retry-After hint and a
+// JSON body so clients can surface the back-off (P2: the previous empty body
+// left the frontend showing a generic "login failed" instead of telling the
+// user to wait). Relay endpoints (/v1, /pg) get the OpenAI error format; every
+// other path gets the API envelope the frontend already parses. The in-memory
+// limiter cannot report the remaining window, so callers without a TTL pass
+// the full window duration as a conservative upper bound.
 func writeRateLimited(c *gin.Context, retryAfterSeconds int64) {
 	if retryAfterSeconds > 0 {
 		c.Header("Retry-After", strconv.FormatInt(retryAfterSeconds, 10))
 	}
-	c.Status(http.StatusTooManyRequests)
+	var msg string
+	if retryAfterSeconds > 0 {
+		msg = fmt.Sprintf("请求过于频繁，请 %d 秒后再试", retryAfterSeconds)
+	} else {
+		msg = "请求过于频繁，请稍后再试"
+	}
+	if strings.HasPrefix(c.Request.URL.Path, "/v1") || strings.HasPrefix(c.Request.URL.Path, "/pg") {
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error": gin.H{
+				"message": "Too many requests, please retry later",
+				"type":    "rate_limit_error",
+				"code":    "rate_limit_exceeded",
+			},
+		})
+	} else {
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"success": false,
+			"message": msg,
+		})
+	}
 	c.Abort()
 }
 

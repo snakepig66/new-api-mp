@@ -66,8 +66,8 @@ func TestUpdateKeyTokenLimits(t *testing.T) {
 		"allow_ips":    "10.0.0.1\n10.0.0.0/8",
 	}, f.buyerID)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	data, ok := decodeKeyAPIBody(t, w)["data"].(map[string]any)
-	require.True(t, ok)
+	// decodeKeyAPIBody already unwraps the { success, data } envelope.
+	data := decodeKeyAPIBody(t, w)
 	assert.EqualValues(t, future, data["expired_time"])
 	assert.Equal(t, "10.0.0.1\n10.0.0.0/8", data["allow_ips"])
 

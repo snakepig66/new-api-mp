@@ -79,6 +79,18 @@ func Distribute() func(c *gin.Context) {
 					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired))
 					return
 				}
+				// P3: validate the chat body BEFORE channel selection so a
+				// malformed request surfaces as 400 invalid_request instead of
+				// a 503 "no available channel" when the pool/listings are empty.
+				if strings.HasPrefix(c.Request.URL.Path, "/v1/chat/completions") {
+					chatRequest := &dto.GeneralOpenAIRequest{}
+					if uerr := common.UnmarshalBodyReusable(c, chatRequest); uerr == nil {
+						if len(chatRequest.Messages) == 0 && chatRequest.Prefix == nil && chatRequest.Suffix == nil {
+							abortWithOpenAiMessage(c, http.StatusBadRequest, "field messages is required")
+							return
+						}
+					}
+				}
 				// check path is /pg/chat/completions
 				if strings.HasPrefix(c.Request.URL.Path, "/pg/chat/completions") {
 					usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
@@ -156,7 +168,14 @@ func Distribute() func(c *gin.Context) {
 					} else if tokenID > 0 && keyType == model.KeyTypeStandard {
 						// 普通密钥：只能调用模型广场的模型，走 new-api 原生渠道分发，不经过 BeginDistribute
 						if !marketplace.IsPlazaModel(model.DB, modelRequest.Model) {
-							abortWithOpenAiMessage(c, http.StatusBadRequest, errNotInScope)
+							// P3: a typo close to a catalog model gets the same
+							// suggestion the shared-key path produces, instead of
+							// only the out-of-scope notice.
+							msg := errNotInScope
+							if suggestion := marketplace.ModelPoolSuggestion(model.DB, modelRequest.Model); suggestion != "" {
+								msg = fmt.Sprintf("未知模型 %q；你是否想要 %q？", modelRequest.Model, suggestion)
+							}
+							abortWithOpenAiMessage(c, http.StatusBadRequest, msg)
 							return
 						}
 						channel, _, selectErr = service.SelectChannelForRequest(c, modelRequest.Model, &service.RetryParam{

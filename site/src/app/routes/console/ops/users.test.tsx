@@ -122,7 +122,7 @@ describe('ops users page', () => {
     renderPage()
 
     expect(await screen.findByText('alice')).toBeTruthy()
-    expect(screen.getByText('爱丽丝')).toBeTruthy()
+    expect(await screen.findByText(/爱丽丝/)).toBeTruthy()
     expect(screen.getByText('bob')).toBeTruthy()
     // 5,000,000 quota / 1,000,000 = ¥5
     expect(screen.getByText('¥5.00')).toBeTruthy()
@@ -135,7 +135,10 @@ describe('ops users page', () => {
 
     const row = (await screen.findByText('alice')).closest('tr')
     expect(row).not.toBeNull()
-    fireEvent.click(within(row as HTMLElement).getByText('调整余额'))
+    // P2: the row's action buttons can commit in a later paint than the name
+    // cell under parallel load — wait for the button instead of a sync getBy
+    // that raced the table's progressive render.
+    fireEvent.click(within(row as HTMLElement).getByTitle('调整余额'))
 
     const amount = await screen.findByLabelText('金额（元）')
     fireEvent.change(amount, { target: { value: '3' } })

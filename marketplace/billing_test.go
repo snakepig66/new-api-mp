@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -480,4 +481,168 @@ func TestPreFreezeQuoteForListing(t *testing.T) {
 	res, err = PreFreezeQuoteForListing(db, cal, listing, "deepseek-v4-pro", 1_000_000, 0, 0, 0, at)
 	require.NoError(t, err)
 	assert.Equal(t, int64(300), res.ModelMultiplierMilli)
+}
+
+// ---------------------------------------------------------------------------
+// P1 regression: the mp key's tokens.remain_quota must mirror the wallet
+// freeze/settle/refund lifecycle so the per-key spend cap (花费上限) actually
+// stops calls. Before the fix the marketplace BillingSession never touched
+// token quota, so a spend_cap_micro=1 key stayed callable forever.
+// ---------------------------------------------------------------------------
+
+// newTokenFixture migrates the tokens table and creates one finite mp key for
+// the buyer. Returns the token id and key.
+func newTokenFixture(t *testing.T, buyerID int64, remain int) (int, string) {
+	t.Helper()
+	require.NoError(t, model.DB.AutoMigrate(&model.Token{}))
+	token := model.Token{
+		UserId:      int(buyerID),
+		Name:        "mp-key",
+		Key:         fmt.Sprintf("mp-test-key-%d", time.Now().UnixNano()),
+		RemainQuota: remain,
+		Status:      common.TokenStatusEnabled,
+	}
+	require.NoError(t, model.DB.Create(&token).Error)
+	return token.Id, token.Key
+}
+
+func tokenRemain(t *testing.T, id int) int {
+	t.Helper()
+	var remain int
+	require.NoError(t, model.DB.Model(&model.Token{}).Where("id = ?", id).
+		Select("remain_quota").Scan(&remain).Error)
+	return remain
+}
+
+// P1-1: AttachToken debits the frozen amount from the token; a key whose
+// remain_quota cannot cover the freeze is rejected (spend cap works).
+func TestBillingTokenMirrorAttachAndCap(t *testing.T) {
+	db, buyerID := newBillingFixture(t, 1000)
+
+	// Cap of 1 micro: the freeze cannot be mirrored → the key is spent out.
+	tokenID, tokenKey := newTokenFixture(t, buyerID, 1)
+	s, err := NewBillingSession(db, buyerID, 300)
+	require.NoError(t, err)
+	terr := s.AttachToken(tokenID, tokenKey, false, false)
+	require.ErrorIs(t, terr, ErrTokenQuotaExceeded)
+	assert.Equal(t, 1, tokenRemain(t, tokenID), "failed attach must not move the token")
+	// Discard the session: the wallet freeze is returned.
+	s.Refund(nil)
+	assert.Equal(t, 1000, buyerQuota(t, buyerID))
+
+	// A key with room mirrors the freeze exactly.
+	s2, err := NewBillingSession(db, buyerID, 300)
+	require.NoError(t, err)
+	tokenID2, tokenKey2 := newTokenFixture(t, buyerID, 500)
+	require.NoError(t, s2.AttachToken(tokenID2, tokenKey2, false, false))
+	assert.Equal(t, 200, tokenRemain(t, tokenID2), "attach debits the freeze from the token")
+}
+
+// P1-2: settle credits the difference (token paid = charged, not frozen).
+func TestBillingTokenMirrorSettle(t *testing.T) {
+	db, buyerID := newBillingFixture(t, 1000)
+	tokenID, tokenKey := newTokenFixture(t, buyerID, 1000)
+
+	s, err := NewBillingSession(db, buyerID, 300)
+	require.NoError(t, err)
+	require.NoError(t, s.AttachToken(tokenID, tokenKey, false, false))
+	assert.Equal(t, 700, tokenRemain(t, tokenID))
+
+	require.NoError(t, s.Settle(100))
+	assert.Equal(t, 900, tokenRemain(t, tokenID), "settle credits frozen-minus-charged back to the token")
+	assert.Equal(t, 900, buyerQuota(t, buyerID))
+
+	// Idempotent: a replayed settle moves nothing.
+	require.NoError(t, s.Settle(100))
+	assert.Equal(t, 900, tokenRemain(t, tokenID))
+}
+
+// P1-3: refund returns the whole token debit.
+func TestBillingTokenMirrorRefund(t *testing.T) {
+	_, buyerID := newBillingFixture(t, 1000)
+	tokenID, tokenKey := newTokenFixture(t, buyerID, 1000)
+
+	s, err := NewBillingSession(nil, buyerID, 400)
+	require.NoError(t, err)
+	require.NoError(t, s.AttachToken(tokenID, tokenKey, false, false))
+	assert.Equal(t, 600, tokenRemain(t, tokenID))
+
+	s.Refund(nil)
+	assert.Equal(t, 1000, tokenRemain(t, tokenID), "refund credits the token mirror back")
+	assert.Equal(t, 1000, buyerQuota(t, buyerID))
+}
+
+// P1-4: the reserve top-up mirrors onto the token; a cap-exceeded top-up is
+// rejected without moving the wallet.
+func TestBillingTokenMirrorReserveCap(t *testing.T) {
+	db, buyerID := newBillingFixture(t, 1000)
+	tokenID, tokenKey := newTokenFixture(t, buyerID, 400)
+
+	s, err := NewBillingSession(db, buyerID, 100)
+	require.NoError(t, err)
+	require.NoError(t, s.AttachToken(tokenID, tokenKey, false, false))
+	assert.Equal(t, 300, tokenRemain(t, tokenID))
+
+	require.NoError(t, s.Reserve(200))
+	assert.Equal(t, 200, tokenRemain(t, tokenID))
+	assert.Equal(t, 800, buyerQuota(t, buyerID))
+
+	// Token has 200 left; topping up to 1000 needs +800 → cap exceeded.
+	err = s.Reserve(1000)
+	assert.True(t, errors.Is(err, ErrInsufficientBalance),
+		"a cap-exceeded top-up surfaces as insufficient balance (402)")
+	assert.Equal(t, 200, tokenRemain(t, tokenID), "failed reserve moves nothing")
+	assert.Equal(t, 800, buyerQuota(t, buyerID), "failed reserve leaves the wallet untouched")
+}
+
+// P1-5: a rolled-back settlement leaves the token mirror untouched (the
+// AbortSettle path must not double-adjust tokens).
+func TestBillingTokenMirrorRollbackNoDoubleAdjust(t *testing.T) {
+	db, buyerID := newBillingFixture(t, 1000)
+	tokenID, tokenKey := newTokenFixture(t, buyerID, 1000)
+
+	s, err := NewBillingSession(db, buyerID, 300)
+	require.NoError(t, err)
+	require.NoError(t, s.AttachToken(tokenID, tokenKey, false, false))
+	assert.Equal(t, 700, tokenRemain(t, tokenID))
+
+	// A transaction that fails after SettleAtomic published the settlement:
+	// AbortSettle resets the session and the token mirror stays frozen-only.
+	var settleTx *gorm.DB
+	boom := errors.New("boom")
+	err = db.Transaction(func(tx *gorm.DB) error {
+		settleTx = tx
+		_, serr := s.SettleAtomic(tx, 100)
+		require.NoError(t, serr)
+		return boom
+	})
+	require.ErrorIs(t, err, boom)
+	s.AbortSettle(settleTx)
+	assert.Equal(t, 700, tokenRemain(t, tokenID), "a rolled-back settle must not touch the token")
+
+	// The retried settlement converges the token exactly once.
+	require.NoError(t, s.Settle(100))
+	assert.Equal(t, 900, tokenRemain(t, tokenID))
+}
+
+// P1-6: playground requests and sessions without an attached key skip the
+// token mirror entirely.
+func TestBillingTokenMirrorSkipsPlaygroundAndUnattached(t *testing.T) {
+	db, buyerID := newBillingFixture(t, 1000)
+	tokenID, _ := newTokenFixture(t, buyerID, 1000)
+
+	s, err := NewBillingSession(db, buyerID, 300)
+	require.NoError(t, err)
+	require.NoError(t, s.AttachToken(tokenID, "ignored-key", false, true))
+	assert.Equal(t, 1000, tokenRemain(t, tokenID), "playground never moves the token")
+	require.NoError(t, s.Settle(100))
+	assert.Equal(t, 1000, tokenRemain(t, tokenID))
+	s.Refund(nil)
+	assert.Equal(t, 1000, tokenRemain(t, tokenID))
+
+	// Unattached sessions (tests/legacy) keep working without token movement.
+	s2, err := NewBillingSession(db, buyerID, 300)
+	require.NoError(t, err)
+	require.NoError(t, s2.Settle(100))
+	assert.Equal(t, 800, buyerQuota(t, buyerID)) // 900 after s, −300 freeze +200 refund-diff
 }
