@@ -519,6 +519,11 @@ func (s *RelaySession) settleAtomic(c *gin.Context, db *gorm.DB, u marketplaceUs
 		}
 		return charged, err
 	}
+	// P1: the token mirror (tokens.remain_quota) converges after the wallet
+	// outcome is final — post-commit, never inside the transaction.
+	if s.billing != nil {
+		s.billing.SettleTokenQuota()
+	}
 	s.mu.Lock()
 	s.recordWritten = true
 	s.mu.Unlock()

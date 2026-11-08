@@ -22,6 +22,11 @@ import (
 // a pre-freeze or a reserve top-up (§3.7: 余额不足报错).
 var ErrInsufficientBalance = errors.New("marketplace: insufficient balance")
 
+// ErrInsufficientBalancePublic is the buyer-facing form of
+// ErrInsufficientBalance: the "marketplace: " package prefix is an internal
+// detail (P3) and must never leak into relay error bodies shown to buyers.
+var ErrInsufficientBalancePublic = errors.New("insufficient balance")
+
 // ErrModelDisabled marks a request that reached a listing whose model the
 // seller (or an automatic rule) turned off. The selector already excludes such
 // listings, so this is the defensive check for a disable racing an in-flight
@@ -78,8 +83,23 @@ type BillingSession struct {
 	settledTx    *gorm.DB // transaction that published the settlement, for rollback
 	settledMicro Micro    // amount actually charged by the winning Settle/SettleAtomic
 	settledGift  Micro    // part of settledMicro paid with gifted balance
-	mu           sync.Mutex
+	// Token mirroring (P1): the mp key is an upstream tokens row, so its
+	// remain_quota must move with the same lifecycle as the wallet freeze —
+	// otherwise the per-key spend cap never triggers and the trust-bypass
+	// predicate (service/billing_session.go) reads a stale balance.
+	tokenId       int
+	tokenKey      string
+	tokenUnlimited bool
+	isPlayground  bool
+	tokenConsumed int // amount already debited from tokens.remain_quota
+	mu            sync.Mutex
 }
+
+// ErrTokenQuotaExceeded is returned by AttachToken/Reserve when the mp key's
+// remain_quota cannot cover the freeze: the per-key spend cap (花费上限) has
+// been reached and the request must be rejected (403), mirroring the upstream
+// PreConsumeTokenQuota behaviour.
+var ErrTokenQuotaExceeded = errors.New("marketplace: token spend cap reached")
 
 // Compile-time proof that BillingSession satisfies the upstream seam.
 var _ relaycommon.BillingSettler = (*BillingSession)(nil)
@@ -133,6 +153,98 @@ func reserveBuyerQuota(uid, amount int, paidOnly bool) (bool, error) {
 	return model.TryReserveUserQuota(uid, amount)
 }
 
+// AttachToken registers the mp key whose remain_quota mirrors this session's
+// freeze/settle/refund lifecycle and performs the initial debit matching the
+// freeze that the constructor just placed on users.quota. It must be called
+// exactly once, right after construction and before the session is published
+// (info.Billing), so no other goroutine can observe the half-attached state.
+//
+// The debit uses the same atomic check-and-decrement as the upstream
+// pre-consume (model.TryReserveTokenQuota), so an mp key with a spend cap
+// (花费上限) is rejected here once its remain_quota is exhausted. On failure
+// the caller must discard the session via Refund and fail the request.
+func (s *BillingSession) AttachToken(tokenId int, tokenKey string, unlimited, isPlayground bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tokenId = tokenId
+	s.tokenKey = tokenKey
+	s.tokenUnlimited = unlimited
+	s.isPlayground = isPlayground
+	return s.reserveTokenLocked(int(s.preConsumed))
+}
+
+// reserveTokenLocked debits delta from tokens.remain_quota with the atomic
+// check-and-decrement. The caller holds s.mu. On failure nothing has been
+// debited and the session state is unchanged (except the attach fields).
+func (s *BillingSession) reserveTokenLocked(delta int) error {
+	if s.tokenId <= 0 || s.isPlayground || delta <= 0 {
+		// No mp key attached (tests/legacy callers) — token accounting skipped.
+		return nil
+	}
+	ok, err := model.TryReserveTokenQuota(s.tokenId, s.tokenKey, delta, s.tokenUnlimited)
+	if err != nil {
+		return fmt.Errorf("marketplace: reserve token quota: %w", err)
+	}
+	if !ok {
+		return ErrTokenQuotaExceeded
+	}
+	s.tokenConsumed += delta
+	return nil
+}
+
+// adjustTokenLocked applies a best-effort reconciliation delta to the token:
+// delta > 0 debits (DecreaseTokenQuota), delta < 0 credits (IncreaseTokenQuota).
+// Failures are logged and leave tokenConsumed unchanged so a later
+// reconciliation retries the full outstanding difference (converges).
+func (s *BillingSession) adjustTokenLocked(delta int) {
+	if s.tokenId <= 0 || s.isPlayground || delta == 0 {
+		return
+	}
+	var err error
+	if delta > 0 {
+		err = model.DecreaseTokenQuota(s.tokenId, s.tokenKey, delta)
+	} else {
+		err = model.IncreaseTokenQuota(s.tokenId, s.tokenKey, -delta)
+	}
+	if err != nil {
+		common.SysError(common.LogText(
+			"marketplace: adjust token quota failed (tokenId=%d, delta=%d): %s",
+			s.tokenId, delta, err.Error()))
+		return
+	}
+	s.tokenConsumed += delta
+}
+
+// reconcileTokenLocked moves the token balance to booked: the token must have
+// paid exactly booked once the session outcome (charge or refund) is final.
+// Convergence-based: tokenConsumed is the source of truth for what the token
+// already paid, so repeated calls are no-ops and a rollback (AbortSettle)
+// never double-applies.
+func (s *BillingSession) reconcileTokenLocked(booked Micro) {
+	s.adjustTokenLocked(int(booked) - s.tokenConsumed)
+}
+
+// reconcileToken is the locking wrapper around reconcileTokenLocked; use it
+// when the caller does not hold s.mu.
+func (s *BillingSession) reconcileToken(booked Micro) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reconcileTokenLocked(booked)
+}
+
+// SettleTokenQuota reconciles tokens.remain_quota with the amount the session
+// actually booked. Call once per session after the settlement transaction has
+// COMMITTED (never inside the transaction: the token helpers run on the global
+// handle and cannot roll back with the caller's tx). Idempotent.
+func (s *BillingSession) SettleTokenQuota() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.settled {
+		return
+	}
+	s.reconcileTokenLocked(s.settledMicro)
+}
+
 // Settle reconciles the pre-freeze against the actual debit actualQuota
 // (微元, computed by Quote and passed in through the seam):
 //
@@ -161,13 +273,18 @@ func (s *BillingSession) Settle(actualQuota int) error {
 		return err
 	})
 	if err != nil {
-		// SettleAtomic publishes the in-memory settled state before the
+		// SettleAtomic publishes the in-memory settlement before the
 		// caller's transaction commits. Undo that publication when the
 		// transaction fails, otherwise a later Refund/Settle replays a charge
 		// that was rolled back and silently loses the difference.
 		s.AbortSettle(settleTx)
+		return err
 	}
-	return err
+	// P1: token mirror converges after the wallet outcome is final
+	// (post-commit; inside the tx the token helpers would run on the global
+	// handle and could not roll back with it).
+	s.SettleTokenQuota()
+	return nil
 }
 
 // SettleAtomic reconciles the pre-freeze against actual inside the caller's
@@ -359,6 +476,9 @@ func (s *BillingSession) Refund(c *gin.Context) {
 	}
 	s.refunded = true
 	s.mu.Unlock()
+	// P1: the token mirror follows the wallet refund (post-commit). The
+	// session is closed now, so booked is always 0 (the whole freeze returns).
+	s.reconcileToken(0)
 }
 
 // quotaDB returns the marketplace handle, falling back to the model package's
@@ -456,6 +576,9 @@ func (s *BillingSession) RefundDelta(amount int) error {
 	}
 	s.preConsumed -= Micro(amount)
 	s.mu.Unlock()
+	// P1: the token mirror follows the wallet release (post-commit, best-
+	// effort); tokenConsumed keeps the token side convergent.
+	s.adjustTokenLocked(-amount)
 	return nil
 }
 
@@ -475,11 +598,23 @@ func (s *BillingSession) reserve(targetQuota int) error {
 	if int64(delta) > int64(math.MaxInt) {
 		return fmt.Errorf("marketplace: reserve delta %d out of int range", int64(delta))
 	}
+	// Token side first (P1): the mp key spend cap must reject the top-up
+	// before the wallet freeze moves, so a cap-exceeded top-up never leaves
+	// the wallet frozen. A cap-exceeded top-up surfaces as the same 402 the
+	// wallet path produces.
+	if terr := s.reserveTokenLocked(int(delta)); terr != nil {
+		if errors.Is(terr, ErrTokenQuotaExceeded) {
+			return ErrInsufficientBalance
+		}
+		return fmt.Errorf("marketplace: reserve token top-up: %w", terr)
+	}
 	ok, err := reserveBuyerQuota(s.buyerUserID, int(delta), s.paidOnly)
 	if err != nil {
+		s.adjustTokenLocked(-int(delta))
 		return fmt.Errorf("marketplace: reserve top-up: %w", err)
 	}
 	if !ok {
+		s.adjustTokenLocked(-int(delta))
 		return ErrInsufficientBalance
 	}
 	s.preConsumed = Micro(targetQuota)

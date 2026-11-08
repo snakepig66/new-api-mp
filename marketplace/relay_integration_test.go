@@ -124,7 +124,7 @@ func newMPHarness(t *testing.T, buyerQuota int) *mpHarness {
 	db := model.DB
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxOpenConns(8)
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	require.NoError(t, model.InitLogDB())
 	// Production loads the options table into common.OptionMap before
