@@ -1,0 +1,528 @@
+@import 'tailwindcss';
+@import './legacy/styles/tw-animate.css';
+@import './legacy/styles/shadcn-tailwind.css';
+@import './legacy/styles/legacy.css';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+
+/*
+ * DeepSeek-inspired visual language, per docs/marketplace/VISUAL-SPEC.md §1.
+ * One accent only (brand blue). The old green palette is retired.
+ */
+@theme {
+  --font-sans:
+    'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC',
+    'HarmonyOS Sans SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  /* Mono is for code blocks only. */
+  --font-mono:
+    'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+
+  /*
+   * Blue-white glass: surface tokens are translucent so every `bg-bg` /
+   * `bg-bg-soft` / `border-line` surface lets the page gradient through.
+   * `--color-surface` is the opaque fallback for engines without
+   * backdrop-filter (see the @supports block at the bottom).
+   */
+  --color-bg: rgb(255 255 255 / 0.62);
+  --color-bg-soft: rgb(232 239 255 / 0.55);
+  --color-bg-subtle: rgb(238 243 255 / 0.6);
+  --color-surface: rgb(255 255 255 / 0.72);
+  --color-ink: #0f1115;
+  --color-ink-2: #454c5c;
+  /* A touch darker than before so tertiary text holds up on tinted glass. */
+  --color-ink-3: #767d8c;
+  --color-line: rgb(120 140 200 / 0.18);
+  --color-line-strong: rgb(100 125 200 / 0.28);
+  --color-brand: #4d6bfe;
+  --color-brand-hover: #3b58f0;
+  --color-brand-soft: #eef1ff;
+  --color-brand-ink: #2f4bd8;
+  --color-cta: #4d6bfe;
+  --color-cta-hover: #3b58f0;
+  --color-brand-2: #6a8bff;
+  --color-danger: #e5484d;
+  --color-warn: #f59e0b;
+  /* Status-only green: appears in health dots, never as a surface or accent. */
+  --color-ok: #16a34a;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+  --text-meta: 13px;
+  --text-meta--line-height: 18px;
+  --text-body: 14px;
+  --text-body--line-height: 22px;
+  --text-title: 16px;
+  --text-title--line-height: 24px;
+  --text-h3: 18px;
+  --text-h3--line-height: 26px;
+  --text-h2: 22px;
+  --text-h2--line-height: 30px;
+  --text-h1: 28px;
+  --text-h1--line-height: 36px;
+  --text-display: 44px;
+  --text-display--line-height: 52px;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+    -webkit-text-size-adjust: 100%;
+    min-height: 100%;
+    scrollbar-gutter: stable;
+    background-color: #f5f8ff;
+    background-image:
+      radial-gradient(60rem 40rem at 50% -10%, rgb(255 255 255 / 0.9), transparent 70%),
+      linear-gradient(180deg, #eaf1ff 0%, #f5f8ff 45%, #ffffff 100%);
+    background-attachment: fixed;
+  }
+
+  body {
+    @apply font-sans text-ink antialiased text-body;
+    font-size: 14px;
+    line-height: 1.6;
+    background: transparent;
+    min-height: 100dvh;
+  }
+
+  /*
+   * Fixed, blurred light blobs behind everything. z-index -1 keeps them
+   * under all content in the root stacking context; pointer-events none so
+   * they never eat clicks.
+   */
+  body::before,
+  body::after {
+    content: '';
+    position: fixed;
+    z-index: -1;
+    pointer-events: none;
+    border-radius: 9999px;
+    filter: blur(60px);
+  }
+
+  body::before {
+    top: -12vh;
+    left: -10vw;
+    width: 52vw;
+    height: 52vw;
+    max-width: 720px;
+    max-height: 720px;
+    background: radial-gradient(circle, rgb(77 107 254 / 0.22) 0%, rgb(77 107 254 / 0) 70%);
+  }
+
+  body::after {
+    right: -12vw;
+    bottom: -14vh;
+    width: 56vw;
+    height: 56vw;
+    max-width: 780px;
+    max-height: 780px;
+    background:
+      radial-gradient(circle at 35% 35%, rgb(56 189 248 / 0.2) 0%, rgb(56 189 248 / 0) 60%),
+      radial-gradient(circle at 70% 70%, rgb(106 139 255 / 0.16) 0%, rgb(106 139 255 / 0) 65%);
+  }
+
+  #root::before {
+    content: '';
+    position: fixed;
+    z-index: -1;
+    pointer-events: none;
+    top: 38vh;
+    right: 18vw;
+    width: 30vw;
+    height: 30vw;
+    max-width: 420px;
+    max-height: 420px;
+    border-radius: 9999px;
+    filter: blur(70px);
+    background: radial-gradient(circle, rgb(125 211 252 / 0.16) 0%, rgb(125 211 252 / 0) 70%);
+  }
+
+  ::selection {
+    background: var(--color-brand);
+    color: #fff;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  /* Thin neutral scrollbars, both engines. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border-radius: 999px;
+  }
+
+  /*
+   * Legacy numeric utility kept so untouched pages keep compiling. It is now
+   * sans + tabular figures; numbers never use the mono face outside code.
+   */
+  .font-numeric {
+    font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+}
+
+@layer components {
+  /*
+   * Glass surfaces. Radius comes from the existing tokens: `.glass` defaults
+   * to --radius-md and any rounded-* utility overrides it (utilities layer).
+   */
+  .glass,
+  .glass-strong,
+  .glass-bar,
+  .glass-inset {
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+    backdrop-filter: blur(18px) saturate(160%);
+  }
+
+  .glass {
+    border-radius: var(--radius-md);
+    border: 1px solid rgb(255 255 255 / 0.65);
+    background-color: rgb(255 255 255 / 0.6);
+    box-shadow:
+      0 8px 32px rgb(77 107 254 / 0.1),
+      inset 0 1px 0 rgb(255 255 255 / 0.7);
+  }
+
+  .glass-strong {
+    border-radius: var(--radius-md);
+    border: 1px solid rgb(255 255 255 / 0.7);
+    background-color: rgb(255 255 255 / 0.72);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
+    box-shadow:
+      0 16px 48px rgb(77 107 254 / 0.16),
+      0 2px 8px rgb(15 17 21 / 0.04),
+      inset 0 1px 0 rgb(255 255 255 / 0.8);
+  }
+
+  /* Edge-to-edge bars (top bar, sidebar, save bar): no radius, no ring. */
+  .glass-bar {
+    background-color: rgb(255 255 255 / 0.58);
+    box-shadow: 0 1px 24px rgb(77 107 254 / 0.06);
+  }
+
+  /* Quiet nested glass, e.g. a table well inside a card. */
+  .glass-inset {
+    border-radius: var(--radius-md);
+    border: 1px solid rgb(255 255 255 / 0.6);
+    background-color: rgb(255 255 255 / 0.4);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    backdrop-filter: blur(12px) saturate(140%);
+  }
+
+  /* Primary action: brand gradient with a soft glow. */
+  .btn-primary {
+    color: #fff;
+    background-image: linear-gradient(135deg, var(--color-brand) 0%, var(--color-brand-2) 100%);
+    box-shadow:
+      0 4px 14px rgb(77 107 254 / 0.32),
+      inset 0 1px 0 rgb(255 255 255 / 0.25);
+  }
+
+  .btn-primary:hover {
+    filter: brightness(1.05);
+    box-shadow:
+      0 8px 22px rgb(77 107 254 / 0.42),
+      inset 0 1px 0 rgb(255 255 255 / 0.3);
+    transform: translateY(-1px);
+  }
+
+  .btn-primary:active {
+    filter: brightness(0.96);
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgb(77 107 254 / 0.3);
+  }
+
+  .btn-glass {
+    border: 1px solid rgb(255 255 255 / 0.75);
+    background-color: rgb(255 255 255 / 0.6);
+    -webkit-backdrop-filter: blur(12px) saturate(150%);
+    backdrop-filter: blur(12px) saturate(150%);
+    box-shadow:
+      0 2px 10px rgb(77 107 254 / 0.08),
+      inset 0 1px 0 rgb(255 255 255 / 0.7);
+  }
+
+  .btn-glass:hover {
+    background-color: rgb(255 255 255 / 0.82);
+    box-shadow:
+      0 4px 16px rgb(77 107 254 / 0.14),
+      inset 0 1px 0 rgb(255 255 255 / 0.8);
+  }
+
+  /* Cards that respond to the pointer: a small lift and a deeper shadow. */
+  .glass-lift {
+    transition:
+      transform 220ms ease,
+      box-shadow 220ms ease,
+      border-color 220ms ease;
+  }
+
+  .glass-lift:hover {
+    transform: translateY(-3px);
+    border-color: rgb(255 255 255 / 0.9);
+    box-shadow:
+      0 18px 44px rgb(77 107 254 / 0.18),
+      0 2px 8px rgb(15 17 21 / 0.05),
+      inset 0 1px 0 rgb(255 255 255 / 0.85);
+  }
+
+  .prose-doc {
+    @apply text-body leading-7 text-ink;
+  }
+
+  .prose-doc p {
+    @apply text-ink-2;
+  }
+
+  .prose-doc h2 {
+    @apply mt-10 mb-3 scroll-mt-24 text-h2 font-semibold tracking-tight text-ink;
+  }
+
+  .prose-doc h3 {
+    @apply mt-6 mb-2 scroll-mt-24 text-h3 font-semibold text-ink;
+  }
+
+  .prose-doc code:not(pre code) {
+    @apply rounded-sm border border-line bg-bg-soft px-1.5 py-0.5 font-mono text-meta text-ink;
+  }
+
+  .code-block {
+    @apply overflow-x-auto rounded-md border border-[#1f242c] bg-[#0d1117] p-4 font-mono text-meta leading-6 text-[#e6edf3];
+  }
+}
+
+@keyframes dialog-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes dialog-content-in {
+  /* Tailwind v4 emits `translate: -50% -50%` for the centering utilities. Use
+     the same property here: a keyframe transform would compose with the
+     translate utility and shift the dialog an extra -50% horizontally. */
+  from {
+    opacity: 0;
+    translate: -50% calc(-50% + 6px);
+  }
+  to {
+    opacity: 1;
+    translate: -50% -50%;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.dialog-overlay[data-state='open'] {
+  animation: dialog-overlay-in 140ms ease-out;
+}
+
+.dialog-content[data-state='open'] {
+  animation: dialog-content-in 160ms ease-out;
+}
+
+.toast-root[data-state='open'] {
+  animation: toast-in 160ms ease-out;
+}
+
+.toast-root[data-state='closed'] {
+  opacity: 0;
+  transition: opacity 120ms ease-in;
+}
+
+/*
+ * Without backdrop-filter translucent glass reads as washed out, so fall back
+ * to near-opaque white surfaces.
+ */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --color-bg: rgb(255 255 255 / 0.96);
+    --color-bg-soft: #f1f5ff;
+    --color-bg-subtle: #f3f6ff;
+    --color-surface: #ffffff;
+  }
+
+  .glass,
+  .glass-strong,
+  .glass-bar,
+  .btn-glass {
+    background-color: rgb(255 255 255 / 0.96);
+  }
+
+  .glass-inset {
+    background-color: rgb(255 255 255 / 0.9);
+  }
+
+  body::before,
+  body::after,
+  #root::before {
+    filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-primary:hover,
+  .btn-primary:active,
+  .glass-lift:hover {
+    transform: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/*
+ * Ported new-api channel management (`src/legacy`) uses the shadcn token set.
+ * Map it on top of the site brand palette; only shadcn names are introduced
+ * here so the existing --color-* tokens stay untouched.
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-neutral: var(--neutral);
+  --color-neutral-foreground: var(--neutral-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-xs: calc(var(--radius) * 0.4);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --radius: 0.75rem;
+  /* new-api legacy console (channels) tokens */
+  --table-row: var(--background);
+  --table-header: color-mix(in oklch, var(--foreground) 3%, var(--background));
+  --table-header-hover: color-mix(in oklch, var(--foreground) 5%, var(--background));
+  --table-disabled: color-mix(in oklch, var(--foreground) 3%, var(--background));
+  --table-disabled-hover: color-mix(in oklch, var(--foreground) 4.5%, var(--background));
+  --table-disabled-border: color-mix(in oklch, var(--foreground) 16%, var(--background));
+  --dialog-inset-top: max(1rem, env(safe-area-inset-top, 0px));
+  --dialog-inset-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  --dialog-available-height: calc(100dvh - var(--dialog-inset-top) - var(--dialog-inset-bottom));
+  --dialog-viewport-center: calc((100dvh + var(--dialog-inset-top) - var(--dialog-inset-bottom)) / 2);
+  --app-header-height: 3rem;
+  --background: #ffffff;
+  --foreground: #0f1115;
+  --card: #ffffff;
+  --card-foreground: #0f1115;
+  --popover: #ffffff;
+  --popover-foreground: #0f1115;
+  --primary: #4d6bfe;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f4fa;
+  --secondary-foreground: #2f4bd8;
+  --muted: #edf1fa;
+  --muted-foreground: #767d8c;
+  --accent: #eef1ff;
+  --accent-foreground: #0f1115;
+  --destructive: #e5484d;
+  --destructive-foreground: #ffffff;
+  --success: #16a34a;
+  --success-foreground: #ffffff;
+  --warning: #f59e0b;
+  --warning-foreground: #0f1115;
+  --info: #4d6bfe;
+  --info-foreground: #ffffff;
+  --neutral: #767d8c;
+  --neutral-foreground: #ffffff;
+  --border: rgba(120, 140, 200, 0.18);
+  --input: rgba(100, 125, 200, 0.28);
+  --ring: #4d6bfe;
+  --chart-1: #4d6bfe;
+  --chart-2: #6a8bff;
+  --chart-3: #2f4bd8;
+  --chart-4: #16a34a;
+  --chart-5: #f59e0b;
+  --sidebar: #f7f9ff;
+  --sidebar-foreground: #0f1115;
+  --sidebar-primary: #4d6bfe;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef1ff;
+  --sidebar-accent-foreground: #2f4bd8;
+  --sidebar-border: rgba(120, 140, 200, 0.18);
+  --sidebar-ring: #4d6bfe;
+}

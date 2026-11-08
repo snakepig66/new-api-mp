@@ -9,4 +9,11 @@ docs
 .gocache
 /web/node_modules
 /web/dist
+/site/node_modules
+/site/dist
+/site/test-results
+/site/playwright-report
+/site/e2e/.tmp
+/site/.vite
+/site/.tanstack
 !THIRD-PARTY-LICENSES.md

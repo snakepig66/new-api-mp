@@ -23,22 +23,38 @@ func CloseResponseBodyGracefully(httpResponse *http.Response) {
 	}
 }
 
-// ShouldCopyUpstreamHeader checks whether a given upstream response header
-// should be copied to the client response. It returns false for Content-Length
-// (managed separately) and X-Oneapi-Request-Id (to preserve the local instance
-// ID). When the upstream header is X-Oneapi-Request-Id, the value is captured
-// into the Gin context for later logging.
+// upstreamResponseHeaderWhitelist is the complete set of upstream response
+// headers that may reach the buyer. Every other upstream header is dropped so
+// upstream identity and provider plumbing (OpenAI-Organization, x-ratelimit-*,
+// Set-Cookie, Server, Via, X-Powered-By and vendor-specific custom headers)
+// cannot leak through the marketplace proxy (§2.3).
+//
+// Content-Length is deliberately absent: rewriting the response body can change
+// its length, so IOCopyBytesGracefully always sets the local payload's length.
+var upstreamResponseHeaderWhitelist = map[string]struct{}{
+	"Content-Type":  {},
+	"Cache-Control": {},
+	"Etag":          {},
+	"Last-Modified": {},
+	// Codex clients need the turn-state header to continue a response. It is
+	// copied only by copyCodexSSEHeaders and carries no upstream identity.
+	"X-Reasoning-Included": {},
+	"X-Codex-Turn-State":   {},
+}
+
+// ShouldCopyUpstreamHeader reports whether an upstream response header may be
+// forwarded to the buyer. Only the identity-safe whitelist is copied. An
+// upstream X-Oneapi-Request-Id is never forwarded (the local instance supplies
+// its own id) but is captured into the Gin context for later logging.
 func ShouldCopyUpstreamHeader(c *gin.Context, k string, v []string) bool {
-	if strings.EqualFold(k, "Content-Length") {
-		return false
-	}
 	if strings.EqualFold(k, common.RequestIdKey) {
 		if c != nil && len(v) > 0 {
 			c.Set(common.UpstreamRequestIdKey, v[0])
 		}
 		return false
 	}
-	return true
+	_, ok := upstreamResponseHeaderWhitelist[http.CanonicalHeaderKey(k)]
+	return ok
 }
 
 func IOCopyBytesGracefully(c *gin.Context, src *http.Response, data []byte) {

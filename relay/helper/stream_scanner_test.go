@@ -526,6 +526,91 @@ func TestStreamScannerHandler_StreamStatus_HandlerDone(t *testing.T) {
 	assert.False(t, info.StreamStatus.HasErrors())
 }
 
+// eofTrackingBody reports when the scanner has read to EOF and when cleanup
+// closes the upstream body, so a test can order a handler completion after the
+// scanner's own EOF handling without sleeping.
+type eofTrackingBody struct {
+	reader    io.Reader
+	eof       chan struct{}
+	eofOnce   sync.Once
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func (b *eofTrackingBody) Read(p []byte) (int, error) {
+	n, err := b.reader.Read(p)
+	if err == io.EOF {
+		b.eofOnce.Do(func() { close(b.eof) })
+	}
+	return n, err
+}
+
+func (b *eofTrackingBody) Close() error {
+	b.closeOnce.Do(func() { close(b.closed) })
+	return nil
+}
+
+// TestStreamScannerHandler_HandlerDoneWinsOverEOF pins the end-reason race found
+// by the marketplace integration tests: a fast upstream reaches EOF while the
+// handler goroutine has not yet run its last callback. A protocol completion
+// reported by the handler (message_stop, response.completed) must not be
+// overwritten by the scanner's bare EOF.
+func TestStreamScannerHandler_HandlerDoneWinsOverEOF(t *testing.T) {
+	t.Parallel()
+
+	body := &eofTrackingBody{
+		reader: strings.NewReader("data: {\"type\":\"message_stop\"}\n"),
+		eof:    make(chan struct{}),
+		closed: make(chan struct{}),
+	}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	resp := &http.Response{Body: body}
+	info := &relaycommon.RelayInfo{DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{}}
+
+	handlerStarted := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {
+			close(handlerStarted)
+			<-release
+			sr.Done()
+		})
+		close(finished)
+	}()
+
+	select {
+	case <-handlerStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler never started")
+	}
+	select {
+	case <-body.eof:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scanner never reached EOF")
+	}
+	// cleanup closes the upstream body after the scanner has published its EOF
+	// (pre-fix) and before wg.Wait joins the still-blocked handler.
+	select {
+	case <-body.closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cleanup never closed the upstream body")
+	}
+	close(release)
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stream handler did not return")
+	}
+
+	require.NotNil(t, info.StreamStatus)
+	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)
+	assert.True(t, info.StreamStatus.IsNormalEnd())
+}
+
 func TestStreamScannerHandler_StreamStatus_Timeout(t *testing.T) {
 	// Not parallel: modifies global constant.StreamingTimeout
 	oldTimeout := constant.StreamingTimeout

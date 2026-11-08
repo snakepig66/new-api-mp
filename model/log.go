@@ -336,6 +336,12 @@ type RecordConsumeLogParams struct {
 	Other            *LogOther         `json:"other"`
 }
 
+var onConsumeLogHooks []func(c *gin.Context, log *Log, params RecordConsumeLogParams)
+
+func RegisterConsumeLogHook(fn func(c *gin.Context, log *Log, params RecordConsumeLogParams)) {
+	onConsumeLogHooks = append(onConsumeLogHooks, fn)
+}
+
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
 	if !common.LogConsumeEnabled {
 		return
@@ -384,6 +390,9 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	err := createLog(log)
 	if err != nil {
 		logger.LogError(c, common.LogText("failed to record log: %s", err.Error()))
+	}
+	for _, hook := range onConsumeLogHooks {
+		hook(c, log, params)
 	}
 	if common.DataExportEnabled {
 		var cacheReadTokens, cacheCreationTokens int

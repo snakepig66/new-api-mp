@@ -23,14 +23,31 @@ import { cn } from '@/lib/utils'
 function Card({
   className,
   size = 'default',
+  spotlight = false,
+  onPointerMove,
   ...props
-}: React.ComponentProps<'div'> & { size?: 'default' | 'sm' }) {
+}: React.ComponentProps<'div'> & {
+  size?: 'default' | 'sm'
+  spotlight?: boolean
+}) {
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (spotlight) {
+      const el = e.currentTarget
+      const rect = el.getBoundingClientRect()
+      el.style.setProperty('--spotlight-x', `${e.clientX - rect.left}px`)
+      el.style.setProperty('--spotlight-y', `${e.clientY - rect.top}px`)
+    }
+    onPointerMove?.(e)
+  }
+
   return (
     <div
       data-slot='card'
       data-size={size}
+      onPointerMove={handlePointerMove}
       className={cn(
         'group/card bg-card text-card-foreground ring-foreground/10 flex flex-col gap-4 overflow-hidden rounded-xl py-4 text-sm ring-1 has-data-[slot=card-footer]:pb-0 has-[>img:first-child]:pt-0 data-[size=sm]:gap-3 data-[size=sm]:py-3 data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl',
+        spotlight && 'whale-spotlight-card',
         className
       )}
       {...props}

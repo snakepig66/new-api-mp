@@ -827,6 +827,9 @@ func EnableChannelByTag(tag string) error {
 		return err
 	}
 	err = UpdateAbilityStatusByTag(tag, true)
+	if err == nil {
+		InitChannelCache()
+	}
 	return err
 }
 
@@ -849,6 +852,9 @@ func DisableChannelByTag(tag string) error {
 		return err
 	}
 	err = UpdateAbilityStatusByTag(tag, false)
+	if err == nil {
+		InitChannelCache()
+	}
 	return err
 }
 

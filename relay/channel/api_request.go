@@ -14,6 +14,7 @@ import (
 	common2 "github.com/QuantumNous/new-api/common"
 	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/marketplace"
 	"github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -383,6 +384,8 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 // request context, and reports a rejected handshake as a *types.NewAPIError
 // carrying the upstream status code (types.NewError preserves it).
 func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*websocket.Conn, error) {
+	// MP-HOOK: marketplace v1 serves only chat/responses/messages over HTTP, so a
+	// marketplace channel never reaches the websocket relay; upstream logic applies.
 	fullRequestURL, err := a.GetRequestURL(info)
 	if err != nil {
 		return nil, fmt.Errorf("get request url failed: %w", err)
@@ -459,6 +462,10 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
+	// MP-HOOK: marketplace channels dial through the egress guard with a 20s first-byte timeout (§4.4 D, §3.7/§3.11)
+	if marketplace.IsRelayRequest(c) {
+		client = marketplace.RelayHTTPClient()
+	}
 	// Clients are cached and shared across channels, so override redirect
 	// behavior on a shallow copy instead of mutating the cached client. This
 	// still reuses its transport and connection pools, including HTTP/2's
@@ -514,6 +521,8 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 }
 
 func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	// MP-HOOK: marketplace v1 serves only chat/responses/messages, so a marketplace
+	// channel never reaches the task relay; upstream logic applies.
 	fullRequestURL, err := a.BuildRequestURL(info)
 	if err != nil {
 		return nil, err

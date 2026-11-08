@@ -117,6 +117,17 @@ func InitEnv() {
 	RelayMaxIdleConns = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS", 500)
 	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
 
+	// 额度单位：本站以微元记账，1 元 = 1,000,000 额度，市场结算也按
+	// 1:1 复用 users.quota，因此必须读到这里配置的值，否则旧控制台金额
+	// 会和新站差一个倍数。非法值保留上游默认。
+	if raw := os.Getenv("QUOTA_PER_UNIT"); raw != "" {
+		if parsed, err := strconv.ParseFloat(raw, 64); err == nil && parsed > 0 {
+			QuotaPerUnit = parsed
+		} else {
+			SysError(LogText("invalid QUOTA_PER_UNIT %q, keeping %v", raw, QuotaPerUnit))
+		}
+	}
+
 	// Initialize string variables with GetEnvOrDefaultString
 	GeminiSafetySetting = GetEnvOrDefaultString("GEMINI_SAFETY_SETTING", "BLOCK_NONE")
 	CohereSafetySetting = GetEnvOrDefaultString("COHERE_SAFETY_SETTING", "NONE")

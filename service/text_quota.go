@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/marketplace"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -409,6 +410,18 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 
 	adminRejectReason := common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason)
 	summary := calculateTextQuotaSummary(ctx, relayInfo, billingUsage)
+
+	// MP-HOOK: marketplace settlement replaces the upstream quota with the
+	// marketplace Quote result in 微元 (== quota 1:1, §4.5) and writes
+	// mp_requests/mp_ledger (§4.4 E); the upstream quota math must not charge
+	// the request again, so tool surcharges are cleared along with the quota.
+	// (Tiered billing below stays a no-op: marketplace requests never carry a
+	// TieredBillingSnapshot.)
+	if marketplace.IsRelayRequest(ctx) {
+		summary.Quota = marketplace.SettleRelay(ctx, relayInfo, billingUsage)
+		summary.ToolSurchargeItems = nil
+		summary.ToolCallSurchargeQuota = decimal.Zero
+	}
 
 	var tieredResult *billingexpr.TieredResult
 	var tieredTokens billingexpr.TokenParams

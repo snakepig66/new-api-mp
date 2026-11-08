@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/controller"
+	"github.com/QuantumNous/new-api/marketplace"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/service/authz"
 
@@ -26,6 +27,34 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/setup", controller.GetSetup)
 		apiRouter.POST("/setup", anonymousRequestBodyLimit, controller.PostSetup)
 		apiRouter.GET("/status", controller.GetStatus)
+		// MP-HOOK: marketplace console/status API (§4.4 H). Public: status +
+		// model square; logged-in: buyer-key prefs, usage/share records, the
+		// seller console and wallet; admin: price books, holidays, listing
+		// review, payout approval, reversal and code de-anonymization.
+		if marketplace.Enabled() {
+			marketplace.RegisterRoutes(apiRouter)
+			mpUser := apiRouter.Group("/marketplace", middleware.UserAuth())
+			marketplace.RegisterKeyRoutes(mpUser)
+			marketplace.RegisterRecordRoutes(mpUser)
+			marketplace.RegisterSellerRoutes(mpUser)
+			marketplace.RegisterSellerOnboardingRoutes(mpUser)
+			marketplace.RegisterWalletRoutes(mpUser)
+			marketplace.RegisterStatsRoutes(mpUser)
+			marketplace.RegisterNotificationRoutes(mpUser)
+			mpAdmin := apiRouter.Group("/marketplace", middleware.RootAuth())
+			marketplace.RegisterAdminRootRoutes(mpAdmin)
+			// 认证池运营 (P5-C): AdminAuth establishes the dashboard session,
+			// then each route requires its trust_pool action. A non-root
+			// operator with a per-user grant can manage the pool without
+			// gaining the root-only marketplace admin endpoints; root is a
+			// superuser and still passes every action.
+			mpTrustPool := apiRouter.Group("/marketplace", middleware.AdminAuth())
+			for _, route := range marketplace.TrustPoolRoutes() {
+				permission := authz.Permission{Resource: authz.ResourceTrustPool, Action: route.Action}
+				middleware.DeclareAccessTokenPermissionRoute(route.Method, joinPaths(mpTrustPool.BasePath(), route.Path), permission)
+				mpTrustPool.Handle(route.Method, route.Path, middleware.RequirePermission(permission), route.Handler)
+			}
+		}
 		apiRouter.GET("/uptime/status", controller.GetUptimeKumaStatus)
 		apiRouter.GET("/models", middleware.UserAuth(), controller.DashboardListModels)
 		apiRouter.GET("/status/test", middleware.AdminAuth(), controller.TestStatus)
@@ -98,6 +127,7 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/sessions/revoke-others", middleware.DisableCache(), controller.RevokeOtherLoginSessions)
 				selfRoute.GET("/self/groups", controller.GetUserGroups)
 				selfRoute.GET("/self", controller.GetSelf)
+				selfRoute.GET("/ip", controller.GetClientIP)
 				selfRoute.GET("/models", controller.GetUserModels)
 				selfRoute.PUT("/self", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.UpdateSelf)
 				selfRoute.DELETE("/self", middleware.DisableCache(), controller.DeleteSelf)
@@ -140,6 +170,10 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/2fa/enable", middleware.UserCriticalRateLimit("security-verification"), middleware.DisableCache(), controller.Enable2FA)
 				selfRoute.POST("/2fa/disable", middleware.DisableCache(), controller.Disable2FA)
 				selfRoute.POST("/2fa/backup_codes", middleware.DisableCache(), controller.RegenerateBackupCodes)
+
+				// Password change via email
+				selfRoute.POST("/password/email/code", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("account-security"), middleware.EmailVerificationRateLimit(), controller.SendPasswordChangeEmailCode)
+				selfRoute.POST("/password/email/reset", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("account-security"), controller.ChangePasswordByEmail)
 
 				// Check-in routes
 				selfRoute.GET("/checkin", controller.GetCheckinStatus)

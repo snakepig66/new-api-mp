@@ -333,3 +333,15 @@ func requireOrderedSubstrings(t *testing.T, s string, parts ...string) {
 		offset += idx + len(part)
 	}
 }
+
+func TestOpenaiHandlerRewritesModelForConvertedClaude(t *testing.T) {
+	c, recorder, resp, info := newResponsesChatTestContext(t, `{"id":"chatcmpl-1","object":"chat.completion","model":"upstream-internal-model","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":5,"total_tokens":10}}`, false)
+	info.RelayFormat = types.RelayFormatClaude
+	info.OriginModelName = "requested-claude"
+	usage, err := OpenaiHandler(c, info, resp)
+	require.Nil(t, err)
+	require.NotNil(t, usage)
+	var claudeResp dto.ClaudeResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &claudeResp))
+	assert.Equal(t, "requested-claude", claudeResp.Model)
+}

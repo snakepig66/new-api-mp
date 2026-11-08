@@ -170,6 +170,53 @@ func TestBatchUpdateAccumulatorSaturatesOverflow(t *testing.T) {
 	batchUpdateLocks[BatchUpdateTypeUserQuota].Unlock()
 }
 
+// A reversible pre-freeze must not truncate gift_quota. Otherwise a failed
+// request refunds the total balance but leaves the gift part permanently
+// converted into paid balance.
+func TestReservePreservesGiftAcrossRefund(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		name := "direct"
+		if batch {
+			name = "batch"
+		}
+		t.Run(name, func(t *testing.T) {
+			truncateTables(t)
+			resetBatchUpdateTestState(t)
+			useUserCacheMiniRedis(t)
+			common.BatchUpdateEnabled = batch
+
+			user := createReserveTestUser(t, 100)
+			require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Update("gift_quota", 100).Error)
+			require.NoError(t, populateUserCache(user))
+
+			reserved, err := TryReserveUserQuota(user.Id, 80)
+			require.NoError(t, err)
+			require.True(t, reserved)
+			if batch {
+				batchUpdate()
+			}
+			assert.Equal(t, 20, getUserQuotaFromDB(t, user.Id))
+			assert.Equal(t, 100, getUserGiftQuotaFromDB(t, user.Id),
+				"a freeze must not destroy gift provenance")
+
+			require.NoError(t, IncreaseUserQuota(user.Id, 80, false))
+			if batch {
+				batchUpdate()
+			}
+			assert.Equal(t, 100, getUserQuotaFromDB(t, user.Id))
+			assert.Equal(t, 100, getUserGiftQuotaFromDB(t, user.Id),
+				"refunding the freeze restores the original gift balance")
+		})
+	}
+}
+
+func getUserGiftQuotaFromDB(t *testing.T, id int) int {
+	t.Helper()
+	var user User
+	require.NoError(t, DB.Select("gift_quota").First(&user, id).Error)
+	return user.GiftQuota
+}
+
 func TestReserveFallsBackToDatabaseWhenRedisIsUnavailable(t *testing.T) {
 	truncateTables(t)
 	resetBatchUpdateTestState(t)

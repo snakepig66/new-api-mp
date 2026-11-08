@@ -40,6 +40,15 @@ func jsonScanBytes(value any) []byte {
 	}
 }
 
+// InitCommonColumns (re)computes the dialect-specific column identifiers used
+// in raw SQL (reserved-word columns such as "group" and "key"). It is
+// idempotent and must run after the main/log database types are set; startup
+// calls it from InitDB and InitLogDB, and tests call it after pointing the
+// process at a test dialect.
+func InitCommonColumns() {
+	initCol()
+}
+
 func initCol() {
 	// init common column names
 	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
@@ -66,29 +75,6 @@ func initCol() {
 var DB *gorm.DB
 
 var LOG_DB *gorm.DB
-
-func createRootAccountIfNeed() error {
-	var user User
-	//if user.Status != common.UserStatusEnabled {
-	if err := DB.First(&user).Error; err != nil {
-		common.SysLog(common.LogText("no user exists, create a root user for you: username is root, password is 123456"))
-		hashedPassword, err := common.Password2Hash("123456")
-		if err != nil {
-			return err
-		}
-		rootUser := User{
-			Username:    "root",
-			Password:    hashedPassword,
-			Role:        common.RoleRootUser,
-			Status:      common.UserStatusEnabled,
-			DisplayName: "Root User",
-			AccessToken: nil,
-			Quota:       100000000,
-		}
-		DB.Create(&rootUser)
-	}
-	return nil
-}
 
 func CheckSetup() {
 	setup := GetSetup()

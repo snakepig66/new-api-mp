@@ -87,15 +87,23 @@ func ValidateTopUpQuotaCapacity(userId int, creditedQuota int) error {
 // creditTopUpQuota atomically enforces the wallet ceiling while adding quota.
 // Keeping the predicate and increment in one UPDATE prevents two
 // concurrent callbacks from both passing a separate read/check.
-func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, updates map[string]any) error {
-	maxCurrentQuota, err := topUpQuotaMaxCurrent(creditedQuota)
+//
+// paidQuota is real paid balance; giftQuota is the part that must be tracked as
+// gifted (redemption codes). Top-ups pass giftQuota == 0, so recharge money is
+// always paid and stays withdrawable. Both increments share one UPDATE so
+// gift_quota <= quota keeps holding.
+func creditTopUpQuota(tx *gorm.DB, userId int, paidQuota int, giftQuota int, updates map[string]any) error {
+	maxCurrentQuota, err := topUpQuotaMaxCurrent(paidQuota)
 	if err != nil {
 		return err
 	}
 
-	updateFields := make(map[string]any, len(updates)+1)
+	updateFields := make(map[string]any, len(updates)+2)
 	maps.Copy(updateFields, updates)
-	updateFields["quota"] = gorm.Expr("quota + ?", creditedQuota)
+	updateFields["quota"] = gorm.Expr("quota + ?", paidQuota)
+	if giftQuota > 0 {
+		updateFields["gift_quota"] = gorm.Expr("gift_quota + ?", giftQuota)
+	}
 
 	result := tx.Model(&User{}).
 		Where("id = ? AND quota <= ?", userId, maxCurrentQuota).
@@ -215,7 +223,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 		if err := tx.Save(topUp).Error; err != nil {
 			return err
 		}
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, 0, nil)
 	})
 	if err != nil {
 		if !errors.Is(err, ErrTopUpNotFound) && !errors.Is(err, ErrPaymentMethodMismatch) && !errors.Is(err, ErrTopUpStatusInvalid) {
@@ -273,7 +281,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		if err != nil || quota <= 0 {
 			return ErrInvalidTopUpQuota
 		}
-		return creditTopUpQuota(tx, topUp.UserId, quota, map[string]any{
+		return creditTopUpQuota(tx, topUp.UserId, quota, 0, map[string]any{
 			"stripe_customer": customerId,
 		})
 	})
@@ -480,12 +488,15 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 
 		// 计算应充值额度：
 		// - Stripe 订单：Money 代表经分组倍率换算后的美元数量，直接 * QuotaPerUnit
+		// - Creem 订单：Amount 本身即为最终充值额度，直接转换
 		// - 其他订单（如易支付）：Amount 为美元数量，* QuotaPerUnit
 		var quotaErr error
 		if topUp.PaymentProvider == PaymentProviderStripe {
 			quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(
 				decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
 			)
+		} else if topUp.PaymentProvider == PaymentProviderCreem {
+			quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(decimal.NewFromInt(topUp.Amount))
 		} else {
 			quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(
 				decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
@@ -503,7 +514,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		}
 
 		// 增加用户额度（立即写库，保持一致性）
-		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
+		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, 0, nil); err != nil {
 			return err
 		}
 
@@ -580,7 +591,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 			}
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quota, updateFields)
+		return creditTopUpQuota(tx, topUp.UserId, quota, 0, updateFields)
 	})
 
 	if err != nil {
@@ -638,7 +649,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 			return err
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, 0, nil)
 	})
 
 	if err != nil {
@@ -698,7 +709,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 			return err
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, 0, nil)
 	})
 
 	if err != nil {

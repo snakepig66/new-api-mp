@@ -2,6 +2,7 @@ package model
 
 import (
 	"maps"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -221,6 +222,50 @@ func loadOptionsFromDatabase() {
 		}
 	}
 	applyPasskeyDomainOptions(passkeyOptions)
+	applyOAuthEnvOverrides()
+}
+
+// applyOAuthEnvOverrides makes GitHub login configurable from the process
+// environment, so a deployment can keep the client id and secret in its env
+// file instead of the option table. It runs after every database load because
+// SyncOptions re-reads the table periodically; env values always win.
+//
+// GITHUB_OAUTH_ENABLED is optional: when it is unset, GitHub login turns on as
+// soon as both credentials are present. An explicit "true" without credentials
+// is refused rather than exposing a button that fails at the provider.
+func applyOAuthEnvOverrides() {
+	clientID := strings.TrimSpace(os.Getenv("GITHUB_CLIENT_ID"))
+	clientSecret := strings.TrimSpace(os.Getenv("GITHUB_CLIENT_SECRET"))
+	enabledEnv := strings.ToLower(strings.TrimSpace(os.Getenv("GITHUB_OAUTH_ENABLED")))
+
+	common.OptionMapRWMutex.Lock()
+	defer common.OptionMapRWMutex.Unlock()
+	if clientID != "" {
+		common.GitHubClientId = clientID
+		common.OptionMap["GitHubClientId"] = clientID
+	}
+	if clientSecret != "" {
+		common.GitHubClientSecret = clientSecret
+		common.OptionMap["GitHubClientSecret"] = clientSecret
+	}
+	if clientID == "" && clientSecret == "" && enabledEnv == "" {
+		return
+	}
+
+	enabled := common.GitHubClientId != "" && common.GitHubClientSecret != ""
+	switch enabledEnv {
+	case "", "auto":
+	case "1", "true", "yes", "on":
+		if !enabled {
+			common.SysError("GITHUB_OAUTH_ENABLED is on but GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET are missing; GitHub login stays disabled")
+		}
+	case "0", "false", "no", "off":
+		enabled = false
+	default:
+		common.SysError(common.LogText("ignoring unknown GITHUB_OAUTH_ENABLED value %q", enabledEnv))
+	}
+	common.GitHubOAuthEnabled = enabled
+	common.OptionMap["GitHubOAuthEnabled"] = strconv.FormatBool(enabled)
 }
 
 func SyncOptions(frequency int) {
@@ -435,10 +480,15 @@ func updateOptionMap(key string, value string) (err error) {
 			common.LogConsumeEnabled = boolValue
 		case "DisplayInCurrencyEnabled":
 			// 兼容旧字段：同步到新配置 general_setting.quota_display_type（运行时生效）
-			// true -> USD, false -> TOKENS
+			// 旧布尔开关只区分「货币 / tokens」；开启货币显示时沿用已选的
+			// 币种（本站统一为 CNY），不能把人民币改回美元。
 			newVal := "USD"
 			if !boolValue {
 				newVal = "TOKENS"
+			} else if cfg := config.GlobalConfig.Get("general_setting"); cfg != nil {
+				if current := operation_setting.GetQuotaDisplayType(); current == operation_setting.QuotaDisplayTypeCNY {
+					newVal = operation_setting.QuotaDisplayTypeCNY
+				}
 			}
 			if cfg := config.GlobalConfig.Get("general_setting"); cfg != nil {
 				_ = config.UpdateConfigFromMap(cfg, map[string]string{"quota_display_type": newVal})

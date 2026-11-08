@@ -16,6 +16,7 @@ type verificationValue struct {
 const (
 	EmailVerificationPurpose = "v"
 	PasswordResetPurpose     = "r"
+	PasswordChangePurpose    = "c"
 )
 
 var verificationMutex sync.Mutex

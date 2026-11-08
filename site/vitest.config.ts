@@ -1,0 +1,22 @@
+import { fileURLToPath } from 'node:url'
+
+import { defineConfig } from 'vitest/config'
+
+export default defineConfig({
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
+  test: {
+    environment: 'jsdom',
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    restoreMocks: true,
+    testTimeout: 15000,
+    // The legacy channel-management suite lazily transforms a large module.
+    // With one worker per CPU it can starve under the full-suite fan-out and
+    // time out nondeterministically; two workers keep it reliable without
+    // materially changing total runtime.
+    maxWorkers: 2,
+  },
+})

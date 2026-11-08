@@ -18,6 +18,10 @@ const (
 	BatchUpdateTypeUsedQuota
 	BatchUpdateTypeChannelUsedQuota
 	BatchUpdateTypeRequestCount
+	// BatchUpdateTypeUserQuotaReserve carries reversible pre-freeze deltas.
+	// They are flushed without the gift_quota clamp so a later refund cannot
+	// promote gifted balance to paid balance.
+	BatchUpdateTypeUserQuotaReserve
 	BatchUpdateTypeCount // if you add a new type, you need to add a new map and a new lock
 )
 
@@ -107,8 +111,9 @@ func batchUpdate() {
 	userQuotaStore := stores[BatchUpdateTypeUserQuota]
 	usedQuotaStore := stores[BatchUpdateTypeUsedQuota]
 	requestCountStore := stores[BatchUpdateTypeRequestCount]
+	reserveStore := stores[BatchUpdateTypeUserQuotaReserve]
 
-	userIDs := make(map[int]struct{}, len(userQuotaStore)+len(usedQuotaStore)+len(requestCountStore))
+	userIDs := make(map[int]struct{}, len(userQuotaStore)+len(usedQuotaStore)+len(requestCountStore)+len(reserveStore))
 	for key := range userQuotaStore {
 		userIDs[key] = struct{}{}
 	}
@@ -118,8 +123,14 @@ func batchUpdate() {
 	for key := range requestCountStore {
 		userIDs[key] = struct{}{}
 	}
+	for key := range reserveStore {
+		userIDs[key] = struct{}{}
+	}
 	for key := range userIDs {
 		updateUserQuotaUsedQuotaAndRequestCount(key, userQuotaStore[key], usedQuotaStore[key], requestCountStore[key])
+		if delta, ok := reserveStore[key]; ok {
+			updateUserQuotaReserve(key, delta)
+		}
 	}
 	common.SysLog(common.LogText("batch update finished"))
 }

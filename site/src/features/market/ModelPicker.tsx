@@ -1,0 +1,370 @@
+import { useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, useRef, useState } from 'react'
+
+import { copy } from '@/copy'
+import { formatYuan } from '@/lib/money'
+import { cn } from '@/lib/cn'
+import { Button, Empty, Input, ModelName } from '@/ui'
+
+import { parseMultiplierToMilli } from '@/features/console/format'
+import { squareModelsQuery, type SquareModel, type SquareTierPrices } from './api'
+import { originVendorOf } from './model-table'
+import { VendorPills } from './VendorPills'
+import { toVendorLookup, vendorLogo, vendorOptions, vendorShortLabel } from './vendors'
+import { vendorsQuery } from '@/features/seller/api'
+
+const pickerCopy = copy.pages.models.picker
+
+export type ModelSelection = Record<string, string>
+
+export interface ModelPickerProps {
+  /** model id -> typed per-model price cap ('' = no cap). */
+  selection: ModelSelection
+  onChange: (next: ModelSelection) => void
+  disabled?: boolean
+  idPrefix?: string
+  className?: string
+  /** Optional overrides for tests and callers that already hold the data. */
+  models?: SquareModel[]
+  vendors?: {
+    id: string
+    display_name: string
+    tier: string
+    kind?: string
+    logo_url?: string
+  }[]
+  loading?: boolean
+  error?: unknown
+  onRetry?: () => void
+}
+
+function currentPrices(model: SquareModel): SquareTierPrices | undefined {
+  return model.prices.flat
+}
+
+/** Filter by origin vendor and by standard name/alias only (never by channel). */
+export function filterPickerModels(
+  models: SquareModel[],
+  vendor: string,
+  search: string,
+): SquareModel[] {
+  const needle = search.trim().toLowerCase()
+  return models.filter((model) => {
+    if (vendor !== 'all' && originVendorOf(model) !== vendor) return false
+    if (!needle) return true
+    if (model.model.toLowerCase().includes(needle)) return true
+    return (model.aliases ?? []).some((alias) => alias.toLowerCase().includes(needle))
+  })
+}
+
+export interface VendorGroup {
+  vendor: string
+  label: string
+  models: SquareModel[]
+}
+
+/** Group filtered models by their original vendor; groups and rows are stable. */
+export function groupPickerModels(
+  models: SquareModel[],
+  labels: (vendor: string) => string,
+): VendorGroup[] {
+  const byVendor = new Map<string, SquareModel[]>()
+  for (const model of models) {
+    const vendor = originVendorOf(model)
+    const list = byVendor.get(vendor) ?? []
+    list.push(model)
+    byVendor.set(vendor, list)
+  }
+  return [...byVendor.entries()]
+    .map(([vendor, rows]) => ({
+      vendor,
+      label: labels(vendor),
+      models: rows.sort((a, b) => a.model.localeCompare(b.model)),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'))
+}
+
+/** Add or remove every model of one group while preserving other selections. */
+export function toggleGroupSelection(
+  selection: ModelSelection,
+  group: VendorGroup,
+): ModelSelection {
+  const allSelected = group.models.every((model) => model.model in selection)
+  const next = { ...selection }
+  if (allSelected) {
+    for (const model of group.models) delete next[model.model]
+  } else {
+    for (const model of group.models) {
+      if (!(model.model in next)) next[model.model] = ''
+    }
+  }
+  return next
+}
+
+export function ModelPicker({
+  selection,
+  onChange,
+  disabled = false,
+  idPrefix = 'model-picker',
+  className,
+  models,
+  vendors,
+  loading,
+  error,
+  onRetry,
+}: ModelPickerProps) {
+  const squareQuery = useQuery({ ...squareModelsQuery(), enabled: models === undefined })
+  const vendorsQueryResult = useQuery({ ...vendorsQuery(), enabled: vendors === undefined })
+  const [vendor, setVendor] = useState('all')
+  const [search, setSearch] = useState('')
+
+  const allModels = models ?? squareQuery.data ?? []
+  const vendorList = vendors ?? vendorsQueryResult.data ?? []
+  const lookup = useMemo(() => toVendorLookup(vendorList), [vendorList])
+  const labelFor = (slug: string) => vendorShortLabel(slug, lookup)
+
+  const originVendors = useMemo(
+    () => vendorOptions(new Set(allModels.map((model) => originVendorOf(model))), lookup),
+    [allModels, lookup],
+  )
+  const vendorPillOptions = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const model of allModels) {
+      const vendor = originVendorOf(model)
+      counts.set(vendor, (counts.get(vendor) ?? 0) + 1)
+    }
+    return originVendors.map((option) => ({
+      ...option,
+      logoUrl: vendorLogo(option.value, lookup),
+      count: counts.get(option.value) ?? 0,
+    }))
+  }, [allModels, lookup, originVendors])
+  const filtered = useMemo(
+    () => filterPickerModels(allModels, vendor, search),
+    [allModels, vendor, search],
+  )
+  const groups = useMemo(() => groupPickerModels(filtered, labelFor), [filtered, lookup])
+
+  const isPending = loading ?? (models === undefined && squareQuery.isPending)
+  const loadError = error ?? (models === undefined ? squareQuery.error : undefined)
+  const retry = onRetry ?? (() => void squareQuery.refetch())
+  const selectedCount = Object.keys(selection).length
+
+  function toggle(model: SquareModel) {
+    const next = { ...selection }
+    if (model.model in next) delete next[model.model]
+    else next[model.model] = ''
+    onChange(next)
+  }
+
+  function setCap(model: string, value: string) {
+    onChange({ ...selection, [model]: value })
+  }
+
+  function selectAllFiltered() {
+    const next = { ...selection }
+    for (const model of filtered) {
+      if (!(model.model in next)) next[model.model] = ''
+    }
+    onChange(next)
+  }
+
+  function clearFilters() {
+    setVendor('all')
+    setSearch('')
+  }
+
+  return (
+    <div className={cn('min-w-0', className)}>
+      <VendorPills
+        options={vendorPillOptions}
+        active={vendor === 'all' ? null : vendor}
+        onSelect={(next) => setVendor(next ?? 'all')}
+        allLabel={pickerCopy.allVendors}
+        allCount={allModels.length}
+        ariaLabel={copy.pages.models.vendorAria}
+      />
+
+      <div className="mt-2">
+        <Input
+          aria-label={pickerCopy.searchAria}
+          placeholder={pickerCopy.searchPlaceholder}
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+      </div>
+
+      <div className="mt-2 max-h-[320px] overflow-y-auto glass-inset">
+        {isPending ? (
+          <div className="space-y-2 p-3" aria-label={pickerCopy.loading}>
+            <div className="h-5 animate-pulse rounded-sm bg-line" />
+            <div className="h-5 animate-pulse rounded-sm bg-line" />
+            <div className="h-5 animate-pulse rounded-sm bg-line" />
+          </div>
+        ) : loadError ? (
+          <div className="p-4 text-meta text-ink-2">
+            <p>{pickerCopy.error}</p>
+            <Button variant="secondary" size="sm" className="mt-3" onClick={retry}>
+              {pickerCopy.retry}
+            </Button>
+          </div>
+        ) : allModels.length === 0 ? (
+          <Empty className="border-0 py-8" title={pickerCopy.emptyAll} reason="" />
+        ) : filtered.length === 0 ? (
+          <Empty
+            className="border-0 py-8"
+            title={pickerCopy.emptyFiltered}
+            reason=""
+            action={
+              <Button variant="secondary" size="sm" onClick={clearFilters}>
+                {pickerCopy.clearFilter}
+              </Button>
+            }
+          />
+        ) : (
+          <div>
+            {groups.map((group) => {
+              const groupSelected = group.models.filter((model) => model.model in selection).length
+              const allSelected = groupSelected === group.models.length
+              return (
+                <section key={group.vendor}>
+                  <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-white/70 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-white/80">
+                    <TriStateCheckbox
+                      checked={allSelected}
+                      indeterminate={groupSelected > 0 && !allSelected}
+                      onChange={() => onChange(toggleGroupSelection(selection, group))}
+                      label={`${group.label} ${pickerCopy.groupCount(groupSelected, group.models.length)}`}
+                    />
+                    <span className="min-w-0 flex-1 truncate text-meta font-medium text-ink">
+                      {group.label}
+                    </span>
+                    <span className="shrink-0 tabular-nums text-meta text-ink-3">
+                      {pickerCopy.groupCount(groupSelected, group.models.length)}
+                    </span>
+                  </div>
+                  <ul className="divide-y divide-line">
+                    {group.models.map((model) => {
+                      const checked = model.model in selection
+                      const prices = currentPrices(model)
+                      const lowestMilli = model.multiplier_min_milli ?? 0
+                      const capMilli = parseMultiplierToMilli(selection[model.model] ?? '')
+                      const belowLowest =
+                        checked &&
+                        lowestMilli > 0 &&
+                        capMilli !== null &&
+                        capMilli > 0 &&
+                        capMilli < lowestMilli
+                      return (
+                        <li
+                          key={model.model}
+                          className={cn(
+                            'flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 transition-colors',
+                            checked ? 'bg-brand-soft/40' : 'bg-white/60 hover:bg-brand/[0.06]',
+                          )}
+                        >
+                          <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
+                            <input
+                              type="checkbox"
+                              className="h-3.5 w-3.5 shrink-0 accent-brand"
+                              checked={checked}
+                              disabled={disabled}
+                              onChange={() => toggle(model)}
+                            />
+                            <span className="min-w-0">
+                              <span className="block truncate text-meta text-ink">
+                                <ModelName model={model.model} vendor={group.vendor} size="sm" />
+                              </span>
+                              {prices ? (
+                                <span className="block text-caption tabular-nums text-ink-3">
+                                  {pickerCopy.priceLabel} {formatYuan(prices.input_micro_per_mtok)}
+                                  /M
+                                </span>
+                              ) : null}
+                            </span>
+                          </label>
+                          <label className="flex shrink-0 items-center gap-1.5 text-caption text-ink-3">
+                            <span>{pickerCopy.capLabel}</span>
+                            <input
+                              id={`${idPrefix}-cap-${model.model}`}
+                              type="text"
+                              inputMode="decimal"
+                              disabled={!checked || disabled}
+                              aria-label={`${model.model} ${pickerCopy.capLabel}`}
+                              placeholder={pickerCopy.capPlaceholder}
+                              value={selection[model.model] ?? ''}
+                              onChange={(event) => setCap(model.model, event.target.value)}
+                              className="h-8 w-20 rounded-sm border border-white/70 bg-white/55 backdrop-blur-md px-2 tabular-nums text-meta text-ink disabled:bg-white/35 disabled:text-ink-3"
+                            />
+                            {lowestMilli > 0 && prices ? (
+                              <span className="tabular-nums">
+                                {pickerCopy.lowestCap(formatYuan(prices.input_micro_per_mtok))}
+                              </span>
+                            ) : null}
+                            {belowLowest ? (
+                              <span role="alert" className="text-danger">
+                                {pickerCopy.capBelowLowest}
+                              </span>
+                            ) : null}
+                          </label>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </section>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-meta text-ink-3">
+        <span className="tabular-nums">{pickerCopy.selectedCount(selectedCount)}</span>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            className="text-meta text-ink-2 underline-offset-2 hover:text-ink hover:underline disabled:text-ink-3"
+            disabled={filtered.length === 0 || disabled}
+            onClick={selectAllFiltered}
+          >
+            {pickerCopy.selectAllFiltered}
+          </button>
+          <button
+            type="button"
+            className="text-meta text-ink-2 underline-offset-2 hover:text-ink hover:underline disabled:text-ink-3"
+            disabled={selectedCount === 0 || disabled}
+            onClick={() => onChange({})}
+          >
+            {pickerCopy.clear}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function TriStateCheckbox({
+  checked,
+  indeterminate,
+  onChange,
+  label,
+}: {
+  checked: boolean
+  indeterminate: boolean
+  onChange: () => void
+  label: string
+}) {
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate
+  }, [indeterminate])
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      aria-label={label}
+      className="h-3.5 w-3.5 shrink-0 accent-brand"
+      checked={checked}
+      onChange={onChange}
+    />
+  )
+}

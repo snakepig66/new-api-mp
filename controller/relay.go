@@ -14,6 +14,7 @@ import (
 	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/marketplace"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
@@ -72,6 +73,10 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
 func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	requestId := c.GetString(common.RequestIdKey)
+	// MP-HOOK: finalize the marketplace session on every exit path, including
+	// PrepareBilling failures, bad request bodies, panics and early returns that
+	// never reach RefundFailedRequestBilling (§4.4 H1). No-op when not MP.
+	defer marketplace.EndRelay(c)
 	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 	//originalModel := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
 
@@ -94,6 +99,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if newAPIError != nil {
 			service.RecordRequestPolicyTermination(c, newAPIError)
 			logger.LogError(c, common.LogText("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
+			if marketplace.IsRelayRequest(c) {
+				// MP-HOOK: upstream error text passes through (native New-API); an upstream 401/403 (seller key) is converged to 503.
+				newAPIError = marketplace.ConvergeOutwardError(newAPIError)
+			}
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			upstreamURLs := common.UpstreamAddresses(c)
 			if relayFormat != types.RelayFormatOpenAIRealtime && c.Writer.Written() &&
@@ -120,6 +129,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}()
 
+	// MP-HOOK: strip server search/fetch tools for vendors whose tool counts cannot be billed (§3.4)
+	marketplace.StripInboundServerTools(c)
 	request, err := helper.GetAndValidateRequest(c, relayFormat)
 	if err != nil {
 		// Map "request body too large" to 413 so clients can handle it correctly
@@ -173,12 +184,21 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
+	// MP-HOOK: marketplace retries use their own fixed budget (2 switches + 1
+	// in-place retry) and never read the mutable common.RetryTimes (§4.4 C, M2).
+	retryBudget := marketplace.RetryBudget(c, common.RetryTimes)
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	for ; retryParam.GetRetry() <= retryBudget; retryParam.IncreaseRetry() {
 		relayInfo.StreamStatus = nil
 		relayInfo.PerformanceBusinessRejection = false
 		relayInfo.PerformanceOutputTokens = 0
 		relayInfo.RetryIndex = retryParam.GetRetry()
+		// once the first response bytes (or stream headers) reached the
+		// client, a request must not switch channels/suppliers. The
+		// previous attempt already committed the response; return its error.
+		if retryParam.GetRetry() > 0 && c.Writer.Written() {
+			break
+		}
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
 			logger.LogError(c, channelErr.Error())
@@ -223,7 +243,16 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
-		decision := service.DecideRelayRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
+		decision := service.DecideRelayRetry(c, newAPIError, retryBudget-retryParam.GetRetry())
+		// a response already committed to the client must not be retried
+		// on another channel. Record the reason so the policy log is clear.
+		if decision.Action == "retry" && c.Writer.Written() {
+			decision = service.PolicyDecision{Action: "stop", Reason: "response_already_committed", Source: "gateway"}
+		}
+		// MP-HOOK: marketplace hop budget — at most 2 listing switches plus 1 in-place retry (§4.4 C, §3.7)
+		if decision.Action == "retry" && !marketplace.MayRetry(c, newAPIError) {
+			decision = service.PolicyDecision{Action: "stop", Reason: "marketplace_hop_budget_exhausted", Source: "marketplace"}
+		}
 		service.RecordPolicyFailure(c, channel.Id, newAPIError, decision)
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, relayInfo)
 
@@ -310,6 +339,10 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		}
 		service.RequestPolicy(c).BeginAttempt(channel, info.UsingGroup)
 		return channel, nil
+	}
+	// MP-HOOK: marketplace retry re-selects a listing and re-freezes at the original quote instant (§4.4 C, §3.7)
+	if marketplace.IsRelayRequest(c) {
+		return marketplace.ReselectChannel(c, info, middleware.SetupContextForSelectedChannel)
 	}
 	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
 	if err != nil {

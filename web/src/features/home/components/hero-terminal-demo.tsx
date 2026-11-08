@@ -206,13 +206,21 @@ export function HeroTerminalDemo(props: HeroTerminalDemoProps) {
   const demo = API_DEMOS[activeIndex]
   const accent = ACCENT_CLASSES[demo.accent]
 
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = e.currentTarget
+    const rect = el.getBoundingClientRect()
+    el.style.setProperty('--spotlight-x', `${e.clientX - rect.left}px`)
+    el.style.setProperty('--spotlight-y', `${e.clientY - rect.top}px`)
+  }
+
   return (
     <div className={cn('mx-auto w-full max-w-2xl', props.className)}>
       <div
+        onPointerMove={handlePointerMove}
         className={cn(
-          'overflow-hidden rounded-2xl border backdrop-blur-sm',
+          'whale-spotlight-card overflow-hidden rounded-2xl border backdrop-blur-md',
           'border-border/60 bg-white/95 shadow-[0_20px_50px_-25px_rgba(15,23,42,0.18)]',
-          'dark:border-white/[0.06] dark:bg-[#0b0f17]/95 dark:shadow-[0_20px_60px_-25px_rgba(0,0,0,0.7)]'
+          'dark:border-white/[0.08] dark:bg-[#070c18]/90 dark:shadow-[0_20px_60px_-25px_rgba(0,0,0,0.8),0_0_24px_rgba(56,189,248,0.12)]'
         )}
       >
         {/* Tab strip */}

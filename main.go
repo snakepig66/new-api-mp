@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/marketplace" // MP-HOOK: marketplace module
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
@@ -31,6 +32,7 @@ import (
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
@@ -41,11 +43,21 @@ import (
 	_ "net/http/pprof"
 )
 
-//go:embed web/dist
+//go:embed all:web/dist
 var buildFS embed.FS
 
-//go:embed web/dist/index.html
+//go:embed all:web/dist/index.html
 var indexPage []byte
+
+// MP-HOOK: standalone marketplace frontend (site/). Build it with
+// `cd site && bun install && bun run build`; site/dist/index.html stays in
+// the tree so `go build` also works before the first frontend build.
+//
+//go:embed all:site/dist
+var siteBuildFS embed.FS
+
+//go:embed all:site/dist/index.html
+var siteIndexPage []byte
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "plugin" {
@@ -60,6 +72,12 @@ func main() {
 	err := InitResources()
 	if err != nil {
 		common.FatalLog(common.LogText("failed to initialize resources: %s", err.Error()))
+		return
+	}
+
+	// MP-HOOK: marketplace bootstrap (migrations, jobs); no-op unless MP_ENABLED=true
+	if err := marketplace.Init(model.DB); err != nil {
+		common.FatalLog(common.LogText("failed to initialize marketplace: %s", err.Error()))
 		return
 	}
 
@@ -203,8 +221,10 @@ func main() {
 
 	// 设置路由
 	router.SetRouter(server, router.WebAssets{
-		BuildFS:   buildFS,
-		IndexPage: indexPage,
+		BuildFS:       buildFS,
+		IndexPage:     indexPage,
+		SiteBuildFS:   siteBuildFS,
+		SiteIndexPage: siteIndexPage,
 	})
 	var port = os.Getenv("PORT")
 	if port == "" {
@@ -288,6 +308,43 @@ func InjectGoogleAnalytics() {
 	indexPage = bytes.ReplaceAll(indexPage, placeholder, analyticsInject)
 }
 
+// enforceMarketplaceBillingInvariants pins the two settings that would
+// otherwise turn top-ups or gifts into free money. Price is the legacy
+// multiplier new-api applies to a top-up (default 7.3), so a ¥10 order would
+// charge ¥73; the marketplace bills 1:1. Gift quotas are equally dangerous:
+// they are withdrawable once a recipient buys a listing, so marketplace mode
+// keeps them at zero.
+func enforceMarketplaceBillingInvariants() {
+	if operation_setting.Price != 1 {
+		common.SysError(common.LogText(
+			"ALERT: top-up Price is %v, not 1; marketplace requires 1:1 billing. Overriding to 1.",
+			operation_setting.Price))
+		if err := model.UpdateOption("Price", "1"); err != nil {
+			// Keep the runtime value correct even if the option row cannot be
+			// written; an admin can retry from the console.
+			operation_setting.Price = 1
+			common.SysError(common.LogText("ALERT: persist Price=1 failed: %s", err.Error()))
+		}
+	}
+	gifts := map[string]*int{
+		"QuotaForNewUser": &common.QuotaForNewUser,
+		"QuotaForInviter": &common.QuotaForInviter,
+		"QuotaForInvitee": &common.QuotaForInvitee,
+	}
+	for key, value := range gifts {
+		if *value == 0 {
+			continue
+		}
+		common.SysError(common.LogText(
+			"ALERT: %s is %d; marketplace mode keeps gift quotas at 0 to prevent cash-out. Overriding to 0.",
+			key, *value))
+		if err := model.UpdateOption(key, "0"); err != nil {
+			*value = 0
+			common.SysError(common.LogText("ALERT: persist %s=0 failed: %s", key, err.Error()))
+		}
+	}
+}
+
 func InitResources() error {
 	// Initialize resources here if needed
 	// This is a placeholder function for future resource initialization
@@ -334,6 +391,10 @@ func InitResources() error {
 		}
 	}
 	model.InitOptionMap()
+	enforceMarketplaceBillingInvariants()
+	if os.Getenv("SESSION_SECRET") == "" {
+		common.SysError(common.LogText("ALERT: SESSION_SECRET is not set; sessions will be invalidated on every restart. Set a persistent random value in the service environment."))
+	}
 
 	// 清理旧的磁盘缓存文件
 	common.CleanupOldCacheFiles()

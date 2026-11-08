@@ -745,3 +745,103 @@ For commercial licensing, please contact support@quantumnous.com
     display: none;
   }
 }
+
+/* ================================================================
+   Whale Isle Aesthetic & Interactive Effects (鲸屿风格轻度光感)
+   ================================================================ */
+.whale-spotlight-card {
+  position: relative;
+  overflow: hidden;
+  transition:
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.25s ease;
+}
+
+.whale-spotlight-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: radial-gradient(
+    380px circle at var(--spotlight-x, -999px) var(--spotlight-y, -999px),
+    rgba(125, 211, 252, 0.45),
+    transparent 65%
+  );
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 10;
+}
+
+.whale-spotlight-card:hover::before {
+  opacity: 1;
+}
+
+.whale-spotlight-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    480px circle at var(--spotlight-x, -999px) var(--spotlight-y, -999px),
+    rgba(125, 211, 252, 0.08),
+    transparent 70%
+  );
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 0;
+}
+
+.whale-spotlight-card:hover::after {
+  opacity: 1;
+}
+
+:root:not(.dark) .whale-spotlight-card::before {
+  background: radial-gradient(
+    380px circle at var(--spotlight-x, -999px) var(--spotlight-y, -999px),
+    rgba(56, 189, 248, 0.38),
+    transparent 65%
+  );
+}
+
+:root:not(.dark) .whale-spotlight-card::after {
+  background: radial-gradient(
+    480px circle at var(--spotlight-x, -999px) var(--spotlight-y, -999px),
+    rgba(56, 189, 248, 0.04),
+    transparent 70%
+  );
+}
+
+/* Deep sea breathing glow */
+.whale-ocean-backdrop {
+  background:
+    radial-gradient(ellipse 70% 50% at 50% -10%, rgba(14, 34, 77, 0.55), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 15% 40%, rgba(12, 45, 92, 0.35), transparent 70%),
+    radial-gradient(ellipse 60% 45% at 85% 60%, rgba(30, 27, 75, 0.35), transparent 70%);
+}
+
+.dark .whale-ocean-backdrop {
+  background:
+    radial-gradient(ellipse 75% 55% at 50% -10%, rgba(15, 38, 92, 0.7), transparent 72%),
+    radial-gradient(ellipse 55% 45% at 10% 45%, rgba(14, 52, 110, 0.45), transparent 70%),
+    radial-gradient(ellipse 65% 50% at 90% 65%, rgba(26, 20, 70, 0.45), transparent 70%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .whale-spotlight-card::before,
+  .whale-spotlight-card::after {
+    display: none !important;
+  }
+}
+

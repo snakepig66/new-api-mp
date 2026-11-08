@@ -155,6 +155,10 @@ func UpdateRedemption(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if cleanRedemption.Status == common.RedemptionCodeStatusUsed {
+		common.ApiErrorT(c, "Used redemption code cannot be modified or re-enabled")
+		return
+	}
 	if statusOnly == "" {
 		if redemption.Quota <= 0 {
 			common.ApiErrorT(c, "Redemption quota must be positive")

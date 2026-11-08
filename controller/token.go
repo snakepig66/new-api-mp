@@ -362,6 +362,12 @@ func AddToken(c *gin.Context) {
 		Group:              token.Group,
 		CrossGroupRetry:    token.CrossGroupRetry,
 		AutoGroups:         token.AutoGroups,
+		KeyType: func() string {
+			if strings.TrimSpace(token.KeyType) == "" {
+				return model.KeyTypeStandard
+			}
+			return strings.TrimSpace(token.KeyType)
+		}(),
 	}
 	cleanToken.AllowUserQuotaQuery = request.AllowUserQuotaQuery == nil || *request.AllowUserQuotaQuery
 	err = cleanToken.Insert()
@@ -445,19 +451,26 @@ func UpdateToken(c *gin.Context) {
 			return
 		}
 	}
+	quotaModified := false
 	if statusOnly != "" {
 		cleanToken.Status = token.Status
 	} else {
 		// If you add more fields, please also update token.Update()
 		cleanToken.Name = token.Name
 		cleanToken.ExpiredTime = token.ExpiredTime
-		cleanToken.RemainQuota = token.RemainQuota
-		cleanToken.UnlimitedQuota = token.UnlimitedQuota
+		quotaModified = token.RemainQuota != previous.RemainQuota || token.UnlimitedQuota != previous.UnlimitedQuota
+		if quotaModified {
+			cleanToken.RemainQuota = token.RemainQuota
+			cleanToken.UnlimitedQuota = token.UnlimitedQuota
+		}
 		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps
 		if request.AllowUserQuotaQuery != nil {
 			cleanToken.AllowUserQuotaQuery = *request.AllowUserQuotaQuery
+		}
+		if strings.TrimSpace(token.KeyType) != "" {
+			cleanToken.KeyType = strings.TrimSpace(token.KeyType)
 		}
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
@@ -470,7 +483,7 @@ func UpdateToken(c *gin.Context) {
 			}
 		}
 	}
-	err = cleanToken.Update()
+	err = cleanToken.Update(quotaModified)
 	if err != nil {
 		common.ApiError(c, err)
 		return

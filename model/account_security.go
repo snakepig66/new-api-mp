@@ -57,6 +57,31 @@ func ChangeUserPassword(identity AuthSessionIdentity, update *User, firstPasswor
 	})
 }
 
+// ChangeUserPasswordByEmail verifies the authenticated session and updates the password
+// after an email verification code has been confirmed.
+func ChangeUserPasswordByEmail(identity AuthSessionIdentity, newPassword string) error {
+	hash, err := common.HashAccountPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := ValidateAuthSessionWithTx(tx, identity); err != nil {
+			return err
+		}
+		var current User
+		if err := tx.First(&current, identity.UserID).Error; err != nil {
+			return err
+		}
+		if current.Password != "" && common.ValidatePasswordAndHash(newPassword, current.Password) {
+			return common.ErrAccountPasswordSame
+		}
+		if _, err := IncrementUserAuthVersionWithTx(tx, identity.UserID); err != nil {
+			return err
+		}
+		return tx.Model(&User{}).Where("id = ?", identity.UserID).Update("password", hash).Error
+	})
+}
+
 // AccountLoginMethods is a snapshot of administrator-enabled login mechanisms.
 // Enrollment is checked inside the transaction, not trusted from this snapshot.
 type AccountLoginMethods struct {

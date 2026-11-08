@@ -29,6 +29,7 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import { AnimateInView } from '@/components/animate-in-view'
+import { SpotlightCard } from '@/components/effects'
 
 interface FeaturesProps {
   className?: string
@@ -200,18 +201,20 @@ export function Features(_props: FeaturesProps) {
               key={f.id}
               delay={i * 100}
               animation='scale-in'
-              className={`bg-background group hover:bg-muted/20 p-7 transition-colors duration-300 md:p-8 ${f.span}`}
+              className={f.span}
             >
-              <div className='mb-3 flex items-center gap-3'>
-                <span className='border-border/40 bg-muted text-muted-foreground flex size-7 items-center justify-center rounded-md border text-[10px] font-semibold tabular-nums'>
-                  {f.num}
-                </span>
-                <h3 className='text-sm font-semibold'>{f.title}</h3>
-              </div>
-              <p className='text-muted-foreground text-sm leading-relaxed'>
-                {f.desc}
-              </p>
-              {f.visual}
+              <SpotlightCard className='bg-background/95 group hover:bg-muted/20 p-7 transition-colors duration-300 md:p-8 h-full'>
+                <div className='mb-3 flex items-center gap-3'>
+                  <span className='border-border/40 bg-muted text-muted-foreground flex size-7 items-center justify-center rounded-md border text-[10px] font-semibold tabular-nums'>
+                    {f.num}
+                  </span>
+                  <h3 className='text-sm font-semibold'>{f.title}</h3>
+                </div>
+                <p className='text-muted-foreground text-sm leading-relaxed'>
+                  {f.desc}
+                </p>
+                {f.visual}
+              </SpotlightCard>
             </AnimateInView>
           ))}
         </div>

@@ -1,0 +1,1374 @@
+package marketplace
+
+// selector.go — 选渠道 (§3.5 过滤与打分, §4.3 请求链路步骤 2): per-listing
+// concurrency slots, 429 circuit breaking, RPM sliding windows, daily spend
+// caps, 可接单时段, and the scored pick of one listing for one buyer
+// request.
+//
+// SlotManager, CircuitBreaker and RPMWindow are process-local: a multi-node
+// deployment must move this state to Redis (or equivalent shared storage) —
+// a second-version item (§8). Until then the limits they enforce are per
+// process, like the rest of new-api's in-process caches.
+
+import (
+	"cmp"
+	"errors"
+	"fmt"
+	"math/rand"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"gorm.io/gorm"
+
+	"github.com/QuantumNous/new-api/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+)
+
+// SlotTimeout is how long a held concurrency slot lives without an explicit
+// release (§3.5: 并发槽在请求结束或超时 10 分钟释放).
+const SlotTimeout = 10 * time.Minute
+
+// SlotManager enforces each listing's 并发上限 (§3.5: required, default 5).
+// A full listing is skipped, never queued (满并发跳过这家，不排队).
+type SlotManager struct {
+	mu sync.Mutex
+	// slots maps a listing id to the acquire times of its in-flight slots;
+	// the slice stays chronologically ordered because appends are
+	// chronological.
+	slots map[int64][]time.Time
+
+	// Process-lifetime counters (P5): acquiring and releasing slots, and
+	// renewing a slot that is no longer held (a renew failure). Atomic so
+	// Stats never contends on mu with a renewing stream.
+	acquireCount      atomic.Int64
+	renewCount        atomic.Int64
+	renewFailureCount atomic.Int64
+	releaseCount      atomic.Int64
+}
+
+// NewSlotManager builds an empty SlotManager.
+func NewSlotManager() *SlotManager {
+	return &SlotManager{slots: make(map[int64][]time.Time)}
+}
+
+// Acquire takes one slot for listingID and reports whether it succeeded.
+// Slots acquired at least SlotTimeout ago are swept first (§3.5 超时释放).
+// A limit <= 0 falls back to the §3.5 default of 5.
+func (m *SlotManager) Acquire(listingID int64, limit int, now time.Time) bool {
+	if limit <= 0 {
+		limit = defaultListingConcurrency
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sweepLocked(listingID, now)
+	if len(m.slots[listingID]) >= limit {
+		return false
+	}
+	m.slots[listingID] = append(m.slots[listingID], now)
+	m.acquireCount.Add(1)
+	return true
+}
+
+// SlotRenewInterval is how often a long-running (streaming) attempt extends
+// its concurrency slot's expiry, so a request that exceeds SlotTimeout does
+// not silently lose the slot while its upstream is still producing (§3.5).
+const SlotRenewInterval = 30 * time.Second
+
+// Renew extends one outstanding slot of listingID to now. The oldest slot is
+// renewed because Release also frees the oldest one and because a long stream
+// is the attempt most likely to be the oldest outstanding slot. Renewing a
+// listing with nothing held is a no-op. The refreshed timestamp moves to the
+// end of the chronological slice, keeping sweepLocked's ordering invariant.
+func (m *SlotManager) Renew(listingID int64, now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	times := m.slots[listingID]
+	if len(times) == 0 {
+		m.renewFailureCount.Add(1)
+		return
+	}
+	times = append(times[1:], now)
+	m.slots[listingID] = times
+	m.renewCount.Add(1)
+}
+
+// Release returns one slot — the oldest outstanding one. Releasing a listing
+// with nothing held is a no-op: the slot may already have timed out, and a
+// caller releasing after SlotTimeout must not go negative.
+func (m *SlotManager) Release(listingID int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	times := m.slots[listingID]
+	if len(times) == 0 {
+		return
+	}
+	times = times[1:]
+	m.releaseCount.Add(1)
+	if len(times) == 0 {
+		delete(m.slots, listingID)
+		return
+	}
+	m.slots[listingID] = times
+}
+
+// InFlight reports the number of slots currently held; it does not sweep
+// expired slots (only Acquire does).
+func (m *SlotManager) InFlight(listingID int64) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.slots[listingID])
+}
+
+// ForceRelease drops every slot held for listingID and returns how many were
+// released (P5-C operator escape hatch for a wedged listing). It bypasses the
+// normal one-slot-per-release rule, so the caller must treat it as a manual
+// intervention: any request still running on that listing will later find its
+// slot already gone, and capacity can be overbooked until it ends.
+func (m *SlotManager) ForceRelease(listingID int64) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	released := len(m.slots[listingID])
+	if released == 0 {
+		return 0
+	}
+	delete(m.slots, listingID)
+	m.releaseCount.Add(int64(released))
+	return released
+}
+
+// Stats returns a snapshot of the slot lifecycle counters (P5 名额占用和续租
+// 失败次数): acquire, renew, renew_failure and release are process-lifetime
+// totals, while in_flight is the number of slots held right now. It does not
+// sweep expired slots, like InFlight. Every key is always present.
+func (m *SlotManager) Stats() map[string]int64 {
+	m.mu.Lock()
+	inFlight := 0
+	for _, times := range m.slots {
+		inFlight += len(times)
+	}
+	m.mu.Unlock()
+	return map[string]int64{
+		"acquire":       m.acquireCount.Load(),
+		"renew":         m.renewCount.Load(),
+		"renew_failure": m.renewFailureCount.Load(),
+		"release":       m.releaseCount.Load(),
+		"in_flight":     int64(inFlight),
+	}
+}
+
+// sweepLocked drops slots acquired at least SlotTimeout before now. The
+// caller holds m.mu.
+func (m *SlotManager) sweepLocked(listingID int64, now time.Time) {
+	times := m.slots[listingID]
+	cutoff := now.Add(-SlotTimeout)
+	first := 0
+	for first < len(times) && !times[first].After(cutoff) {
+		first++
+	}
+	if first == 0 {
+		return
+	}
+	remaining := slices.Clone(times[first:])
+	if len(remaining) == 0 {
+		delete(m.slots, listingID)
+		return
+	}
+	m.slots[listingID] = remaining
+}
+
+// GroupSlots enforces a listing group's aggregate concurrency limit (P4
+// 渠道级并发上限). Unlike SlotManager, a limit <= 0 means unlimited: the
+// channel-level limit is opt-in, and a group without one never holds a slot.
+type GroupSlots struct {
+	mu    sync.Mutex
+	slots map[int64][]time.Time
+}
+
+// NewGroupSlots builds an empty GroupSlots.
+func NewGroupSlots() *GroupSlots {
+	return &GroupSlots{slots: make(map[int64][]time.Time)}
+}
+
+// Acquire takes one aggregate slot of groupID when the group has a limit. It
+// reports success; a group with no limit always succeeds without holding state.
+func (m *GroupSlots) Acquire(groupID int64, limit int, now time.Time) bool {
+	if limit <= 0 {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sweepLocked(groupID, now)
+	if len(m.slots[groupID]) >= limit {
+		return false
+	}
+	m.slots[groupID] = append(m.slots[groupID], now)
+	return true
+}
+
+// Release frees the oldest aggregate slot of groupID. Releasing with nothing
+// held is a no-op, so a caller never goes negative after a timeout sweep.
+func (m *GroupSlots) Release(groupID int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	times := m.slots[groupID]
+	if len(times) == 0 {
+		return
+	}
+	times = times[1:]
+	if len(times) == 0 {
+		delete(m.slots, groupID)
+		return
+	}
+	m.slots[groupID] = times
+}
+
+// Renew extends one outstanding slot of groupID to now. It is a no-op when no
+// slot is held (an unlimited group never holds one), so a streaming request
+// can renew unconditionally.
+func (m *GroupSlots) Renew(groupID int64, now time.Time) {
+	if groupID <= 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	times := m.slots[groupID]
+	if len(times) == 0 {
+		return
+	}
+	m.slots[groupID] = append(times[1:], now)
+}
+
+// InFlight reports the number of aggregate slots currently held by groupID.
+func (m *GroupSlots) InFlight(groupID int64) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.slots[groupID])
+}
+
+func (m *GroupSlots) sweepLocked(groupID int64, now time.Time) {
+	times := m.slots[groupID]
+	cutoff := now.Add(-SlotTimeout)
+	first := 0
+	for first < len(times) && !times[first].After(cutoff) {
+		first++
+	}
+	if first == 0 {
+		return
+	}
+	remaining := slices.Clone(times[first:])
+	if len(remaining) == 0 {
+		delete(m.slots, groupID)
+		return
+	}
+	m.slots[groupID] = remaining
+}
+
+// CircuitBreakDuration is how long one listing stays broken after a 429
+// (§3.5: 429 只熔断这条挂单 60 秒并换家; a 429 never counts as 额度耗尽).
+const CircuitBreakDuration = 60 * time.Second
+
+// circuitState is one listing's breaker state; absence from the map means
+// closed (healthy).
+type circuitState struct {
+	openedAt      time.Time
+	halfOpen      bool
+	probeInFlight bool
+}
+
+// CircuitBreaker implements the §3.5 per-listing 429 rule: a 429 breaks the
+// listing for CircuitBreakDuration; past that it admits exactly one
+// concurrent half-open probe (之后逐步放量) — the probe's success closes
+// the circuit, another 429 re-breaks it for a full duration.
+type CircuitBreaker struct {
+	mu     sync.Mutex
+	states map[int64]*circuitState
+}
+
+// NewCircuitBreaker builds an empty (all-closed) CircuitBreaker.
+func NewCircuitBreaker() *CircuitBreaker {
+	return &CircuitBreaker{states: make(map[int64]*circuitState)}
+}
+
+// Record429 breaks the listing for CircuitBreakDuration from now. Called on
+// an already open or half-open circuit it restarts the full break (半开中再
+// 429 → 重新熔断 60s).
+func (b *CircuitBreaker) Record429(listingID int64, now time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.states[listingID] = &circuitState{openedAt: now}
+}
+
+// RecordSuccess closes the circuit (半开成功后恢复). It is also how a
+// half-open probe slot is handed back when the probe request ended without
+// a 429.
+func (b *CircuitBreaker) RecordSuccess(listingID int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.states, listingID)
+}
+
+// Allow reports whether a request may go to the listing now: false while
+// broken; past the break it admits exactly one concurrent half-open probe
+// and holds that probe slot until Record429 or RecordSuccess resolves it.
+func (b *CircuitBreaker) Allow(listingID int64, now time.Time) bool {
+	allowed, _ := b.allow(listingID, now)
+	return allowed
+}
+
+// allow is Allow plus whether the call consumed the half-open probe slot.
+// Select needs the second return to hand the probe back (releaseProbe) for
+// candidates it does not pick.
+func (b *CircuitBreaker) allow(listingID int64, now time.Time) (allowed, tookProbe bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	st, ok := b.states[listingID]
+	if !ok {
+		return true, false
+	}
+	if !st.halfOpen {
+		if now.Sub(st.openedAt) < CircuitBreakDuration {
+			return false, false
+		}
+		st.halfOpen = true
+	}
+	if st.probeInFlight {
+		return false, false
+	}
+	st.probeInFlight = true
+	return true, true
+}
+
+// releaseProbe returns a half-open probe slot taken by allow without
+// resolving the circuit; the listing stays half-open so the next attempt
+// becomes the probe.
+func (b *CircuitBreaker) releaseProbe(listingID int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if st, ok := b.states[listingID]; ok && st.halfOpen {
+		st.probeInFlight = false
+	}
+}
+
+// ReleaseProbe is the exported hand-back used by the relay session when a
+// half-open probe attempt ends with a non-429 failure (5xx, timeout, 401, an
+// early-exit cleanup, ...). Without it probeInFlight would stay true forever
+// and the listing would never receive traffic again (CODE-REVIEW H2). The
+// circuit stays half-open, so the next request is admitted as the probe.
+func (b *CircuitBreaker) ReleaseProbe(listingID int64) {
+	b.releaseProbe(listingID)
+}
+
+// available reports whether listingID may be attempted now without mutating
+// the state machine or consuming the half-open probe slot. Select ranks with
+// it and only calls allow on the candidate it commits to.
+func (b *CircuitBreaker) available(listingID int64, now time.Time) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	st, ok := b.states[listingID]
+	if !ok {
+		return true
+	}
+	if !st.halfOpen {
+		return now.Sub(st.openedAt) >= CircuitBreakDuration
+	}
+	return !st.probeInFlight
+}
+
+// rpmWindow is the sliding window RPMWindow limits over (§3.5 RPM 上限).
+const rpmWindow = time.Minute
+
+// RPMWindow enforces each listing's RPM limit as a 60-second sliding window
+// of attempt timestamps; rpm <= 0 means unlimited.
+type RPMWindow struct {
+	mu   sync.Mutex
+	hits map[int64][]time.Time
+}
+
+// NewRPMWindow builds an empty RPMWindow.
+func NewRPMWindow() *RPMWindow {
+	return &RPMWindow{hits: make(map[int64][]time.Time)}
+}
+
+// Allow records one attempt and reports whether it fits the listing's rpm
+// budget: the (rpm+1)-th attempt inside the window is refused. Attempts at
+// least 60 seconds old fall out of the window.
+func (w *RPMWindow) Allow(listingID int64, rpm int, now time.Time) bool {
+	if rpm <= 0 {
+		return true
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	cutoff := now.Add(-rpmWindow)
+	times := w.hits[listingID]
+	first := 0
+	for first < len(times) && !times[first].After(cutoff) {
+		first++
+	}
+	times = times[first:]
+	if len(times) >= rpm {
+		w.hits[listingID] = times
+		return false
+	}
+	w.hits[listingID] = append(times, now)
+	return true
+}
+
+// GroupRPMWindow enforces a listing group's aggregate RPM limit (P4 渠道级
+// RPM 上限) as a 60-second sliding window. rpm <= 0 means unlimited.
+type GroupRPMWindow struct {
+	mu   sync.Mutex
+	hits map[int64][]time.Time
+}
+
+// NewGroupRPMWindow builds an empty GroupRPMWindow.
+func NewGroupRPMWindow() *GroupRPMWindow {
+	return &GroupRPMWindow{hits: make(map[int64][]time.Time)}
+}
+
+// Allow records one attempt against groupID and reports whether the group's
+// budget admits it. An unlimited group records nothing.
+func (w *GroupRPMWindow) Allow(groupID int64, rpm int, now time.Time) bool {
+	if rpm <= 0 {
+		return true
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	cutoff := now.Add(-rpmWindow)
+	times := w.hits[groupID]
+	first := 0
+	for first < len(times) && !times[first].After(cutoff) {
+		first++
+	}
+	times = times[first:]
+	if len(times) >= rpm {
+		w.hits[groupID] = times
+		return false
+	}
+	w.hits[groupID] = append(times, now)
+	return true
+}
+
+// GroupRotation holds one weighted-round-robin cursor per listing group. The
+// cursor is process-local, like the other selector state.
+type GroupRotation struct {
+	mu       sync.Mutex
+	counters map[int64]uint64
+}
+
+// NewGroupRotation builds an empty GroupRotation.
+func NewGroupRotation() *GroupRotation {
+	return &GroupRotation{counters: make(map[int64]uint64)}
+}
+
+// Next advances and returns the cursor of groupID.
+func (r *GroupRotation) Next(groupID int64) uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	next := r.counters[groupID]
+	r.counters[groupID] = next + 1
+	return next
+}
+
+// GroupDailySpendMicro returns how much buyers have been charged through the
+// listings of one group since 00:00 Asia/Shanghai of the day containing now
+// (§P4 渠道级日上限). It joins each ledger row's listing_id back to its group.
+func GroupDailySpendMicro(db *gorm.DB, groupID int64, now time.Time) (int64, error) {
+	loc, err := time.LoadLocation(shanghaiTZ)
+	if err != nil {
+		return 0, fmt.Errorf("marketplace: load %s: %w", shanghaiTZ, err)
+	}
+	lt := now.In(loc)
+	dayStart := time.Date(lt.Year(), lt.Month(), lt.Day(), 0, 0, 0, 0, loc)
+	return groupSpendMicro(db, groupID, dayStart, dayStart.AddDate(0, 0, 1))
+}
+
+// GroupCumulativeSpendMicro returns the group's all-time charged amount
+// (§P4 渠道级累计上限). A zero since/until bound is unbounded.
+func GroupCumulativeSpendMicro(db *gorm.DB, groupID int64) (int64, error) {
+	return groupSpendMicro(db, groupID, time.Time{}, time.Time{})
+}
+
+// groupSpendMicro sums the absolute buyer/tool debits of every ledger row whose
+// listing belongs to groupID, optionally bounded by [since, until).
+func groupSpendMicro(db *gorm.DB, groupID int64, since, until time.Time) (int64, error) {
+	if groupID <= 0 {
+		return 0, nil
+	}
+	q := db.Model(&LedgerEntry{}).
+		Joins("JOIN mp_listings ON mp_listings.id = mp_ledger.listing_id").
+		Where("mp_listings.group_id = ? AND mp_ledger.entry_type IN ?",
+			groupID, []string{EntryBuyerDebit, EntryToolDebit})
+	if !since.IsZero() {
+		q = q.Where("mp_ledger.created_at >= ?", since)
+	}
+	if !until.IsZero() {
+		q = q.Where("mp_ledger.created_at < ?", until)
+	}
+	var total int64
+	if err := q.Select("COALESCE(SUM(ABS(mp_ledger.amount_micro)), 0)").Scan(&total).Error; err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// ListingDailySpendMicro returns how much buyers have been charged through// one listing since 00:00 Asia/Shanghai of the day containing now: the
+// absolute buyer_debit + tool_debit of its mp_ledger rows (§3.5
+// daily_cap_micro). Select skips the listing once this reaches
+// Listing.DailyCapMicro; a 0 cap means unlimited.
+func ListingDailySpendMicro(db *gorm.DB, listingID int64, now time.Time) (int64, error) {
+	loc, err := time.LoadLocation(shanghaiTZ)
+	if err != nil {
+		return 0, fmt.Errorf("marketplace: load %s: %w", shanghaiTZ, err)
+	}
+	lt := now.In(loc)
+	dayStart := time.Date(lt.Year(), lt.Month(), lt.Day(), 0, 0, 0, 0, loc)
+	dayEnd := dayStart.AddDate(0, 0, 1)
+	var total int64
+	err = db.Model(&LedgerEntry{}).
+		Where("listing_id = ? AND entry_type IN ? AND created_at >= ? AND created_at < ?",
+			listingID, []string{EntryBuyerDebit, EntryToolDebit}, dayStart, dayEnd).
+		Select("COALESCE(SUM(ABS(amount_micro)), 0)").
+		Scan(&total).Error
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// WithinHours reports whether now falls inside a listing's 可接单时段
+// (§3.5): an empty hours string means all day; otherwise now (in
+// Asia/Shanghai) must lie in at least one [start, end) window. Anything
+// unparseable fails closed — a listing with a broken hours config takes no
+// traffic. Cross-midnight windows (start >= end) are rejected by
+// ValidateHours at write time and never match here either.
+func WithinHours(hours string, now time.Time) bool {
+	hours = strings.TrimSpace(hours)
+	if hours == "" {
+		return true
+	}
+	var windows []hourWindow
+	if err := common.UnmarshalJsonStr(hours, &windows); err != nil {
+		return false
+	}
+	loc, err := time.LoadLocation(shanghaiTZ)
+	if err != nil {
+		return false
+	}
+	lt := now.In(loc)
+	mins := lt.Hour()*60 + lt.Minute()
+	for _, w := range windows {
+		start, err1 := parseHourMinute(w.Start)
+		end, err2 := parseHourMinute(w.End)
+		if err1 != nil || err2 != nil || start >= end {
+			continue
+		}
+		if mins >= start && mins < end {
+			return true
+		}
+	}
+	return false
+}
+
+// dailySpendCacheTTL is how long one listing's daily spend sum is reused
+// (M7: 避免每请求全表 SUM). One second bounds staleness far below the
+// minutely RPM/cap granularity while collapsing bursts of requests.
+const dailySpendCacheTTL = time.Second
+
+// dailySpendEntry is one listing's cached daily spend. loading/done implement
+// a single-flight refresh so a burst of requests issues one SUM query.
+type dailySpendEntry struct {
+	at      time.Time
+	value   int64
+	err     error
+	loading bool
+	done    chan struct{}
+}
+
+// dailySpendCache caches ListingDailySpendMicro per listing for a short TTL.
+type dailySpendCache struct {
+	mu      sync.Mutex
+	entries map[int64]*dailySpendEntry
+}
+
+func newDailySpendCache() *dailySpendCache {
+	return &dailySpendCache{entries: make(map[int64]*dailySpendEntry)}
+}
+
+// get returns listingID's spend at now, loading it through load at most once
+// per TTL (and once concurrently — later callers wait for the in-flight load).
+func (c *dailySpendCache) get(listingID int64, now time.Time, load func() (int64, error)) (int64, error) {
+	c.mu.Lock()
+	e := c.entries[listingID]
+	if e != nil && !e.loading && now.Sub(e.at) < dailySpendCacheTTL {
+		v, err := e.value, e.err
+		c.mu.Unlock()
+		return v, err
+	}
+	if e != nil && e.loading {
+		done := e.done
+		c.mu.Unlock()
+		<-done
+		c.mu.Lock()
+		cur := c.entries[listingID]
+		c.mu.Unlock()
+		if cur != nil {
+			return cur.value, cur.err
+		}
+		return 0, nil
+	}
+	if e == nil {
+		e = &dailySpendEntry{}
+		c.entries[listingID] = e
+	}
+	e.loading = true
+	e.done = make(chan struct{})
+	done := e.done
+	c.mu.Unlock()
+
+	v, err := load()
+
+	c.mu.Lock()
+	e.value, e.err, e.at, e.loading = v, err, now, false
+	close(done)
+	c.mu.Unlock()
+	return v, err
+}
+
+// ErrNoListingAvailable is Select's outcome when every candidate has been
+// filtered out; the relay layer maps it to §3.10's 503 暂无可用供应商.
+var ErrNoListingAvailable = errors.New("marketplace: no listing available")
+
+// Selector holds the routing state used to pick one listing per buyer
+// request (§4.3 step 2).
+type Selector struct {
+	Slots   *SlotManager
+	Breaker *CircuitBreaker
+	RPM     *RPMWindow
+	// P4 group-level state: aggregate concurrency, rate and rotation per
+	// mp_listing_groups row.
+	GroupSlots *GroupSlots
+	GroupRPM   *GroupRPMWindow
+	Rotation   *GroupRotation
+	// CanaryFraction is the share of traffic admitted to canary listings
+	// (§3.5: canary 灰度默认 10% 流量); 0 admits none, 1 admits all.
+	CanaryFraction float64
+	// Rand is the canary dice, injected so tests stay deterministic.
+	// rand.Rand is not goroutine-safe, so canaryAdmit serializes it.
+	Rand *rand.Rand
+
+	randMu sync.Mutex
+	// spend caches each listing's daily spend for dailySpendCacheTTL (M7).
+	spendMu sync.Mutex
+	spend   *dailySpendCache
+	// P4 group spend caches, keyed by group id, sharing the same short TTL so a
+	// burst of requests issues one aggregate SUM each.
+	groupDailyMu sync.Mutex
+	groupDaily   *dailySpendCache
+	groupTotalMu sync.Mutex
+	groupTotal   *dailySpendCache
+}
+
+// NewSelector builds a Selector with the §3.5 default canary fraction.
+func NewSelector() *Selector {
+	return &Selector{
+		Slots:          NewSlotManager(),
+		Breaker:        NewCircuitBreaker(),
+		RPM:            NewRPMWindow(),
+		GroupSlots:     NewGroupSlots(),
+		GroupRPM:       NewGroupRPMWindow(),
+		Rotation:       NewGroupRotation(),
+		CanaryFraction: 0.1,
+		Rand:           rand.New(rand.NewSource(time.Now().UnixNano())),
+		spend:          newDailySpendCache(),
+		groupDaily:     newDailySpendCache(),
+		groupTotal:     newDailySpendCache(),
+	}
+}
+
+// dailySpend returns the listing's daily spend, served from the short-TTL
+// process cache (single-flight) instead of one SUM per candidate per request.
+func (s *Selector) dailySpend(db *gorm.DB, listingID int64, now time.Time) (int64, error) {
+	s.spendMu.Lock()
+	if s.spend == nil {
+		s.spend = newDailySpendCache()
+	}
+	cache := s.spend
+	s.spendMu.Unlock()
+	return cache.get(listingID, now, func() (int64, error) {
+		return ListingDailySpendMicro(db, listingID, now)
+	})
+}
+
+// groupDailySpend returns the group's daily spend from the short-TTL cache.
+func (s *Selector) groupDailySpend(db *gorm.DB, groupID int64, now time.Time) (int64, error) {
+	s.groupDailyMu.Lock()
+	if s.groupDaily == nil {
+		s.groupDaily = newDailySpendCache()
+	}
+	cache := s.groupDaily
+	s.groupDailyMu.Unlock()
+	return cache.get(groupID, now, func() (int64, error) {
+		return GroupDailySpendMicro(db, groupID, now)
+	})
+}
+
+// groupCumulativeSpend returns the group's all-time spend from the short-TTL
+// cache. The cache key is the group id; the TTL only delays cap enforcement by
+// up to one second, far below the request-level granularity.
+func (s *Selector) groupCumulativeSpend(db *gorm.DB, groupID int64, now time.Time) (int64, error) {
+	s.groupTotalMu.Lock()
+	if s.groupTotal == nil {
+		s.groupTotal = newDailySpendCache()
+	}
+	cache := s.groupTotal
+	s.groupTotalMu.Unlock()
+	return cache.get(groupID, now, func() (int64, error) {
+		return GroupCumulativeSpendMicro(db, groupID)
+	})
+}
+
+// SelectInput is one buyer request's routing context (§4.3 step 2).
+type SelectInput struct {
+	Model string
+	Now   time.Time // zero → time.Now()
+	// BuyerID excludes the buyer's own listings. Without it a user could buy
+	// their own supply with gifted or redemption-code balance and convert it
+	// into withdrawable seller income.
+	BuyerID int64
+	// ExcludeListingIDs carries the listings this request's retry chain has
+	// already tried (§3.7 换家).
+	ExcludeListingIDs []int64
+	// MaxMultiplierMilli is the buyer key's price cap expressed as a
+	// multiplier (§3.6: 兜底换家同样受价格上限约束); 0 means no cap.
+	MaxMultiplierMilli int64
+	// OfficialOnly restricts selection to official channels
+	// (MODEL-CHANNEL-POOL §3.2: the buyer's "只用官方渠道" switch).
+	OfficialOnly bool
+	// EndpointKind is the upstream protocol the buyer's request maps to
+	// (openai_chat / openai_responses / anthropic_messages). Only channels
+	// configured to serve it are candidates. Empty means no restriction, which
+	// keeps callers that route outside the three v1 protocols unchanged.
+	EndpointKind relayconstant.EndpointKind
+	// PreferredListingID is the affinity binding's listing (P4-A). It is only a
+	// ranking preference: the listing must still pass every filter, and when its
+	// concurrency slots are full the selector falls through to the other
+	// candidates. 0 means no preference.
+	PreferredListingID int64
+}
+
+// loadVerifiedChannels returns the active channels that have a verified,
+// active sellable qualification for the model and can relay endpointKind. A
+// missing, paused or protocol-incompatible entry means the channel cannot
+// serve this request right now.
+func loadVerifiedChannels(db *gorm.DB, model string, endpointKind relayconstant.EndpointKind) map[string]ChannelPool {
+	out := make(map[string]ChannelPool)
+	var cms []ChannelModel
+	if err := db.Select("channel_slug").
+		Where("model = ? AND verified = ? AND status = ?", model, true, PoolStatusActive).
+		Find(&cms).Error; err != nil {
+		return out
+	}
+	slugs := make([]string, 0, len(cms))
+	for i := range cms {
+		if !slices.Contains(slugs, cms[i].ChannelSlug) {
+			slugs = append(slugs, cms[i].ChannelSlug)
+		}
+	}
+	if len(slugs) == 0 {
+		return out
+	}
+	var channels []ChannelPool
+	if err := db.Where("slug IN ? AND status = ?", slugs, PoolStatusActive).
+		Find(&channels).Error; err != nil {
+		return out
+	}
+	for _, ch := range channels {
+		if !ParseChannelEndpointBases(ch.Protocols).ServesEndpoint(endpointKind) {
+			continue
+		}
+		out[ch.Slug] = ch
+	}
+	return out
+}
+
+// selectorListingColumns deliberately omits key_ciphertext: Select runs over
+// every live listing on every request, and the encrypted seller key is only
+// needed for the winning listing (hydrateListingKey). M7: 挂单全表加载不取密文.
+const selectorListingColumns = "id, seller_id, channel_id, vendor, models, multiplier_milli, " +
+	"concurrency_limit, status, hours, daily_cap_micro, rpm_limit, key_fingerprint, version, group_id, weight"
+
+// loadListingGroups returns the groups of the given ids. A missing row means
+// the listing has no aggregate limits (the selector treats it as ungrouped).
+func loadListingGroups(db *gorm.DB, ids []int64) map[int64]ListingGroup {
+	out := make(map[int64]ListingGroup, len(ids))
+	if len(ids) == 0 {
+		return out
+	}
+	var rows []ListingGroup
+	if err := db.Where("id IN ?", ids).Find(&rows).Error; err != nil {
+		return out
+	}
+	for _, g := range rows {
+		out[g.ID] = g
+	}
+	return out
+}
+
+// weightedRotationOrder maps the group cursor to a preference order over the
+// group's listings: equal-weight groups rotate evenly, and a larger Weight
+// takes proportionally more turns.
+func weightedRotationOrder(members []Listing, cursor uint64) []int {
+	weights := make([]int, len(members))
+	divisor := 0
+	for i := range members {
+		weight := members[i].Weight
+		if weight <= 0 {
+			weight = 100
+		}
+		weights[i] = weight
+		divisor = gcdInt(divisor, weight)
+	}
+	if divisor <= 0 {
+		divisor = 1
+	}
+	total := 0
+	for i := range weights {
+		// Dividing by the GCD keeps the sequence stable for the default equal
+		// weights (one turn each) instead of a hundred identical turns.
+		weights[i] /= divisor
+		total += weights[i]
+	}
+	if total <= 0 || len(members) == 0 {
+		return nil
+	}
+	pos := int(cursor % uint64(total))
+	start := 0
+	acc := 0
+	for i, weight := range weights {
+		if pos < acc+weight {
+			start = i
+			break
+		}
+		acc += weight
+	}
+	order := make([]int, 0, len(members))
+	for i := range len(members) {
+		order = append(order, (start+i)%len(members))
+	}
+	return order
+}
+
+// gcdInt is the Euclidean greatest common divisor of two non-negative ints.
+func gcdInt(a, b int) int {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
+
+// loadVerifiedCoefficients returns channel slug -> price coefficient (milli)
+// for the model's verified, active qualifications. A missing/zero coefficient
+// defaults to 1000 (official price). Coefficients above 1000 are kept as-is so
+// Select can reject them (the marketplace must never charge above official).
+func loadVerifiedCoefficients(db *gorm.DB, model string) map[string]int64 {
+	out := make(map[string]int64)
+	if db == nil {
+		return out
+	}
+	var rows []ChannelModel
+	if err := db.Select("channel_slug", "coefficient_milli").
+		Where("model = ? AND verified = ? AND status = ?", model, true, PoolStatusActive).
+		Find(&rows).Error; err != nil {
+		return out
+	}
+	for _, row := range rows {
+		coefficient := row.CoefficientMilli
+		if coefficient <= 0 {
+			coefficient = 1000
+		}
+		out[row.ChannelSlug] = coefficient
+	}
+	return out
+}
+
+// effectiveMultiplierMilli is the price the buyer actually pays relative to
+// the official price: ceil(multiplierMilli * coefficientMilli / 1000). The
+// clamp-free multiplication is safe here because both inputs are bounded by
+// listing/multiplier validation (1..1000) and the Select coefficient guard.
+func effectiveMultiplierMilli(multiplierMilli, coefficientMilli int64) int64 {
+	if coefficientMilli <= 0 {
+		coefficientMilli = 1000
+	}
+	return (multiplierMilli*coefficientMilli + 999) / 1000
+}
+
+// Select filters the live (+ gray-admitted canary) listings for in.Model and
+// returns the best-scored one, holding its concurrency slot — the caller
+// MUST release it via s.Slots.Release when the request ends (§3.5).
+//
+// Filters, in order: not excluded, serves the model, canary admitted by the
+// CanaryFraction dice, channel coefficient valid and effective multiplier
+// (ceil(multiplier × coefficient / 1000)) within MaxMultiplierMilli when set,
+// inside its 可接单时段, under its daily spend cap, and circuit not broken.
+// Scoring (§4.3 综合价格、可用率、延迟): effective multiplier ascending first;
+// ties break on the most recent verify/patrol mp_probes latency ascending,
+// with never-probed listings last; candidates still tied are drawn at random
+// (listing id is only the deterministic fallback when the draw repeats).
+//
+// Only channels whose configured endpoint bases serve in.EndpointKind are
+// candidates; an empty EndpointKind leaves the protocol unrestricted.
+//
+// Side-effecting limits (RPM, half-open probe, concurrency slot) are applied
+// only to candidates in ranked order, and only the eventual winner keeps
+// them: a candidate whose RPM budget is exhausted is skipped in favour of the
+// next best instead of consuming budget it never uses (M7). Use
+// SelectWithProbe when the caller must know it holds a half-open probe.
+func (s *Selector) Select(db *gorm.DB, in SelectInput) (Listing, error) {
+	listing, _, err := s.SelectWithProbe(db, in)
+	return listing, err
+}
+
+// SelectWithProbe is Select plus tookProbe: true when the returned listing's
+// half-open circuit probe slot was consumed for this request. The caller MUST
+// eventually resolve it via CircuitBreaker.RecordSuccess/Record429/
+// ReleaseProbe (see RelaySession).
+func (s *Selector) SelectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, error) {
+	listing, tookProbe, err := s.selectWithProbe(db, in)
+	if errors.Is(err, ErrNoListingAvailable) && in.EndpointKind == relayconstant.EndpointAnthropicMessages {
+		// No listing speaks Anthropic natively: fall back to an OpenAI-chat
+		// listing. The relay converts the Claude request to chat completions and
+		// the response back, as native new-api channels do for the plaza, so
+		// Claude-protocol clients are not refused when only OpenAI supply exists.
+		fallback := in
+		fallback.EndpointKind = relayconstant.EndpointOpenAIChat
+		return s.selectWithProbe(db, fallback)
+	}
+	return listing, tookProbe, err
+}
+
+func (s *Selector) selectWithProbe(db *gorm.DB, in SelectInput) (Listing, bool, error) {
+	now := in.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	var rows []Listing
+	if err := db.Where("status IN ?", []string{ListingLive, ListingCanary}).
+		Select(selectorListingColumns).Find(&rows).Error; err != nil {
+		return Listing{}, false, err
+	}
+	// Only certified, sellable channel-model pairs are selectable, and the
+	// plan channels paused by a quota window never receive traffic
+	// (MODEL-CHANNEL-POOL §3.2/§4). Loaded once per selection.
+	verifiedChannels := loadVerifiedChannels(db, in.Model, in.EndpointKind)
+	coefficients := loadVerifiedCoefficients(db, in.Model)
+	// P4 逐模型倍率: a model-specific multiplier overrides the listing-level one
+	// for both the price cap and the ranking, matching what Quote charges. A
+	// disabled row removes the listing from this model entirely; falling back to
+	// the base multiplier would keep a model the seller turned off sellable.
+	rowIDs := make([]int64, len(rows))
+	for i := range rows {
+		rowIDs[i] = rows[i].ID
+	}
+	overrides := loadListingModelOverrides(db, rowIDs, now)
+	// effectiveByID is the buyer-facing price factor (multiplier × channel
+	// coefficient) used for the cap and for ranking. A coefficient above 1000
+	// would let a listing charge more than official, so it is rejected outright.
+	effectiveByID := make(map[int64]int64, len(rows))
+	multiplierByID := make(map[int64]int64, len(rows))
+	var cands []Listing
+	var heldCanaries []Listing
+	for i := range rows {
+		l := rows[i]
+		if slices.Contains(in.ExcludeListingIDs, l.ID) {
+			continue
+		}
+		if in.BuyerID > 0 && l.SellerID == in.BuyerID {
+			continue
+		}
+		if !slices.Contains(l.Models, in.Model) {
+			continue
+		}
+		if !overrides.modelEnabled(l.ID, in.Model) {
+			continue
+		}
+		ch, ok := verifiedChannels[l.Vendor]
+		if !ok {
+			continue
+		}
+		if in.OfficialOnly && ch.Kind != ChannelKindOfficial {
+			continue
+		}
+		// A canary listing not admitted by the dice is held back, not dropped:
+		// when no live listing can serve the model it is still used, so a model
+		// whose only suppliers are new (canary) listings does not 503 on ~90%
+		// of requests and can collect the samples it needs to be promoted.
+		heldCanary := l.Status == ListingCanary && !s.canaryAdmit()
+		coefficient, foundCoefficient := coefficients[l.Vendor]
+		if !foundCoefficient || coefficient <= 0 {
+			// Missing coefficients mean official price.
+			coefficient = 1000
+		}
+		if coefficient > 1000 {
+			// Defence in depth: no mark-up above the official price.
+			continue
+		}
+		multiplier := overrides.multiplierFor(l.ID, in.Model, l.MultiplierMilli)
+		effective := effectiveMultiplierMilli(multiplier, coefficient)
+		if in.MaxMultiplierMilli > 0 && effective > in.MaxMultiplierMilli {
+			continue
+		}
+		if !WithinHours(l.Hours, now) {
+			continue
+		}
+		if l.DailyCapMicro > 0 {
+			spent, err := s.dailySpend(db, l.ID, now)
+			if err != nil {
+				return Listing{}, false, err
+			}
+			if spent >= l.DailyCapMicro {
+				continue
+			}
+		}
+		// Non-mutating breaker check; the probe slot is only consumed for a
+		// candidate that reaches the commit loop below.
+		if !s.Breaker.available(l.ID, now) {
+			continue
+		}
+		effectiveByID[l.ID] = effective
+		multiplierByID[l.ID] = multiplier
+		if heldCanary {
+			heldCanaries = append(heldCanaries, l)
+			continue
+		}
+		cands = append(cands, l)
+	}
+	if len(cands) == 0 && s.CanaryFraction > 0 {
+		// Fraction 0 stays a hard kill switch for canary traffic.
+		cands = heldCanaries
+	}
+	if len(cands) == 0 {
+		return Listing{}, false, ErrNoListingAvailable
+	}
+
+	// P4 渠道级聚合: one group is one logical channel. A group whose daily or
+	// cumulative cap is exhausted is dropped as a whole, so no key of that
+	// group can serve.
+	groupIDs := make([]int64, 0, len(cands))
+	for i := range cands {
+		if id := cands[i].GroupID; id > 0 && !slices.Contains(groupIDs, id) {
+			groupIDs = append(groupIDs, id)
+		}
+	}
+	groups := loadListingGroups(db, groupIDs)
+	if len(groups) > 0 {
+		groupAllowed := make(map[int64]bool, len(groups))
+		for id, g := range groups {
+			allowed := true
+			if g.ChannelDailyCapMicro > 0 {
+				spent, err := s.groupDailySpend(db, id, now)
+				if err != nil {
+					return Listing{}, false, err
+				}
+				if spent >= g.ChannelDailyCapMicro {
+					allowed = false
+				}
+			}
+			if allowed && g.ChannelCumulativeCapMicro > 0 {
+				spent, err := s.groupCumulativeSpend(db, id, now)
+				if err != nil {
+					return Listing{}, false, err
+				}
+				if spent >= g.ChannelCumulativeCapMicro {
+					allowed = false
+				}
+			}
+			groupAllowed[id] = allowed
+		}
+		kept := cands[:0]
+		for _, l := range cands {
+			if _, grouped := groups[l.GroupID]; grouped && !groupAllowed[l.GroupID] {
+				continue
+			}
+			kept = append(kept, l)
+		}
+		cands = kept
+		if len(cands) == 0 {
+			return Listing{}, false, ErrNoListingAvailable
+		}
+	}
+
+	// 组内选择: weighted_round_robin rotates the group's keys (Weight decides
+	// the share), primary_backup always tries the lowest listing id first. The
+	// rank is a tie-breaker after price, so the cheapest supply still wins.
+	groupRank := s.groupPreferenceRanks(groups, cands)
+
+	ids := make([]int64, len(cands))
+	for i := range cands {
+		ids[i] = cands[i].ID
+	}
+	latency, err := latestProbeLatencies(db, ids)
+	if err != nil {
+		return Listing{}, false, err
+	}
+	// Candidates that tie on effective price, raw multiplier and probe latency
+	// are drawn at random instead of always preferring the lowest id, so
+	// traffic spreads across equally good supply. The draw uses the injected
+	// source, so tests stay reproducible. Probe latency is already a hard
+	// ordering key above, so an equal-latency tie has equal weights.
+	var draws map[int64]float64
+	if len(cands) > 1 {
+		draws = make(map[int64]float64, len(cands))
+		for i := range cands {
+			draws[cands[i].ID] = s.randomFloat()
+		}
+	}
+	slices.SortFunc(cands, func(a, b Listing) int {
+		// An affinity-preferred candidate ranks first so the commit loop tries it
+		// before any other. All filters (price cap, official-only, hours,
+		// endpoint, self-purchase, breaker) have already run, so this only
+		// reorders candidates that are already eligible.
+		if in.PreferredListingID > 0 {
+			if a.ID == in.PreferredListingID {
+				return -1
+			}
+			if b.ID == in.PreferredListingID {
+				return 1
+			}
+		}
+		if ea, eb := effectiveByID[a.ID], effectiveByID[b.ID]; ea != eb {
+			return cmp.Compare(ea, eb)
+		}
+		if ra, rb := groupRank[a.ID], groupRank[b.ID]; ra != rb {
+			return cmp.Compare(ra, rb)
+		}
+		if ma, mb := multiplierByID[a.ID], multiplierByID[b.ID]; ma != mb {
+			return cmp.Compare(ma, mb)
+		}
+		la, oka := latency[a.ID]
+		lb, okb := latency[b.ID]
+		if oka != okb {
+			if oka {
+				return -1
+			}
+			return 1
+		}
+		if la != lb {
+			return cmp.Compare(la, lb)
+		}
+		if da, db := draws[a.ID], draws[b.ID]; da != db {
+			return cmp.Compare(da, db)
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	// Commit side effects in ranked order: the winner keeps the listing slot,
+	// the group's aggregate slot/RPM budget and (when half-open) the probe;
+	// every loser is handed back before the next candidate is considered.
+	for i := range cands {
+		l := cands[i]
+		if !s.Slots.Acquire(l.ID, l.ConcurrencyLimit, now) {
+			continue
+		}
+		if !s.RPM.Allow(l.ID, l.RPMLimit, now) {
+			s.Slots.Release(l.ID)
+			continue
+		}
+		group, hasGroup := groups[l.GroupID]
+		if hasGroup {
+			if !s.GroupSlots.Acquire(l.GroupID, group.ChannelConcurrencyLimit, now) {
+				s.Slots.Release(l.ID)
+				continue
+			}
+			if !s.GroupRPM.Allow(l.GroupID, group.ChannelRPMLimit, now) {
+				s.GroupSlots.Release(l.GroupID)
+				s.Slots.Release(l.ID)
+				continue
+			}
+		}
+		allowed, tookProbe := s.Breaker.allow(l.ID, now)
+		if !allowed {
+			if hasGroup {
+				s.GroupSlots.Release(l.GroupID)
+			}
+			s.Slots.Release(l.ID)
+			continue
+		}
+		return l, tookProbe, nil
+	}
+	return Listing{}, false, ErrNoListingAvailable
+}
+
+// groupPreferenceRanks computes the in-group preference rank of every member
+// listing: 0 is the key the strategy wants to try first, then the fallbacks.
+// Ungrouped listings and groups without a loaded row have no rank (0).
+func (s *Selector) groupPreferenceRanks(groups map[int64]ListingGroup, cands []Listing) map[int64]int {
+	ranks := make(map[int64]int, len(cands))
+	if len(groups) == 0 {
+		return ranks
+	}
+	byGroup := make(map[int64][]Listing)
+	for _, l := range cands {
+		if _, ok := groups[l.GroupID]; !ok {
+			continue
+		}
+		byGroup[l.GroupID] = append(byGroup[l.GroupID], l)
+	}
+	for groupID, members := range byGroup {
+		slices.SortFunc(members, func(a, b Listing) int { return cmp.Compare(a.ID, b.ID) })
+		var order []int
+		if normalizeKeyStrategy(groups[groupID].KeyStrategy) == KeyStrategyPrimaryBackup {
+			for i := range members {
+				order = append(order, i)
+			}
+		} else {
+			order = weightedRotationOrder(members, s.Rotation.Next(groupID))
+		}
+		for rank, index := range order {
+			ranks[members[index].ID] = rank
+		}
+	}
+	return ranks
+}
+
+// AcquireGroupLimits applies a group's aggregate limits to a listing chosen
+// outside SelectWithProbe (bound-response resume and the in-place retry). It
+// checks the daily/cumulative caps first, then takes one aggregate concurrency
+// slot and one RPM attempt. A dangling group row or a group with no limits
+// admits the request without holding state, mirroring SelectWithProbe.
+func (s *Selector) AcquireGroupLimits(db *gorm.DB, groupID int64, now time.Time) (bool, error) {
+	if groupID <= 0 {
+		return true, nil
+	}
+	var group ListingGroup
+	if err := db.Select("id", "channel_concurrency_limit", "channel_rpm_limit",
+		"channel_daily_cap_micro", "channel_cumulative_cap_micro").
+		Where("id = ?", groupID).Take(&group).Error; err != nil {
+		return true, nil
+	}
+	if group.ChannelDailyCapMicro > 0 {
+		spent, err := s.groupDailySpend(db, groupID, now)
+		if err != nil {
+			return false, err
+		}
+		if spent >= group.ChannelDailyCapMicro {
+			return false, nil
+		}
+	}
+	if group.ChannelCumulativeCapMicro > 0 {
+		spent, err := s.groupCumulativeSpend(db, groupID, now)
+		if err != nil {
+			return false, err
+		}
+		if spent >= group.ChannelCumulativeCapMicro {
+			return false, nil
+		}
+	}
+	if !s.GroupSlots.Acquire(groupID, group.ChannelConcurrencyLimit, now) {
+		return false, nil
+	}
+	if !s.GroupRPM.Allow(groupID, group.ChannelRPMLimit, now) {
+		s.GroupSlots.Release(groupID)
+		return false, nil
+	}
+	return true, nil
+}
+
+// canaryAdmit rolls the gray-release dice for one canary candidate.
+func (s *Selector) canaryAdmit() bool {
+	f := s.CanaryFraction
+	if f <= 0 {
+		return false
+	}
+	if f >= 1 {
+		return true
+	}
+	return s.randomFloat() < f
+}
+
+// randomFloat draws one value from the selector's injected random source,
+// serialized because rand.Rand is not goroutine-safe. A nil source falls back
+// to the global generator.
+func (s *Selector) randomFloat() float64 {
+	s.randMu.Lock()
+	defer s.randMu.Unlock()
+	if s.Rand == nil {
+		return rand.Float64()
+	}
+	return s.Rand.Float64()
+}
+
+// latestProbeLatencies returns the LatencyMs of each listing's most recent
+// verify/patrol mp_probes row (§4.2); listings without any probe are absent
+// from the map and rank last in scoring.
+func latestProbeLatencies(db *gorm.DB, listingIDs []int64) (map[int64]int64, error) {
+	out := make(map[int64]int64, len(listingIDs))
+	if len(listingIDs) == 0 {
+		return out, nil
+	}
+	latest := db.Model(&Probe{}).
+		Select("MAX(id)").
+		Where("listing_id IN ? AND type IN ?", listingIDs, []string{ProbeTypeVerify, ProbeTypePatrol}).
+		Group("listing_id")
+	var rows []struct {
+		ListingID int64
+		LatencyMs int64
+	}
+	if err := db.Model(&Probe{}).
+		Select("listing_id, latency_ms").
+		Where("id IN (?)", latest).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		out[r.ListingID] = r.LatencyMs
+	}
+	return out, nil
+}
+
+// Probe types written outside verification (§4.2 验真/巡检/举报):
+// ProbeTypeVerify lives in verify.go.
+const (
+	// ProbeTypePatrol marks rows from the background 巡检 job and from
+	// AutoPauseListing.
+	ProbeTypePatrol = "patrol"
+	// ProbeTypeReport marks rows from buyer 举报 (arrives with phase 6).
+	ProbeTypeReport = "report"
+)
+
+// AutoPauseListing applies the §3.5 rule for an upstream reporting
+// insufficient balance or a rejected key: the listing goes live → paused at
+// once, an mp_probes row records the semantic reason, and one SysLog line
+// flags it. reason must carry semantics only (e.g. "upstream reported
+// insufficient balance"), never any key material (§2.3).
+//
+// TODO(phase 6): notify the seller through the console notification channel
+// (§3.5 立即自动暂停并通知分享者) once the phase-6 notification work lands.
+func AutoPauseListing(db *gorm.DB, listingID int64, reason string) error {
+	if err := PauseListing(db, listingID); err != nil {
+		return err
+	}
+	detail, err := common.Marshal(map[string]any{
+		"auto_paused": true,
+		"reason":      reason,
+	})
+	if err != nil {
+		detail = []byte("{}")
+	}
+	probe := Probe{
+		ListingID: listingID,
+		Type:      ProbeTypePatrol,
+		OK:        false,
+		Detail:    string(detail),
+	}
+	if err := db.Create(&probe).Error; err != nil {
+		return fmt.Errorf("marketplace: record auto-pause probe: %w", err)
+	}
+	notifySeller(db, listingID, NotificationKindListingDegraded,
+		"渠道已自动暂停",
+		"系统巡检未通过，渠道已暂停接单。检查上游 Key 后可在「我的渠道」恢复。",
+		"/console/listings")
+	common.SysLog(fmt.Sprintf("marketplace: listing %d auto-paused: %s", listingID, reason))
+	return nil
+}

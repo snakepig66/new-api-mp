@@ -158,6 +158,14 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 			ActionBind: false,
 		},
 		ResourceAudit: {ActionRead: false},
+		ResourceTrustPool: {
+			ActionRead:    false,
+			ActionList:    false,
+			ActionCreate:  false,
+			ActionUpdate:  false,
+			ActionDelete:  false,
+			ActionApprove: false,
+		},
 	}, ExplicitUserPermissions(42))
 	assert.Equal(t, PermissionsMap{
 		ResourceChannel: {
@@ -190,6 +198,14 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 			ActionBind: false,
 		},
 		ResourceAudit: {ActionRead: false},
+		ResourceTrustPool: {
+			ActionRead:    false,
+			ActionList:    false,
+			ActionCreate:  false,
+			ActionUpdate:  false,
+			ActionDelete:  false,
+			ActionApprove: false,
+		},
 	}, ExplicitUserPermissions(42))
 	assert.Empty(t, ExplicitUserOverrides(42))
 }
@@ -319,4 +335,49 @@ func TestTaskPluginBindIsRootOnlyUntilGranted(t *testing.T) {
 	_, err = enforcer.RemovePolicy(RoleSubject(BuiltInRoleAdmin), ResourceTaskPlugin, ActionBind, EffectAllow)
 	require.NoError(t, err)
 	assert.False(t, Can(2, common.RoleAdminUser, TaskPluginBind))
+}
+
+// TestTrustPoolIsDelegableWithoutAdminBaseline pins the P5-C contract: the
+// trust pool is a first-class resource whose actions are absent from the admin
+// baseline, root is allowed implicitly as superuser, and a per-user grant can
+// hand one operator exactly the actions they need.
+func TestTrustPoolIsDelegableWithoutAdminBaseline(t *testing.T) {
+	db := newAuthzTestDB(t)
+	require.NoError(t, Init(db))
+
+	permissions := []Permission{
+		TrustPoolRead,
+		TrustPoolList,
+		TrustPoolCreate,
+		TrustPoolUpdate,
+		TrustPoolDelete,
+		TrustPoolApprove,
+	}
+	for _, permission := range permissions {
+		assert.True(t, Can(1, common.RoleRootUser, permission), "root is a superuser: %s", permission.Action)
+		assert.False(t, Can(2, common.RoleAdminUser, permission), "admin has no trust_pool baseline: %s", permission.Action)
+		assert.False(t, Can(3, common.RoleCommonUser, permission), "common users have no role baseline: %s", permission.Action)
+	}
+	for _, permission := range PermissionsForRole(BuiltInRoleAdmin) {
+		assert.NotEqual(t, ResourceTrustPool, permission.Resource, "admin receives no trust_pool grant by default")
+	}
+
+	require.NoError(t, SetUserPermissions(2, PermissionsMap{ResourceTrustPool: {
+		ActionList:    true,
+		ActionApprove: true,
+	},
+	}))
+	assert.True(t, Can(2, common.RoleAdminUser, TrustPoolList))
+	assert.True(t, Can(2, common.RoleAdminUser, TrustPoolApprove))
+	assert.False(t, Can(2, common.RoleAdminUser, TrustPoolCreate))
+	assert.False(t, Can(2, common.RoleAdminUser, TrustPoolUpdate))
+	assert.False(t, Can(2, common.RoleAdminUser, TrustPoolDelete))
+	assert.False(t, Can(2, common.RoleAdminUser, TrustPoolRead))
+
+	capabilities := Capabilities(2, common.RoleAdminUser)
+	assert.True(t, capabilities[ResourceTrustPool][ActionList])
+	assert.False(t, capabilities[ResourceTrustPool][ActionCreate])
+
+	require.NoError(t, ClearUserAuthorization(2))
+	assert.False(t, Can(2, common.RoleAdminUser, TrustPoolList))
 }

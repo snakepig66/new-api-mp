@@ -1,0 +1,240 @@
+package marketplace
+
+// keyprefs.go — 买家 Key 偏好与模型管理 (§3.6): per-token strategy, price
+// cap, prefer/block/only seller lists, the buyer-managed model list with
+// per-model price caps, and the buyer-side RPM limit enforced on the relay
+// path (BeginDistribute).
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"gorm.io/gorm"
+)
+
+// Key preference / model management errors (§3.6). Messages never carry key
+// material (§2.3).
+var (
+	ErrKeyPrefNotFound   = errors.New("marketplace: key preference not found")
+	ErrKeyModelScope     = errors.New("marketplace: model_scope must be all or selected")
+	ErrModelAlreadyAdded = errors.New("marketplace: model already added to this key")
+	ErrModelNotAdded     = errors.New("marketplace: model not added to this key")
+)
+
+// KeyPrefInput is one write of a buyer key's marketplace routing preferences
+// (§3.6).
+const (
+	ModelScopeAll      = "all"
+	ModelScopeSelected = "selected"
+)
+
+type KeyPrefInput struct {
+	Strategy        string  // cheapest / balanced / stable; empty = balanced
+	ModelScope      string  // all / selected; empty keeps the current scope
+	PriceCapMilli   int64   // 0 = 不限
+	PreferSellerIDs []int64 // 优选名单
+	BlockSellerIDs  []int64 // 拉黑名单
+	OnlySellerID    int64   // >0 = 只用某一家
+	AllowFallback   bool    // 只用某一家不可用时是否允许回落 (§3.6)
+	RPM             int     // 买家 RPM 限制, 0 = 不限
+	// OfficialOnly restricts this key to official channels
+	// (MODEL-CHANNEL-POOL §3.2).
+	OfficialOnly bool
+}
+
+// validate checks the fields that need no database; the strategy default
+// (balanced) is applied by UpsertKeyPref before validate runs.
+func (in KeyPrefInput) validate() error {
+	switch in.Strategy {
+	case StrategyCheapest, StrategyBalanced, StrategyStable:
+	default:
+		return fmt.Errorf("marketplace: invalid strategy %q", in.Strategy)
+	}
+	if in.ModelScope != "" && in.ModelScope != ModelScopeAll && in.ModelScope != ModelScopeSelected {
+		return ErrKeyModelScope
+	}
+	if in.PriceCapMilli < 0 {
+		return errors.New("marketplace: price cap must be >= 0")
+	}
+	if in.RPM < 0 {
+		return errors.New("marketplace: rpm must be >= 0")
+	}
+	// §3.6: 「只用某一家」与优选/拉黑互斥 — an only-seller key has no list
+	// left to prefer or block.
+	if in.OnlySellerID > 0 && (len(in.PreferSellerIDs) > 0 || len(in.BlockSellerIDs) > 0) {
+		return errors.New("marketplace: only-seller conflicts with prefer/block lists")
+	}
+	return nil
+}
+
+// UpsertKeyPref creates or replaces the preference row of one buyer token.
+// The token_id unique index on mp_key_prefs makes the row 1:1 with the token.
+func UpsertKeyPref(db *gorm.DB, tokenID int64, in KeyPrefInput) error {
+	if tokenID <= 0 {
+		return errors.New("marketplace: token id must be positive")
+	}
+	if in.Strategy == "" {
+		in.Strategy = StrategyBalanced
+	}
+	if err := in.validate(); err != nil {
+		return err
+	}
+	var pref KeyPref
+	err := db.Where("token_id = ?", tokenID).Take(&pref).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		pref = KeyPref{TokenID: tokenID}
+	case err != nil:
+		return err
+	}
+	if in.ModelScope == "" {
+		if pref.ModelScope == "" {
+			pref.ModelScope = ModelScopeSelected
+		}
+	} else {
+		pref.ModelScope = in.ModelScope
+	}
+	pref.Strategy = in.Strategy
+	pref.PriceCapMilli = in.PriceCapMilli
+	pref.PreferSellerIDs = in.PreferSellerIDs
+	pref.BlockSellerIDs = in.BlockSellerIDs
+	pref.OnlySellerID = in.OnlySellerID
+	pref.AllowFallback = in.AllowFallback
+	pref.RPM = in.RPM
+	pref.OfficialOnly = in.OfficialOnly
+	return db.Save(&pref).Error
+}
+
+// KeyPrefAllowsModel reports whether the key may call modelName under its
+// model scope. A key with no preference row keeps the legacy selected-only
+// behavior; an "all" key is limited only by the marketplace catalog when the
+// relay checks for a live listing.
+func KeyPrefAllowsModel(db *gorm.DB, tokenID int64, modelName string) (bool, error) {
+	pref, err := GetKeyPref(db, tokenID)
+	if err != nil && !errors.Is(err, ErrKeyPrefNotFound) {
+		return false, err
+	}
+	if err == nil && pref.ModelScope == ModelScopeAll {
+		return true, nil
+	}
+	standard := modelName
+	if std, ok := ModelPoolResolveAlias(db, modelName); ok {
+		standard = std
+	}
+	var cnt int64
+	if err := db.Model(&KeyModel{}).Where("token_id = ? AND (model = ? OR model = ?)", tokenID, modelName, standard).
+		Count(&cnt).Error; err != nil {
+		return false, err
+	}
+	return cnt > 0, nil
+}
+
+// GetKeyPref returns the preference row of one buyer token, or
+// ErrKeyPrefNotFound when the buyer never saved one.
+func GetKeyPref(db *gorm.DB, tokenID int64) (KeyPref, error) {
+	var pref KeyPref
+	err := db.Where("token_id = ?", tokenID).Take(&pref).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return KeyPref{}, ErrKeyPrefNotFound
+	}
+	return pref, err
+}
+
+// AddKeyModel adds one model to a buyer key with an optional per-model price
+// cap (§3.6: 模型由买家自己加到 Key 上，可设该模型的价格上限; cap 0 inherits
+// the key-level cap at request time). The model must have at least one
+// live/canary listing — adding a model nobody sells would only fail later on
+// the relay path with less context.
+func AddKeyModel(db *gorm.DB, tokenID int64, model string, priceCapMilli int64) error {
+	if tokenID <= 0 {
+		return errors.New("marketplace: token id must be positive")
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return errors.New("marketplace: model must not be empty")
+	}
+	if priceCapMilli < 0 {
+		return errors.New("marketplace: price cap must be >= 0")
+	}
+	var existing int64
+	if err := db.Model(&KeyModel{}).Where("token_id = ? AND model = ?", tokenID, model).Count(&existing).Error; err != nil {
+		return err
+	}
+	if existing > 0 {
+		return ErrModelAlreadyAdded
+	}
+	has, err := hasLiveListingForModel(db, model)
+	if err != nil {
+		return err
+	}
+	if !has {
+		return ErrNoListingAvailable
+	}
+	return db.Create(&KeyModel{TokenID: tokenID, Model: model, PriceCapMilli: priceCapMilli}).Error
+}
+
+// RemoveKeyModel drops one model from a buyer key; a model the key never
+// added yields ErrModelNotAdded.
+func RemoveKeyModel(db *gorm.DB, tokenID int64, model string) error {
+	res := db.Where("token_id = ? AND model = ?", tokenID, model).Delete(&KeyModel{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrModelNotAdded
+	}
+	return nil
+}
+
+// ListKeyModels returns every model the buyer added to the key, oldest
+// addition first.
+func ListKeyModels(db *gorm.DB, tokenID int64) ([]KeyModel, error) {
+	var rows []KeyModel
+	if err := db.Where("token_id = ?", tokenID).Order("id asc").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// buyerRPMWindow is the process-local state of the §3.6 buyer RPM limit,
+// keyed by buyer user id (M13). Every API key of one buyer shares the same
+// budget, so creating more keys cannot bypass the limit. Like the
+// listing-side Selector state (slots, breaker, listing RPM) it lives in this
+// process only: a multi-node deployment must move it to Redis or equivalent
+// shared storage (second-version item, §8).
+var buyerRPMWindow = NewRPMWindow()
+
+// BuyerRPMAllow records one buyer request against the buyer's RPM budget and
+// reports whether it fits (§3.6: 每个买家有自己的 RPM 限制).
+//
+// The window is keyed by userID — not by token id — so all tokens of the same
+// buyer share one limit (M13: 按买家计, not 按 token 计). rpmLimit <= 0 means
+// unlimited; the caller resolves the effective limit from the key preference
+// and falls back to DefaultBuyerRPM(), because this function only enforces the
+// number it is given. A non-positive userID is admitted without spending
+// budget (it is not a buyer request).
+func BuyerRPMAllow(userID int64, rpmLimit int, now time.Time) bool {
+	if userID <= 0 {
+		return true
+	}
+	return buyerRPMWindow.Allow(userID, rpmLimit, now)
+}
+
+// DefaultBuyerRPM returns the platform-wide default buyer RPM from
+// MP_DEFAULT_BUYER_RPM (§3.6). A missing, malformed or non-positive value
+// falls back to 0, which means unlimited.
+func DefaultBuyerRPM() int {
+	raw := strings.TrimSpace(os.Getenv("MP_DEFAULT_BUYER_RPM"))
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}

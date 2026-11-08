@@ -51,6 +51,7 @@ func GetStatus(c *gin.Context) {
 		"version":                     common.Version,
 		"start_time":                  common.StartTime,
 		"email_verification":          common.EmailVerificationEnabled,
+		"smtp_configured":             common.SMTPServer != "" && common.SMTPAccount != "",
 		"github_oauth":                common.GitHubOAuthEnabled,
 		"github_client_id":            common.GitHubClientId,
 		"discord_oauth":               system_setting.GetDiscordSettings().Enabled,
@@ -290,8 +291,9 @@ func SendPasswordResetEmail(c *gin.Context) {
 }
 
 type PasswordResetRequest struct {
-	Email string `json:"email"`
-	Token string `json:"token"`
+	Email    string `json:"email"`
+	Token    string `json:"token"`
+	Password string `json:"password,omitempty"`
 }
 
 func ResetPassword(c *gin.Context) {
@@ -310,7 +312,13 @@ func ResetPassword(c *gin.Context) {
 		common.ApiErrorT(c, "Password reset link is invalid or has expired")
 		return
 	}
-	password := common.GenerateVerificationCode(12)
+	password := req.Password
+	if password == "" {
+		password = common.GenerateVerificationCode(12)
+	} else if len(password) < 8 {
+		common.ApiErrorT(c, "New password must be at least 8 characters long")
+		return
+	}
 	err = model.ResetUserPasswordByEmail(req.Email, password)
 	if err != nil {
 		if errors.Is(err, model.ErrEmailNotFound) || errors.Is(err, model.ErrEmailAmbiguous) {

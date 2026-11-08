@@ -227,8 +227,11 @@ func GenerateRandomKey(length int) (string, error) {
 }
 
 func GenerateKey() (string, error) {
-	//rand.Seed(time.Now().UnixNano())
-	return GenerateRandomCharsKey(48)
+	key, err := GenerateRandomCharsKey(48)
+	if err != nil {
+		return "", err
+	}
+	return "sk_" + key, nil
 }
 
 func GetRandomInt(max int) int {

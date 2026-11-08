@@ -11,6 +11,11 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	KeyTypeStandard = "standard"
+	KeyTypeShared   = "shared"
+)
+
 type Token struct {
 	Id                 int            `json:"id"`
 	UserId             int            `json:"user_id" gorm:"index"`
@@ -32,6 +37,8 @@ type Token struct {
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 	// 允许用此令牌查询所属用户的额度；新建令牌默认开启，已有令牌升级后保持关闭
 	AllowUserQuotaQuery bool `json:"allow_user_quota_query"`
+	// KeyType 区分普通密钥 (standard) 与共享密钥 (shared)
+	KeyType string `json:"key_type" gorm:"type:varchar(32);default:'standard'"`
 }
 
 func (token *Token) GetAutoGroups() ([]string, error) {
@@ -71,6 +78,9 @@ func MaskTokenKey(key string) string {
 	}
 	if len(key) <= 8 {
 		return key[:2] + "****" + key[len(key)-2:]
+	}
+	if (strings.HasPrefix(key, "sk_") || strings.HasPrefix(key, "sk-")) && len(key) > 11 {
+		return key[:7] + "**********" + key[len(key)-4:]
 	}
 	return key[:4] + "**********" + key[len(key)-4:]
 }
@@ -279,7 +289,7 @@ func GetTokenById(id int) (*Token, error) {
 	return &token, err
 }
 
-func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
+func getTokenByKeyExact(key string, fromDB bool) (token *Token, err error) {
 	if !fromDB && common.RedisEnabled {
 		// Try Redis first
 		token, err := cacheGetTokenByKey(key)
@@ -302,6 +312,43 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 	return token, nil
 }
 
+func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
+	if key == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	token, err = getTokenByKeyExact(key, fromDB)
+	if err == nil {
+		return token, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	// Fallback lookup: tolerate key prefix mismatches across sk_, sk-, or raw key
+	candidates := make([]string, 0, 2)
+	if strings.HasPrefix(key, "sk_") {
+		trimmed := strings.TrimPrefix(key, "sk_")
+		candidates = append(candidates, trimmed, "sk-"+trimmed)
+	} else if strings.HasPrefix(key, "sk-") {
+		trimmed := strings.TrimPrefix(key, "sk-")
+		candidates = append(candidates, "sk_"+trimmed, trimmed)
+	} else {
+		candidates = append(candidates, "sk_"+key, "sk-"+key)
+	}
+
+	for _, cand := range candidates {
+		if cand == "" || cand == key {
+			continue
+		}
+		fallbackToken, fallbackErr := getTokenByKeyExact(cand, fromDB)
+		if fallbackErr == nil {
+			return fallbackToken, nil
+		}
+	}
+
+	return nil, err
+}
+
 func (token *Token) Insert() error {
 	var err error
 	err = DB.Create(token).Error
@@ -309,14 +356,24 @@ func (token *Token) Insert() error {
 }
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
-func (token *Token) Update() (err error) {
+func (token *Token) Update(updateQuota ...bool) (err error) {
+	shouldUpdateQuota := true
+	if len(updateQuota) > 0 {
+		shouldUpdateQuota = updateQuota[0]
+	}
 	// 写库前失效缓存并设置 fence，防止并发读者把过期快照重新写回缓存。
 	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
 		common.SysLog(common.LogText("failed to invalidate token cache before update: %s", cacheErr.Error()))
 	}
-	return DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
+	selectFields := []string{
+		"name", "status", "expired_time",
 		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups",
-		"allow_user_quota_query").Updates(token).Error
+		"allow_user_quota_query", "key_type",
+	}
+	if shouldUpdateQuota {
+		selectFields = append(selectFields, "remain_quota", "unlimited_quota")
+	}
+	return DB.Model(token).Select(selectFields).Updates(token).Error
 }
 
 func (token *Token) SelectUpdate() (err error) {

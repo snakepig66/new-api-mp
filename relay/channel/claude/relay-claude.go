@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/marketplace"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -19,6 +20,8 @@ import (
 	"github.com/QuantumNous/new-api/setting/model_setting"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 func stopReasonClaude2OpenAI(reason string) string {
@@ -107,6 +110,11 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	}
 	if claudeResponse.Type == "message_stop" {
 		info.StreamStatus.MarkCompleted()
+		// The real Anthropic SSE protocol ends with message_stop and has no
+		// [DONE] terminator. Record the normal end here so the scanner's bare
+		// EOF after it is not classified as a truncated stream. Message_stop is
+		// the last event, so no later output is suppressed.
+		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
 	}
 	if info.RelayFormat == types.RelayFormatClaude {
 		FormatClaudeResponseInfo(&claudeResponse, nil, claudeInfo)
@@ -121,6 +129,21 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			// 解决 AWS Bedrock 等上游返回的 message_delta 缺少这些字段的问题
 			if !shouldSkipClaudeMessageDeltaUsagePatch(info) {
 				data = patchClaudeMessageDeltaUsageData(data, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo))
+			}
+		}
+		if !marketplace.HasModelRewrite(c) && info != nil && info.OriginModelName != "" {
+			if claudeResponse.Message != nil {
+				claudeResponse.Message.Model = info.OriginModelName
+			}
+			if gjson.Get(data, "message.model").Exists() {
+				if patched, err := sjson.Set(data, "message.model", info.OriginModelName); err == nil {
+					data = patched
+				}
+			}
+			if gjson.Get(data, "model").Exists() {
+				if patched, err := sjson.Set(data, "model", info.OriginModelName); err == nil {
+					data = patched
+				}
 			}
 		}
 		countClaudeStreamBillableTools(info, &claudeResponse)
@@ -365,6 +388,9 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
 	}
 	info.ObserveResponseModel(claudeResponse.Model)
+	if !marketplace.HasModelRewrite(c) && info != nil && info.OriginModelName != "" {
+		claudeResponse.Model = info.OriginModelName
+	}
 	maybeMarkClaudeRefusal(c, info, claudeResponse.StopReason)
 	if claudeInfo.Usage == nil {
 		claudeInfo.Usage = &dto.Usage{}
@@ -409,6 +435,11 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 	case types.RelayFormatClaude:
+		if !marketplace.HasModelRewrite(c) && info != nil && info.OriginModelName != "" && gjson.GetBytes(data, "model").Exists() {
+			if patched, err := sjson.SetBytes(data, "model", info.OriginModelName); err == nil {
+				data = patched
+			}
+		}
 		responseData = data
 	case types.RelayFormatGemini:
 		{
