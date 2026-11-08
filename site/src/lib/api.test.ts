@@ -142,11 +142,12 @@ describe('api envelopes', () => {
 
 describe('relay paths', () => {
   it('does not prefix /pg or /v1 requests with /api', async () => {
-    const fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify({ choices: [] }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }),
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ choices: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
     )
     vi.stubGlobal('fetch', fetchMock)
 
