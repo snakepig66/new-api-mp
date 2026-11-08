@@ -144,6 +144,11 @@ func decodeKeyAPIBody(t *testing.T, w *httptest.ResponseRecorder) map[string]any
 	t.Helper()
 	var v map[string]any
 	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &v))
+	// The create endpoint answers the standard { success, data } envelope
+	// (P3: API-envelope consistency); unwrap it for the assertions.
+	if data, ok := v["data"].(map[string]any); ok {
+		return data
+	}
 	return v
 }
 

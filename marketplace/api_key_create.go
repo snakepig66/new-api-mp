@@ -15,7 +15,6 @@ package marketplace
 import (
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -254,7 +253,9 @@ func postCreateKey(c *gin.Context) {
 		writeKeyAPIInternal(c, msg)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
+	// P3: API-envelope consistency — every marketplace endpoint answers
+	// { success, message, data } (the raw object predated the envelope).
+	common.ApiSuccess(c, gin.H{
 		"id":              token.Id,
 		"name":            token.Name,
 		"key":             key,
