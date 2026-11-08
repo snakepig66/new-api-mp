@@ -152,11 +152,11 @@ function renderChannels() {
 describe('ported channel management', () => {
   // The ported legacy bundle takes ~30s to render in jsdom even unloaded
   // (P2: under full-suite parallel load it exceeded the 30s wait and flaked).
-  it('renders the legacy channel list', { timeout: 180000 }, async () => {
+  it('renders the legacy channel list', { timeout: 300000 }, async () => {
     renderChannels()
 
     expect(
-      await screen.findByText('OpenAI 主渠道', undefined, { timeout: 120000 })
+      await screen.findByText('OpenAI 主渠道', undefined, { timeout: 240000 })
     ).toBeTruthy()
     expect(screen.getByText('Claude 备用')).toBeTruthy()
     expect(calls.some((u) => u.includes('/api/channel?'))).toBe(true)
