@@ -123,7 +123,7 @@ func newSQLiteTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(8)
+	sqlDB.SetMaxOpenConns(1) // in-memory shared cache: serialize writes
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	return db
 }

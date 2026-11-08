@@ -118,7 +118,11 @@ func newMPHarness(t *testing.T, buyerQuota int) *mpHarness {
 	sqlDSN, isSQLite := marketplace.NewIntegrationDSN(t)
 	t.Setenv("SQL_DSN", sqlDSN)
 	if isSQLite {
-		common.SQLitePath = filepath.Join(t.TempDir(), "mp_relay_it.db")
+		// Same pragmas production uses (busy_timeout/WAL/immediate txlock):
+		// with a multi-connection pool, concurrent write txs must wait on
+		// the file lock instead of failing with SQLITE_BUSY.
+		common.SQLitePath = filepath.Join(t.TempDir(), "mp_relay_it.db") +
+			"?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_txlock=immediate"
 	}
 	require.NoError(t, model.InitDB())
 	db := model.DB
