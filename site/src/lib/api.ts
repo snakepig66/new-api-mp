@@ -111,6 +111,8 @@ function handleUnauthorized(path: string, skipNavigation: boolean): void {
 
 function resolveApiPath(path: string): string {
   if (path === API_PREFIX || path.startsWith(`${API_PREFIX}/`)) return path
+  // Relay endpoints are served outside /api (see router/relay-router.go).
+  if (path.startsWith('/pg/') || path.startsWith('/v1/')) return path
   return `${API_PREFIX}${path.startsWith('/') ? '' : '/'}${path}`
 }
 
