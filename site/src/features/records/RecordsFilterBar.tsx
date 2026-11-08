@@ -64,6 +64,8 @@ export interface RecordsFilterBarProps {
   subjectAllLabel?: string
   /** 分组 select options; empty hides the 分组 control. */
   groupOptions?: SelectOption[]
+  /** 已加载记录中出现过的模型名，作为输入框的候选提示。 */
+  modelOptions?: string[]
   /** Refresh button busy state while the queries are refetching. */
   refreshing?: boolean
   onRefresh?: () => void
@@ -82,6 +84,7 @@ export function RecordsFilterBar({
   subjectLabel = filtersCopy.subjectToken,
   subjectAllLabel = filtersCopy.subjectTokenAll,
   groupOptions,
+  modelOptions,
   refreshing = false,
   onRefresh,
   showSummary = true,
@@ -190,9 +193,17 @@ export function RecordsFilterBar({
           <Input
             className="w-[200px]"
             placeholder={filtersCopy.modelPlaceholder}
+            list="records-model-options"
             value={value.model ?? ''}
             onChange={(event) => patch({ model: event.target.value || undefined })}
           />
+          {modelOptions && modelOptions.length > 0 ? (
+            <datalist id="records-model-options">
+              {modelOptions.map((model) => (
+                <option key={model} value={model} />
+              ))}
+            </datalist>
+          ) : null}
         </label>
 
         {groupOptions && groupOptions.length > 0 ? (

@@ -38,6 +38,13 @@ export const copy = {
   dash: '—',
 } as const
 
+/** Token column text: the live name, or a stable reference after deletion. */
+function tokenLabel(record: UsageRecord): string {
+  if (record.token_name) return record.token_name
+  if (record.token_id && record.token_id > 0) return `Key #${record.token_id}（已删除）`
+  return copy.deletedToken
+}
+
 export interface BuyerRecordsTableProps {
   records: UsageRecord[]
   /** Open one record's detail by request_id. */
@@ -88,7 +95,12 @@ export function BuyerRecordsTable({ records, onOpen }: BuyerRecordsTableProps) {
                 {record.token_name}
               </span>
             ) : (
-              <span className="text-caption text-ink-3 whitespace-nowrap">{copy.deletedToken}</span>
+              <span
+                className="font-mono text-meta text-ink-2 truncate max-w-[140px] block whitespace-nowrap"
+                title={tokenLabel(record)}
+              >
+                {tokenLabel(record)}
+              </span>
             )
 
             const subtext = record.token_group || record.tier_label || ''
@@ -227,7 +239,9 @@ function BuyerRecordCard({
               {record.token_name}
             </span>
           ) : (
-            <span className="text-caption text-ink-3 whitespace-nowrap">{copy.deletedToken}</span>
+            <span className="text-caption text-ink-3 whitespace-nowrap" title={tokenLabel(record)}>
+              {tokenLabel(record)}
+            </span>
           )}
         </div>
       </div>

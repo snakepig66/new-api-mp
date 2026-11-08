@@ -3,13 +3,12 @@ import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 
 import { copy } from '@/copy'
-import { writeClipboard } from '@/lib/clipboard'
 import { formatDateTime } from '@/lib/time'
 import {
   Button,
+  CopyButton,
   Empty,
   PageHeader,
-  useToast,
 } from '@/ui'
 
 import { consoleKeysQuery } from '@/features/console/api'
@@ -115,20 +114,7 @@ export function KeysPage() {
 }
 
 function ApiAddressCard() {
-  const toast = useToast()
-  const [copied, setCopied] = useState(false)
   const baseUrl = `${currentBaseUrl()}/v1`
-
-  async function handleCopy() {
-    const ok = await writeClipboard(baseUrl)
-    if (ok) {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-      toast.show({ title: '已复制 API 地址', tone: 'success' })
-    } else {
-      toast.show({ title: '复制失败', tone: 'error' })
-    }
-  }
 
   return (
     <div className="mt-6 rounded-xl border border-line bg-surface p-4 sm:p-5 shadow-xs">
@@ -153,14 +139,12 @@ function ApiAddressCard() {
         <code className="rounded-md border border-line bg-bg px-2.5 py-1 font-mono text-meta text-ink tabular-nums selection:bg-brand/20">
           {baseUrl}
         </code>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={handleCopy}
+        <CopyButton
+          text={baseUrl}
+          label="复制"
+          toast="已复制 API 地址"
           className="h-7 px-2.5 text-caption"
-        >
-          {copied ? '已复制' : '复制'}
-        </Button>
+        />
       </div>
       <p className="mt-2 text-caption text-ink-3">
         每把密钥可以单独设额度、到期时间和可用模型。

@@ -139,3 +139,24 @@ describe('api envelopes', () => {
     })
   })
 })
+
+describe('relay paths', () => {
+  it('does not prefix /pg or /v1 requests with /api', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ choices: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.post('/pg/chat/completions', { model: 'gpt-4o' })
+    expect(fetchMock.mock.calls[0][0]).toBe('/pg/chat/completions')
+
+    await api.get('/v1/models')
+    expect(fetchMock.mock.calls[1][0]).toBe('/v1/models')
+
+    await api.get('/marketplace/square/models')
+    expect(fetchMock.mock.calls[2][0]).toBe('/api/marketplace/square/models')
+  })
+})

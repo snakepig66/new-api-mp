@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, createFileRoute } from '@tanstack/react-router'
+import { useState } from 'react'
 
 import { copy } from '@/copy'
 import {
@@ -9,6 +10,7 @@ import {
   type SquareTierPrices,
 } from '@/features/market/api'
 import { AddToKeyMenu } from '@/features/market/AddToKeyMenu'
+import { TrialDrawer } from '@/features/market/TrialDrawer'
 import { capabilitiesOf } from '@/features/market/capabilities'
 import { CodeBlock } from '@/features/market/code-block'
 import { CopyButton } from '@/features/market/copy-button'
@@ -19,6 +21,7 @@ import { vendorsQuery } from '@/features/seller/api'
 import { ApiError } from '@/lib/api'
 import { formatYuan } from '@/lib/money'
 import {
+  Button,
   Empty,
   ModelName,
   Price,
@@ -134,6 +137,7 @@ export function ModelDetailPage() {
   const { id } = Route.useParams()
   const page = copy.pages.modelDetail
   const detail = useQuery(squareModelQuery(id))
+  const [trialOpen, setTrialOpen] = useState(false)
   const vendors = useQuery(vendorsQuery())
   const vendorMeta = toVendorLookup(vendors.data ?? [])
   const baseUrl = currentBaseUrl()
@@ -390,6 +394,19 @@ export function ModelDetailPage() {
               size="lg"
               className="mt-5 w-full"
             />
+
+            {data.official_available ? (
+              <Button
+                variant="secondary"
+                size="lg"
+                className="mt-3 w-full"
+                onClick={() => setTrialOpen(true)}
+              >
+                {page.trial.action}
+              </Button>
+            ) : null}
+
+            <TrialDrawer model={data.model} open={trialOpen} onOpenChange={setTrialOpen} />
           </div>
         </aside>
       </div>

@@ -108,6 +108,8 @@ export interface UsageRecord {
   token_group: string
   /** 令牌名; empty when the token has been deleted. */
   token_name: string
+  /** 买家自己的令牌 id；仅用于删除后的显示兜底（Key #id）。 */
+  token_id?: number
   input_tokens: number
   output_tokens: number
   cache_read_tokens: number

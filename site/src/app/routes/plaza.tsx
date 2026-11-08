@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 
 import { copy } from '@/copy'
@@ -13,6 +13,7 @@ import {
   SlaBar,
 } from '@/features/market/ModelCardParts'
 import { modelLogo } from '@/features/market/model-logo'
+import { QueryError } from '@/features/market/query-error'
 import { vendorLabel, vendorLogo } from '@/features/market/vendors'
 import { cn } from '@/lib/cn'
 import { Empty, Input, PageHeader } from '@/ui'
@@ -113,11 +114,20 @@ export function PlazaPage() {
             />
           ))}
         </div>
+      ) : plazaQuery.isError ? (
+        <div className="mt-12">
+          <QueryError
+            title={copy.pages.plaza.errorTitle}
+            reason={copy.pages.plaza.errorReason}
+            onRetry={() => void plazaQuery.refetch()}
+            retrying={plazaQuery.isFetching}
+          />
+        </div>
       ) : filtered.length === 0 ? (
         <div className="mt-12">
           <Empty
             title={copy.pages.plaza.empty}
-            reason="没有找到匹配的模型，请尝试其他关键词或厂商筛选。"
+            reason={copy.pages.plaza.emptyReason}
           />
         </div>
       ) : (
@@ -151,12 +161,14 @@ export function PlazaModelCard({ item }: { item: PlazaModel }) {
         <div className="flex items-start justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2.5">
             <ModelLogoMark model={item.model} logo={logo} />
-            <span
+            <Link
+              to="/models/$id"
+              params={{ id: item.model }}
               className="truncate text-[15px] font-semibold text-ink transition-colors group-hover:text-brand-ink"
               title={item.model}
             >
               {item.model}
-            </span>
+            </Link>
             <CopyModelButton model={item.model} />
           </div>
           <CapabilityBadges model={item.model} capabilities={item.capabilities} />

@@ -144,7 +144,12 @@ export function RecordDetailContent({ detail, view }: RecordDetailContentProps) 
             <dt className="text-ink-3">{buyer ? text.token : text.channel}</dt>
             <dd className="mt-0.5 truncate text-meta text-ink">
               {buyer ? (
-                buyerRecord.token_name || <span className="text-ink-3">{text.deletedToken}</span>
+                buyerRecord.token_name ||
+                (buyerRecord.token_id && buyerRecord.token_id > 0 ? (
+                  <span className="text-ink-3">Key #{buyerRecord.token_id}（已删除）</span>
+                ) : (
+                  <span className="text-ink-3">{text.deletedToken}</span>
+                ))
               ) : (
                 <span className="tabular-nums">
                   #{sellerRecord.listing_id}

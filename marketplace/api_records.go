@@ -72,6 +72,9 @@ type usageRecord struct {
 	TierLabel        string `json:"tier_label"`  // 高峰 / 空闲 / 标准
 	TokenGroup       string `json:"token_group"` // 令牌分组快照
 	TokenName        string `json:"token_name"`  // 令牌名；令牌已删除时为空（前端显示"已删除"）
+	// TokenID 是买家自己的令牌 id，仅用于令牌删除后的显示兜底
+	// （前端渲染 "Key #id（已删除）"）；不对外部多暴露任何敏感信息。
+	TokenID          int64  `json:"token_id"`
 	InputTokens      int64  `json:"input_tokens"`
 	OutputTokens     int64  `json:"output_tokens"`
 	CacheReadTokens  int64  `json:"cache_read_tokens"`
@@ -228,6 +231,7 @@ func newUsageRecord(r *Request, ctx recordRowContext) usageRecord {
 		TierLabel:         tierLabel(r.Tier),
 		TokenGroup:        r.TokenGroup,
 		TokenName:         ctx.tokenName,
+		TokenID:           r.BuyerTokenID,
 		InputTokens:       r.InputTokens,
 		OutputTokens:      r.OutputTokens,
 		CacheReadTokens:   r.CacheReadTokens,
@@ -740,6 +744,7 @@ func listUsageRecords(c *gin.Context) {
 					Tier:             "flat",
 					TierLabel:        "标准",
 					TokenName:        tokenNamesByID[int64(as.TokenID)],
+					TokenID:          int64(as.TokenID),
 					InputTokens:      0,
 					OutputTokens:     0,
 					CacheReadTokens:  0,
@@ -794,6 +799,7 @@ func getUsageRecord(c *gin.Context) {
 						Tier:             "flat",
 						TierLabel:        "标准",
 						TokenName:        tokenName,
+						TokenID:          int64(entry.TokenID),
 						InputTokens:      0,
 						OutputTokens:     0,
 						CacheReadTokens:  0,

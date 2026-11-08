@@ -58,6 +58,8 @@ export interface AdminUser {
   request_count: number
   group: string
   created_at: number
+  /** Unix 秒；0 表示从未登录（model.User.last_login_at，登录时更新）。 */
+  last_login_at: number
   gift_quota: number
   deleted_at: string | null
 }
@@ -84,6 +86,7 @@ export function normalizeAdminUser(raw: unknown): AdminUser {
     request_count: int(pick(row, 'request_count', 'RequestCount')),
     group: text(pick(row, 'group', 'Group')),
     created_at: int(pick(row, 'created_at', 'CreatedAt')),
+    last_login_at: int(pick(row, 'last_login_at', 'LastLoginAt')),
     gift_quota: int(pick(row, 'gift_quota', 'GiftQuota')),
     deleted_at: deletedAt,
   }
