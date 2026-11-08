@@ -1,12 +1,13 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
 import { Link, createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 
 import { copy } from '@/copy'
 import { registerUser, sendEmailCode as requestEmailCode, systemStatusQuery } from '@/features/auth/api'
+import { authErrorMessage } from '@/features/auth/errors'
 import { AuthSplit } from '@/features/auth/auth-split'
 import { GithubButton } from '@/features/auth/github-button'
 import { GoogleButton } from '@/features/auth/google-button'
@@ -82,6 +83,8 @@ function RegisterPage() {
   const turnstileSiteKey = resolveTurnstileSiteKey(status.data?.turnstile_site_key)
   const [turnstileToken, setTurnstileToken] = useState('')
   const [sending, setSending] = useState(false)
+  // Resend cooldown so the button cannot be hammered right after a send.
+  const [cooldown, setCooldown] = useState(0)
 
   const {
     register,
@@ -113,6 +116,7 @@ function RegisterPage() {
     setSending(true)
     try {
       await requestEmailCode(email, turnstileToken || undefined)
+      setCooldown(60)
       toast.show({ title: page.codeSent, tone: 'success' })
     } catch (error) {
       toast.show({
@@ -124,6 +128,12 @@ function RegisterPage() {
       setSending(false)
     }
   }
+
+  useEffect(() => {
+    if (cooldown <= 0) return
+    const timer = window.setTimeout(() => setCooldown((value) => value - 1), 1000)
+    return () => window.clearTimeout(timer)
+  }, [cooldown])
 
   const onSubmit = handleSubmit(async (values) => {
     if (status.data?.turnstile_check) {
@@ -151,9 +161,7 @@ function RegisterPage() {
         search: { registered: true, redirect: safeRedirect(redirectTo, '/console') },
       })
     } catch (error) {
-      setError('root', {
-        message: error instanceof ApiError && error.status === 0 ? error.message : page.failed,
-      })
+      setError('root', { message: authErrorMessage(error, page.failed) })
     }
   })
 
@@ -210,9 +218,14 @@ function RegisterPage() {
                 variant="secondary"
                 className="h-12 shrink-0 px-5"
                 loading={sending}
+                disabled={cooldown > 0}
                 onClick={() => void requestCode()}
               >
-                {sending ? page.sendingCode : page.sendCode}
+                {cooldown > 0
+                  ? page.resendCode(cooldown)
+                  : sending
+                    ? page.sendingCode
+                    : page.sendCode}
               </Button>
             </div>
             {errors.code ? (

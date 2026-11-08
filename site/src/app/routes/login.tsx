@@ -1,17 +1,22 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
 import { Link, createFileRoute, redirect } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 
 import { copy } from '@/copy'
-import { loginUser, systemStatusQuery } from '@/features/auth/api'
+import {
+  loginUser,
+  systemStatusQuery,
+  verifyLoginCode,
+  type LoginChallenge,
+} from '@/features/auth/api'
+import { authErrorMessage } from '@/features/auth/errors'
 import { AuthSplit } from '@/features/auth/auth-split'
 import { GithubButton } from '@/features/auth/github-button'
 import { GoogleButton } from '@/features/auth/google-button'
 import { Turnstile, resolveTurnstileSiteKey } from '@/features/auth/turnstile'
-import { ApiError } from '@/lib/api'
 import { isLoggedIn } from '@/lib/auth'
 import { safeRedirect } from '@/lib/navigation'
 import { Button, Input, PasswordInput } from '@/ui'
@@ -47,6 +52,12 @@ function LoginPage() {
   const status = useQuery(systemStatusQuery())
   const turnstileSiteKey = resolveTurnstileSiteKey(status.data?.turnstile_site_key)
   const [turnstileToken, setTurnstileToken] = useState('')
+  // Second login step: the backend answers a challenge instead of a bundle
+  // when the account has 2FA enabled (service.LoginChallenge).
+  const [challenge, setChallenge] = useState<LoginChallenge | null>(null)
+  const [code, setCode] = useState('')
+  const [verifying, setVerifying] = useState(false)
+  const [verifyError, setVerifyError] = useState<string | null>(null)
 
   const {
     register,
@@ -70,17 +81,54 @@ function LoginPage() {
       }
     }
     try {
-      await loginUser(values.identifier, values.password, turnstileToken || undefined)
+      const outcome = await loginUser(values.identifier, values.password, turnstileToken || undefined)
+      if (outcome.kind === 'challenge') {
+        // Only the authenticator-code method is supported here; a passkey-only
+        // account is told to use a client that supports it.
+        if (!outcome.challenge.methods.some((m) => m.method === '2fa' && m.available)) {
+          setError('root', { message: page.verifyUnavailable })
+          return
+        }
+        setChallenge(outcome.challenge)
+        setCode('')
+        setVerifyError(null)
+        return
+      }
       window.location.assign(safeRedirect(redirectTo, '/console'))
     } catch (error) {
-      setError('root', {
-        message:
-          error instanceof ApiError && error.status === 0
-            ? error.message
-            : page.failed,
-      })
+      setError('root', { message: authErrorMessage(error, page.failed) })
     }
   })
+
+  const onVerify = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!challenge) return
+    const trimmed = code.trim()
+    if (!/^\d{6}$/.test(trimmed)) {
+      setVerifyError(page.verifyRequired)
+      return
+    }
+    if (challenge.expires_at * 1000 <= Date.now()) {
+      setVerifyError(page.verifyExpired)
+      return
+    }
+    setVerifyError(null)
+    setVerifying(true)
+    try {
+      await verifyLoginCode(challenge.flow_token, trimmed)
+      window.location.assign(safeRedirect(redirectTo, '/console'))
+    } catch (error) {
+      setVerifyError(authErrorMessage(error, page.verifyFailed))
+      setVerifying(false)
+    }
+  }
+
+  const resetChallenge = () => {
+    setChallenge(null)
+    setCode('')
+    setVerifyError(null)
+    setVerifying(false)
+  }
 
   return (
     <AuthSplit headline={page.brandHeading} body={page.brandBody} points={page.points} contentAs="main">
@@ -96,6 +144,41 @@ function LoginPage() {
         </p>
       ) : null}
 
+      {challenge ? (
+        <form className="mt-7 space-y-4" onSubmit={onVerify} noValidate>
+          <p className="text-body leading-6 text-ink-2">{page.verifyLead}</p>
+          <div>
+            <label htmlFor="login-verify-code" className="mb-2 block text-meta font-medium text-ink">
+              {page.verifyCode}
+            </label>
+            <Input
+              id="login-verify-code"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              autoFocus
+              placeholder={page.verifyCodePlaceholder}
+              value={code}
+              onChange={(event) => {
+                setCode(event.target.value.replace(/\D/g, '').slice(0, 6))
+                setVerifyError(null)
+              }}
+            />
+          </div>
+          {verifyError ? (
+            <p role="alert" className="rounded-md bg-danger/10 px-3 py-2 text-meta leading-5 text-danger">
+              {verifyError}
+            </p>
+          ) : null}
+          <Button type="submit" size="lg" className="w-full" loading={verifying} disabled={code.length !== 6}>
+            {verifying ? page.verifySubmitting : page.verifySubmit}
+          </Button>
+          <Button type="button" variant="secondary" size="lg" className="w-full" onClick={resetChallenge}>
+            {page.verifyBack}
+          </Button>
+        </form>
+      ) : (
+        <>
       <form className="mt-7 space-y-4" onSubmit={onSubmit} noValidate>
         <div>
           <label htmlFor="login-identifier" className="mb-2 block text-meta font-medium text-ink">
@@ -175,6 +258,9 @@ function LoginPage() {
           {page.toRegister}
         </Link>
       </p>
+
+        </>
+      )}
 
       <p className="mt-8 border-t border-line pt-4 text-meta leading-6 text-ink-3">{page.note}</p>
     </AuthSplit>

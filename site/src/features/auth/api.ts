@@ -26,6 +26,19 @@ export interface SystemStatus {
   turnstile_check?: boolean
   turnstile_site_key?: string
   custom_oauth_providers?: CustomOAuthProviderInfo[]
+  /** 系统公告（后台 console_setting 开启时返回，controller/misc.go）。 */
+  announcements_enabled?: boolean
+  announcements?: AnnouncementInfo[]
+}
+
+/** One entry of status.announcements (setting/console_setting/validation.go). */
+export interface AnnouncementInfo {
+  id?: number | string
+  title?: string
+  content?: string
+  publishDate?: string
+  type?: string
+  link?: string
 }
 
 export interface CustomOAuthProviderInfo {
@@ -37,6 +50,41 @@ export interface CustomOAuthProviderInfo {
   authorization_endpoint: string
   scopes: string
 }
+
+/** One verification method offered by the login challenge (service/login_verification.go). */
+export interface LoginChallengeMethod {
+  method: '2fa' | 'passkey'
+  available: boolean
+  reason?: string
+}
+
+/**
+ * POST /api/user/login answers this instead of a bundle when the account has
+ * 2FA / passkey login verification enabled (service.LoginChallenge). The
+ * session is only issued after POST /api/user/login/verify succeeds.
+ */
+export interface LoginChallenge {
+  require_verification: true
+  flow_token: string
+  expires_at: number
+  methods: LoginChallengeMethod[]
+}
+
+export function isLoginChallenge(value: unknown): value is LoginChallenge {
+  if (!value || typeof value !== 'object') return false
+  const it = value as Partial<LoginChallenge>
+  return (
+    it.require_verification === true &&
+    typeof it.flow_token === 'string' &&
+    it.flow_token.length > 0 &&
+    typeof it.expires_at === 'number' &&
+    Array.isArray(it.methods)
+  )
+}
+
+export type LoginOutcome =
+  | { kind: 'session'; user: AuthUser | null }
+  | { kind: 'challenge'; challenge: LoginChallenge }
 
 export const systemStatusQuery = () =>
   queryOptions({
@@ -50,14 +98,39 @@ export async function loginUser(
   identifier: string,
   password: string,
   turnstile?: string,
-): Promise<AuthUser | null> {
-  const bundle = await api.post<AuthBundlePayload>(
+): Promise<LoginOutcome> {
+  const payload = await api.post<AuthBundlePayload | LoginChallenge>(
     '/user/login',
     { username: identifier, password },
     { query: turnstile ? { turnstile } : undefined },
   )
-  if (!bundle?.access_token) {
+  if (isLoginChallenge(payload)) {
+    return { kind: 'challenge', challenge: payload }
+  }
+  if (!payload?.access_token) {
     throw new ApiError(200, undefined, copy.pages.login.failed)
+  }
+  applyAuthBundle(payload)
+  return { kind: 'session', user: payload.user ?? null }
+}
+
+/**
+ * Second login step: exchange the challenge flow token plus the authenticator
+ * code for the session (controller.VerifyLogin → POST /api/user/login/verify).
+ * Only the 2FA code method is handled here; a passkey-only account is rejected
+ * by the caller before this call.
+ */
+export async function verifyLoginCode(
+  flowToken: string,
+  code: string,
+): Promise<AuthUser | null> {
+  const bundle = await api.post<AuthBundlePayload>(
+    '/user/login/verify',
+    { flow_token: flowToken, method: '2fa', code },
+    { skipAuthRetry: true },
+  )
+  if (!bundle?.access_token) {
+    throw new ApiError(200, undefined, copy.pages.login.verifyFailed)
   }
   applyAuthBundle(bundle)
   return bundle.user ?? null
