@@ -6,9 +6,11 @@ import { useForm } from 'react-hook-form'
 
 import { copy } from '@/copy'
 import { ApiError } from '@/lib/api'
+import { writeClipboard } from '@/lib/clipboard'
 import { formatYuan } from '@/lib/money'
 import {
   Button,
+  CopyButton,
   Dialog,
   Empty,
   Input,
@@ -144,7 +146,6 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
   const navigate = useNavigate()
   const { token, pref, models } = detail
   const status = tokenStatusMeta(isTokenExpired(token) ? TOKEN_STATUS_EXPIRED : token.status)
-  const [copying, setCopying] = useState(false)
   const [statusBusy, setStatusBusy] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -159,24 +160,6 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
     form.reset(prefToFormValues(pref))
   }, [form, pref])
 
-  async function handleCopy() {
-    setCopying(true)
-    try {
-      const key = await revealTokenKey(tokenId)
-      const ok = await writeClipboard(key)
-      toast.show({
-        title: ok ? shared.copied : shared.copyFailed,
-        tone: ok ? 'success' : 'error',
-      })
-    } catch (error) {
-      toast.show({
-        title: error instanceof ApiError ? error.message : shared.copyFailed,
-        tone: 'error',
-      })
-    } finally {
-      setCopying(false)
-    }
-  }
 
   async function handleStatusToggle() {
     const next =
@@ -269,9 +252,11 @@ function KeyDetailContent({ tokenId, detail }: { tokenId: number; detail: KeyDet
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <Button variant="secondary" size="sm" loading={copying} onClick={() => void handleCopy()}>
-            {page.copyKey}
-          </Button>
+          <CopyButton
+            label={page.copyKey}
+            toast={shared.copied}
+            text={async () => await revealTokenKey(tokenId)}
+          />
           <Button
             variant="secondary"
             size="sm"
@@ -754,27 +739,3 @@ function modelsToSelection(rows: KeyDetail['models']): ModelSelection {
   return selection
 }
 
-async function writeClipboard(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text)
-      return true
-    }
-  } catch {
-    // Fall through to the legacy path.
-  }
-  try {
-    const area = document.createElement('textarea')
-    area.value = text
-    area.setAttribute('readonly', '')
-    area.style.position = 'fixed'
-    area.style.opacity = '0'
-    document.body.appendChild(area)
-    area.select()
-    const copied = document.execCommand('copy')
-    area.remove()
-    return copied
-  } catch {
-    return false
-  }
-}

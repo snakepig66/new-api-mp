@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 
 import { copy } from '@/copy'
 import { NotificationBell } from '@/features/notifications/NotificationBell'
+import { AnnouncementBanner } from '@/features/notifications/AnnouncementBanner'
 import { logout, useAuth } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { Button, Logo, buttonClasses } from '@/ui'
@@ -241,6 +242,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         ) : null}
       </header>
+
+      <AnnouncementBanner />
 
       <main className="flex-1 overflow-x-clip">{children}</main>
 

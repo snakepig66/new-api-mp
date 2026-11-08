@@ -4,12 +4,12 @@ import { useState } from 'react'
 
 import { copy } from '@/copy'
 import { ApiError } from '@/lib/api'
-import { writeClipboard } from '@/lib/clipboard'
 import { cn } from '@/lib/cn'
 import { formatYuan } from '@/lib/money'
 import { formatDate, formatRelativeTime } from '@/lib/time'
 import {
   Button,
+  CopyButton,
   Dialog,
   Input,
   Switch,
@@ -23,6 +23,7 @@ import {
   revealTokenKey,
   saveKeyTokenLimits,
   setTokenStatus,
+  updateToken,
 } from '@/features/console/api'
 import {
   dateTimeInputToUnix,
@@ -63,8 +64,6 @@ export function KeyCard({ item }: { item: ConsoleKey }) {
   const expired = isTokenExpired(token)
   const strategy = pref?.strategy ?? null
 
-  const [copying, setCopying] = useState(false)
-  const [copied, setCopied] = useState(false)
   const [statusBusy, setStatusBusy] = useState(false)
 
   // Extend dialog state
@@ -73,6 +72,12 @@ export function KeyCard({ item }: { item: ConsoleKey }) {
   const [expiresAt, setExpiresAt] = useState('')
   const [saving, setSaving] = useState(false)
   const [extendError, setExtendError] = useState<string | null>(null)
+
+  // Rename dialog state
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
+  const [renaming, setRenaming] = useState(false)
+  const [renameError, setRenameError] = useState<string | null>(null)
 
   // Delete dialog state
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -141,29 +146,32 @@ export function KeyCard({ item }: { item: ConsoleKey }) {
     }
   }
 
-  async function handleCopyKey() {
-    setCopying(true)
+
+  function openRename() {
+    setRenameValue(token.name ?? '')
+    setRenameError(null)
+    setRenameOpen(true)
+  }
+
+  async function rename() {
+    const name = renameValue.trim()
+    if (!name) {
+      setRenameError(page.rename.required)
+      return
+    }
+    setRenaming(true)
+    setRenameError(null)
     try {
-      let realKey = token.key
-      // If the list returned a masked key, fetch the full plaintext key
-      if (token.key.includes('*')) {
-        realKey = await revealTokenKey(token.id)
-      }
-      const ok = await writeClipboard(realKey)
-      if (ok) {
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
-        toast.show({ title: '已复制 API Key', tone: 'success' })
-      } else {
-        toast.show({ title: shared.copyFailed, tone: 'error' })
-      }
+      // PUT /token/ writes the whole row back; Token.Update only persists the
+      // editable columns, so the masked key in this list row is harmless.
+      await updateToken({ ...token, name })
+      toast.show({ title: page.rename.saved, tone: 'success' })
+      setRenameOpen(false)
+      await queryClient.invalidateQueries({ queryKey: ['console', 'keys'] })
     } catch (error) {
-      toast.show({
-        title: error instanceof ApiError ? error.message : shared.copyFailed,
-        tone: 'error',
-      })
+      setRenameError(error instanceof ApiError ? error.message : shared.errorHint)
     } finally {
-      setCopying(false)
+      setRenaming(false)
     }
   }
 
@@ -212,6 +220,27 @@ export function KeyCard({ item }: { item: ConsoleKey }) {
                 <Tag tone={token.key_type === 'standard' ? 'brand' : 'neutral'} className="text-caption shrink-0">
                   {token.key_type === 'standard' ? '普通密钥' : '共享密钥'}
                 </Tag>
+                <button
+                  type="button"
+                  onClick={openRename}
+                  title={page.rename.action}
+                  aria-label={page.rename.action}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink-3 transition-colors hover:bg-surface hover:text-ink focus:outline-none"
+                >
+                  <svg
+                    className="h-3.5 w-3.5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                    <path d="m15 5 4 4" />
+                  </svg>
+                </button>
               </div>
               {/* Subtitle: Status indicator + Group */}
               <div className="mt-1 flex items-center gap-1.5 text-meta text-ink-3">
@@ -247,43 +276,12 @@ export function KeyCard({ item }: { item: ConsoleKey }) {
             <span className="font-mono text-meta text-ink tabular-nums tracking-wide selection:bg-brand/20">
               {maskKey(token.key)}
             </span>
-            <button
-              type="button"
-              onClick={handleCopyKey}
-              disabled={copying}
-              title="复制 API Key"
-              aria-label="复制 API Key"
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-3 transition-colors hover:bg-surface hover:text-ink focus:outline-none"
-            >
-              {copied ? (
-                <svg
-                  className="h-4 w-4 text-[var(--color-ok)]"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              ) : (
-                <svg
-                  className="h-4 w-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-                  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-                </svg>
-              )}
-            </button>
+            <CopyButton
+              variant="icon"
+              label="复制 API Key"
+              toast="已复制 API Key"
+              text={async () => (token.key.includes('*') ? await revealTokenKey(token.id) : token.key)}
+            />
           </div>
 
           {/* Quota Usage & Progress Bar */}
@@ -351,16 +349,14 @@ export function KeyCard({ item }: { item: ConsoleKey }) {
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5">
-            {expired ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={openExtend}
-                className="h-7 px-2.5 text-caption"
-              >
-                {page.extend.action}
-              </Button>
-            ) : null}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={openExtend}
+              className="h-7 px-2.5 text-caption"
+            >
+              {expired ? page.extend.action : page.extend.actionActive}
+            </Button>
             <Link
               to="/console/keys/$id"
               params={{ id: String(token.id) }}
@@ -409,6 +405,43 @@ export function KeyCard({ item }: { item: ConsoleKey }) {
         </div>
       </article>
 
+      {/* Rename Dialog */}
+      <Dialog
+        open={renameOpen}
+        onOpenChange={(open) => {
+          if (!renaming) setRenameOpen(open)
+        }}
+        title={page.rename.title}
+        description={page.rename.hint}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setRenameOpen(false)} disabled={renaming}>
+              {shared.cancel}
+            </Button>
+            <Button loading={renaming} onClick={() => void rename()}>
+              {renaming ? page.rename.saving : page.rename.confirm}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Input
+            aria-label={page.rename.name}
+            value={renameValue}
+            maxLength={50}
+            onChange={(event) => {
+              setRenameValue(event.target.value)
+              setRenameError(null)
+            }}
+          />
+          {renameError ? (
+            <p role="alert" className="text-meta text-danger">
+              {renameError}
+            </p>
+          ) : null}
+        </div>
+      </Dialog>
+
       {/* Extend Dialog */}
       <Dialog
         open={extendOpen}
@@ -433,6 +466,27 @@ export function KeyCard({ item }: { item: ConsoleKey }) {
         }
       >
         <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {[7, 30, 90].map((days) => (
+              <Button
+                key={days}
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="h-7 px-2.5 text-caption"
+                onClick={() => {
+                  setNever(false)
+                  const at = new Date(Date.now() + days * 24 * 60 * 60 * 1000)
+                  const pad = (n: number) => String(n).padStart(2, '0')
+                  setExpiresAt(
+                    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`,
+                  )
+                }}
+              >
+                {page.extend.days(days)}
+              </Button>
+            ))}
+          </div>
           <Input
             aria-label={page.extend.newExpiry}
             type="datetime-local"
