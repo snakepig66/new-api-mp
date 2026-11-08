@@ -17,6 +17,7 @@ export const Route = createFileRoute('/oauth/$provider')({
 })
 
 type CallbackState = 'working' | 'missing' | 'error'
+type CallbackMode = 'login' | 'bind'
 
 /**
  * OAuth landing page. The provider's registered callback URL points here; the
@@ -24,13 +25,15 @@ type CallbackState = 'working' | 'missing' | 'error'
  * returned access bundle. The backend also sets the HttpOnly refresh cookie,
  * so a later page load can renew the session.
  *
- * The redirect target from before the handshake is remembered in session
- * storage (see features/auth/api.ts) and validated same-origin before use.
+ * A handshake started from the account page carries a bind marker in session
+ * storage instead of a login redirect: that branch links the provider to the
+ * signed-in account and returns to 账号 without touching the session.
  */
 function OAuthCallbackPage() {
   const { provider } = Route.useParams()
   const page = copy.pages.oauth
   const [state, setState] = useState<CallbackState>('working')
+  const [mode, setMode] = useState<CallbackMode>('login')
   const [message, setMessage] = useState<string>(page.failedReason)
 
   useEffect(() => {
@@ -47,6 +50,7 @@ function OAuthCallbackPage() {
     // the backend links the provider and answers { action: "bind" }.
     const bindProvider = takeOAuthBindCallback(flowState)
     if (bindProvider) {
+      setMode('bind')
       let cancelled = false
       void completeOAuthBind(provider, code, flowState)
         .then(() => {
@@ -87,9 +91,14 @@ function OAuthCallbackPage() {
     }
   }, [provider, page.failedReason])
 
+  const isBind = mode === 'bind'
+
   return (
     <div className="mx-auto max-w-[760px] px-5 py-14">
-      <PageHeader title={page.title} lead={state === 'working' ? page.lead : undefined} />
+      <PageHeader
+        title={isBind ? page.bindTitle : page.title}
+        lead={state === 'working' ? (isBind ? page.bindLead : page.lead) : undefined}
+      />
 
       {state === 'working' ? (
         <div className="mt-8 space-y-4" aria-busy="true">
@@ -100,12 +109,15 @@ function OAuthCallbackPage() {
       ) : (
         <div className="mt-6">
           <Empty
-            title={page.failedTitle}
+            title={isBind ? page.bindFailedTitle : page.failedTitle}
             reason={state === 'missing' ? page.missingReason : message}
-            next={page.next}
+            next={isBind ? page.bindNext : page.next}
             action={
-              <Link to="/login" className={buttonClasses('secondary', 'md')}>
-                {page.backLogin}
+              <Link
+                to={isBind ? '/console/account' : '/login'}
+                className={buttonClasses('secondary', 'md')}
+              >
+                {isBind ? page.backAccount : page.backLogin}
               </Link>
             }
           />

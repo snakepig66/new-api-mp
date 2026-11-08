@@ -168,10 +168,20 @@ export async function completeOAuthBind(
   code: string,
   state: string,
 ): Promise<void> {
-  const result = await api.get<{ action?: string }>(
-    `/oauth/${encodeURIComponent(provider)}`,
-    { query: { code, state } },
-  )
+  let result: { action?: string }
+  try {
+    result = await api.get<{ action?: string }>(`/oauth/${encodeURIComponent(provider)}`, {
+      query: { code, state },
+    })
+  } catch (error) {
+    // The backend refuses to bind an identity that another site account already
+    // owns; surface that specific rule instead of the raw English message.
+    if (error instanceof ApiError && /already been bound/i.test(error.message)) {
+      const label = provider === 'google' ? page.google : page.github
+      throw new ApiError(error.status, error.code, page.alreadyBound(label))
+    }
+    throw error
+  }
   if (result?.action !== 'bind') {
     throw new ApiError(200, undefined, page.failed)
   }

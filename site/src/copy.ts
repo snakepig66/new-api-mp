@@ -1544,6 +1544,8 @@ console.log(response.choices[0].message.content)
         failed: '操作没有完成，请重试。',
         verifyUnavailable: '当前账号的验证方式不接受密码校验，无法在这里绑定第三方账号。',
         encryptionUnsupported: '站点启用了密码加密传输，当前页面暂不支持该操作。',
+        alreadyBound: (provider: string) =>
+          `这个 ${provider} 账号已经绑定了其他站点账号。请先登录那个账号解除绑定，或换一个 ${provider} 账号。`,
         loading: '正在读取绑定状态',
       },
       password: {
@@ -3889,6 +3891,11 @@ console.log(response.choices[0].message.content)
       twoFactorReason: '这个账号还需要二次验证，请改用邮箱和密码登录。',
       next: '回到登录页重新开始；如果问题持续出现，请联系运营。',
       backLogin: '返回登录',
+      bindTitle: '正在完成账号绑定',
+      bindLead: '正在校验返回的授权信息，请稍候。',
+      bindFailedTitle: '绑定没有完成',
+      bindNext: '回到账号设置重试，或换一个第三方账号。',
+      backAccount: '返回账号设置',
     },
   },
 

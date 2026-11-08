@@ -254,22 +254,10 @@ function ModelPoolPage() {
     setSubmitError(null)
 
     try {
-      // 1. Save model attributes, carrying over untouched fields from the
-      // edited model (or the original form defaults when creating).
+      // 1. Write the price book entry first: enabling the plaza is validated
+      // against the model's base price, so a new model saved before its price
+      // exists would be rejected with 「请先配置模型池基价再上架广场」.
       const base = editing
-      await putAdminPoolModel({
-        name,
-        origin_vendor: origin || base?.origin_vendor || '',
-        context_length: contextRaw ? Math.round(Number(contextRaw) * 1000) : 0,
-        capabilities: base?.capabilities ?? [],
-        aliases: base?.aliases ?? [],
-        verify_prompt: base?.verify_prompt ?? '',
-        status: base?.status ?? 'active',
-        enable_plaza: base ? base.enable_plaza !== false : true,
-        plaza_multiplier_milli: base?.plaza_multiplier_milli ?? 1000,
-      })
-
-      // 2. Save price if specified
       if (hasInputPrice && hasOutputPrice) {
         const inputMicro = Math.round(Number(form.input_yuan) * 1_000_000)
         const outputMicro = Math.round(Number(form.output_yuan) * 1_000_000)
@@ -286,6 +274,20 @@ function ModelPoolPage() {
           effective_at: shanghaiDateTimeToRfc3339(defaultEffectiveAt()) ?? new Date().toISOString(),
         })
       }
+
+      // 2. Save model attributes, carrying over untouched fields from the
+      // edited model (or the original form defaults when creating).
+      await putAdminPoolModel({
+        name,
+        origin_vendor: origin || base?.origin_vendor || '',
+        context_length: contextRaw ? Math.round(Number(contextRaw) * 1000) : 0,
+        capabilities: base?.capabilities ?? [],
+        aliases: base?.aliases ?? [],
+        verify_prompt: base?.verify_prompt ?? '',
+        status: base?.status ?? 'active',
+        enable_plaza: base ? base.enable_plaza !== false : true,
+        plaza_multiplier_milli: base?.plaza_multiplier_milli ?? 1000,
+      })
 
       refresh()
       toast.show({
