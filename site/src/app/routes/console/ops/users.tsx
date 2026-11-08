@@ -184,6 +184,7 @@ function UsersPanel({ perUnit }: { perUnit: number }) {
                 <TableHeaderCell numeric>余额</TableHeaderCell>
                 <TableHeaderCell numeric>已用 / 请求数</TableHeaderCell>
                 <TableHeaderCell>注册时间</TableHeaderCell>
+                <TableHeaderCell>最后登录</TableHeaderCell>
                 <TableHeaderCell numeric>操作</TableHeaderCell>
               </TableRow>
             </TableHead>
@@ -246,6 +247,12 @@ function UsersPanel({ perUnit }: { perUnit: number }) {
                       title={row.created_at ? formatDate(row.created_at) : undefined}
                     >
                       {row.created_at ? formatMonthDay(row.created_at) : '—'}
+                    </TableCell>
+                    <TableCell
+                      className="whitespace-nowrap text-ink-3"
+                      title={row.last_login_at ? formatDate(row.last_login_at) : undefined}
+                    >
+                      {row.last_login_at ? formatMonthDay(row.last_login_at) : '—'}
                     </TableCell>
                     <TableCell numeric>
                       <div className="flex items-center justify-end gap-1 whitespace-nowrap">

@@ -171,6 +171,12 @@ function ShareRecordsPage() {
         : false,
   })
   const summary = useQuery(shareSummaryQuery(filters))
+  const modelOptions = useMemo(() => {
+    const items = (records.data?.items ?? []) as Array<{ model?: string }>
+    return Array.from(
+      new Set(items.map((item) => item.model).filter((model): model is string => Boolean(model))),
+    ).sort((a, b) => a.localeCompare(b))
+  }, [records.data])
 
   const total = records.data?.total ?? 0
   const summaryData = summary.data
@@ -257,6 +263,7 @@ function ShareRecordsPage() {
         subjectAllLabel={filtersCopy.subjectChannelAll}
         subjectOptions={listingOptions}
         groupOptions={groupOptions}
+        modelOptions={modelOptions}
         refreshing={records.isFetching || summary.isFetching}
         showSummary={showSummary}
         onToggleSummary={toggleSummary}

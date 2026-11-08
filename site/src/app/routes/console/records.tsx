@@ -234,6 +234,13 @@ function RecordsPage() {
   })
 
   const records = isSeller ? shareRecords : usageRecords
+  // Model suggestions for the filter input, derived from the loaded page.
+  const modelOptions = useMemo(() => {
+    const items = (records.data?.items ?? []) as Array<{ model?: string }>
+    return Array.from(
+      new Set(items.map((item) => item.model).filter((model): model is string => Boolean(model))),
+    ).sort((a, b) => a.localeCompare(b))
+  }, [records.data])
   const summary = isSeller ? shareSummary : usageSummary
   const total = records.data?.total ?? 0
 
@@ -372,6 +379,7 @@ function RecordsPage() {
         subjectAllLabel={isSeller ? filtersCopy.subjectChannelAll : undefined}
         subjectOptions={isSeller ? listingOptions : tokenOptions}
         groupOptions={isSeller ? groupOptions : undefined}
+        modelOptions={modelOptions}
         refreshing={records.isFetching || summary.isFetching}
         showSummary={showSummary}
         onToggleSummary={toggleSummary}
