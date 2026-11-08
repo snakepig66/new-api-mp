@@ -17,6 +17,10 @@ export default defineConfig({
       autoCodeSplitting: true,
       routesDirectory: './src/app/routes',
       generatedRouteTree: './src/app/routeTree.gen.ts',
+      // P3: test files colocated under routes/ are not routes; silence the
+      // "does not export a Route" warning noise they triggered on every dev
+      // boot.
+      routeFileIgnorePattern: '\.test\.(ts|tsx)$',
     }),
     react(),
     tailwindcss(),

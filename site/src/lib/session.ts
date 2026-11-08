@@ -141,6 +141,19 @@ export function clearSession(): void {
   persist(null)
 }
 
+/**
+ * Whether the backend's script-readable session marker cookie is present
+ * (service/auth_session.go writes `new_api_has_session=1` alongside the
+ * HttpOnly refresh cookie).
+ */
+function hasSessionHintCookie(): boolean {
+  if (typeof document === 'undefined') return false
+  return document.cookie.split(';').some((part) => {
+    const [name] = part.trim().split('=')
+    return name === 'new_api_has_session'
+  })
+}
+
 /** Whether a refresh attempt is worth making. */
 export function canRefresh(): boolean {
   return Boolean(current?.accessToken || current?.sid)
@@ -160,6 +173,13 @@ let refreshInflight: Promise<boolean> | null = null
  */
 export function refreshAccessToken(): Promise<boolean> {
   if (refreshInflight) return refreshInflight
+
+  // P3: the backend writes a script-readable marker cookie in lockstep with
+  // the HttpOnly refresh cookie. With neither the marker nor a cached session
+  // there is nothing to renew — skip the round trip entirely so anonymous
+  // cold visits (e.g. /usage-logs) stop burning a CriticalRateLimit slot on a
+  // guaranteed 401.
+  if (!hasSessionHintCookie() && !canRefresh()) return Promise.resolve(false)
 
   refreshInflight = (async () => {
     try {

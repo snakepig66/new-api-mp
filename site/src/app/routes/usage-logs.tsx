@@ -1,4 +1,4 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { Navigate, createFileRoute } from '@tanstack/react-router'
 
 /**
  * Payment providers return the browser to `<ServerAddress>/usage-logs` after
@@ -7,7 +7,5 @@ import { createFileRoute, redirect } from '@tanstack/react-router'
  * visible. A failed or still-pending payment is also handled there.
  */
 export const Route = createFileRoute('/usage-logs')({
-  beforeLoad: () => {
-    throw redirect({ to: '/console/wallet', search: { page: 1 }, replace: true })
-  },
+  component: () => <Navigate to="/console/wallet" search={{ page: 1 }} replace />,
 })

@@ -18,6 +18,19 @@ import { getFirstTokenColor, getTotalLatencyColor } from './latency-colors'
 
 const text = copy.pages.records.detail
 
+// P3: endpoint enum values arrive raw from the API (`openai_chat`); show the
+// human label everywhere an endpoint is displayed.
+const ENDPOINT_LABELS: Record<string, string> = {
+  openai_chat: 'OpenAI Chat',
+  openai_responses: 'OpenAI Responses',
+  anthropic_messages: 'Anthropic Messages',
+}
+
+function endpointLabel(endpoint: string | undefined): string {
+  if (!endpoint) return text.dash
+  return ENDPOINT_LABELS[endpoint] ?? endpoint
+}
+
 /** Who is looking: decides token vs channel fields and the money wording. */
 export type RecordDetailView = 'buyer' | 'seller'
 
@@ -111,7 +124,7 @@ export function RecordDetailContent({ detail, view }: RecordDetailContentProps) 
             </dd>
           </div>
           <Info label={text.time} value={formatDateTime(record.created_at)} mono />
-          <Info label={text.endpoint} value={record.endpoint || text.dash} mono />
+          <Info label={text.endpoint} value={endpointLabel(record.endpoint)} mono />
           <div className="min-w-0">
             <dt className="text-ink-3">{text.model}</dt>
             <dd className="mt-0.5 flex flex-wrap items-center gap-1">

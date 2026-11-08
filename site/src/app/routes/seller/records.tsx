@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link, createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 
 import { copy } from '@/copy'
 import { formatYuan } from '@/lib/money'
@@ -32,13 +32,6 @@ import { sellerErrorMessage } from '@/features/seller/errors'
 import { ShareRecordCards, ShareRecordsTable } from '@/features/seller/ShareRecordsTable'
 
 export const Route = createFileRoute('/seller/records')({
-  beforeLoad: ({ search }) => {
-    throw redirect({
-      to: '/console/records',
-      search: { ...search, view: 'sales' },
-      replace: true,
-    })
-  },
   validateSearch: (search: Record<string, unknown>): RecordsSearch => {
     const pageSize = Number(search.page_size)
     return {
