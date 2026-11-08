@@ -10,7 +10,7 @@ import { registerUser, sendEmailCode as requestEmailCode, systemStatusQuery } fr
 import { AuthSplit } from '@/features/auth/auth-split'
 import { GithubButton } from '@/features/auth/github-button'
 import { GoogleButton } from '@/features/auth/google-button'
-import { Turnstile, isTurnstileConfigured } from '@/features/auth/turnstile'
+import { Turnstile, resolveTurnstileSiteKey } from '@/features/auth/turnstile'
 import { ApiError } from '@/lib/api'
 import { isLoggedIn } from '@/lib/auth'
 import { safeRedirect } from '@/lib/navigation'
@@ -79,6 +79,7 @@ function RegisterPage() {
   const toast = useToast()
   const status = useQuery(systemStatusQuery())
   const emailVerification = status.data?.email_verification === true
+  const turnstileSiteKey = resolveTurnstileSiteKey(status.data?.turnstile_site_key)
   const [turnstileToken, setTurnstileToken] = useState('')
   const [sending, setSending] = useState(false)
 
@@ -100,7 +101,7 @@ function RegisterPage() {
       return
     }
     if (status.data?.turnstile_check) {
-      if (!isTurnstileConfigured()) {
+      if (!turnstileSiteKey) {
         setError('root', { message: copy.pages.login.turnstileMissing })
         return
       }
@@ -126,7 +127,7 @@ function RegisterPage() {
 
   const onSubmit = handleSubmit(async (values) => {
     if (status.data?.turnstile_check) {
-      if (!isTurnstileConfigured()) {
+      if (!turnstileSiteKey) {
         setError('root', { message: copy.pages.login.turnstileMissing })
         return
       }
@@ -252,7 +253,7 @@ function RegisterPage() {
           ) : null}
         </div>
 
-        <Turnstile onToken={setTurnstileToken} />
+        <Turnstile siteKey={turnstileSiteKey} onToken={setTurnstileToken} />
 
         {errors.root?.message ? (
           <p

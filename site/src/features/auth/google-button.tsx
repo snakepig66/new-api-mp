@@ -6,7 +6,7 @@ import { cn } from '@/lib/cn'
 
 import { startGoogleLogin, systemStatusQuery } from './api'
 
-function GoogleMark() {
+export function GoogleMark() {
   return (
     <svg width="15" height="15" viewBox="0 0 18 18" aria-hidden="true">
       <path

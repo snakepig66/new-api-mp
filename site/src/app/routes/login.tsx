@@ -10,7 +10,7 @@ import { loginUser, systemStatusQuery } from '@/features/auth/api'
 import { AuthSplit } from '@/features/auth/auth-split'
 import { GithubButton } from '@/features/auth/github-button'
 import { GoogleButton } from '@/features/auth/google-button'
-import { Turnstile, isTurnstileConfigured } from '@/features/auth/turnstile'
+import { Turnstile, resolveTurnstileSiteKey } from '@/features/auth/turnstile'
 import { ApiError } from '@/lib/api'
 import { isLoggedIn } from '@/lib/auth'
 import { safeRedirect } from '@/lib/navigation'
@@ -45,6 +45,7 @@ function LoginPage() {
   const { redirect: redirectTo, registered } = Route.useSearch()
   const page = copy.pages.login
   const status = useQuery(systemStatusQuery())
+  const turnstileSiteKey = resolveTurnstileSiteKey(status.data?.turnstile_site_key)
   const [turnstileToken, setTurnstileToken] = useState('')
 
   const {
@@ -59,7 +60,7 @@ function LoginPage() {
 
   const onSubmit = handleSubmit(async (values) => {
     if (status.data?.turnstile_check) {
-      if (!isTurnstileConfigured()) {
+      if (!turnstileSiteKey) {
         setError('root', { message: page.turnstileMissing })
         return
       }
@@ -136,7 +137,7 @@ function LoginPage() {
           ) : null}
         </div>
 
-        <Turnstile onToken={setTurnstileToken} />
+        <Turnstile siteKey={turnstileSiteKey} onToken={setTurnstileToken} />
 
         {errors.root?.message ? (
           <p

@@ -16,6 +16,7 @@ import {
 } from '@/features/auth/account'
 import { ErrorBlock, Section, Skeleton } from '@/features/console/components/DataState'
 import { Notice } from '@/features/console/components/form'
+import { OAuthBindings } from '@/features/console/components/OAuthBindings'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useSession } from '@/lib/session'
@@ -82,6 +83,8 @@ function AccountPage() {
           <IdentityRows profile={profile.data} />
         )}
       </Section>
+
+      <OAuthBindings />
 
       <section className="mt-6 glass p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

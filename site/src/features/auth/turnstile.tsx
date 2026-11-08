@@ -16,8 +16,12 @@ import { useEffect, useRef } from 'react'
 
 const SITE_KEY = (import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined)?.trim()
 
-export function isTurnstileConfigured(): boolean {
-  return Boolean(SITE_KEY)
+/**
+ * The site key is served by /api/status, so a production build does not need a
+ * build-time env var. The env var stays as a local/dev fallback.
+ */
+export function resolveTurnstileSiteKey(fromStatus?: string): string {
+  return fromStatus?.trim() || SITE_KEY || ''
 }
 
 interface TurnstileApi {
@@ -60,15 +64,18 @@ function loadTurnstile(): Promise<TurnstileApi> {
 
 export interface TurnstileProps {
   onToken: (token: string) => void
+  /** Site key from /api/status; falls back to the build-time env var. */
+  siteKey?: string
   /** Change this value to force a fresh widget after a failed submit. */
   resetKey?: number
 }
 
-export function Turnstile({ onToken, resetKey = 0 }: TurnstileProps) {
+export function Turnstile({ onToken, siteKey, resetKey = 0 }: TurnstileProps) {
   const container = useRef<HTMLDivElement>(null)
+  const key = resolveTurnstileSiteKey(siteKey)
 
   useEffect(() => {
-    if (!SITE_KEY || !container.current) return
+    if (!key || !container.current) return
     let widgetId: string | null = null
     let cancelled = false
 
@@ -76,7 +83,7 @@ export function Turnstile({ onToken, resetKey = 0 }: TurnstileProps) {
       .then((api) => {
         if (cancelled || !container.current) return
         widgetId = api.render(container.current, {
-          sitekey: SITE_KEY,
+          sitekey: key,
           callback: (token: string) => onToken(token),
           'expired-callback': () => onToken(''),
           'error-callback': () => onToken(''),
@@ -88,8 +95,8 @@ export function Turnstile({ onToken, resetKey = 0 }: TurnstileProps) {
       cancelled = true
       if (widgetId && window.turnstile) window.turnstile.remove(widgetId)
     }
-  }, [onToken, resetKey])
+  }, [key, onToken, resetKey])
 
-  if (!SITE_KEY) return null
+  if (!key) return null
   return <div ref={container} className="mt-1 min-h-[65px]" />
 }

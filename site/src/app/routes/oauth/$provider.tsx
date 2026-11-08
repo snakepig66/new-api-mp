@@ -7,6 +7,8 @@ import {
   completeOAuthLogin,
   takeOAuthRedirect,
 } from '@/features/auth/api'
+import { completeOAuthBind, takeOAuthBindCallback } from '@/features/auth/bindings'
+import { ApiError } from '@/lib/api'
 import { safeRedirect } from '@/lib/navigation'
 import { Empty, PageHeader, buttonClasses } from '@/ui'
 
@@ -39,6 +41,30 @@ function OAuthCallbackPage() {
     if (!code || !flowState) {
       setState('missing')
       return
+    }
+
+    // A bind started from the account page has no login bundle to exchange:
+    // the backend links the provider and answers { action: "bind" }.
+    const bindProvider = takeOAuthBindCallback(flowState)
+    if (bindProvider) {
+      let cancelled = false
+      void completeOAuthBind(provider, code, flowState)
+        .then(() => {
+          if (cancelled) return
+          window.location.assign(
+            `/console/account?bound=${encodeURIComponent(bindProvider)}`,
+          )
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return
+          setState('error')
+          setMessage(
+            error instanceof ApiError && error.message ? error.message : page.failedReason,
+          )
+        })
+      return () => {
+        cancelled = true
+      }
     }
 
     let cancelled = false

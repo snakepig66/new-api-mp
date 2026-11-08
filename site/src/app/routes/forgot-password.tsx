@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { copy } from '@/copy'
 import { requestPasswordReset, systemStatusQuery } from '@/features/auth/api'
 import { AuthSplit } from '@/features/auth/auth-split'
-import { Turnstile, isTurnstileConfigured } from '@/features/auth/turnstile'
+import { Turnstile, resolveTurnstileSiteKey } from '@/features/auth/turnstile'
 import { ApiError } from '@/lib/api'
 import { Button, Input } from '@/ui'
 
@@ -31,6 +31,7 @@ export const Route = createFileRoute('/forgot-password')({
 
 function ForgotPasswordPage() {
   const status = useQuery(systemStatusQuery())
+  const turnstileSiteKey = resolveTurnstileSiteKey(status.data?.turnstile_site_key)
   const [turnstileToken, setTurnstileToken] = useState('')
   const [sentTo, setSentTo] = useState('')
 
@@ -46,7 +47,7 @@ function ForgotPasswordPage() {
 
   const onSubmit = handleSubmit(async (values) => {
     if (status.data?.turnstile_check) {
-      if (!isTurnstileConfigured()) {
+      if (!turnstileSiteKey) {
         setError('root', { message: loginCopy.turnstileMissing })
         return
       }
@@ -119,7 +120,7 @@ function ForgotPasswordPage() {
             ) : null}
           </div>
 
-          <Turnstile onToken={setTurnstileToken} />
+          <Turnstile siteKey={turnstileSiteKey} onToken={setTurnstileToken} />
 
           {errors.root?.message ? (
             <p

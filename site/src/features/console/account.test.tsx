@@ -27,6 +27,23 @@ vi.mock('@/features/auth/account', () => ({
   changePasswordByEmail: vi.fn().mockResolvedValue(undefined),
 }))
 
+vi.mock('@/features/auth/bindings', () => ({
+  fetchOAuthBindings: vi.fn().mockResolvedValue([]),
+  startGithubBind: vi.fn().mockResolvedValue(undefined),
+  startGoogleBind: vi.fn().mockResolvedValue(undefined),
+  unbindOAuthProvider: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('@/features/auth/api', () => ({
+  systemStatusQuery: () => ({
+    queryKey: ['system', 'status'],
+    queryFn: async () => ({
+      github_oauth: true,
+      custom_oauth_providers: [{ slug: 'google' }],
+    }),
+  }),
+}))
+
 afterEach(cleanup)
 
 function renderAccount() {
@@ -63,6 +80,12 @@ describe('Console Account page', () => {
 
     expect(screen.getByRole('button', { name: '使用原密码修改' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '通过邮箱验证码修改' })).toBeTruthy()
+
+    // Third-party account binding lives on the same page.
+    expect(await screen.findByText('第三方账号')).toBeTruthy()
+    expect(await screen.findByText('GitHub')).toBeTruthy()
+    expect(await screen.findByText('Google')).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: '绑定' })).toHaveLength(2)
 
     // Default mode is password: shows current password field
     expect(screen.getByLabelText('当前密码')).toBeTruthy()

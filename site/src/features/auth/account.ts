@@ -28,6 +28,7 @@ export interface SelfProfile {
   has_password?: boolean
   role?: number
   email?: string
+  github_id?: string
 }
 
 interface VerificationMethodOption {
