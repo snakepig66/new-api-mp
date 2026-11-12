@@ -15,9 +15,11 @@ import type { ConsoleNavGroup } from './ConsoleSidebar'
 export function consoleGroups({
   sellerActive,
   isAdmin,
+  onboardingPending = false,
 }: {
   sellerActive: boolean
   isAdmin: boolean
+  onboardingPending?: boolean
 }): ConsoleNavGroup[] {
   const nav = copy.pages.console.nav
   const sellerNav = copy.pages.sellerCommon.nav
@@ -37,6 +39,11 @@ export function consoleGroups({
     {
       label: '渠道',
       items: [
+        {
+          to: '/console/onboarding',
+          label: sellerNav.onboarding,
+          ...(onboardingPending ? { badge: sellerNav.onboardingBadge } : {}),
+        },
         { to: '/console/listings', label: sellerNav.listings },
         ...(sellerActive
           ? [

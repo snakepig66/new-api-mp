@@ -50,8 +50,14 @@ function ConsoleLayout() {
   }, [pathname])
 
   const sellerActive = seller.data ? isSellerActive(seller.data.seller) : false
+  const onboardingPending = seller.data
+    ? !(
+        seller.data.seller.progress.agreement_signed &&
+        seller.data.seller.progress.payout_account_bound
+      )
+    : false
 
-  const groups = consoleGroups({ sellerActive, isAdmin })
+  const groups = consoleGroups({ sellerActive, isAdmin, onboardingPending })
   const activeItem = groups
     .flatMap((group) => group.items)
     .find((item) => isConsoleNavItemActive(pathname, search, item))

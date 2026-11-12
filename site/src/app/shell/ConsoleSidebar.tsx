@@ -12,6 +12,8 @@ export interface ConsoleNavItem {
   /** Icon lookup key when several items share the same route. */
   iconKey?: string
   external?: boolean
+  /** Small trailing hint, e.g. unfinished onboarding. */
+  badge?: string
 }
 
 export interface ConsoleNavGroup {
@@ -93,6 +95,15 @@ export function getConsoleNavIcon(to: string): ReactNode {
         </svg>
       )
 
+    case '/console/onboarding':
+      // 开通分享: flag / milestone
+      return (
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M5 17.5V3" />
+          <path d="M5 4h9.5l-2.2 3.2L14.5 10H5" />
+        </svg>
+      )
+
     case '/console/listings':
       // 共享模型: Layers / Stack
       return (
@@ -118,6 +129,16 @@ export function getConsoleNavIcon(to: string): ReactNode {
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="10" cy="6.5" r="3.5" />
           <path d="M3.5 16.5a6.5 6.5 0 0 1 13 0" />
+        </svg>
+      )
+
+    case '/console/ops/logs':
+      // 运营调用记录: terminal prompt, distinct from the buyer-facing 使用记录 document
+      return (
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="2.5" y="4" width="15" height="12" rx="2" />
+          <polyline points="6 8 8.5 10.5 6 13" />
+          <line x1="10.5" y1="13" x2="14" y2="13" />
         </svg>
       )
 
@@ -314,6 +335,11 @@ function SidebarNavLink({
         </span>
       ) : null}
       <span className="truncate">{item.label}</span>
+      {item.badge ? (
+        <span className="ml-auto shrink-0 rounded-full bg-brand-soft px-1.5 py-0.5 text-caption font-medium text-brand-ink">
+          {item.badge}
+        </span>
+      ) : null}
     </>
   )
 

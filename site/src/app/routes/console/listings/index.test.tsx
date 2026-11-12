@@ -99,6 +99,30 @@ const listings = [
     status: 'live',
     key_fingerprint8: 'dddddd44',
     created_at: '2026-10-24T10:00:00+08:00',
+    verification: {
+      ok: false,
+      fail_reason: 'upstream 500',
+      prompt_cache_support: false,
+      latency_ms: 0,
+      checked_at: '2026-10-24T10:06:00+08:00',
+      model_results: [
+        {
+          model: 'deepseek-flash',
+          upstream_model: 'deepseek-flash',
+          ok: false,
+          fail_reason: '401 unauthorized',
+          prompt_cache_support: false,
+          latency_ms: 0,
+        },
+        {
+          model: 'deepseek-v4-pro',
+          upstream_model: 'deepseek-v4-pro',
+          ok: true,
+          prompt_cache_support: false,
+          latency_ms: 120,
+        },
+      ],
+    },
   },
   {
     id: 5,
@@ -322,6 +346,23 @@ describe('seller listings table view', () => {
     // Rows without any health row show no sample in every window.
     const row3 = rowOf('套餐渠道')
     expect(within(row3).getAllByText('—')).toHaveLength(3)
+  })
+
+  it('explains pauses, review stages and failed verify models in the status cell', async () => {
+    await renderLoadedTable()
+
+    // Paused: why + when it resumes, instead of a bare 已关闭 tag.
+    const paused = rowById(3)
+    expect(within(paused).getByText(/套餐额度已用尽/)).toBeTruthy()
+    expect(within(paused).getByText(/11:00/)).toBeTruthy()
+
+    // Draft: the next step for the contributor.
+    expect(within(rowById(5)).getByText(/等待验证/)).toBeTruthy()
+
+    // Failed verify: count in the cell, detail on hover.
+    const broken = rowById(4)
+    const failedHint = within(broken).getByText('1 个模型验真失败，悬停看原因')
+    expect(failedHint.getAttribute('title')).toContain('deepseek-flash: 401 unauthorized')
   })
 
   it('filters the table by the status chips', async () => {

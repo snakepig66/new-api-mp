@@ -9,13 +9,14 @@ import { Button, Empty, PageHeader, Tag, buttonClasses, useToast } from '@/ui'
 import {
   meQuery,
   postOnboarding,
+  sellerListingsQuery,
   type MeResponse,
   type OnboardingInput,
   type SellerIdentity,
 } from '@/features/seller/api'
 import { notify } from '@/features/seller/components'
 import { sellerErrorMessage } from '@/features/seller/errors'
-import { isSellerActive } from '@/features/seller/status'
+import { PayoutAccountCard } from '@/features/seller/PayoutAccountCard'
 
 export const Route = createFileRoute('/console/onboarding')({
   component: SellerOnboardingPage,
@@ -23,34 +24,50 @@ export const Route = createFileRoute('/console/onboarding')({
 
 const page = copy.pages.sellerOnboarding
 
-function StepRail({ seller }: { seller: SellerIdentity }) {
-  const done = seller.progress.agreement_signed ? 2 : 0
-  const steps = [
+interface OnboardingStep {
+  key: 'agreement' | 'payout' | 'listing'
+  title: string
+  hint: string
+  done: boolean
+}
+
+/** 三步都从真实字段推导，不做本地乐观状态，避免刷新后回退。 */
+export function onboardingSteps(
+  seller: SellerIdentity,
+  listingCount: number,
+): OnboardingStep[] {
+  const signed = seller.progress.agreement_signed
+  const bound = seller.progress.payout_account_bound
+  return [
+    { key: 'agreement', title: page.stepTitles[0], hint: page.stepHints[0], done: signed },
+    { key: 'payout', title: page.stepTitles[1], hint: page.stepHints[1], done: bound },
     {
-      title: page.stepTitles[0],
-      hint: page.stepHints[0],
-      done: seller.progress.agreement_signed,
-    },
-    {
-      title: page.stepTitles[1],
-      hint: page.stepHints[1],
-      done: seller.progress.agreement_signed,
+      key: 'listing',
+      title: page.stepTitles[2],
+      hint: page.stepHints[2],
+      done: listingCount > 0,
     },
   ]
+}
+
+function StepRail({ steps }: { steps: OnboardingStep[] }) {
+  const doneCount = steps.filter((step) => step.done).length
+  const currentIndex = steps.findIndex((step) => !step.done)
 
   return (
     <section aria-label={page.progress} className="mt-6 glass p-6">
       <div className="flex items-baseline justify-between">
         <h2 className="text-title font-semibold tracking-tight text-ink">{page.progress}</h2>
-        <span className="tabular-nums text-meta text-ink-3">{done}/2</span>
+        <span className="tabular-nums text-meta text-ink-3">
+          {doneCount}/{steps.length}
+        </span>
       </div>
-      <ol className="mt-5 grid gap-3 sm:grid-cols-2">
+      <ol className="mt-5 grid gap-3 sm:grid-cols-3">
         {steps.map((step, index) => {
-          const completed = step.done
-          const active = !completed && index === 0
+          const active = index === currentIndex
           return (
             <li
-              key={step.title}
+              key={step.key}
               aria-current={active ? 'step' : undefined}
               className={cn(
                 'relative rounded-md border p-4',
@@ -61,7 +78,7 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
                 <span
                   className={cn(
                     'grid h-6 w-6 shrink-0 place-items-center rounded-full border text-meta font-medium',
-                    completed
+                    step.done
                       ? 'border-transparent bg-brand-soft text-brand-ink'
                       : active
                         ? 'border-transparent bg-brand text-white'
@@ -69,7 +86,7 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
                   )}
                   aria-hidden="true"
                 >
-                  {completed ? (
+                  {step.done ? (
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                       <path
                         d="M2.5 6.2l2.2 2.2 4.8-5"
@@ -86,7 +103,7 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
                 <span
                   className={cn(
                     'text-body font-medium',
-                    completed || active ? 'text-ink' : 'text-ink-3',
+                    step.done || active ? 'text-ink' : 'text-ink-3',
                   )}
                 >
                   {step.title}
@@ -94,7 +111,7 @@ function StepRail({ seller }: { seller: SellerIdentity }) {
               </div>
               <p className="mt-2 text-meta leading-5 text-ink-3">{step.hint}</p>
               <p className="mt-1 text-meta text-ink-3">
-                {completed ? page.state.done : active ? page.state.current : page.state.todo}
+                {step.done ? page.state.done : active ? page.state.current : page.state.todo}
               </p>
             </li>
           )
@@ -111,6 +128,10 @@ export function SellerOnboardingPage() {
   const seller = data?.seller
   const [accepted, setAccepted] = useState(false)
 
+  const signed = seller?.progress.agreement_signed ?? false
+  const listings = useQuery({ ...sellerListingsQuery(), enabled: signed })
+  const listingCount = listings.data?.length ?? 0
+
   const mutation = useMutation({
     mutationFn: (input: OnboardingInput) => postOnboarding(input),
     onSuccess: (response) => {
@@ -125,8 +146,9 @@ export function SellerOnboardingPage() {
   if (!seller) return null
 
   const blocked = seller.exists && (seller.status === 'banned' || seller.status === 'closed')
-  const active = isSellerActive(seller)
+  const steps = onboardingSteps(seller, listingCount)
   const errorText = mutation.isError ? sellerErrorMessage(mutation.error) : null
+  const allDone = steps.every((step) => step.done)
 
   function submit(input: OnboardingInput) {
     mutation.reset()
@@ -139,13 +161,13 @@ export function SellerOnboardingPage() {
         title={page.title}
         lead={page.lead}
         actions={
-          active ? (
+          seller.progress.agreement_signed ? (
             <Tag tone="brand" dot>
-              {page.state.done}
+              {page.activeBadge}
             </Tag>
           ) : (
             <Tag tone="neutral" dot>
-              {page.state.todo}
+              {page.pendingBadge}
             </Tag>
           )
         }
@@ -160,24 +182,9 @@ export function SellerOnboardingPage() {
         />
       ) : (
         <>
-          <StepRail seller={seller} />
+          <StepRail steps={steps} />
 
-          {active ? (
-            <section className="mt-6 glass p-6">
-              <h2 className="text-title font-semibold tracking-tight text-ink">
-                {page.done.title}
-              </h2>
-              <p className="mt-2 text-body leading-6 text-ink-2">{page.done.reason}</p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <Link to="/console/listings/new" className={buttonClasses('primary', 'md')}>
-                  {page.done.newListing}
-                </Link>
-                <Link to="/console/earnings" className={buttonClasses('secondary', 'md')}>
-                  {page.done.overview}
-                </Link>
-              </div>
-            </section>
-          ) : (
+          {!signed ? (
             <section className="mt-6 glass p-6">
               <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-4">
                 <h2 className="text-title font-semibold tracking-tight text-ink">
@@ -241,7 +248,53 @@ export function SellerOnboardingPage() {
                 </div>
               </div>
             </section>
-          )}
+          ) : null}
+
+          {signed && !seller.progress.payout_account_bound ? (
+            <>
+              <div className="mt-6 flex items-start gap-2 text-meta leading-6 text-ink-2">
+                <span className="mt-0.5 text-brand" aria-hidden="true">
+                  ▸
+                </span>
+                <p>{page.payoutHint}</p>
+              </div>
+              <PayoutAccountCard seller={seller} className="mt-3" />
+            </>
+          ) : null}
+
+          {signed && seller.progress.payout_account_bound && listingCount === 0 ? (
+            <section className="mt-6 glass p-6">
+              <h2 className="text-title font-semibold tracking-tight text-ink">
+                {page.firstListing.title}
+              </h2>
+              <p className="mt-2 text-body leading-6 text-ink-2">{page.firstListing.reason}</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Link to="/console/listings/new" className={buttonClasses('primary', 'md')}>
+                  {page.firstListing.action}
+                </Link>
+                <Link to="/console/listings" className={buttonClasses('secondary', 'md')}>
+                  {page.firstListing.viewAll}
+                </Link>
+              </div>
+            </section>
+          ) : null}
+
+          {allDone ? (
+            <section className="mt-6 glass p-6">
+              <h2 className="text-title font-semibold tracking-tight text-ink">
+                {page.done.title}
+              </h2>
+              <p className="mt-2 text-body leading-6 text-ink-2">{page.done.reason}</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Link to="/console/listings/new" className={buttonClasses('primary', 'md')}>
+                  {page.done.newListing}
+                </Link>
+                <Link to="/console/earnings" className={buttonClasses('secondary', 'md')}>
+                  {page.done.overview}
+                </Link>
+              </div>
+            </section>
+          ) : null}
         </>
       )}
     </>

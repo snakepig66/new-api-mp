@@ -60,6 +60,7 @@ import {
   isListingPausable,
   isListingReverifiable,
   isListingSellerResumable,
+  listingStageHint,
   listingStatusView,
   pauseReasonView,
 } from '@/features/seller/status'
@@ -431,6 +432,36 @@ function KindTag({ kind }: { kind: SellerChannelKind }) {
   return <Tag tone={kind === 'official' ? 'brand' : 'neutral'}>{page.kinds[kind]}</Tag>
 }
 
+/**
+ * Status plus what it means for the contributor: why it is paused, when it
+ * resumes, and which models failed the last verify probe.
+ */
+function StatusCell({ listing }: { listing: SellerListing }) {
+  const status = listingStatusView(listing.status)
+  const hint =
+    listing.status === 'paused' ? pauseTitle(listing) : listingStageHint(listing.status)
+  const failed = (listing.verification?.model_results ?? []).filter((row) => !row.ok)
+
+  return (
+    <div className="min-w-0">
+      <Tag tone={status.tone} dot>
+        {status.label}
+      </Tag>
+      {hint ? <p className="mt-1 text-caption leading-4 text-ink-3">{hint}</p> : null}
+      {failed.length > 0 ? (
+        <p
+          className="mt-0.5 cursor-help text-caption leading-4 text-danger"
+          title={failed
+            .map((row) => `${row.model}${row.fail_reason ? `: ${row.fail_reason}` : ''}`)
+            .join('\n')}
+        >
+          {page.verificationFailed(failed.length)}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
 export function SellerListingsPage() {
   const toast = useToast()
   const queryClient = useQueryClient()
@@ -734,9 +765,22 @@ export function SellerListingsPage() {
           ) : null}
 
           {filtered.length === 0 ? (
-            <p className="mt-6 text-meta text-ink-3" role="status">
-              {page.filterEmpty}
-            </p>
+            filter === 'abnormal' ? (
+              <Empty
+                className="mt-6"
+                title={page.abnormalEmpty.title}
+                reason={page.abnormalEmpty.reason}
+                action={
+                  <Button variant="secondary" size="sm" onClick={() => selectFilter('all')}>
+                    {page.abnormalEmpty.action}
+                  </Button>
+                }
+              />
+            ) : (
+              <p className="mt-6 text-meta text-ink-3" role="status">
+                {page.filterEmpty}
+              </p>
+            )
           ) : view === 'table' ? (
             <div className="mt-4">
               <Table minWidth={980} size="compact">
@@ -763,7 +807,6 @@ export function SellerListingsPage() {
                 <TableBody>
                   {paged.map((listing) => {
                     const listingHealth = healthById.get(listing.id)
-                    const status = listingStatusView(listing.status)
                     const pausable = isListingPausable(listing.status)
                     const resumable = isListingSellerResumable(listing)
                     const canToggle = pausable || resumable
@@ -816,9 +859,7 @@ export function SellerListingsPage() {
                           />
                         </TableCell>
                         <TableCell>
-                          <Tag tone={status.tone} dot>
-                            {status.label}
-                          </Tag>
+                          <StatusCell listing={listing} />
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-2">

@@ -36,13 +36,37 @@ describe('console navigation', () => {
     expect(funds?.items.map((item) => item.label)).toEqual(['钱包', '收益与提现'])
   })
 
-  it('shows 被调用记录 next to 我的渠道 for active sellers', () => {
+  it('shows onboarding and 被调用记录 next to 我的渠道 for active sellers', () => {
     const groups = consoleGroups({ sellerActive: true, isAdmin: false })
     const channels = groups.find((group) => group.label === '渠道')
     const records = channels?.items.find((item) => item.label === '被调用记录')
-    expect(channels?.items.map((item) => item.label)).toEqual(['我的渠道', '被调用记录'])
+    expect(channels?.items.map((item) => item.label)).toEqual([
+      '开通分享',
+      '我的渠道',
+      '被调用记录',
+    ])
     expect(records?.search).toEqual({ view: 'sales' })
     expect(records?.iconKey).toBe('/console/records#sales')
+  })
+
+  it('marks the onboarding entry until agreement and payout account are done', () => {
+    const pending = consoleGroups({
+      sellerActive: false,
+      isAdmin: false,
+      onboardingPending: true,
+    })
+    const ready = consoleGroups({
+      sellerActive: true,
+      isAdmin: false,
+      onboardingPending: false,
+    })
+    const itemOf = (groups: ReturnType<typeof consoleGroups>) =>
+      groups
+        .find((group) => group.label === '渠道')
+        ?.items.find((item) => item.label === '开通分享')
+
+    expect(itemOf(pending)?.badge).toBe('待完善')
+    expect(itemOf(ready)?.badge).toBeUndefined()
   })
 
   it('hides 被调用记录 for users who have not opened a channel', () => {

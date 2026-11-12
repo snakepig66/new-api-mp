@@ -39,11 +39,15 @@ function sellerMe(progress: Record<string, unknown>) {
 }
 
 let meBody = sellerMe({})
+let listingsBody: unknown[] = []
 
 const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
   const url = String(input)
   if (url === '/api/marketplace/me') {
     return jsonResponse({ success: true, data: meBody })
+  }
+  if (url.startsWith('/api/marketplace/seller/listings')) {
+    return jsonResponse({ success: true, data: listingsBody })
   }
   return jsonResponse({ success: false, message: 'not found' })
 })
@@ -51,6 +55,7 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
 beforeEach(() => {
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
+  listingsBody = []
   meBody = sellerMe({
     agreement_signed: true,
     next_step: 'payout_account',
@@ -74,6 +79,7 @@ function renderPage() {
   })
   const dummy = [
     '/console/listings/new',
+    '/console/listings',
     '/console/earnings',
     '/agreement',
     '/privacy',
@@ -91,8 +97,13 @@ function renderPage() {
   )
 }
 
+function stepItems() {
+  const rail = screen.getByLabelText('开通进度')
+  return within(rail).getAllByRole('listitem')
+}
+
 describe('seller onboarding rail', () => {
-  it('renders 协议 → 完成 with todo states before signing', async () => {
+  it('shows three steps, with only the agreement active before signing', async () => {
     meBody = sellerMe({
       agreement_signed: false,
       next_step: 'agreement',
@@ -100,27 +111,40 @@ describe('seller onboarding rail', () => {
     renderPage()
     await screen.findByText('签署分享者协议')
 
-    expect(screen.getByText('完成')).toBeTruthy()
-    expect(screen.getByText('0/2')).toBeTruthy()
+    expect(screen.getByText('0/3')).toBeTruthy()
+    expect(screen.getByText('绑定收款账户')).toBeTruthy()
+    expect(screen.getByText('发布第一个渠道')).toBeTruthy()
 
-    const steps = screen.getAllByRole('listitem')
-    expect(steps).toHaveLength(2)
+    const steps = stepItems()
+    expect(steps).toHaveLength(3)
     expect(within(steps[0]).getByText('当前')).toBeTruthy()
     expect(within(steps[1]).getByText('未开始')).toBeTruthy()
+    expect(within(steps[2]).getByText('未开始')).toBeTruthy()
   })
 
-  it('marks both steps done once agreement is complete', async () => {
+  it('asks for the payout account after the agreement is signed', async () => {
+    renderPage()
+    await screen.findByText('收款账户设置')
+
+    expect(screen.getByText('1/3')).toBeTruthy()
+    const steps = stepItems()
+    expect(within(steps[0]).getByText('已完成')).toBeTruthy()
+    expect(within(steps[1]).getByText('当前')).toBeTruthy()
+    expect(screen.queryByText('发布第一个渠道')).toBeTruthy()
+  })
+
+  it('marks all steps done once a listing exists', async () => {
     meBody = sellerMe({
       agreement_signed: true,
+      payout_account_bound: true,
       next_step: 'done',
     })
+    listingsBody = [{ id: 7, status: 'live', models: [] }]
     renderPage()
-    await screen.findByText('签署分享者协议')
+    await screen.findByText('已开通，可以分享渠道了')
 
-    expect(screen.getByText('2/2')).toBeTruthy()
-    const steps = screen.getAllByRole('listitem')
-    expect(steps).toHaveLength(2)
-    for (const step of steps) {
+    expect(screen.getByText('3/3')).toBeTruthy()
+    for (const step of stepItems()) {
       expect(within(step).getByText('已完成')).toBeTruthy()
     }
   })

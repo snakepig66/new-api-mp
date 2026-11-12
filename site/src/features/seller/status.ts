@@ -33,6 +33,12 @@ export function listingStatusView(status: string): StatusView {
   }
 }
 
+/** One line explaining what the current status means for the contributor. */
+export function listingStageHint(status: string): string {
+  const hints = copy.pages.sellerListings.stageHints
+  return hints[status] ?? ''
+}
+
 export function shareStatusView(status: string): StatusView {
   switch (status) {
     case 'available':

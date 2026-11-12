@@ -1830,6 +1830,7 @@ console.log(response.choices[0].message.content)
         records: '我卖出的',
         payouts: '收益与提现',
         onboarding: '开通分享',
+        onboardingBadge: '待完善',
       },
       status: {
         draft: '待检测',
@@ -2008,11 +2009,20 @@ console.log(response.choices[0].message.content)
         todo: '未开始',
         optional: '可选',
       },
-      stepTitles: ['签署分享者协议', '完成'],
+      stepTitles: ['签署分享者协议', '绑定收款账户', '发布第一个渠道'],
       stepHints: [
         '签完即可分享渠道，开通不收费。',
-        '全部就绪后即可去分享渠道，收益按 T+3 结算。',
+        '收益通过微信或支付宝打款，绑定后才能提现。',
+        '添加一个上游 Key，验真通过后上线接单。',
       ],
+      payoutHint: '收款账户只用于打款，绑定后仍可在收益页修改。',
+      firstListing: {
+        title: '发布第一个渠道',
+        reason:
+          '添加一个上游 Key，平台会自动验真；通过后进入灰度，24 小时后自动上线并开始接单。',
+        action: '去新建渠道',
+        viewAll: '查看我的渠道',
+      },
       agreement: {
         title: '分享者协议',
         version: '协议版本 v1',
@@ -2056,6 +2066,21 @@ console.log(response.choices[0].message.content)
     sellerListings: {
       title: '我的渠道',
       lead: '每个渠道对应一个上游 Key；暂停、改倍率和换 Key 都在这里。',
+      stageHints: {
+        draft: '等待验证，可点「重新验证」',
+        verifying: '正在真实调用验证，通常几秒完成',
+        pending_review: '平台审核中，通过后自动验证',
+        canary: '灰度观察中，24 小时后自动上线',
+        live: '',
+        paused: '',
+        banned: '已被平台停用',
+      } as Record<string, string>,
+      verificationFailed: (n: number) => `${n} 个模型验真失败，悬停看原因`,
+      abnormalEmpty: {
+        title: '没有异常渠道',
+        reason: '当前所有渠道状态正常。出现 Key 失效、额度耗尽或验真失败时会出现在这里。',
+        action: '查看全部渠道',
+      },
       columns: {
         listing: '渠道',
         models: '模型',
