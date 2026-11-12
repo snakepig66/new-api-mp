@@ -124,26 +124,30 @@ function ModelCategory(props: ModelCategoryProps) {
                   )
                 }
               />
-              <Label
-                htmlFor={`${id}-${model}`}
-                className='min-w-0 flex-1 cursor-pointer text-sm font-normal break-words'
-              >
-                {model}
-              </Label>
-              {props.aliases?.[model] && (
-                <Badge
-                  variant='outline'
-                  aria-label={t('Published as {{model}}', {
-                    model: props.aliases[model],
-                  })}
-                  title={t('Published as {{model}}', {
-                    model: props.aliases[model],
-                  })}
-                  className='max-w-40 shrink-0 truncate font-normal'
+              {/* 名字和别名各占一行：徽标和图标都是 shrink-0，和名字挤同一行会把
+                  名字压到几个像素宽，长模型名就碎成竖条。名字独占宽度才不会塌。 */}
+              <div className='flex min-w-0 flex-1 flex-col gap-1'>
+                <Label
+                  htmlFor={`${id}-${model}`}
+                  className='min-w-0 cursor-pointer text-sm font-normal leading-5 break-words'
                 >
-                  {props.aliases[model]}
-                </Badge>
-              )}
+                  {model}
+                </Label>
+                {props.aliases?.[model] && (
+                  <Badge
+                    variant='outline'
+                    aria-label={t('Published as {{model}}', {
+                      model: props.aliases[model],
+                    })}
+                    title={t('Published as {{model}}', {
+                      model: props.aliases[model],
+                    })}
+                    className='w-fit max-w-full truncate font-normal'
+                  >
+                    {props.aliases[model]}
+                  </Badge>
+                )}
+              </div>
               {props.redirectOnly.has(normalizeModelName(model)) && (
                 <Tooltip>
                   <TooltipTrigger
